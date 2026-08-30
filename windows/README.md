@@ -230,10 +230,38 @@ Service would run in session 0, which has no desktop, so
 display enumeration in session 0 is untested and expected to be problematic for the
 same reason. See [`../ARCHITECTURE.md`](../ARCHITECTURE.md).
 
+## `nvapi-probe.ps1` -- a read-only diagnostic
+
+```powershell
+.\nvapi-probe.ps1                              # print what NVAPI can see
+.\nvapi-probe.ps1 -LogFile C:\ProgramData\display-switch\nvapi-probe.log
+```
+
+Enumerates GPUs, connected displays and each display's EDID **through NVAPI only**,
+and prints a `user32 EnumDisplayMonitors` count beside it as a control. It exists to
+answer whether monitors can be identified in a context that has no desktop, which is
+the precondition for any pre-login work.
+
+**It performs no writes.** `NvAPI_I2CWrite` is deliberately not resolved anywhere in
+the file, so it cannot be called even by accident; nothing is sent to source address
+`0x50`; no VCP value is read or written. `NvAPI_GPU_GetEDID` reads the EDID block
+from the GPU, which is neither the service channel nor a VCP read. Safe to run
+repeatedly, in any context, with nothing to confirm visually.
+
+Function ids and struct layouts come from [SimpleKVM](https://github.com/fiddyschmitt/SimpleKVM)
+(MIT), with `NvAPI_Initialize` and `NvAPI_EnumPhysicalGPUs` independently
+corroborated by `lg-input-switch`.
+
 ## Still open
 
-- Does NVAPI I2C work from a non-interactive context at all? (unexplored; only
-  matters if pre-login ever becomes worth building)
-- Could NVAPI carry both monitors and remove the dual-code-path? Possible in
-  principle, but it would mean sourcing more NVAPI function ids, and the current
-  ASUS path works and is safe.
+- **Does NVAPI work from a context with no desktop?** Half-answered. It enumerates
+  both monitors correctly in a normal session, returning EDID identities that match
+  those measured through the Windows PnP path -- and it yields **per-output ids**
+  (ASUS `0x100`, LG `0x200`), which is the aiming `lg-input-switch` throws away.
+  Whether it still works in session 0 or in a non-interactive task is untested.
+- Could NVAPI carry both monitors and remove the dual-code-path? Now looks likely
+  rather than merely possible -- the enumeration and identity halves are proven, and
+  the write half would use the already-corroborated `NvAPI_I2CWrite`. Untested.
+- Pre-login needs admin regardless: registering a scheduled task with `S4U` or a
+  `SYSTEM` principal both fail with "Access is denied" for an ordinary user, while
+  the `Interactive` task this installer uses does not. There is no zero-admin route.
