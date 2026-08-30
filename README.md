@@ -27,11 +27,12 @@ USB switch ──> peripherals ──> whichever machine gets them pulls both di
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | The design and its rationale — why pull-to-self, why two DDC dialects, why post-login |
 | [`AGENTS.md`](AGENTS.md) | Instructions for anyone (human or agent) changing this repo, including the hard safety rules |
 | `macos/` | Working implementation: `usb-watch` (IOKit) + `switch-displays.sh` (m1ddc) + LaunchAgent |
-| `windows/` | Design notes only — **not yet implemented** |
+| `windows/` | Working implementation: `usb-watch.ps1` (WMI) + `switch-displays.ps1` (dxva2 + `lg-input-switch`) + Scheduled Task |
 
 Code is not shared between platforms — macOS goes through `IOAVService`, Windows
-through NVAPI, with no common runtime. `displays.toml` exists so the *values* can't
-silently drift apart between two independent implementations.
+through NVAPI and the Monitor Configuration API, with no common runtime.
+`displays.toml` exists so the *values* can't silently drift apart between two
+independent implementations.
 
 ## The two things that will waste your time if you forget them
 
@@ -55,29 +56,34 @@ after switching, or a verify-then-retry loop will fire spurious retries.
 
 ## Verified behaviour
 
-All four cases tested and confirmed visually on 2026-08-30:
+All four cases tested from **both** machines and confirmed visually on 2026-08-30,
+plus the end-to-end USB trigger driven by the real switch on the Windows side:
 
-| Case | Method | From an inactive link |
+| Case | From the Mac | From Windows |
 |---|---|---|
-| ASUS → DisplayPort (pull to Mac) | `input 15` | ✅ |
-| ASUS → HDMI 1 (push to Windows) | `input 17` | ✅ |
-| LG → USB-C (pull to Mac) | `input-alt 209` | ✅ |
-| LG → DisplayPort (push to Windows) | `input-alt 208` | ✅ |
+| ASUS → DisplayPort (show the Mac) | `input 15` ✅ | `SetVCPFeature 0x60=0x0F` ✅ |
+| ASUS → HDMI 1 (show Windows) | `input 17` ✅ | `SetVCPFeature 0x60=0x11` ✅ |
+| LG → USB-C (show the Mac) | `input-alt 209` ✅ | `lg-input-switch usbc` ✅ |
+| LG → DisplayPort (show Windows) | `input-alt 208` ✅ | `lg-input-switch dp` ✅ |
 
-"Inactive link" is the case that matters: the machine issuing the command is by
-definition not the one being displayed. The Mac's link stays enumerated while the
-monitor shows the other machine, so there is always a path to command it home.
+Each machine's *pull-to-self* direction was exercised with the monitor actually
+displaying the other machine — the case that matters, since the machine issuing the
+command is by definition not the one being displayed. Both hosts keep their link
+enumerated while the panel shows the other machine, so there is always a path to
+command it home.
 
 ## Install
 
 macOS: see [`macos/README.md`](macos/README.md) — `make install`.
 
-Windows: not implemented. See [`windows/README.md`](windows/README.md).
+Windows: see [`windows/README.md`](windows/README.md) — `.\install.ps1`.
 
 ## Scope
 
-Post-login only, on both platforms. Pre-login is a much larger job than it looks —
-`m1ddc` links CoreGraphics and enumerates displays via `CGGetOnlineDisplayList`,
-which needs a window server connection that a LaunchDaemon in session 0 does not
-have. Windows hits the same wall for the same reason. See `windows/README.md` for
-the sketch of a CoreGraphics-free path if this ever becomes worth building.
+Post-login only, on both platforms — a LaunchAgent on macOS, a Scheduled Task at
+logon on Windows. Pre-login is a much larger job than it looks: `m1ddc` links
+CoreGraphics and enumerates displays via `CGGetOnlineDisplayList`, which needs a
+window server connection that a LaunchDaemon in session 0 does not have. Windows
+hits the same wall for the same reason — session 0 has no desktop, so there is no
+`HMONITOR`. See `windows/README.md` for the sketch of a CoreGraphics-free path if
+this ever becomes worth building.

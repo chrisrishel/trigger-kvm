@@ -32,7 +32,11 @@ holds the peripherals at a time, so only one fires.
 
 **A host's link to a monitor stays enumerated while that monitor displays a
 different input.** macOS continues to report the display as online at full
-resolution even when the panel is showing the other machine.
+resolution even when the panel is showing the other machine. Windows behaves the
+same way — both monitors stay in `EnumDisplayMonitors` with full desktop rects
+while showing the Mac, and both accept DDC writes in that state. Confirmed
+independently on both platforms, so the property is a monitor behaviour rather than
+an OS quirk either side happens to have.
 
 Two consequences, and both are load-bearing:
 
@@ -52,9 +56,12 @@ together, so this only surfaces during asymmetric testing.
 ```
 displays.toml          the contract — shared by both platforms
 ├── macos/
-│   ├── usb-watch.c        detects arrival  →  execs the switcher
-│   └── switch-displays.sh drives m1ddc     →  sends the DDC writes
-└── windows/               same two roles, unimplemented
+│   ├── usb-watch.c          detects arrival  →  execs the switcher
+│   └── switch-displays.sh   drives m1ddc     →  sends the DDC writes
+└── windows/
+    ├── usb-watch.ps1        detects arrival  →  execs the switcher
+    ├── switch-displays.ps1  dxva2 + lg-input-switch → sends the DDC writes
+    └── install.ps1          Scheduled Task at logon
 ```
 
 Every platform implementation is the same two roles: **a detector** and **a
@@ -87,6 +94,11 @@ The two monitors do not speak the same dialect:
 |---|---|---|
 | ASUS PG42UQ | Standard DDC/CI, VCP `0x60` | Works normally |
 | LG 45GX950A | I2C source `0x50`, VCP `0xF4` | Standard input control is **stubbed** on this panel |
+
+This split is why neither platform has a single code path. macOS reaches both
+through `m1ddc` (`set input` vs `set input-alt`); Windows reaches the ASUS through
+`dxva2.dll` and the LG by shelling out to `lg-input-switch`, because the Windows
+DDC/CI stack hardcodes I2C source `0x51` and cannot express `0x50` at all.
 
 The LG accepts `VCP 0x60` writes, returns success, and discards them; reads always
 return `0x0F` regardless of what is displayed. Recent LG monitors moved input
@@ -131,10 +143,13 @@ an oversight.
 which requires a window server connection. A LaunchDaemon in session 0 has none and
 would enumerate zero displays. Windows hits the same wall: session 0 has no
 desktop, so `GetPhysicalMonitorsFromHMONITOR` has no `HMONITOR` and NVAPI display
-enumeration is expected to fail for the same reason.
+enumeration is expected to fail for the same reason. The Windows side is therefore
+a Scheduled Task at logon in the interactive session, not a Windows Service.
 
 Pre-login on macOS has a known clean path if it ever becomes worth building:
 enumerate `DCPAVServiceProxy` entries where `Location = External` directly from
-IORegistry, match by EDID product ID, then `IOAVServiceCreateWithService` +
+IORegistry, match by EDID product ID (but see the unresolved note on the LG's
+`edid_product` in `displays.toml` first — that value is not currently trustworthy
+on macOS), then `IOAVServiceCreateWithService` +
 `IOAVServiceWriteI2C` — no CoreGraphics anywhere. The Windows equivalent is
 unexplored.

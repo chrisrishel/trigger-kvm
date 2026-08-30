@@ -1,116 +1,145 @@
-# Windows side — NOT YET IMPLEMENTED
+# Windows side
 
-Design notes only. Nothing here has been built or tested.
-
-The macOS side is deliberately finished first so the design is validated in practice
-before being duplicated onto a second platform.
-
-## What needs to exist
-
-A background process that detects the shared USB peripherals arriving and then
-commands both monitors to the Windows inputs:
+A Scheduled Task runs `usb-watch.ps1`, which fires `switch-displays.ps1 windows`
+when a watched USB device arrives. No compiled code: PowerShell plus one pinned
+third-party binary for the LG.
 
 | Monitor | Target input | Method |
 |---|---|---|
-| LG 45GX950A | DisplayPort, `0xD0` | LG sidechannel — I2C src `0x50`, VCP `0xF4` |
-| ASUS PG42UQ | HDMI 1, `0x11` | Standard DDC/CI, VCP `0x60` |
+| LG 45GX950A | DisplayPort, `0xD0` | LG sidechannel -- I2C src `0x50`, VCP `0xF4`, via `lg-input-switch.exe` |
+| ASUS PG42UQ | HDMI 1, `0x11` | Standard DDC/CI, VCP `0x60`, via `dxva2.dll` |
 
-Values are in [`../displays.toml`](../displays.toml). Keep them in sync — that file
+Values are in [`../displays.toml`](../displays.toml). Keep them in sync -- that file
 exists precisely so these two implementations can't drift.
 
-## What is already known to work
+## Requirements
 
-**The LG.** Standard DDC is stubbed on this panel, so the OS DDC stack is useless
-for it. The working approach bypasses it entirely and injects raw I2C via **NVAPI**
-(RTX 4090). Reference implementation: `github.com/meer-cha/lg-input-switch`.
+- NVIDIA GPU. The LG path injects raw I2C through NVAPI; there is no vendor-neutral
+  route to the sidechannel. Verified on an RTX 4090, driver 32.0.16.1062.
+- Windows PowerShell 5.1 (stock). No admin rights needed, at install or at run time.
 
-The exact packets, confirmed working from Windows:
+## Install
+
+```powershell
+.\install.ps1              # install to %LOCALAPPDATA%, register the task, start it
+.\install.ps1 -Status      # is the task registered and running?
+.\install.ps1 -Logs        # tail the log
+.\install.ps1 -Uninstall
+```
+
+`install.ps1` downloads `lg-input-switch` from a pinned release and verifies its
+SHA256. The binary is not vendored -- it is 16MB of third-party code.
+
+Log: `%LOCALAPPDATA%\display-switch\displayswitch.log`
+
+## Manual use
+
+```powershell
+.\switch-displays.ps1 windows            # pull both monitors here
+.\switch-displays.ps1 mac                # push both to the Mac
+.\switch-displays.ps1 windows -Only asus # move one monitor only
+```
+
+`-Only lg|asus|both` exists because moving both at once can take away the display
+your terminal is on. Use it when testing.
+
+## Verified behaviour
+
+All four cases tested from Windows and confirmed visually on 2026-08-30, plus the
+end-to-end USB trigger:
+
+| Case | Method | From an inactive link |
+|---|---|---|
+| ASUS -> HDMI 1 (pull here) | `SetVCPFeature 0x60 = 0x11` | yes |
+| ASUS -> DisplayPort (push to Mac) | `SetVCPFeature 0x60 = 0x0F` | n/a (was active) |
+| LG -> DisplayPort (pull here) | `lg-input-switch dp` | yes |
+| LG -> USB-C (push to Mac) | `lg-input-switch usbc` | n/a (was active) |
+
+Both "pull here" cases were exercised with the monitor **displaying the Mac**, which
+is the case the whole design depends on: the machine issuing the command is by
+definition not the one being shown. Windows keeps its link enumerated while the
+panel shows the other machine, exactly as macOS does.
+
+**Answering the open question this file used to carry:** yes, the ASUS answers DDC
+over this PC's HDMI cable, including while it is displaying its DisplayPort input.
+Only its DP input had been exercised from the Mac side; HDMI 1 is now confirmed.
+
+## Components
+
+**`switch-displays.ps1`** -- sends both writes. The ASUS goes through the Monitor
+Configuration API (`GetPhysicalMonitorsFromHMONITOR` -> `SetVCPFeature`); the LG
+shells out to `lg-input-switch.exe`. Each write is sent twice: DDC is lossy and the
+writes are idempotent. There are deliberately no reads anywhere in it.
+
+**`usb-watch.ps1`** -- `Register-CimIndicationEvent` on `Win32_DeviceChangeEvent`,
+an extrinsic WMI event, so there is no polling interval. That event does not say
+*which* device changed, so each one is followed by a targeted `Win32_PnPEntity`
+query (~40ms) to establish identity. Push latency, exact identity, no elevation.
+
+Three safety behaviours, ported from `../macos/usb-watch.c`:
+
+- **debounce** (3.0s) -- ignore arrivals within N seconds of the last fire. This is
+  not theoretical: on the first live test the Focusrite arrived at `01:49:46` and
+  fired, and the webcam followed moments later and was correctly swallowed.
+- **settle** (0.75s) -- after an arrival, wait, then confirm the device is *still*
+  present. Appear-then-vanish was a glitch, not a switch.
+- **edge-triggered** -- fires only on absent -> present. Devices already plugged in
+  at startup never fire.
+
+**`install.ps1`** -- Scheduled Task at logon, interactive session, `RunLevel
+Limited`. Explicitly clears `StopIfGoingOnBatteries`, which defaults on and would
+otherwise kill the watcher on a brief UPS blip.
+
+## Watched devices
+
+Kept in sync with [`../displays.toml`](../displays.toml):
+
+| Device | ID | Note |
+|---|---|---|
+| Logitech Webcam C930e | `046d:0843` | Preferred anchor -- a UVC camera rarely re-enumerates spuriously |
+| Focusrite Clarett+ 2Pre | `1235:820a` | Weaker anchor -- audio interfaces re-enumerate on driver reloads and power events |
+
+Both confirmed present on this machine when the USB switch is pointed here.
+
+**Match the full VID+PID, never the vendor alone.** The keyboard and mouse are
+Logitech too (`VID_046D`, `PID_C547`) and are *always* present, because they are
+wired directly to this PC's motherboard and do not pass through the USB switch. A
+vendor-only match would fire continuously.
+
+## Traps specific to Windows
+
+**Do not address monitors by index or by description.** On this machine
+`\\.\DISPLAY1` is the **ASUS** and `\\.\DISPLAY2` is the LG, and dxva2 reports the
+LG's description as the useless generic string `Generic PnP Monitor`. Getting this
+wrong sends LG service-channel writes to the ASUS. `switch-displays.ps1` resolves
+by the EDID id embedded in the PnP interface path instead:
 
 ```
-50 84 03 F4 00 D1 9C    switch to USB-C       (0xD1 — the Mac)
-50 84 03 F4 00 D0 9D    switch to DisplayPort (0xD0 — this PC)
+\\?\DISPLAY#AUS42E0#5&aaaaaaaa&0&UID4352#{e6f07b5f-...}
+             ^^^^^^^ matched on this
 ```
 
-Structure: `[source_addr, 0x84, 0x03, vcp, value_hi, value_lo, checksum]`, where
-checksum is the XOR of `0x6E` and all preceding bytes. Verified against m1ddc's
-independent implementation on macOS — byte-identical.
+**`lg-input-switch` is not addressable to one monitor.** See `../AGENTS.md` -- it
+injects on every connected output, so the ASUS also receives the LG's VCP `0xF4`
+write. Confirmed harmless on the PG42UQ, but it is why the LG path cannot be made
+selective without forking the tool.
 
-**The ASUS.** Standard DDC/CI works normally from Windows, in both directions,
-including while the monitor displays the other machine. The Monitor Configuration
-API (`GetPhysicalMonitorsFromHMONITOR` → `SetVCPFeature`) is sufficient.
+**Keep `.ps1` files ASCII-only.** Windows PowerShell 5.1 reads a `.ps1` without a
+BOM as ANSI, so a UTF-8 em dash in a comment becomes a parse error tens of lines
+away from anything that looks wrong.
 
-## Recommended approach: wrap, don't reimplement
+## Scope: post-login only
 
-Windows should be **simpler** than macOS, not harder — most of it can be assembled
-from things that already work, and probably needs no compiled code at all.
+The task runs at logon in the interactive session, matching macOS. A Windows
+Service would run in session 0, which has no desktop, so
+`GetPhysicalMonitorsFromHMONITOR` would have no `HMONITOR` to work from. NVAPI
+display enumeration in session 0 is untested and expected to be problematic for the
+same reason. See [`../ARCHITECTURE.md`](../ARCHITECTURE.md).
 
-**For the LG — wrap the existing tool.** `lg-input-switch` already does the NVAPI
-raw-I2C injection and is confirmed working on this machine. Call it. Do **not**
-hand-write NVAPI P/Invoke bindings: NVAPI dispatches through
-`nvapi_QueryInterface` with magic per-function IDs, those IDs must come from a real
-source rather than memory, and a wrong one calls the wrong function against a
-service channel. The risk is entirely unnecessary when a working binary exists.
+## Still open
 
-**For the ASUS — standard DDC, several easy options:**
-
-- NirSoft **ControlMyMonitor** — CLI, no code:
-  `ControlMyMonitor.exe /SetValue "<monitor-id>" 60 17`
-- Or a short P/Invoke to `dxva2.dll`: `GetPhysicalMonitorsFromHMONITOR` →
-  `SetVCPFeature(hMonitor, 0x60, 0x11)`. Well documented, low risk, ~30 lines of C#.
-
-**For detection — likely no compiled code either:**
-
-- PowerShell `Register-CimIndicationEvent` on `Win32_DeviceChangeEvent`, run as a
-  Scheduled Task at logon; or
-- A Scheduled Task triggered directly on a Kernel-PnP device-arrival event in the
-  System log — zero code, though less precise about *which* device arrived.
-
-If PowerShell proves too laggy or imprecise about device identity, then fall back to
-`CM_Register_Notification` in a small C# service. Try the simple route first.
-
-## Detection
-
-- PowerShell `Register-CimIndicationEvent` / `Win32_DeviceChangeEvent` (start here)
-- `CM_Register_Notification` with a device-interface filter (precise, needs code)
-- WMI `__InstanceCreationEvent` on `Win32_USBControllerDevice` (heavier, polls)
-
-Watch the same devices as macOS — webcam `046d:0843`, audio interface `1235:820a`.
-Keyboard and mouse are wired directly to this PC's motherboard and never move.
-
-**Port the debounce and settle logic.** It is not optional. A spurious device
-arrival will yank both displays mid-session, and this desk has a documented history
-of USB instability. See `../macos/usb-watch.c` for the shape.
-
-## Startup
-
-Post-login, matching macOS. Simplest: a **Scheduled Task** with trigger "At log on",
-running in the interactive session.
-
-A **Windows Service** would be more robust and is the only route that could ever
-reach pre-login — but see below before reaching for it.
-
-## Why pre-login is not in scope
-
-A service runs in session 0, which has no desktop. Both DDC paths likely need a
-display/session context there:
-
-- `GetPhysicalMonitorsFromHMONITOR` needs an `HMONITOR`, i.e. a desktop.
-- NVAPI display enumeration is untested in session 0 and expected to be
-  problematic for the same reason.
-
-macOS hits an identical wall: `m1ddc` links CoreGraphics and enumerates via
-`CGGetOnlineDisplayList`, which needs a window server connection.
-
-If pre-login ever becomes worth building, the macOS path is known and clean:
-enumerate `DCPAVServiceProxy` entries where `Location = External` directly from
-IORegistry, match by EDID product ID (LG `0x1e6d:0x9ea0`, ASUS `0x06b3:0x42e0`),
-then `IOAVServiceCreateWithService` + `IOAVServiceWriteI2C` — no CoreGraphics at
-all. The Windows equivalent would need investigating from scratch.
-
-## Open questions
-
-- Does NVAPI I2C work from a non-interactive context at all?
-- Does the ASUS need the Monitor Configuration API, or can NVAPI carry both monitors
-  and remove the dual-code-path?
-- Confirm the ASUS is reachable over DDC on **HDMI**, not just DisplayPort — the
-  macOS testing only exercised its DP input.
+- Does NVAPI I2C work from a non-interactive context at all? (unexplored; only
+  matters if pre-login ever becomes worth building)
+- Could NVAPI carry both monitors and remove the dual-code-path? Possible in
+  principle, but it would mean sourcing more NVAPI function ids, and the current
+  ASUS path works and is safe.

@@ -43,6 +43,23 @@ the other machine blacks out this one. When testing, move one monitor at a time 
 keep the other on the machine running the terminal. Warn before any command that
 takes the last remaining display.
 
+Note the corollary from `ARCHITECTURE.md`: because the link stays enumerated, a
+window on a monitor you just switched away is still *there*, just invisible. Before
+moving the monitor the terminal is on, have the user drag the terminal to the other
+one first.
+
+**5. `lg-input-switch` is a shotgun, not a scalpel.**
+Its `_i2c_write` loops over every connected output mask and ports 0-7, sending the
+packet to all of them. It does not identify the LG. With both monitors on one GPU,
+`lg-input-switch dp` therefore also delivers `SetVCP 0xF4` to the **ASUS**.
+
+Confirmed on 2026-08-30: the PG42UQ ignores it, with no flicker or setting change.
+Treat that as a property of this specific pair of monitors, not a general licence.
+Attach a third monitor and it will receive these writes too -- check before assuming
+that is safe. Making the LG path selective means sourcing more NVAPI function ids,
+which the last bullet under Conventions exists to discourage; the current
+arrangement is the accepted trade.
+
 ## Keep the docs current
 
 Documentation is part of the change, not a follow-up. **In the same commit as the
@@ -94,6 +111,33 @@ To exercise the watcher without installing:
 It should log `armed ... (N already present, not firing)` and **not** fire for
 devices that were already plugged in.
 
+### Windows
+
+```powershell
+cd windows
+.\install.ps1                              # install, register the logon task, start
+.\install.ps1 -Status / -Logs / -Uninstall
+.\switch-displays.ps1 windows | mac        # manual switch
+.\switch-displays.ps1 windows -Only asus   # one monitor only -- use when testing
+```
+
+Both scripts must parse clean before they are run against hardware:
+
+```powershell
+$e = $null
+[System.Management.Automation.Language.Parser]::ParseFile('.\switch-displays.ps1', [ref]$null, [ref]$e)
+$e
+```
+
+The equivalent watcher smoke test, which fires nothing:
+
+```powershell
+.\usb-watch.ps1 -Exec .\some-harmless-script.ps1 -Arg TEST -Device 046d:c547 -Verbose
+```
+
+`046d:c547` is the keyboard, which is always present, so this is the direct check
+that already-present devices do not fire.
+
 ## Conventions
 
 - Conventional commits: `feat:`, `fix:`, `refactor:`, `docs:`, `chore:`, scoped by
@@ -101,6 +145,13 @@ devices that were already plugged in.
 - Do not hardcode display indices or UUIDs in switching code. Resolve by name at
   runtime — index numbers shift when a display drops, and index `1` silently
   becoming the *other* monitor would send LG service-channel writes to the ASUS.
+  This is live on Windows, not hypothetical: `\\.\DISPLAY1` **is** the ASUS there,
+  and dxva2 reports the LG's description as the generic `Generic PnP Monitor`, so
+  neither index nor description is a usable key. Match the EDID id in the PnP
+  interface path.
+- Keep `.ps1` files ASCII-only. Windows PowerShell 5.1 reads a `.ps1` with no BOM
+  as ANSI, so a UTF-8 em dash in a comment surfaces as a parse error at an
+  unrelated line. Prose files are unaffected; use ASCII punctuation in scripts.
 - Send DDC writes more than once. They are idempotent and the bus is lossy.
 - Post-login only, both platforms. Do not add pre-login support without asking;
   `ARCHITECTURE.md` explains why it is a rewrite rather than a config change.

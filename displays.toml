@@ -5,7 +5,8 @@
 # so the two implementations cannot silently drift apart.
 #
 # All values verified by direct testing on 2026-08-30, confirmed visually in both
-# directions on both monitors, including from an inactive link.
+# directions on both monitors, including from an inactive link -- and independently
+# from both machines: macOS via m1ddc, Windows via dxva2 and lg-input-switch.
 
 # ---------------------------------------------------------------------------
 # RULE: never verify a switch by reading a VCP value back.
@@ -30,8 +31,25 @@ windows = "Windows PC (RTX 4090)"
 [[monitor]]
 name         = "LG 45GX950A"
 match_name   = "LG ULTRAGEAR+"   # as reported by `m1ddc display list`
-edid_vendor  = 0x1e6d            # GSM / LG Electronics
-edid_product = 0x9ea0
+win_match    = "GSM9E9D"         # EDID id in the Windows PnP interface path
+edid_vendor  = 0x1e6d            # GSM / LG Electronics -- agrees on both platforms
+edid_product = 0x9e9d            # measured from raw EDID on Windows over DisplayPort
+
+# UNRESOLVED: this field read 0x9ea0 until 2026-08-30. The Windows side measured
+# 0x9e9d directly from the monitor's EDID (registry Device Parameters\EDID, bytes
+# 10-11), and Windows spells the same id GSM9E9D in the PnP path. 0x9ea0 appears
+# never to have been verified against hardware, and nothing consumes it: the macOS
+# switcher matches by name, and its only other mention was the pre-login sketch,
+# which is unimplemented.
+#
+# Two possibilities, not yet distinguished:
+#   (a) 0x9ea0 was simply wrong, or
+#   (b) this panel reports a different product code per input, in which case macOS
+#       over USB-C legitimately sees 0x9ea0 and Windows over DP sees 0x9e9d -- and
+#       the field is not portable at all.
+#
+# To settle it, on the Mac:  ioreg -lw0 -r -c DCPAVServiceProxy | grep -i EDID
+# Until then do NOT use this value to match a display on macOS.
 
 # Standard DDC/CI VCP 0x60 is STUBBED on this panel: writes return success and are
 # ignored, and reads always return 0x0F regardless of the displayed input.
@@ -54,15 +72,19 @@ hdmi2   = 0x91   # 145 — unused
 [[monitor]]
 name         = "ASUS PG42UQ"
 match_name   = "PG42UQ"
+win_match    = "AUS42E0"         # EDID id in the Windows PnP interface path
 edid_vendor  = 0x06b3            # AUS / ASUSTek
-edid_product = 0x42e0
+edid_product = 0x42e0            # confirmed from raw EDID on Windows; agrees
 
 # Standard DDC/CI. Works normally.
 method = "standard"              # VCP 0x60, I2C source address 0x51
 
 [monitor.input]
 mac     = 0x0F   # 15 — DisplayPort
-windows = 0x11   # 17 — HDMI 1
+windows = 0x11   # 17 — HDMI 1. Confirmed from Windows 2026-08-30: this panel does
+                 #      answer DDC over the HDMI cable, including while it is
+                 #      displaying its DisplayPort input. Only DP had been
+                 #      exercised previously, from the Mac side.
 hdmi2   = 0x12   # 18 — unused
 
 # ---------------------------------------------------------------------------
@@ -75,8 +97,14 @@ hdmi2   = 0x12   # 18 — unused
 # Any listed device arriving fires a switch; the debounce below stops two arrivals
 # from double-firing. Order matters only for documentation.
 #
-# Verify these IDs once the devices are actually behind the USB switch:
-#   ioreg -p IOUSB -l | grep -E 'idVendor|idProduct'
+# Both IDs verified on Windows 2026-08-30 with the devices behind the USB switch:
+#   USB\VID_046D&PID_0843\5A5A5A5A     Logitech Webcam C930e
+#   USB\VID_1235&PID_820A\00001234     Focusrite Clarett+ 2Pre
+# To re-check:  macOS   ioreg -p IOUSB -l | grep -E 'idVendor|idProduct'
+#               Windows Get-PnpDevice -PresentOnly | ? InstanceId -match 'VID_046D'
+#
+# TRAP: the keyboard and mouse are Logitech too (VID_046D, PID_C547) and are always
+# present. Match the full vendor+product pair; a vendor-only match fires constantly.
 
 [[trigger]]
 name    = "Logitech Webcam C930e"
