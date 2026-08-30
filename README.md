@@ -72,6 +72,10 @@ command is by definition not the one being displayed. Both hosts keep their link
 enumerated while the panel shows the other machine, so there is always a path to
 command it home.
 
+**In service since 2026-08-30.** Switching back and forth repeatedly between the
+two machines with the real USB switch moves both monitors correctly every time, in
+both directions, with no spurious switches observed.
+
 ## Install
 
 macOS: see [`macos/README.md`](macos/README.md) — `make install`.

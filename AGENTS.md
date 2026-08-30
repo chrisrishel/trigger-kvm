@@ -65,6 +65,13 @@ arrangement is the accepted trade.
 Neither of these is a bug to fix on sight; they are things to know before changing
 the detectors, and to reach for first if a spurious switch is ever reported.
 
+**Only one device ever appears in the log, and that is correct.** Both watched
+devices arrive together when the USB switch moves. Whichever lands first fires; the
+other falls inside the debounce window and is discarded. In practice the Focusrite
+wins and the webcam is never logged — observed on both platforms. This is the
+debounce working, not the webcam failing to register. Do not "fix" it, and do not
+read a single-device log as evidence that the other device is misconfigured.
+
 **Sleep/wake may fire a spurious switch on macOS, but probably not on Windows.**
 This is reasoned from the two designs and is **UNVERIFIED** — nobody has tested a
 sleep cycle on either side.
