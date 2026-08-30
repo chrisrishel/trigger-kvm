@@ -64,6 +64,11 @@ panel shows the other machine, exactly as macOS does.
 over this PC's HDMI cable, including while it is displaying its DisplayPort input.
 Only its DP input had been exercised from the Mac side; HDMI 1 is now confirmed.
 
+**Hibernate (S4) disturbs neither monitor and fires no spurious switch.** Verified
+2026-08-30 across a real `shutdown -h` / resume cycle, with both panels confirmed
+visually. **S3 standby hangs this machine and must not be tested** -- that, and why
+the watcher is safe across a power transition, is in [`../AGENTS.md`](../AGENTS.md).
+
 ## Components
 
 **`switch-displays.ps1`** -- sends both writes. The ASUS goes through the Monitor
@@ -112,6 +117,12 @@ next logon, and you would only discover it when the displays quietly stopped
 following the USB switch. A second trigger re-runs the task every minute;
 `MultipleInstances IgnoreNew` makes that a no-op while it is alive, so the
 steady-state cost is a process launch that exits immediately.
+
+That no-op is also why `install.ps1 -Status` shows a last-run result of
+`2147946720` / `0x800710E0` -- "The operator or administrator has refused the
+request" -- during **normal** operation. It is Task Scheduler's code for a trigger
+that fired while an instance was already running, i.e. `IgnoreNew` doing its job.
+Expect it whenever the watcher is healthy; it is not a failure to chase.
 
 That trigger is the *only* thing that brings it back. The task's `RestartCount` /
 `RestartInterval` settings do not: killing the watcher leaves the task `Ready`

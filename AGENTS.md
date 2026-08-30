@@ -85,6 +85,52 @@ Scope of that result: one cycle, on a desktop with powered USB. A laptop, or a h
 that drops power, could still re-enumerate and fire. Re-test rather than assume if
 the hardware changes.
 
+**Sleep/wake does not fire a spurious switch on Windows either. Tested 2026-08-30,
+by hibernate (S4)** — see the next entry for why not by S3. The watcher survives
+hibernation as a *live process*, so its in-memory `$present` map comes back holding
+what it held going down. USB bus power does cycle underneath it — the Focusrite's
+relay is audible on the way back — but `Get-PresenceMap` and the restored `$present`
+then agree on "present", there is no absent -> present edge, and nothing fires. If
+the watcher is restarted across the transition instead, it re-primes at startup and
+logs `armed (2 already present, not firing)`. Both paths are safe, and so is the
+move in between: flipping the USB switch to this PC *while it is hibernating* does
+fire on resume, which is correct — the peripherals really did move here.
+
+**Do not read a quiet log as proof the edge guard rejected anything.**
+`usb-watch.ps1` drops a device-change event that yields no edge with a bare
+`continue` and no log line. "No arrival logged" therefore cannot distinguish "no
+event was delivered" from "an event was delivered and correctly rejected". The
+outcome is the same either way; the claim is not. Add a `Write-Verbose` on that
+branch before trying to evidence which one happened.
+
+**`DEVPKEY_Device_LastArrivalDate` does not track this.** It read `03:28:57` (boot)
+for both watched devices *both before and after* a hibernate cycle in which bus
+power demonstrably cycled. It is not a re-enumeration probe — do not reach for it to
+answer "did USB come back?", because it will confidently say no.
+
+**S3 standby HANGS this machine. Do not test it again; use hibernate.**
+On 2026-08-30 a sleep entered S3 (power light blinking, displays off) and never
+resumed: fans spun back up, no video, no keyboard or mouse, no RDP, hard reboot
+required. There is no crash dump and no bugcheck — a hang, not a driver fault, so
+there is nothing to attribute and nothing to fix from here.
+
+Nothing in this repo is implicated, and the evidence is worth keeping so the
+question does not get reopened: the Scheduled Task is `WakeToRun: False`, the
+watcher's last activity was three minutes before the attempt, and user-mode DDC
+writes can neither block S3 entry (entry succeeded) nor prevent resume. The System
+log holds **zero** `Kernel-Power 42` and **zero** `Power-Troubleshooter 1` events
+back to 2026-01-25, so no sleep cycle has ever completed on this machine — this is
+not a regression from anything built here.
+
+The cause is platform, not project: `powercfg /a` offers only S3 and Hibernate, and
+reports Hybrid Sleep unavailable because "the hypervisor does not support this
+standby state", with VBS running under HVCI strict mode. Hibernate is both the safer
+and the better test anyway, since S4 drops USB bus power where S3 may not.
+
+Running it from a bash-flavoured shell needs `shutdown -h`, not `shutdown /h`: MSYS
+path conversion rewrites the lone `/h` into a Windows path, and `shutdown.exe` prints
+its usage instead of doing anything.
+
 **What sleep breaks is the monitors, not the detector — and it is a settings
 problem, now closed.** During that same cycle the ASUS defected to the Windows PC
 on its own: it lost the Mac's signal while asleep and its auto-input feature moved
