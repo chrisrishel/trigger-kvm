@@ -205,12 +205,21 @@ $triggers = @(
 
 # Self-heal. AtLogOn alone means that if the watcher is ever killed -- Task Manager,
 # a crash, a stray Stop-Process -- it stays dead until the next logon, and you would
-# only find out when the displays silently stopped following the USB switch. This
-# second trigger re-runs it every 5 minutes; MultipleInstances IgnoreNew below makes
-# that a no-op whenever it is already alive, so the steady-state cost is nothing.
+# only find out when the displays silently stopped following the USB switch.
+#
+# This trigger is the ONLY thing that brings it back. The task's RestartCount /
+# RestartInterval settings do not: measured 2026-08-30, killing the watcher left the
+# task Ready and no restart occurred in 180s, because Task Scheduler treats the
+# ended task as complete rather than failed. So this interval IS the recovery time.
+#
+# One minute, to stay within sight of the macOS side, where launchd's KeepAlive
+# respawns in about a second. MultipleInstances IgnoreNew makes each tick a no-op
+# while the watcher is alive, so the steady-state cost of the tighter interval is a
+# process launch that exits immediately.
 $heal = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) `
-    -RepetitionInterval (New-TimeSpan -Minutes 5)
-$heal.Repetition.Duration = ''      # empty means indefinitely
+    -RepetitionInterval (New-TimeSpan -Minutes 1)
+# No Duration means repeat indefinitely; be explicit that it must not stop.
+$heal.Repetition.StopAtDurationEnd = $false
 $triggers += $heal
 
 # Interactive session, normal user rights: this needs a desktop for HMONITOR and

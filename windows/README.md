@@ -109,9 +109,22 @@ reports the task as `Running` and its restart-on-failure settings still apply.
 **It comes back if it dies.** `-AtLogOn` alone means that if the watcher is ever
 killed -- Task Manager, a crash, a stray `Stop-Process` -- it stays dead until the
 next logon, and you would only discover it when the displays quietly stopped
-following the USB switch. A second trigger re-runs the task every 5 minutes;
+following the USB switch. A second trigger re-runs the task every minute;
 `MultipleInstances IgnoreNew` makes that a no-op while it is alive, so the
-steady-state cost is nothing.
+steady-state cost is a process launch that exits immediately.
+
+That trigger is the *only* thing that brings it back. The task's `RestartCount` /
+`RestartInterval` settings do not: killing the watcher leaves the task `Ready`
+rather than failed, and no restart occurred in 180s of watching. Measured
+2026-08-30, kill to running again: **51s** at a 1-minute interval, against 205s
+when the interval was 5 minutes.
+
+This is the one place Windows is meaningfully behind macOS, where launchd's
+`KeepAlive` respawns in about a second. Closing that fully would mean making
+`launcher.vbs` a supervising loop, which is deliberately not done: stopping the
+task kills the launcher but leaves the watcher (see below), so a loop would spin
+relaunching a watcher that exits immediately on the mutex. A minute of downtime
+after an unobserved failure is the better trade.
 
 **Only one ever runs.** `usb-watch.ps1` holds a named mutex
 (`Local\display-switch-usb-watch`) and exits immediately if another instance has
