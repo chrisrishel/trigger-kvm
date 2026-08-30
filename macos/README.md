@@ -45,10 +45,17 @@ one instance per label, so a second copy cannot be started by reinstalling.
 ## Components
 
 **`switch-displays.sh`** — sends the DDC writes via `m1ddc`. Resolves display UUIDs
-at runtime by name rather than hardcoding them: m1ddc's index numbers shift when a
-display drops, and index `1` silently becoming the *other* monitor would send LG
-service-channel writes to the ASUS. Sends each write twice — DDC is lossy and the
-writes are idempotent.
+by name on **every** invocation, rather than hardcoding or caching them.
+
+**Display ordering is not stable, and must never be assumed to be.** A display
+dropping is not the only thing that reorders it: on Windows the two indices were
+observed swapping outright — `DISPLAY1` going from the ASUS to the LG — across a
+reboot and hibernate cycle with both monitors attached the whole time. Index `1`
+silently becoming the *other* monitor would send LG service-channel writes to the
+ASUS. Do not turn the per-switch lookup into a cached one; the cost is a single
+`m1ddc` call, and a stale mapping is a service-channel write to the wrong panel.
+
+Sends each write twice — DDC is lossy and the writes are idempotent.
 
 **`usb-watch.c`** — `IOServiceAddMatchingNotification` on `IOUSBHostDevice`, filtered
 by `idVendor`/`idProduct`. Two safety behaviours, both because a spurious arrival
