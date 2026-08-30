@@ -33,23 +33,12 @@ name         = "LG 45GX950A"
 match_name   = "LG ULTRAGEAR+"   # as reported by `m1ddc display list`
 win_match    = "GSM9E9D"         # EDID id in the Windows PnP interface path
 edid_vendor  = 0x1e6d            # GSM / LG Electronics -- agrees on both platforms
-edid_product = 0x9e9d            # measured from raw EDID on Windows over DisplayPort
-
-# UNRESOLVED: this field read 0x9ea0 until 2026-08-30. The Windows side measured
-# 0x9e9d directly from the monitor's EDID (registry Device Parameters\EDID, bytes
-# 10-11), and Windows spells the same id GSM9E9D in the PnP path. 0x9ea0 appears
-# never to have been verified against hardware, and nothing consumes it: the macOS
-# switcher matches by name, and its only other mention was the pre-login sketch,
-# which is unimplemented.
-#
-# Two possibilities, not yet distinguished:
-#   (a) 0x9ea0 was simply wrong, or
-#   (b) this panel reports a different product code per input, in which case macOS
-#       over USB-C legitimately sees 0x9ea0 and Windows over DP sees 0x9e9d -- and
-#       the field is not portable at all.
-#
-# To settle it, on the Mac:  ioreg -lw0 -r -c DCPAVServiceProxy | grep -i EDID
-# Until then do NOT use this value to match a display on macOS.
+edid_product = 0x9e9d            # measured from raw EDID on Windows over DisplayPort;
+                                 # this file recorded 0x9ea0 before 2026-08-30, which
+                                 # appears never to have been verified. Reference only:
+                                 # neither switcher reads it (macOS matches on
+                                 # match_name, Windows on win_match). Measure it fresh
+                                 # if the pre-login path is ever built.
 
 # Standard DDC/CI VCP 0x60 is STUBBED on this panel: writes return success and are
 # ignored, and reads always return 0x0F regardless of the displayed input.

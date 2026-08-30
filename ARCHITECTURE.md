@@ -154,8 +154,8 @@ a Scheduled Task at logon in the interactive session, not a Windows Service.
 
 Pre-login on macOS has a known clean path if it ever becomes worth building:
 enumerate `DCPAVServiceProxy` entries where `Location = External` directly from
-IORegistry, match by EDID product ID (but see the unresolved note on the LG's
-`edid_product` in `displays.toml` first — that value is not currently trustworthy
-on macOS), then `IOAVServiceCreateWithService` +
+IORegistry, match by EDID product ID (measure it at the time rather than trusting
+`displays.toml`'s — nothing reads that field today, so it is reference only), then
+`IOAVServiceCreateWithService` +
 `IOAVServiceWriteI2C` — no CoreGraphics anywhere. The Windows equivalent is
 unexplored.
