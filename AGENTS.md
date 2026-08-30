@@ -54,11 +54,35 @@ packet to all of them. It does not identify the LG. With both monitors on one GP
 `lg-input-switch dp` therefore also delivers `SetVCP 0xF4` to the **ASUS**.
 
 Confirmed on 2026-08-30: the PG42UQ ignores it, with no flicker or setting change.
-Treat that as a property of this specific pair of monitors, not a general licence.
-Attach a third monitor and it will receive these writes too -- check before assuming
-that is safe. Making the LG path selective means sourcing more NVAPI function ids,
-which the last bullet under Conventions exists to discourage; the current
-arrangement is the accepted trade.
+Re-confirmed the same day with the ASUS write **isolated out** — a `-Only lg` run,
+so the `0xF4` spray was the only traffic on the wire — and observed directly: the LG
+flickered, the ASUS did not. Insist on that isolation if you ever re-test. A plain
+`switch-displays.ps1 windows` sends the ASUS its own VCP `0x60` write seconds
+earlier, so any ASUS flicker in *that* run is unattributable and proves nothing
+either way. Treat this as a property of this specific pair of monitors, not a
+general licence.
+
+**Expect the LG to flicker briefly on every LG switch, including a re-assert to the
+input it is already on.** It is re-negotiating the link, and each write is sent
+twice by design (the bus is lossy). This is normal and was mistaken for a fault
+once already — do not go looking for a bug in it.
+Making the LG path selective means sourcing more NVAPI function ids, which the last
+bullet under Conventions exists to discourage; the current arrangement is the
+accepted trade.
+
+This is now enforced in code rather than left to the reader. `Test-LgBlastRadius`
+enumerates every monitor on the NVIDIA adapter before each LG switch and
+**refuses** the switch outright if it finds an EDID id outside `$LG_KNOWN_OUTPUTS`
+(`GSM9E9D`, `AUS42E0`). It refuses rather than warns because this normally runs from
+a background task whose log nobody reads, so a warning there is not a warning.
+
+The check is asymmetric on purpose: an **unknown** panel is the hazard and blocks
+the switch, while a **missing** known panel only logs a note, because fewer
+recipients is not a hazard and refusing there would break LG switching whenever the
+ASUS was merely unplugged. So attaching a third monitor stops LG switching until you
+add its id — that is the intended behaviour, not a bug. Confirm the new panel is
+unharmed by a `0xF4` write before adding it, and note that "unharmed" cannot be
+established by reading anything back (hard rule 2); it means looking at it.
 
 ## Known limitations, both platforms
 
@@ -258,12 +282,16 @@ once with `another usb-watch is already running`.
 - Conventional commits: `feat:`, `fix:`, `refactor:`, `docs:`, `chore:`, scoped by
   platform where useful (`feat(macos): ...`).
 - Do not hardcode display indices or UUIDs in switching code. Resolve by name at
-  runtime — index numbers shift when a display drops, and index `1` silently
-  becoming the *other* monitor would send LG service-channel writes to the ASUS.
-  This is live on Windows, not hypothetical: `\\.\DISPLAY1` **is** the ASUS there,
-  and dxva2 reports the LG's description as the generic `Generic PnP Monitor`, so
-  neither index nor description is a usable key. Match the EDID id in the PnP
-  interface path.
+  runtime — index numbers shift, and index `1` silently becoming the *other*
+  monitor would send LG service-channel writes to the ASUS. This is no longer even
+  theoretical: on 2026-08-30 the two indices **swapped on this machine**, from
+  `DISPLAY1`=ASUS / `DISPLAY2`=LG to `DISPLAY1`=LG / `DISPLAY2`=ASUS, across a hard
+  reboot and a hibernate cycle — either could be responsible, they were not
+  observed separately. Nothing broke, because the switcher matches the EDID id in
+  the PnP interface path. **Do not write a mapping down anywhere and treat it as
+  stable**, including in scratch notes; a stale one is worse than none. dxva2 is no
+  help either: it reports the LG's description as the generic `Generic PnP
+  Monitor`, so neither index nor description is a usable key.
 - Keep `.ps1` files ASCII-only. Windows PowerShell 5.1 reads a `.ps1` with no BOM
   as ANSI, so a UTF-8 em dash in a comment surfaces as a parse error at an
   unrelated line. Prose files are unaffected; use ASCII punctuation in scripts.

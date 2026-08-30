@@ -69,6 +69,13 @@ $ASUS_MAC       = 0x0F           # 15 -- DisplayPort
 $LG_WIN = 'dp'                   # 0xD0 -- DisplayPort
 $LG_MAC = 'usbc'                 # 0xD1 -- USB-C
 
+# Every monitor allowed to be on the NVIDIA GPU when the LG path runs. See
+# AGENTS.md hard rule 5: lg-input-switch injects VCP 0xF4 on EVERY connected
+# output, so anything else attached to this GPU silently receives the LG's
+# service-channel write. The PG42UQ is known to ignore it; an unknown panel is
+# not, and nobody would find out until it misbehaved. Refuse instead.
+$LG_KNOWN_OUTPUTS = @('GSM9E9D', 'AUS42E0')
+
 $LG_EXE_CANDIDATES = @(
     $env:DISPLAY_SWITCH_LG_EXE,
     (Join-Path $PSScriptRoot 'lg-input-switch.exe'),
@@ -158,6 +165,34 @@ public static class Ddc {
         return dd.DeviceID ?? "";
     }
 
+    // Every monitor hanging off an adapter whose name matches `vendor`, returned as
+    // PnP interface paths. Scoped to one vendor deliberately: lg-input-switch only
+    // blasts NVIDIA GPU outputs, so a virtual or iGPU display elsewhere is not in
+    // the blast radius and must not trip the guard.
+    //
+    // Enumerates adapters (EnumDisplayDevices with a null device) rather than
+    // EnumDisplayMonitors, so a monitor that is attached but not part of the
+    // desktop still counts -- it is still wired to an output that will receive the
+    // packet.
+    public static List<string> MonitorsOnVendor(string vendor) {
+        var found = new List<string>();
+        for (uint i = 0; ; i++) {
+            var ad = new DISPLAY_DEVICE();
+            ad.cb = Marshal.SizeOf(typeof(DISPLAY_DEVICE));
+            if (!EnumDisplayDevices(null, i, ref ad, 0)) break;
+            if (ad.DeviceString == null ||
+                ad.DeviceString.IndexOf(vendor, StringComparison.OrdinalIgnoreCase) < 0) continue;
+
+            for (uint j = 0; ; j++) {
+                var mon = new DISPLAY_DEVICE();
+                mon.cb = Marshal.SizeOf(typeof(DISPLAY_DEVICE));
+                if (!EnumDisplayDevices(ad.DeviceName, j, ref mon, EDD_GET_DEVICE_INTERFACE_NAME)) break;
+                if (!string.IsNullOrEmpty(mon.DeviceID)) found.Add(mon.DeviceID);
+            }
+        }
+        return found;
+    }
+
     public static List<IntPtr> Handles() {
         var list = new List<IntPtr>();
         EnumDisplayMonitors(IntPtr.Zero, IntPtr.Zero,
@@ -239,8 +274,46 @@ function Get-LgExe {
     return $null
 }
 
+# Enforce hard rule 5. lg-input-switch cannot be aimed: it writes VCP 0xF4 to every
+# connected output on the GPU. That is only acceptable while the exact set of panels
+# on that GPU is known to tolerate it. Refuse rather than warn -- this normally runs
+# from a background task whose log nobody reads, so a warning there is no warning.
+#
+# Asymmetric on purpose: an UNKNOWN monitor is the hazard and blocks the switch. A
+# known monitor being absent is not a hazard (fewer panels receive the packet), so
+# it is only noted. Refusing on absence would break LG switching whenever the ASUS
+# was merely unplugged, for no safety gain.
+function Test-LgBlastRadius {
+    $paths = @([Ddc]::MonitorsOnVendor('NVIDIA'))
+
+    if ($paths.Count -eq 0) {
+        Write-Log 'REFUSING LG switch: found no monitors on an NVIDIA GPU. lg-input-switch needs NVAPI, and an empty enumeration means this check cannot vouch for what would receive the VCP 0xF4 write. See AGENTS.md hard rule 5.'
+        return $false
+    }
+
+    # \\?\DISPLAY#GSM9E9D#5&aaaaaaaa&0&UID4353#{guid}  ->  GSM9E9D
+    $ids = @($paths | ForEach-Object {
+        if ($_ -match 'DISPLAY#([^#]+)#') { $Matches[1].ToUpper() } else { "UNPARSEABLE($_)" }
+    })
+
+    $unknown = @($ids | Where-Object { $LG_KNOWN_OUTPUTS -notcontains $_ })
+    if ($unknown.Count -gt 0) {
+        Write-Log ("REFUSING LG switch: {0} unexpected monitor(s) on the NVIDIA GPU: {1}. lg-input-switch writes VCP 0xF4 to EVERY connected output, so these would receive the LG's service-channel packet. Only {2} are known to tolerate it. Add it to LG_KNOWN_OUTPUTS only after confirming it is unharmed. See AGENTS.md hard rule 5." -f `
+                   $unknown.Count, ($unknown -join ', '), ($LG_KNOWN_OUTPUTS -join ', '))
+        return $false
+    }
+
+    $missing = @($LG_KNOWN_OUTPUTS | Where-Object { $ids -notcontains $_ })
+    if ($missing.Count -gt 0) {
+        Write-Log ("note: {0} not attached to the NVIDIA GPU right now; proceeding (fewer panels receive the write, which is not a hazard)" -f ($missing -join ', '))
+    }
+    return $true
+}
+
 function Switch-Lg {
     param([string]$Verb, [string]$Label)
+
+    if (-not (Test-LgBlastRadius)) { return $false }
 
     $exe = Get-LgExe
     if (-not $exe) {

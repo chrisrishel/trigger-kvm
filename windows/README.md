@@ -69,12 +69,26 @@ Only its DP input had been exercised from the Mac side; HDMI 1 is now confirmed.
 visually. **S3 standby hangs this machine and must not be tested** -- that, and why
 the watcher is safe across a power transition, is in [`../AGENTS.md`](../AGENTS.md).
 
+**The LG flickers briefly on every LG switch, including a no-op re-assert to the
+input it is already on.** It is re-negotiating the link, and each write is sent
+twice on purpose. Normal, not a fault. The ASUS does not flicker when it receives
+the LG's `0xF4` spray -- confirmed with the ASUS's own write isolated out.
+
 ## Components
 
 **`switch-displays.ps1`** -- sends both writes. The ASUS goes through the Monitor
 Configuration API (`GetPhysicalMonitorsFromHMONITOR` -> `SetVCPFeature`); the LG
 shells out to `lg-input-switch.exe`. Each write is sent twice: DDC is lossy and the
 writes are idempotent. There are deliberately no reads anywhere in it.
+
+Before every LG switch it runs `Test-LgBlastRadius`, which enumerates the monitors
+on the NVIDIA adapter and **refuses** the switch if any of them is outside the known
+set (`GSM9E9D`, `AUS42E0`). Because `lg-input-switch` sprays VCP `0xF4` at every
+connected output, an unrecognised panel would silently receive the LG's
+service-channel packet; refusing is the only way to be sure it does not. A *missing*
+known panel is not a hazard and only logs a `note:`. Attach a third monitor and LG
+switching stops until you add its id to `$LG_KNOWN_OUTPUTS` -- by design. See
+[`../AGENTS.md`](../AGENTS.md) hard rule 5.
 
 **`usb-watch.ps1`** -- `Register-CimIndicationEvent` on `Win32_DeviceChangeEvent`,
 an extrinsic WMI event, so there is no polling interval. That event does not say
@@ -180,11 +194,16 @@ vendor-only match would fire continuously.
 
 ## Traps specific to Windows
 
-**Do not address monitors by index or by description.** On this machine
-`\\.\DISPLAY1` is the **ASUS** and `\\.\DISPLAY2` is the LG, and dxva2 reports the
-LG's description as the useless generic string `Generic PnP Monitor`. Getting this
-wrong sends LG service-channel writes to the ASUS. `switch-displays.ps1` resolves
-by the EDID id embedded in the PnP interface path instead:
+**Do not address monitors by index or by description. The indices are not stable.**
+They were `\\.\DISPLAY1` = ASUS and `\\.\DISPLAY2` = LG for all of this project's
+early testing, and then on 2026-08-30 they **swapped**: the same
+`switch-displays.ps1 windows` that had been logging `on \\.\DISPLAY1` for the ASUS
+began logging `on \\.\DISPLAY2`, across a hard reboot and a hibernate cycle.
+Nothing broke, because the script never uses the index. dxva2 is no help either --
+it reports the LG's description as the useless generic string `Generic PnP
+Monitor`. Getting this wrong sends LG service-channel writes to the ASUS.
+`switch-displays.ps1` resolves by the EDID id embedded in the PnP interface path
+instead:
 
 ```
 \\?\DISPLAY#AUS42E0#5&aaaaaaaa&0&UID4352#{e6f07b5f-...}
@@ -193,8 +212,11 @@ by the EDID id embedded in the PnP interface path instead:
 
 **`lg-input-switch` is not addressable to one monitor.** See `../AGENTS.md` -- it
 injects on every connected output, so the ASUS also receives the LG's VCP `0xF4`
-write. Confirmed harmless on the PG42UQ, but it is why the LG path cannot be made
-selective without forking the tool.
+write. Confirmed harmless on the PG42UQ, including once with the ASUS's own write
+isolated out (`-Only lg`), which is the only way to attribute a flicker to the spray
+rather than to the ASUS re-asserting its own input. It is why the LG path cannot be
+made selective without forking the tool, and why `Test-LgBlastRadius` refuses when
+an unrecognised panel is attached.
 
 **Keep `.ps1` files ASCII-only.** Windows PowerShell 5.1 reads a `.ps1` without a
 BOM as ANSI, so a UTF-8 em dash in a comment becomes a parse error tens of lines
