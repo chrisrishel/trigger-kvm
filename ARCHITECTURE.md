@@ -61,8 +61,14 @@ displays.toml          the contract — shared by both platforms
 └── windows/
     ├── usb-watch.ps1        detects arrival  →  execs the switcher
     ├── switch-displays.ps1  dxva2 + lg-input-switch → sends the DDC writes
-    └── install.ps1          Scheduled Task at logon
+    └── install.ps1          Scheduled Task at logon (generates launcher.vbs)
 ```
+
+On Windows the watcher is a *grandchild* of the scheduled task — the task runs a
+generated `wscript.exe` shim, which is what keeps any console from being allocated,
+and the shim runs the watcher. Stopping the task therefore does not stop the
+watcher, so `usb-watch.ps1` enforces single-instance itself with a named mutex.
+`windows/README.md` covers the reasoning.
 
 Every platform implementation is the same two roles: **a detector** and **a
 switcher**. The detector answers "do I own the peripherals now?"; the switcher

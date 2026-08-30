@@ -132,11 +132,14 @@ $e
 The equivalent watcher smoke test, which fires nothing:
 
 ```powershell
+Stop-ScheduledTask -TaskName display-switch    # the installed watcher holds the mutex
 .\usb-watch.ps1 -Exec .\some-harmless-script.ps1 -Arg TEST -Device 046d:c547 -Verbose
 ```
 
 `046d:c547` is the keyboard, which is always present, so this is the direct check
-that already-present devices do not fire.
+that already-present devices do not fire. The `Stop-ScheduledTask` matters:
+`usb-watch.ps1` is single-instance via a named mutex and will otherwise exit at
+once with `another usb-watch is already running`.
 
 ## Conventions
 

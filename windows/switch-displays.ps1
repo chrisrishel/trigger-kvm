@@ -41,7 +41,12 @@ param(
     [string]$Only = 'both',
 
     # DDC is lossy and these writes are idempotent, so a repeat is free.
-    [int]$Tries = 2
+    [int]$Tries = 2,
+
+    # Append to this file as well as writing to the host. usb-watch.ps1 passes its
+    # own log through, so a fired switch is recorded beside the arrival that caused
+    # it. Unset for manual runs, where the host output is what you want.
+    [string]$LogFile
 )
 
 Set-StrictMode -Version Latest
@@ -74,7 +79,15 @@ $LG_EXE_CANDIDATES = @(
 
 function Write-Log {
     param([string]$Message)
-    Write-Host ('{0} display-switch: {1}' -f (Get-Date -Format 'HH:mm:ss'), $Message)
+    $line = '{0} display-switch: {1}' -f (Get-Date -Format 'HH:mm:ss'), $Message
+    Write-Host $line
+    if ($LogFile) {
+        # The watcher appends to the same file, so a write can briefly collide.
+        for ($i = 0; $i -lt 3; $i++) {
+            try { Add-Content -LiteralPath $LogFile -Value $line -ErrorAction Stop; break }
+            catch { Start-Sleep -Milliseconds 50 }
+        }
+    }
 }
 
 # --- ASUS: standard DDC/CI via the Monitor Configuration API ---------------

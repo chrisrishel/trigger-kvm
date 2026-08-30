@@ -46,17 +46,32 @@ param(
     [string[]]$Device,
 
     [double]$Debounce = 3.0,
-    [double]$Settle   = 0.75
+    [double]$Settle   = 0.75,
+
+    # Append to this file as well as writing to the host. The watcher owns its own
+    # log rather than relying on shell redirection, so it can be launched with no
+    # console attached at all -- see install.ps1.
+    [string]$LogFile
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $SOURCE = 'DisplaySwitchDeviceChange'
+$MUTEX  = 'Local\display-switch-usb-watch'
 
 function Write-Log {
     param([string]$Message)
-    Write-Host ('{0} usb-watch: {1}' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $Message)
+    $line = '{0} usb-watch: {1}' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $Message
+    Write-Host $line
+    if ($LogFile) {
+        # The switcher appends to the same file, so a write can briefly collide.
+        # Logging must never take the watcher down.
+        for ($i = 0; $i -lt 3; $i++) {
+            try { Add-Content -LiteralPath $LogFile -Value $line -ErrorAction Stop; break }
+            catch { Start-Sleep -Milliseconds 50 }
+        }
+    }
 }
 
 # --- parse -Device into WQL prefixes ---------------------------------------
@@ -99,10 +114,15 @@ function Invoke-Exec {
     # Fire and forget, exactly like the macOS posix_spawn: never block the watch
     # loop on the switcher, and never let a switcher failure kill the watcher.
     try {
+        $switchArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden',
+                        '-File', "`"$Exec`"", $Arg)
+        # Hand the switcher the same log, so its lines land beside ours.
+        if ($LogFile) { $switchArgs += @('-LogFile', "`"$LogFile`"") }
+
         $psi = @{
             FilePath     = 'powershell.exe'
-            ArgumentList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $Exec, $Arg)
-            NoNewWindow  = $true
+            ArgumentList = $switchArgs
+            WindowStyle  = 'Hidden'
             PassThru     = $true
         }
         $p = Start-Process @psi
@@ -118,6 +138,16 @@ if (-not (Test-Path -LiteralPath $Exec -PathType Leaf)) {
     throw "-Exec '$Exec' not found"
 }
 $Exec = (Resolve-Path -LiteralPath $Exec).Path
+
+# Single instance, enforced here rather than by whoever launches us. Two watchers
+# would both see the same arrival and each fire the switcher, and the debounce is
+# per-process so it cannot dedupe across them. This also makes the installer's
+# 5-minute self-heal trigger free: a redundant start just exits.
+$mutex = New-Object System.Threading.Mutex($false, $MUTEX)
+if (-not $mutex.WaitOne(0)) {
+    Write-Log 'another usb-watch is already running; exiting'
+    exit 0
+}
 
 Unregister-Event -SourceIdentifier $SOURCE -ErrorAction SilentlyContinue
 Register-CimIndicationEvent -ClassName Win32_DeviceChangeEvent -SourceIdentifier $SOURCE | Out-Null
@@ -173,4 +203,6 @@ try {
     }
 } finally {
     Unregister-Event -SourceIdentifier $SOURCE -ErrorAction SilentlyContinue
+    $mutex.ReleaseMutex()
+    $mutex.Dispose()
 }
