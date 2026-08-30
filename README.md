@@ -81,19 +81,32 @@ both directions, with no spurious switches observed.
 **On every monitor in the setup, before installing anything.** This is not
 optional, and nothing in the software can compensate for it.
 
-A monitor with Auto Input Switch enabled will move itself to whichever input still
-has a signal the moment the current one goes quiet. That directly fights a design
-whose entire premise is that input selection is explicit and commanded. Observed on
-2026-08-30: a sleep cycle on the Mac cost it the ASUS, which saw the Mac's signal
-stop and defected to the Windows PC by itself. The LG, with the setting already
-off, stayed where it was told.
+A monitor with this enabled moves itself to whichever input still has a signal the
+moment the current one goes quiet. That directly fights a design whose entire
+premise is that input selection is explicit and commanded. Sleeping either machine
+makes its signal go quiet, so an enabled monitor defects to the other machine every
+time you sleep.
+
+The setting is named differently per vendor, and both were confirmed on 2026-08-30:
+
+| Monitor | OSD setting | Required |
+|---|---|---|
+| LG 45GX950A | **Auto Input Switch** | Off |
+| ASUS PG42UQ | **Auto Input Detection** | Off |
+
+Verified on both monitors in both states, across real sleep cycles: **on**, the
+monitor defects to the other machine when the machine driving it sleeps; **off**,
+it stays where it was told. The ASUS's differently-named setting does cover
+switching on signal loss, not just detection at power-on.
 
 Nothing brings a defected monitor back on its own, because **wake is not a
 trigger** — the watchers fire on USB arrival, and sleeping produces no USB event.
 The monitor stays defected until the USB switch next moves.
 
-The setting is usually under the monitor's OSD as *Auto Input Switch*, *Auto
-Source*, or *Input Auto Detect*.
+**The trade this makes:** auto-detection is also a recovery mechanism. With it off,
+a monitor that powers on to a remembered input that has no signal shows black until
+you reach the OSD joystick. That is the accepted cost of deterministic switching —
+know where the joystick is.
 
 ## Install
 

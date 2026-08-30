@@ -51,6 +51,32 @@ The second point has a corollary worth knowing: if only *one* monitor is switche
 windows stay on a display you can no longer see. In normal operation both move
 together, so this only surfaces during asymmetric testing.
 
+## The precondition: monitors must be passive sinks
+
+The design assumes a monitor changes input **only when commanded**. A monitor with
+vendor auto-input-detection enabled does not honour that — it moves itself to
+whichever input still carries a signal as soon as the current one goes quiet.
+
+Sleeping a machine makes its signal go quiet. So with the feature on, sleeping
+either machine hands its monitors to the other one, and nothing brings them back:
+the watchers fire on USB arrival, and sleep produces no USB event. **Wake is
+deliberately not a trigger** — re-asserting on every wake would misfire on macOS
+dark wakes (Power Nap, backups, network activity), and displays that steal
+themselves at random is the worst failure this system can have.
+
+Verified on both monitors in both states across real sleep cycles: enabled, they
+defect; disabled, they hold. The required settings are in `README.md` and
+`displays.toml`; they are named differently by each vendor.
+
+This is an **environment precondition, not a software concern**. No amount of code
+compensates for a monitor that switches itself, and attempting to compensate would
+mean re-asserting on a timer or on wake — both worse than setting one OSD option
+per monitor, once.
+
+Its cost is real and accepted: auto-detection doubles as a recovery mechanism, so
+with it off, a monitor powering on to a signal-less input stays black until someone
+reaches the joystick.
+
 ## Components
 
 ```

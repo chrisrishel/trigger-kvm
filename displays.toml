@@ -32,6 +32,10 @@ windows = "Windows PC (RTX 4090)"
 name         = "LG 45GX950A"
 match_name   = "LG ULTRAGEAR+"   # as reported by `m1ddc display list`
 win_match    = "GSM9E9D"         # EDID id in the Windows PnP interface path
+osd_auto_input = "Auto Input Switch"   # MUST be OFF. Verified 2026-08-30: on, this
+                                       # monitor defects to the other machine when
+                                       # the machine driving it sleeps; off, it
+                                       # holds. Not software-controllable.
 edid_vendor  = 0x1e6d            # GSM / LG Electronics -- agrees on both platforms
 edid_product = "per-input, see below"
 # This panel does NOT have one product id. It reports a different one per input, so
@@ -70,6 +74,11 @@ hdmi2   = 0x91   # 145 — unused
 name         = "ASUS PG42UQ"
 match_name   = "PG42UQ"
 win_match    = "AUS42E0"         # EDID id in the Windows PnP interface path
+osd_auto_input = "Auto Input Detection"  # MUST be OFF. Named differently from the
+                                         # LG's, but covers the same behaviour --
+                                         # switching on signal loss, not just
+                                         # detection at power-on. Verified both
+                                         # states across real sleep cycles.
 edid_vendor  = 0x06b3            # AUS / ASUSTek
 edid_product = 0x42e0            # confirmed from raw EDID on Windows; agrees
 

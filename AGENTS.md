@@ -85,17 +85,29 @@ Scope of that result: one cycle, on a desktop with powered USB. A laptop, or a h
 that drops power, could still re-enumerate and fire. Re-test rather than assume if
 the hardware changes.
 
-**What sleep actually breaks is the monitors, not the detector.** During that same
-cycle the ASUS defected to the Windows PC on its own: it lost the Mac's signal while
-asleep and its **Auto Input Switch** moved it to the other live input. The LG stayed
-put, because its Auto Input Switch had already been turned off. Nothing pulled the
-ASUS back, because **wake is not a trigger** — the watcher only fires on USB
-arrival, and sleep produces no USB event.
+**What sleep breaks is the monitors, not the detector — and it is a settings
+problem, now closed.** During that same cycle the ASUS defected to the Windows PC
+on its own: it lost the Mac's signal while asleep and its auto-input feature moved
+it to the other live input. Nothing pulled it back, because **wake is not a
+trigger** — the watcher fires on USB arrival, and sleep produces no USB event.
 
-This is why Auto Input Switch must be off on every monitor in the setup; see
-`README.md`. Resist fixing it with a wake trigger instead: re-asserting on every
-wake would break the legitimate case of deliberately leaving the displays on one
-machine while the peripherals sit on the other.
+Both monitors have since been tested in both states across real sleep cycles:
+enabled, the monitor defects; disabled, it holds. The required OSD settings are in
+`displays.toml` and `README.md`. They are named differently per vendor — LG *Auto
+Input Switch*, ASUS *Auto Input Detection* — and the ASUS one does cover switching
+on signal loss despite the "detection" wording.
+
+**Do not replace this with a wake trigger.** The tempting fix is to re-assert the
+displays whenever the machine wakes. The blocking objection is macOS **dark wakes**:
+Power Nap, Time Machine and network activity wake the machine constantly without the
+user present, and each would re-assert. Guarding on "do I currently hold the
+peripherals?" removes some but not all of that. Displays that steal themselves at
+random is the worst failure this system can have, and one OSD setting per monitor
+prevents the whole class.
+
+Known gap, accepted: neither the setting nor a wake trigger covers drift that
+happens while the machine is **awake** — a monitor power-cycle or cable reseat
+mid-session still strands you until the USB switch next moves.
 
 **Logs grow without bound on both platforms.** `~/Library/Logs/displayswitch.log`
 and `%LOCALAPPDATA%\display-switch\displayswitch.log` are appended to forever, with
