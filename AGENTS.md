@@ -197,9 +197,11 @@ identity, never correlated against the Windows display list.** SimpleKVM's
 lift that structure.
 
 **Do not gate anything on `NV_GPU_DISPLAYIDS.isActive` (flags bit 2).** It read
-`False` for both panels in an interactive run and `True` for both in session 0
-twenty minutes later, with the physical state uncontrolled. Use `isConnected`
-(bit 6). See `ideas/nvapi-transport.md`.
+`False` for both panels at 15:51 and `True` for both at 16:13 **in the same
+interactive session**, with no deliberate change in between. So it varies over time
+rather than by execution context, and what it actually tracks is not established
+here. `isConnected` (bit 6) was stable across every run and every context. Use that.
+See `ideas/nvapi-transport.md`.
 
 **Logs grow without bound on both platforms.** `~/Library/Logs/displayswitch.log`
 and `%LOCALAPPDATA%\display-switch\displayswitch.log` are appended to forever, with

@@ -74,9 +74,10 @@ LG 45GX950A    displayId=0x80061082   outputId=0x00000200   DisplayPort
 
 `NV_GPU_DISPLAYIDS.flags`: bit 6 (`0x40`) isConnected, bit 2 (`0x04`) isActive.
 **Use isConnected. Do not gate anything on isActive** -- it read `False` for both
-panels in an interactive-session run and `True` for both twenty minutes later in
-session 0, and the physical state was not controlled for, so its meaning here is
-not established.
+panels at 15:51 and `True` for both at 16:13 *in the same interactive session*, with
+no deliberate change between. It therefore varies over time rather than by execution
+context, and what it tracks is not established. `isConnected` was stable across all
+five runs and all three contexts.
 
 ## Packet framing -- the two sources disagree
 
