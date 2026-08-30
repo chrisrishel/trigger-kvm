@@ -140,6 +140,25 @@ bug — it is the only functioning interface on that hardware.
 Address `0x50` is a service channel. Only the values in `displays.toml` are known
 safe; sweeping VCP codes there has bricked LG monitors.
 
+## The two switchers differ in blast radius
+
+This is the sharpest asymmetry between the implementations, and it is structural
+rather than cosmetic. `m1ddc display <uuid> set ...` addresses exactly one display.
+The Windows LG path cannot: `lg-input-switch` loops over every connected output on
+the GPU and ports 0–7, sending the packet to all of them. It never identifies the
+LG. So on Windows, switching the LG also delivers a **service-channel** write to
+every other monitor on that GPU.
+
+The PG42UQ is confirmed to ignore it, but that is a property of this particular pair
+of panels, not a general licence — and an untested panel cannot be vouched for. The
+Windows switcher therefore enumerates the monitors on the GPU before each LG switch
+and **refuses** if it finds one it does not recognise.
+
+That makes the Windows LG path **fail closed**: it stops switching rather than let
+an unknown monitor receive a `0x50` write. The failure mode differs by platform as a
+result, which is worth knowing before debugging one side using intuitions from the
+other. macOS needs no such guard, because it can aim.
+
 ## Verification is visual, by necessity
 
 DDC reads are unreliable on both monitors and produced false negatives during

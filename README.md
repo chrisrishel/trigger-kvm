@@ -118,7 +118,7 @@ produces a system that installs cleanly and then behaves strangely.
 | | Needs |
 |---|---|
 | macOS | `brew install m1ddc`; Xcode command line tools for `clang` |
-| Windows | **An NVIDIA GPU** — the LG's sidechannel is reached through NVAPI and has no vendor-neutral equivalent. Windows PowerShell 5.1 (stock). No admin rights. |
+| Windows | **An NVIDIA GPU**, with only recognised monitors attached to it — the LG's sidechannel is reached through NVAPI and has no vendor-neutral equivalent, and the write lands on *every* output of that GPU, so the switcher refuses to move the LG if it sees a panel it does not know ([`windows/README.md`](windows/README.md)). Windows PowerShell 5.1 (stock). No admin rights. |
 
 ### 1. Cable each machine to each monitor
 
