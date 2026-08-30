@@ -16,7 +16,7 @@ SETTLE   := 0.75
 CFLAGS  := -O2 -Wall -Wextra
 LDFLAGS := -framework IOKit -framework CoreFoundation
 
-.PHONY: all clean install uninstall status logs
+.PHONY: all clean install uninstall status logs plist
 
 all: usb-watch
 
@@ -26,10 +26,10 @@ usb-watch: usb-watch.c
 clean:
 	rm -f usb-watch
 
-install: usb-watch
-	@mkdir -p $(BINDIR) $(LADIR) $(LOGDIR)
-	install -m 755 usb-watch          $(BINDIR)/usb-watch
-	install -m 755 switch-displays.sh $(BINDIR)/switch-displays.sh
+# Generate the LaunchAgent plist. Split out from `install` so it can be validated
+# without loading anything:  make plist PLIST=/tmp/t.plist && plutil -lint /tmp/t.plist
+plist:
+	@mkdir -p $(dir $(PLIST))
 	@printf '%s\n' \
 	  '<?xml version="1.0" encoding="UTF-8"?>' \
 	  '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' \
@@ -49,6 +49,12 @@ install: usb-watch
 	  '  <key>StandardOutPath</key><string>$(LOGDIR)/displayswitch.log</string>' \
 	  '  <key>StandardErrorPath</key><string>$(LOGDIR)/displayswitch.log</string>' \
 	  '</dict></plist>' > $(PLIST)
+	@plutil -lint $(PLIST)
+
+install: usb-watch plist
+	@mkdir -p $(BINDIR) $(LOGDIR)
+	install -m 755 usb-watch          $(BINDIR)/usb-watch
+	install -m 755 switch-displays.sh $(BINDIR)/switch-displays.sh
 	@launchctl bootout gui/$(UID)/$(LABEL) 2>/dev/null || true
 	launchctl bootstrap gui/$(UID) $(PLIST)
 	@echo "installed and loaded. logs: $(LOGDIR)/displayswitch.log"
