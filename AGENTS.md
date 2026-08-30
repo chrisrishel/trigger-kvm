@@ -179,6 +179,28 @@ Known gap, accepted: neither the setting nor a wake trigger covers drift that
 happens while the machine is **awake** — a monitor power-cycle or cable reseat
 mid-session still strands you until the USB switch next moves.
 
+**In session 0, `user32` reports ONE PHANTOM MONITOR, not zero. Measured
+2026-08-30.** Running `nvapi-probe.ps1` as SYSTEM and as an unelevated S4U task, both
+in session 0, `EnumDisplayMonitors` returned **1** monitor in each case, while NVAPI
+correctly enumerated both real panels with their real EDIDs.
+
+That phantom is not a real display and is not DDC-capable. The trap is that "no
+desktop" does not present as "no monitors" -- it presents as *wrong* monitors, so any
+identity check that trusts `user32` in a non-interactive context is matching against
+a fiction and will silently mis-resolve. It is also the explanation for the failure
+in `haimgel/display-switch` issue #17, where a service using `ddc-hi` logged "Did not
+detect any DDC-compatible displays": it found the phantom and got no DDC from it.
+
+Consequence for any future session-0 work: **NVAPI must be the sole source of display
+identity, never correlated against the Windows display list.** SimpleKVM's
+`BuildDisplayMap` does exactly that correlation and would map nothing here -- do not
+lift that structure.
+
+**Do not gate anything on `NV_GPU_DISPLAYIDS.isActive` (flags bit 2).** It read
+`False` for both panels in an interactive run and `True` for both in session 0
+twenty minutes later, with the physical state uncontrolled. Use `isConnected`
+(bit 6). See `ideas/nvapi-transport.md`.
+
 **Logs grow without bound on both platforms.** `~/Library/Logs/displayswitch.log`
 and `%LOCALAPPDATA%\display-switch\displayswitch.log` are appended to forever, with
 no rotation. Output is a few lines per switch so this is slow, but it is unbounded.
@@ -296,8 +318,12 @@ once with `another usb-watch is already running`.
   as ANSI, so a UTF-8 em dash in a comment surfaces as a parse error at an
   unrelated line. Prose files are unaffected; use ASCII punctuation in scripts.
 - Send DDC writes more than once. They are idempotent and the bus is lossy.
-- Post-login only, both platforms. Do not add pre-login support without asking;
-  `ARCHITECTURE.md` explains why it is a rewrite rather than a config change.
+- Post-login only, both platforms, as shipped. Do not add pre-login support without
+  asking. Note that `ARCHITECTURE.md`'s reasoning is now partly superseded on the
+  Windows side: it argued pre-login was blocked because session 0 has no `HMONITOR`,
+  which is true of the `dxva2` path but **not** of NVAPI -- measured 2026-08-30,
+  NVAPI enumerates and identifies both panels from session 0. Writing over NVAPI from
+  there is still untested. macOS is unchanged and still blocked.
 - Prefer wrapping a known-working tool over reimplementing a vendor SDK. In
   particular, do not hand-write NVAPI bindings from memory — its dispatch uses
   magic function IDs that must be taken from a real source.

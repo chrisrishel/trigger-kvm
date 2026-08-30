@@ -254,14 +254,20 @@ corroborated by `lg-input-switch`.
 
 ## Still open
 
-- **Does NVAPI work from a context with no desktop?** Half-answered. It enumerates
-  both monitors correctly in a normal session, returning EDID identities that match
-  those measured through the Windows PnP path -- and it yields **per-output ids**
-  (ASUS `0x100`, LG `0x200`), which is the aiming `lg-input-switch` throws away.
-  Whether it still works in session 0 or in a non-interactive task is untested.
+- **Does NVAPI work from a context with no desktop? YES, for enumeration.** Measured
+  2026-08-30 in three contexts -- interactive, SYSTEM in session 0, and an unelevated
+  non-interactive S4U task. All three enumerated both panels with correct EDIDs and
+  **per-output ids** (ASUS `0x100`, LG `0x200`), which is the aiming
+  `lg-input-switch` throws away. In session 0, `user32` meanwhile reported one
+  *phantom* monitor -- see [`../AGENTS.md`](../AGENTS.md).
+- **Does `NvAPI_I2CWrite` work? Unknown -- it has never been called here.**
+  Enumeration working does not imply writing works. This is the next thing to
+  establish, in a normal session first and confirmed visually.
 - Could NVAPI carry both monitors and remove the dual-code-path? Now looks likely
-  rather than merely possible -- the enumeration and identity halves are proven, and
-  the write half would use the already-corroborated `NvAPI_I2CWrite`. Untested.
+  rather than merely possible: the enumeration and identity halves are proven, and
+  the write half would use the already-corroborated `NvAPI_I2CWrite`.
 - Pre-login needs admin regardless: registering a scheduled task with `S4U` or a
   `SYSTEM` principal both fail with "Access is denied" for an ordinary user, while
   the `Interactive` task this installer uses does not. There is no zero-admin route.
+  An `S4U` task is nonetheless preferable to a service -- it needs admin once to
+  register, then runs with ordinary user rights.
