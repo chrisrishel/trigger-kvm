@@ -78,7 +78,21 @@ if ($Status) {
     if (-not $t) { Write-Host 'not installed'; exit 1 }
     $i = Get-ScheduledTaskInfo -TaskName $TASK
     Write-Host ("task     : {0}" -f $t.State)
-    Write-Host ("last run : {0} (result {1})" -f $i.LastRunTime, $i.LastTaskResult)
+
+    # 0x800710E0 is "an instance of this task is already running". The 5-minute
+    # self-heal trigger produces it on every tick while the watcher is healthy, so
+    # it is the expected steady state, not a failure.
+    $note = switch ($i.LastTaskResult) {
+        0          { '' }
+        267009     { '  (running)' }
+        2147946720 { '  (self-heal tick found it already running -- expected)' }
+        default    { '  <- unexpected' }
+    }
+    Write-Host ("last run : {0} (result 0x{1:X8}){2}" -f $i.LastRunTime, $i.LastTaskResult, $note)
+
+    $n = @(Get-CimInstance Win32_Process -Property ProcessId,Name,CommandLine -Verbose:$false |
+           Where-Object { $_.CommandLine -and $_.Name -eq 'powershell.exe' -and $_.CommandLine -match 'usb-watch\.ps1' }).Count
+    Write-Host ("watchers : {0}{1}" -f $n, $(if ($n -eq 1) { '' } else { '  <- expected exactly 1' }))
     Write-Host ("log      : {0}" -f $LOG)
     exit 0
 }
