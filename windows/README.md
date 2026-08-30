@@ -39,10 +39,40 @@ independent implementation on macOS — byte-identical.
 including while the monitor displays the other machine. The Monitor Configuration
 API (`GetPhysicalMonitorsFromHMONITOR` → `SetVCPFeature`) is sufficient.
 
+## Recommended approach: wrap, don't reimplement
+
+Windows should be **simpler** than macOS, not harder — most of it can be assembled
+from things that already work, and probably needs no compiled code at all.
+
+**For the LG — wrap the existing tool.** `lg-input-switch` already does the NVAPI
+raw-I2C injection and is confirmed working on this machine. Call it. Do **not**
+hand-write NVAPI P/Invoke bindings: NVAPI dispatches through
+`nvapi_QueryInterface` with magic per-function IDs, those IDs must come from a real
+source rather than memory, and a wrong one calls the wrong function against a
+service channel. The risk is entirely unnecessary when a working binary exists.
+
+**For the ASUS — standard DDC, several easy options:**
+
+- NirSoft **ControlMyMonitor** — CLI, no code:
+  `ControlMyMonitor.exe /SetValue "<monitor-id>" 60 17`
+- Or a short P/Invoke to `dxva2.dll`: `GetPhysicalMonitorsFromHMONITOR` →
+  `SetVCPFeature(hMonitor, 0x60, 0x11)`. Well documented, low risk, ~30 lines of C#.
+
+**For detection — likely no compiled code either:**
+
+- PowerShell `Register-CimIndicationEvent` on `Win32_DeviceChangeEvent`, run as a
+  Scheduled Task at logon; or
+- A Scheduled Task triggered directly on a Kernel-PnP device-arrival event in the
+  System log — zero code, though less precise about *which* device arrived.
+
+If PowerShell proves too laggy or imprecise about device identity, then fall back to
+`CM_Register_Notification` in a small C# service. Try the simple route first.
+
 ## Detection
 
-- `CM_Register_Notification` with a device-interface filter (modern), or
-- WMI `__InstanceCreationEvent` on `Win32_USBControllerDevice` (simpler, heavier)
+- PowerShell `Register-CimIndicationEvent` / `Win32_DeviceChangeEvent` (start here)
+- `CM_Register_Notification` with a device-interface filter (precise, needs code)
+- WMI `__InstanceCreationEvent` on `Win32_USBControllerDevice` (heavier, polls)
 
 Watch the same devices as macOS — webcam `046d:0843`, audio interface `1235:820a`.
 Keyboard and mouse are wired directly to this PC's motherboard and never move.

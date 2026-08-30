@@ -1,0 +1,109 @@
+# Agent instructions
+
+Read this before changing anything in this repo. Start with `ARCHITECTURE.md` for
+the design and `displays.toml` for the values.
+
+## What this project is
+
+Two machines (Mac Studio, Windows PC) share two monitors with **no KVM in the video
+path**. Each machine connects directly to both monitors. A USB switch moves the
+peripherals; whichever machine receives them commands both monitors over DDC to
+select its own inputs.
+
+Every platform implementation is the same two roles: a **detector** (do I own the
+peripherals now?) and a **switcher** (make the monitors show me).
+
+## Hard safety rules
+
+**1. Never sweep or brute-force VCP codes on I2C source address `0x50`.**
+That is a service/factory channel. Sweeping it has bricked LG monitors — the
+`ddcutil` repo carries an issue titled "Bricked LG Monitor". Use only the values
+already documented in `displays.toml`. If you need a value that isn't there, ask;
+do not go looking for it experimentally.
+
+**2. Never verify a switch by reading a VCP value back.**
+Reads are unreliable on both monitors and *have already produced false negatives*:
+
+- **PG42UQ** returns `0` for luminance, contrast, volume **and** `max luminance` —
+  always, whether or not it is the active input. Writes still work perfectly.
+- **LG** returns real values on a settled active link, but `-7` while the link is
+  inactive or renegotiating. It read `-7` immediately after a switch that had in
+  fact succeeded, then recovered to `100` seconds later.
+
+Writes are fire-and-forget. Do not build verify-then-retry loops; they will fire
+spurious retries. Do not probe immediately after a switch.
+
+**3. You cannot see the screen. A switch is only confirmed by a human looking at
+it.** Never report that a switch worked because a command returned success or a
+read looked right — both have lied here. Ask the user to confirm visually, and say
+plainly when something is unverified.
+
+**4. Never leave the user without a working display.** Switching both monitors to
+the other machine blacks out this one. When testing, move one monitor at a time and
+keep the other on the machine running the terminal. Warn before any command that
+takes the last remaining display.
+
+## Keep the docs current
+
+Documentation is part of the change, not a follow-up. **In the same commit as the
+code**, update whichever of these the change affects:
+
+| File | Update when |
+|---|---|
+| `README.md` | The front door changes — what it does, install, or the top-level gotchas |
+| `ARCHITECTURE.md` | The *shape* changes — components, data flow, a design decision or its rationale. Not for detail churn. |
+| `displays.toml` | Any monitor, input value, DDC method, or trigger device changes |
+| `macos/README.md`, `windows/README.md` | That platform's install, components, or behaviour changes |
+| `AGENTS.md` | A new constraint or hazard is discovered that future work must respect |
+
+Two specific obligations:
+
+- **`displays.toml` is a contract across two independent implementations.** Changing
+  a value there means changing every implementation to match, in the same commit.
+  A value fixed on one machine and not the other produces a half-switching setup
+  that presents as a hardware fault.
+- **When a doc's claim stops being true, fix it in that commit.** Stale docs here
+  are actively dangerous — this repo's docs encode which values are safe to send to
+  a service channel.
+
+New docs earn their existence when their job arises, not before. A spec directory
+is not warranted yet; `displays.toml` plus `ARCHITECTURE.md` currently carry the
+contract. If the map outgrows a single readable file, graduate it to `specs/`.
+
+## Build and test
+
+```sh
+cd macos
+make                                      # build usb-watch
+make plist PLIST=/tmp/t.plist             # generate + lint the LaunchAgent, loads nothing
+make install                              # build, install to ~/.local/bin, load the agent
+make status / make logs / make uninstall
+./switch-displays.sh mac | windows        # manual switch
+```
+
+`usb-watch` must compile clean under `-Wall -Wextra`. Verify the plist with
+`plutil -lint` before claiming an install path works — a malformed plist fails
+silently at load.
+
+To exercise the watcher without installing:
+
+```sh
+./usb-watch --exec /bin/echo --arg TEST --device 046d:0843 --verbose
+```
+
+It should log `armed ... (N already present, not firing)` and **not** fire for
+devices that were already plugged in.
+
+## Conventions
+
+- Conventional commits: `feat:`, `fix:`, `refactor:`, `docs:`, `chore:`, scoped by
+  platform where useful (`feat(macos): ...`).
+- Do not hardcode display indices or UUIDs in switching code. Resolve by name at
+  runtime — index numbers shift when a display drops, and index `1` silently
+  becoming the *other* monitor would send LG service-channel writes to the ASUS.
+- Send DDC writes more than once. They are idempotent and the bus is lossy.
+- Post-login only, both platforms. Do not add pre-login support without asking;
+  `ARCHITECTURE.md` explains why it is a rewrite rather than a config change.
+- Prefer wrapping a known-working tool over reimplementing a vendor SDK. In
+  particular, do not hand-write NVAPI bindings from memory — its dispatch uses
+  magic function IDs that must be taken from a real source.

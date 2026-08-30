@@ -24,6 +24,8 @@ USB switch ──> peripherals ──> whichever machine gets them pulls both di
 | Path | Purpose |
 |---|---|
 | `displays.toml` | **The contract.** Monitor identities, DDC method, input values, trigger devices. Both platforms read from this. |
+| [`ARCHITECTURE.md`](ARCHITECTURE.md) | The design and its rationale — why pull-to-self, why two DDC dialects, why post-login |
+| [`AGENTS.md`](AGENTS.md) | Instructions for anyone (human or agent) changing this repo, including the hard safety rules |
 | `macos/` | Working implementation: `usb-watch` (IOKit) + `switch-displays.sh` (m1ddc) + LaunchAgent |
 | `windows/` | Design notes only — **not yet implemented** |
 
