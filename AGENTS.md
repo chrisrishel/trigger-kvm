@@ -92,6 +92,14 @@ no rotation. Output is a few lines per switch so this is slow, but it is unbound
 cannot: see hard rule 5. Do not assume a technique that is safe on the Mac side
 carries over.
 
+**The LG's EDID product id is per-input, so it is not a shared constant.** Three
+consecutive values have been measured on the one panel — `0x9e9d` (Windows, DP),
+`0x9e9f` (Mac, USB-C), `0x9ea0` (Mac, through the old KVM). Each host sees a stable
+value for its own input, so it works as a *local* key, but copying one host's value
+to another, or treating `displays.toml`'s field as authoritative, will silently
+match nothing. Nothing reads it today; this matters if the pre-login path is ever
+built. The ASUS reports `0x42e0` everywhere, which makes the trap easy to walk into.
+
 ## Keep the docs current
 
 Documentation is part of the change, not a follow-up. **In the same commit as the

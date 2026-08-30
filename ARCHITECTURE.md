@@ -154,8 +154,14 @@ a Scheduled Task at logon in the interactive session, not a Windows Service.
 
 Pre-login on macOS has a known clean path if it ever becomes worth building:
 enumerate `DCPAVServiceProxy` entries where `Location = External` directly from
-IORegistry, match by EDID product ID (measure it at the time rather than trusting
-`displays.toml`'s — nothing reads that field today, so it is reference only), then
-`IOAVServiceCreateWithService` +
+IORegistry, match on the display's identity, then `IOAVServiceCreateWithService` +
 `IOAVServiceWriteI2C` — no CoreGraphics anywhere. The Windows equivalent is
 unexplored.
+
+**Do not key that on the EDID product ID without checking it first.** The LG reports
+a *different product ID on every input* — three consecutive values have been
+measured on this one panel, one per path (see `displays.toml`). Each host sees a
+stable value for the input it is plugged into, so it is usable as a local key, but
+it is meaningless as a shared constant and must never be copied between hosts. The
+ASUS does not behave this way, which makes it easy to assume the field is stable
+when it is not.

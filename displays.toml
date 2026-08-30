@@ -33,12 +33,20 @@ name         = "LG 45GX950A"
 match_name   = "LG ULTRAGEAR+"   # as reported by `m1ddc display list`
 win_match    = "GSM9E9D"         # EDID id in the Windows PnP interface path
 edid_vendor  = 0x1e6d            # GSM / LG Electronics -- agrees on both platforms
-edid_product = 0x9e9d            # measured from raw EDID on Windows over DisplayPort;
-                                 # this file recorded 0x9ea0 before 2026-08-30, which
-                                 # appears never to have been verified. Reference only:
-                                 # neither switcher reads it (macOS matches on
-                                 # match_name, Windows on win_match). Measure it fresh
-                                 # if the pre-login path is ever built.
+edid_product = "per-input, see below"
+# This panel does NOT have one product id. It reports a different one per input, so
+# there is no single correct value and this cannot be a shared constant. Measured:
+#   0x9e9d  Windows, direct DisplayPort -> the LG's DP input
+#   0x9e9f  Mac, direct USB-C           -> the LG's USB-C input
+#   0x9ea0  Mac, via the old KVM        -> DP input, through the KVM's EDID emulation
+# The ids are consecutive, which is consistent with one id assigned per physical
+# input. The 0x9ea0 reading was NOT unverified -- it was decoded from raw EDID bytes
+# at the time; it is simply what that path presented.
+#
+# Consequence: a host may only use the value IT measures on ITS OWN input. Never
+# copy one host's value to another, and never treat this field as authoritative.
+# Nothing reads it today (macOS matches match_name, Windows matches win_match).
+# The ASUS shows no such behaviour: 0x42e0 on both hosts, over DP and HDMI alike.
 
 # Standard DDC/CI VCP 0x60 is STUBBED on this panel: writes return success and are
 # ignored, and reads always return 0x0F regardless of the displayed input.
