@@ -110,9 +110,61 @@ know where the joystick is.
 
 ## Install
 
-macOS: see [`macos/README.md`](macos/README.md) — `make install`.
+**Order matters.** Steps 1–3 are physical or hardware settings, and skipping them
+produces a system that installs cleanly and then behaves strangely.
 
-Windows: see [`windows/README.md`](windows/README.md) — `.\install.ps1`.
+### Prerequisites
+
+| | Needs |
+|---|---|
+| macOS | `brew install m1ddc`; Xcode command line tools for `clang` |
+| Windows | **An NVIDIA GPU** — the LG's sidechannel is reached through NVAPI and has no vendor-neutral equivalent. Windows PowerShell 5.1 (stock). No admin rights. |
+
+### 1. Cable each machine to each monitor
+
+Every machine needs its **own** direct connection to **every** monitor, each on a
+different input. Nothing switches video, so there is no shared cable to contend
+for. This project only tells the monitors which of those inputs to show.
+
+### 2. Put the shared peripherals through the USB switch
+
+Whatever passes through the switch is what signals "this machine is now active."
+Pick devices that enumerate on physical connection and little else — a webcam is a
+good anchor, an audio interface is a weaker one. Anything wired *directly* to one
+machine cannot be a trigger; here the keyboard and mouse are wired to the Windows
+PC, which is why the webcam and audio interface do the signalling.
+
+Record whatever you choose in [`displays.toml`](displays.toml), then set the same
+IDs in each platform's config.
+
+### 3. Turn auto-input off on every monitor
+
+See [the prerequisite above](#monitor-prerequisite-turn-auto-input-switch-off). Do
+this before installing, not after — with it on, the system appears to work until
+the first time a machine sleeps.
+
+### 4. Install on each machine
+
+macOS: [`macos/README.md`](macos/README.md) — `make install`
+
+Windows: [`windows/README.md`](windows/README.md) — `.\install.ps1`
+
+Both install a background watcher that starts at login and is restarted if it dies.
+Both are post-login by design; see [Scope](#scope).
+
+### 5. Verify
+
+Move the USB switch and watch **both** monitors follow. Then check the log — one
+device firing and the other absent is correct, not a fault: they arrive together
+and the second lands inside the debounce window.
+
+```sh
+tail -f ~/Library/Logs/displayswitch.log                      # macOS
+Get-Content -Wait "$env:LOCALAPPDATA\display-switch\displayswitch.log"   # Windows
+```
+
+Confirm by looking at the screens. Never by reading a VCP value back — see the
+gotchas above.
 
 ## Scope
 

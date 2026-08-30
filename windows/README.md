@@ -120,7 +120,9 @@ rather than failed, and no restart occurred in 180s of watching. Measured
 when the interval was 5 minutes.
 
 This is the one place Windows is meaningfully behind macOS, where launchd's
-`KeepAlive` respawns in about a second. Closing that fully would mean making
+`KeepAlive` respawns in **0.01s** -- measured 2026-08-30 by `kill -9` on the
+watcher, not estimated. The gap against this side's 51s is four orders of
+magnitude, though both are recoveries from a failure that should not happen. Closing that fully would mean making
 `launcher.vbs` a supervising loop, which is deliberately not done: stopping the
 task kills the launcher but leaves the watcher (see below), so a loop would spin
 relaunching a watcher that exits immediately on the mutex. A minute of downtime

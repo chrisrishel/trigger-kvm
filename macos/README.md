@@ -20,6 +20,21 @@ make logs        # tail ~/Library/Logs/displayswitch.log
 make uninstall
 ```
 
+### Persistence, measured
+
+`RunAtLoad` starts the watcher at login; `KeepAlive` restarts it if it dies. Both
+verified 2026-08-30 rather than assumed:
+
+- **Respawn after `kill -9`: 0.01s.** launchd replaced the process essentially
+  instantly and incremented its run count. (`windows/README.md` previously described
+  this as "about a second" — that overstated it.)
+- **Full `make uninstall` → `make install` round trip**: uninstall unloaded the
+  agent and removed the plist and both binaries; install rebuilt, reloaded, and the
+  watcher logged a fresh start.
+
+No single-instance guard is needed here, unlike the Windows side: launchd enforces
+one instance per label, so a second copy cannot be started by reinstalling.
+
 ## Manual use
 
 ```sh
