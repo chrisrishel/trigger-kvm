@@ -1,0 +1,14 @@
+# macOS
+.DS_Store
+
+# Build artifacts
+macos/usb-watch
+*.o
+*.dSYM/
+
+# Session-scoped working notes (disposable by convention)
+.context/
+
+# Windows build output
+windows/**/bin/
+windows/**/obj/
