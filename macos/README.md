@@ -65,7 +65,15 @@ Set in the `Makefile` (`DEVICES`), kept in sync with `../displays.toml`:
 The keyboard and mouse are wired directly to the Windows PC's motherboard and never
 pass through the switch, so they can't be the trigger.
 
-Re-check the IDs once the devices are actually behind the USB switch:
+Both IDs were confirmed from the Windows side on 2026-08-30 with the devices
+actually behind the USB switch, so they no longer need re-checking:
+
+```
+USB\VID_046D&PID_0843\5A5A5A5A     Logitech Webcam C930e
+USB\VID_1235&PID_820A\00001234     Focusrite Clarett+ 2Pre
+```
+
+To re-check anyway:
 
 ```sh
 ioreg -p IOUSB -l | grep -E 'idVendor|idProduct'

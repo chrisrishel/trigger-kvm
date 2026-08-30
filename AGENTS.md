@@ -60,6 +60,38 @@ that is safe. Making the LG path selective means sourcing more NVAPI function id
 which the last bullet under Conventions exists to discourage; the current
 arrangement is the accepted trade.
 
+## Known limitations, both platforms
+
+Neither of these is a bug to fix on sight; they are things to know before changing
+the detectors, and to reach for first if a spurious switch is ever reported.
+
+**Sleep/wake may fire a spurious switch on macOS, but probably not on Windows.**
+This is reasoned from the two designs and is **UNVERIFIED** — nobody has tested a
+sleep cycle on either side.
+
+macOS uses `kIOFirstMatchNotification`, which fires whenever a *new* matching
+service appears. USB devices re-enumerate on wake, so that is a fresh match and
+`usb-watch` will fire, subject only to the debounce. Windows tracks
+absent → present *edges* against a presence map, so a device that was present
+before sleep and is present after produces no edge and no fire.
+
+It only ever fires on the machine that already holds the peripherals, so it
+re-asserts a state the system already considers correct, which is why it is a
+limitation rather than a defect. It does bite in one real case: if you have
+deliberately left the displays on one machine while the peripherals sit on the
+other, waking the peripheral-holding Mac will yank them back. If that becomes
+annoying, the fix is to give the macOS side the same edge-tracking the Windows side
+has, not to lengthen the debounce.
+
+**Logs grow without bound on both platforms.** `~/Library/Logs/displayswitch.log`
+and `%LOCALAPPDATA%\display-switch\displayswitch.log` are appended to forever, with
+no rotation. Output is a few lines per switch so this is slow, but it is unbounded.
+
+**The two switchers differ in blast radius, and the macOS one is the safer.**
+`m1ddc display <uuid> set ...` addresses exactly one display. The Windows LG path
+cannot: see hard rule 5. Do not assume a technique that is safe on the Mac side
+carries over.
+
 ## Keep the docs current
 
 Documentation is part of the change, not a follow-up. **In the same commit as the
