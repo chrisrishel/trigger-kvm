@@ -1,12 +1,12 @@
 # Windows side
 
 A Scheduled Task runs `usb-watch.ps1`, which fires `switch-displays.ps1 windows`
-when a watched USB device arrives. No compiled code: PowerShell plus one pinned
-third-party binary for the LG.
+when a watched USB device arrives. No compiled code and no third-party binary:
+PowerShell throughout, with the NVAPI and dxva2 bindings inline.
 
 | Monitor | Target input | Method |
 |---|---|---|
-| LG 45GX950A | DisplayPort, `0xD0` | LG sidechannel -- I2C src `0x50`, VCP `0xF4`, via `lg-input-switch.exe` |
+| LG 45GX950A | DisplayPort, `0xD0` | LG sidechannel -- I2C src `0x50`, VCP `0xF4`, injected through NVAPI and **aimed at that output alone** |
 | ASUS PG42UQ | HDMI 1, `0x11` | Standard DDC/CI, VCP `0x60`, via `dxva2.dll` |
 
 Values are in [`../displays.toml`](../displays.toml). Keep them in sync -- that file
@@ -27,8 +27,9 @@ exists precisely so these two implementations can't drift.
 .\install.ps1 -Uninstall
 ```
 
-`install.ps1` downloads `lg-input-switch` from a pinned release and verifies its
-SHA256. The binary is not vendored -- it is 16MB of third-party code.
+`install.ps1` copies the two scripts and registers the task. It needs no network
+access. Earlier versions downloaded a 16MB `lg-input-switch.exe` from a pinned
+release; installing now deletes that binary if a previous install left one behind.
 
 Log: `%LOCALAPPDATA%\display-switch\displayswitch.log`
 
@@ -52,13 +53,17 @@ end-to-end USB trigger:
 |---|---|---|
 | ASUS -> HDMI 1 (pull here) | `SetVCPFeature 0x60 = 0x11` | yes |
 | ASUS -> DisplayPort (push to Mac) | `SetVCPFeature 0x60 = 0x0F` | n/a (was active) |
-| LG -> DisplayPort (pull here) | `lg-input-switch dp` | yes |
-| LG -> USB-C (push to Mac) | `lg-input-switch usbc` | n/a (was active) |
+| LG -> DisplayPort (pull here) | NVAPI I2C, src `0x50` VCP `0xF4 = 0xD0`, aimed | yes |
+| LG -> USB-C (push to Mac) | NVAPI I2C, src `0x50` VCP `0xF4 = 0xD1`, aimed | n/a (was active) |
 
 Both "pull here" cases were exercised with the monitor **displaying the Mac**, which
 is the case the whole design depends on: the machine issuing the command is by
 definition not the one being shown. Windows keeps its link enumerated while the
 panel shows the other machine, exactly as macOS does.
+
+The LG rows were re-verified on the aimed NVAPI transport on 2026-08-30, both
+directions, confirmed visually -- including the pull-back from an inactive link,
+which is the case that had only ever been established for `lg-input-switch`.
 
 **Answering the open question this file used to carry:** yes, the ASUS answers DDC
 over this PC's HDMI cable, including while it is displaying its DisplayPort input.
@@ -71,24 +76,43 @@ the watcher is safe across a power transition, is in [`../AGENTS.md`](../AGENTS.
 
 **The LG flickers briefly on every LG switch, including a no-op re-assert to the
 input it is already on.** It is re-negotiating the link, and each write is sent
-twice on purpose. Normal, not a fault. The ASUS does not flicker when it receives
-the LG's `0xF4` spray -- confirmed with the ASUS's own write isolated out.
+twice on purpose. Normal, not a fault. The ASUS no longer receives that write at
+all: it is aimed at the LG's output alone.
 
 ## Components
 
 **`switch-displays.ps1`** -- sends both writes. The ASUS goes through the Monitor
 Configuration API (`GetPhysicalMonitorsFromHMONITOR` -> `SetVCPFeature`); the LG
-shells out to `lg-input-switch.exe`. Each write is sent twice: DDC is lossy and the
-writes are idempotent. There are deliberately no reads anywhere in it.
+goes through NVAPI as a raw I2C write. Each write is sent twice: DDC is lossy and
+the writes are idempotent. There are deliberately no reads anywhere in it.
 
-Before every LG switch it runs `Test-LgBlastRadius`, which enumerates the monitors
-on the NVIDIA adapter and **refuses** the switch if any of them is outside the known
-set (`GSM9E9D`, `AUS42E0`). Because `lg-input-switch` sprays VCP `0xF4` at every
-connected output, an unrecognised panel would silently receive the LG's
-service-channel packet; refusing is the only way to be sure it does not. A *missing*
-known panel is not a hazard and only logs a `note:`. Attach a third monitor and LG
-switching stops until you add its id to `$LG_KNOWN_OUTPUTS` -- by design. See
-[`../AGENTS.md`](../AGENTS.md) hard rule 5.
+The LG path resolves its target from NVAPI alone -- enumerate the GPU's connected
+outputs, read each EDID, keep the one whose vendor and product identify it as the
+LG -- and writes to that single output. It refuses on zero matches and on more than
+one, because an ambiguous target cannot be aimed at.
+
+The Windows display list is deliberately not consulted for that identity. In session
+0 `user32` reports a *phantom* monitor rather than none, so correlating against it
+matches a fiction; NVAPI is the sole source. See [`../AGENTS.md`](../AGENTS.md).
+
+`Test-LgBlastRadius` is gone, along with the `$LG_KNOWN_OUTPUTS` list it enforced.
+It existed only because `lg-input-switch` sprayed VCP `0xF4` at every connected
+output, which made an unrecognised panel a real hazard and made attaching a third
+monitor stop LG switching. An aimed write has no blast radius, so both the guard and
+that side effect are gone.
+
+What replaces it is narrower and stronger, and lives at the transport rather than
+the call site: `NvDdc.WriteLgInput` is the only function that can emit I2C source
+`0x50`, the source byte is not a parameter, and it **throws** unless the target's
+EDID manufacturer is GSM (`0x1E6D`). The sidechannel cannot be aimed at another
+vendor's panel by any caller. See [`../AGENTS.md`](../AGENTS.md) hard rule 5.
+
+Use `-WhatIf` to resolve the panels and print the exact packet bytes without sending
+anything:
+
+```powershell
+.\switch-displays.ps1 windows -Only lg -WhatIf
+```
 
 **`usb-watch.ps1`** -- `Register-CimIndicationEvent` on `Win32_DeviceChangeEvent`,
 an extrinsic WMI event, so there is no polling interval. That event does not say
@@ -210,13 +234,20 @@ instead:
              ^^^^^^^ matched on this
 ```
 
-**`lg-input-switch` is not addressable to one monitor.** See `../AGENTS.md` -- it
-injects on every connected output, so the ASUS also receives the LG's VCP `0xF4`
-write. Confirmed harmless on the PG42UQ, including once with the ASUS's own write
-isolated out (`-Only lg`), which is the only way to attribute a flicker to the spray
-rather than to the ASUS re-asserting its own input. It is why the LG path cannot be
-made selective without forking the tool, and why `Test-LgBlastRadius` refuses when
-an unrecognised panel is attached.
+**The LG is resolved by EDID through NVAPI, not by the PnP path.** The ASUS still
+matches on `AUS42E0` in its interface path because it goes through `dxva2`, which is
+desktop-bound anyway. The LG reads its vendor and product straight off the GPU
+output, which is both aimable and usable with no desktop. The two panels therefore
+use different identity mechanisms today; collapsing the ASUS onto the NVAPI path
+would unify them.
+
+**Historical:** `lg-input-switch` was not addressable to one monitor -- it injected
+on every connected output, so the ASUS also received the LG's VCP `0xF4` write. That
+was confirmed harmless on the PG42UQ, once with the ASUS's own write isolated out
+(`-Only lg`), which is the only way to attribute a flicker to the spray rather than
+to the ASUS re-asserting its own input. That measurement is the sole evidence anyone
+has about `0xF4` on a PG42UQ, which is why it is kept -- but nothing depends on it
+now that the write is aimed.
 
 **Keep `.ps1` files ASCII-only.** Windows PowerShell 5.1 reads a `.ps1` without a
 BOM as ANSI, so a UTF-8 em dash in a comment becomes a parse error tens of lines
@@ -257,12 +288,16 @@ corroborated by `lg-input-switch`.
 - **Does NVAPI work from a context with no desktop? YES, for enumeration.** Measured
   2026-08-30 in three contexts -- interactive, SYSTEM in session 0, and an unelevated
   non-interactive S4U task. All three enumerated both panels with correct EDIDs and
-  **per-output ids** (ASUS `0x100`, LG `0x200`), which is the aiming
-  `lg-input-switch` throws away. In session 0, `user32` meanwhile reported one
-  *phantom* monitor -- see [`../AGENTS.md`](../AGENTS.md).
-- **Does `NvAPI_I2CWrite` work? Unknown -- it has never been called here.**
-  Enumeration working does not imply writing works. This is the next thing to
-  establish, in a normal session first and confirmed visually.
+  **per-output ids** (ASUS `0x100`, LG `0x200`) -- the aiming `lg-input-switch` threw
+  away, and what the LG path now uses. Re-confirmed at boot from an at-startup task.
+  In session 0, `user32` meanwhile reported one *phantom* monitor -- see
+  [`../AGENTS.md`](../AGENTS.md).
+- **Does the ASUS answer on the same NVAPI transport (src `0x51`, VCP `0x60`)?**
+  Untested. It would collapse the two identity mechanisms into one and remove the
+  last `dxva2` dependency, which is what makes a pre-login tier cheap.
+- **Does a pre-login tier get built?** The capability is proven; the cost is admin
+  rights to register the task (measured: S4U registration is denied to a standard
+  user). Nothing is built yet. See [`../ideas/nvapi-transport.md`](../ideas/nvapi-transport.md).
 - Could NVAPI carry both monitors and remove the dual-code-path? Now looks likely
   rather than merely possible: the enumeration and identity halves are proven, and
   the write half would use the already-corroborated `NvAPI_I2CWrite`.

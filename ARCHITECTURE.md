@@ -86,7 +86,8 @@ displays.toml          the contract — shared by both platforms
 │   └── switch-displays.sh   drives m1ddc     →  sends the DDC writes
 └── windows/
     ├── usb-watch.ps1        detects arrival  →  execs the switcher
-    ├── switch-displays.ps1  dxva2 + lg-input-switch → sends the DDC writes
+    ├── switch-displays.ps1  dxva2 (ASUS) + NVAPI I2C (LG) → sends the DDC writes
+    ├── nvapi-probe.ps1      read-only display enumeration probe (diagnostic)
     └── install.ps1          Scheduled Task at logon (generates launcher.vbs)
 ```
 
@@ -129,7 +130,7 @@ The two monitors do not speak the same dialect:
 
 This split is why neither platform has a single code path. macOS reaches both
 through `m1ddc` (`set input` vs `set input-alt`); Windows reaches the ASUS through
-`dxva2.dll` and the LG by shelling out to `lg-input-switch`, because the Windows
+`dxva2.dll` and the LG by injecting raw I2C through NVAPI, because the Windows
 DDC/CI stack hardcodes I2C source `0x51` and cannot express `0x50` at all.
 
 The LG accepts `VCP 0x60` writes, returns success, and discards them; reads always
@@ -140,24 +141,32 @@ bug — it is the only functioning interface on that hardware.
 Address `0x50` is a service channel. Only the values in `displays.toml` are known
 safe; sweeping VCP codes there has bricked LG monitors.
 
-## The two switchers differ in blast radius
+## Both switchers aim at exactly one display
 
-This is the sharpest asymmetry between the implementations, and it is structural
-rather than cosmetic. `m1ddc display <uuid> set ...` addresses exactly one display.
-The Windows LG path cannot: `lg-input-switch` loops over every connected output on
-the GPU and ports 0–7, sending the packet to all of them. It never identifies the
-LG. So on Windows, switching the LG also delivers a **service-channel** write to
-every other monitor on that GPU.
+`m1ddc display <uuid> set ...` addresses one display by UUID. The Windows switcher
+addresses one display by **EDID identity**: it enumerates the GPU's connected
+outputs through NVAPI, reads each one's EDID, and writes only to the single output
+whose manufacturer and product id identify it as the LG.
 
-The PG42UQ is confirmed to ignore it, but that is a property of this particular pair
-of panels, not a general licence — and an untested panel cannot be vouched for. The
-Windows switcher therefore enumerates the monitors on the GPU before each LG switch
-and **refuses** if it finds one it does not recognise.
+The safety rule that matters — a `0x50` service-channel write must never reach a
+non-LG panel — is enforced at the transport rather than by the caller.
+`NvDdc.WriteLgInput` is the only function that can emit source `0x50`; the source
+byte is not one of its parameters, and it refuses any target whose EDID
+manufacturer is not GSM. Making the unsafe call unrepresentable is the point: there
+is no code path, and no future caller, that can aim the sidechannel elsewhere.
 
-That makes the Windows LG path **fail closed**: it stops switching rather than let
-an unknown monitor receive a `0x50` write. The failure mode differs by platform as a
-result, which is worth knowing before debugging one side using intuitions from the
-other. macOS needs no such guard, because it can aim.
+The switch also fails closed on ambiguity. Zero matching outputs is a refusal, and
+so is more than one, because a target that cannot be resolved to a single output
+cannot be aimed at.
+
+**This replaced a genuinely dangerous arrangement, and the shape of the current
+design is a direct response to it.** Until 2026-08-30 the LG was driven by
+`lg-input-switch`, which loops over every connected output mask and ports 0–7 and
+sends the packet to all of them, never identifying the LG. Switching the LG
+therefore delivered a service-channel write to every other monitor on the GPU. A
+guard compensated by refusing whenever an unrecognised panel was attached, which
+made "plug in a third monitor" a way to silently stop LG switching. Aiming the write
+removes the hazard and the guard together, and the third monitor stops mattering.
 
 ## Verification is visual, by necessity
 
@@ -192,16 +201,34 @@ an oversight.
 
 `m1ddc` links CoreGraphics and enumerates displays via `CGGetOnlineDisplayList`,
 which requires a window server connection. A LaunchDaemon in session 0 has none and
-would enumerate zero displays. Windows hits the same wall: session 0 has no
-desktop, so `GetPhysicalMonitorsFromHMONITOR` has no `HMONITOR` and NVAPI display
-enumeration is expected to fail for the same reason. The Windows side is therefore
-a Scheduled Task at logon in the interactive session, not a Windows Service.
+would enumerate zero displays. macOS remains blocked for this reason.
+
+**On Windows the technical barrier is gone; what remains is that nobody has built
+the tier.** This section used to argue that session 0 blocked Windows too, because
+it has no desktop and therefore no `HMONITOR` — true of the `dxva2` path, and still
+true of the ASUS half. It also predicted NVAPI would fail "for the same reason".
+That prediction was wrong: measured 2026-08-30, NVAPI enumerates and identifies both
+panels from session 0, as SYSTEM and as an unelevated S4U task, and again from an
+at-startup task after a cold boot. Since the LG now writes over NVAPI too, the LG
+half has no desktop dependency left at all.
+
+The trap that finding exposed: in session 0 `user32` reports **one phantom monitor,
+not zero**. "No desktop" presents as *wrong* monitors rather than none, so any
+identity check that trusts the Windows display list in a non-interactive context
+matches against a fiction. NVAPI must be the sole identity source there — which is
+how the LG path is written. See `AGENTS.md`.
+
+The Windows side is still a Scheduled Task at logon in the interactive session. Its
+remaining blockers are scope, not capability: the ASUS is still on `dxva2`, and a
+pre-login tier needs admin to register (measured — S4U registration is denied to a
+standard user). See `ideas/nvapi-transport.md`.
 
 Pre-login on macOS has a known clean path if it ever becomes worth building:
 enumerate `DCPAVServiceProxy` entries where `Location = External` directly from
 IORegistry, match on the display's identity, then `IOAVServiceCreateWithService` +
-`IOAVServiceWriteI2C` — no CoreGraphics anywhere. The Windows equivalent is
-unexplored.
+`IOAVServiceWriteI2C` — no CoreGraphics anywhere. Identity matching is the unsolved
+part: with two external monitors, order-based pairing could send the LG's `0xF4` to
+the ASUS.
 
 **Do not key that on the EDID product ID without checking it first.** The LG reports
 a *different product ID on every input* — three consecutive values have been

@@ -66,9 +66,12 @@ everything -- plus one live candidate that carries none of this objection:
 
 **An S4U scheduled task** ("do not store password" in Task Scheduler) uses a service
 ticket rather than cached credentials. It is explicitly *not* a credential-storage
-approach, and it may run at startup as the user with no elevation at all. Whether it
-can reach the GPU without a desktop is the open question phase 1 tests. If it works,
-it delivers what this idea was reaching for, without the trade.
+approach, and it may run at startup as the user with no elevation at all.
 
-See `.context/PLAN.md` phase 1c, and [[nvapi-transport]] for the transport it would
-depend on.
+**That question has since been answered, and the answer favours S4U further.**
+Measured 2026-08-30: NVAPI reaches the GPU with no desktop, in session 0, including
+from an at-startup task after a cold boot. So an S4U task delivers what this idea
+was reaching for, without converting "powered on" into "session live". Its one cost
+is admin rights *to register* -- at runtime it holds ordinary user privileges.
+
+See [[nvapi-transport]] for the transport it depends on and the measurements.

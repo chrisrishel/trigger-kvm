@@ -7,6 +7,10 @@
 # All values verified by direct testing on 2026-08-30, confirmed visually in both
 # directions on both monitors, including from an inactive link -- and independently
 # from both machines: macOS via m1ddc, Windows via dxva2 and lg-input-switch.
+#
+# The Windows LG transport has since changed from lg-input-switch to an aimed NVAPI
+# I2C write. The VALUES below did not change: the same bytes go on the same wire, to
+# one output instead of all of them.
 
 # ---------------------------------------------------------------------------
 # RULE: never verify a switch by reading a VCP value back.
@@ -57,7 +61,12 @@ edid_product = "per-input, see below"
 # Input control lives on LG's manufacturer sidechannel instead:
 #   I2C source address 0x50  (standard is 0x51)
 #   VCP code           0xF4  (standard is 0x60)
-# m1ddc exposes this as `set input-alt`.
+# m1ddc exposes this as `set input-alt`. On Windows the packet is injected through
+# NVAPI, aimed at the one output whose EDID vendor is 0x1e6d.
+#
+# The exact bytes, for either platform (checksum = 0x6e XOR every preceding byte):
+#   LG -> DisplayPort   50 84 03 F4 00 D0 9D
+#   LG -> USB-C         50 84 03 F4 00 D1 9C
 method = "lg-alt"
 
 [monitor.input]

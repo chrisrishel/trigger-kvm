@@ -14,10 +14,13 @@ logon.
 
 Post-login by design, matching macOS. A Windows Service runs in session 0, which
 has no desktop: GetPhysicalMonitorsFromHMONITOR would have no HMONITOR to work
-from. See ..\ARCHITECTURE.md.
+from -- still true of the ASUS path. See ..\ARCHITECTURE.md.
 
-lg-input-switch.exe is not vendored into the repo -- it is a 16MB third-party
-binary. It is downloaded from a pinned release and checked against a known SHA256.
+No third-party binary and no network access: both monitors are driven by code in
+this repo. The LG used to need lg-input-switch.exe, a 16MB GPL-3.0 download; it is
+now driven by an aimed NVAPI I2C write from switch-displays.ps1, so the download,
+its pinned SHA256 check and the install-time network dependency are all gone. A
+stale copy left by an older install is removed below.
 #>
 
 [CmdletBinding(DefaultParameterSetName = 'Install')]
@@ -35,7 +38,7 @@ $DEST    = Join-Path $env:LOCALAPPDATA 'Programs\display-switch'
 $LOG     = Join-Path $env:LOCALAPPDATA 'display-switch\displayswitch.log'
 $WATCH   = Join-Path $DEST 'usb-watch.ps1'
 $SWITCH  = Join-Path $DEST 'switch-displays.ps1'
-$LGEXE   = Join-Path $DEST 'lg-input-switch.exe'
+$LGEXE   = Join-Path $DEST 'lg-input-switch.exe'   # legacy; removed on install/uninstall
 $VBS     = Join-Path $DEST 'launcher.vbs'
 
 # Watched USB devices -- the peripherals that actually move through the USB
@@ -44,12 +47,6 @@ $VBS     = Join-Path $DEST 'launcher.vbs'
 $DEVICES  = '046d:0843,1235:820a'
 $DEBOUNCE = '3.0'
 $SETTLE   = '0.75'
-
-# Pinned third-party dependency: github.com/meer-cha/lg-input-switch
-$LG_TAG    = 'v1.2.2'
-$LG_URL    = "https://github.com/meer-cha/lg-input-switch/releases/download/$LG_TAG/lg-input-switch-$LG_TAG.zip"
-$LG_ZIP_SHA = '7C64B923A4F8B609F7877312599401B76578A6782E50548A7762EA4719663C37'
-$LG_EXE_SHA = 'DBC634AA7E711B72380146C8C6EBBE85BB8CF3A8177C32D7F24949424A7338AA'
 
 function Write-Log { param([string]$m) Write-Host "install: $m" }
 
@@ -127,38 +124,13 @@ Copy-Item (Join-Path $PSScriptRoot 'usb-watch.ps1')       $WATCH  -Force
 Copy-Item (Join-Path $PSScriptRoot 'switch-displays.ps1') $SWITCH -Force
 Write-Log "installed scripts to $DEST"
 
-# lg-input-switch: fetch the pinned release unless a verified copy is present.
-$needFetch = $true
+# Migration: older installs downloaded lg-input-switch.exe here. The LG is now
+# driven by an aimed NVAPI write inside switch-displays.ps1, so the binary is dead
+# weight -- and leaving a 16MB GPL-3.0 executable lying around after it stopped
+# being used would be its own small surprise.
 if (Test-Path -LiteralPath $LGEXE) {
-    if ((Get-FileHash $LGEXE -Algorithm SHA256).Hash -eq $LG_EXE_SHA) {
-        Write-Log "lg-input-switch $LG_TAG already present (sha256 ok)"
-        $needFetch = $false
-    } else {
-        Write-Log 'existing lg-input-switch.exe has an unexpected hash; replacing'
-    }
-}
-
-if ($needFetch) {
-    $tmp = Join-Path ([IO.Path]::GetTempPath()) "lg-input-switch-$LG_TAG.zip"
-    Write-Log "downloading lg-input-switch $LG_TAG"
-    Invoke-WebRequest -Uri $LG_URL -OutFile $tmp -UseBasicParsing
-
-    $got = (Get-FileHash $tmp -Algorithm SHA256).Hash
-    if ($got -ne $LG_ZIP_SHA) {
-        Remove-Item $tmp -Force
-        throw "lg-input-switch $LG_TAG sha256 mismatch: expected $LG_ZIP_SHA, got $got"
-    }
-
-    $stage = Join-Path ([IO.Path]::GetTempPath()) "lg-input-switch-$LG_TAG"
-    Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue
-    Expand-Archive -Path $tmp -DestinationPath $stage -Force
-    Copy-Item (Join-Path $stage 'lg-input-switch.exe') $LGEXE -Force
-    Remove-Item $tmp -Force
-    Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue
-
-    $got = (Get-FileHash $LGEXE -Algorithm SHA256).Hash
-    if ($got -ne $LG_EXE_SHA) { throw "extracted lg-input-switch.exe sha256 mismatch: got $got" }
-    Write-Log "installed lg-input-switch $LG_TAG (sha256 verified)"
+    Remove-Item -LiteralPath $LGEXE -Force
+    Write-Log "removed lg-input-switch.exe (no longer used; the LG path is now native)"
 }
 
 # --- the Scheduled Task -----------------------------------------------------

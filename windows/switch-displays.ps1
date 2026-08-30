@@ -6,6 +6,7 @@ Switch both monitors' inputs from this Windows PC.
     switch-displays.ps1 windows      pull both monitors here   (the normal case)
     switch-displays.ps1 mac          push both to the Mac
     switch-displays.ps1 windows -Only asus     move one monitor only
+    switch-displays.ps1 windows -WhatIf        resolve and build the packets, send nothing
 
 Values are documented in ..\displays.toml, which is the source of truth. They are
 duplicated here as literals rather than parsed, because this script runs from a
@@ -17,19 +18,24 @@ The two monitors do not speak the same dialect:
   ASUS PG42UQ    standard DDC/CI, VCP 0x60, via dxva2.dll SetVCPFeature
   LG 45GX950A    standard input control is STUBBED; input lives on LG's
                  manufacturer sidechannel (I2C src 0x50, VCP 0xF4), reachable
-                 only by injecting raw I2C through NVAPI. We shell out to
-                 lg-input-switch.exe rather than binding NVAPI ourselves.
+                 only by injecting raw I2C through NVAPI.
+
+The LG path injects that I2C directly through NVAPI, AIMED at the single output
+whose EDID identifies it as the LG. It is not a spray: no other panel on the GPU
+receives the packet. See ..\ideas\nvapi-transport.md for the function ids, the
+struct traps and the provenance.
 
 NEVER verify a switch by reading a VCP value back -- see ..\displays.toml for why.
 Both monitors switched correctly during macOS testing while reads said they had
 not. Writes are fire-and-forget; there are deliberately no reads in this script.
 
-HAZARD: lg-input-switch injects the packet on EVERY connected output and ports
-0-7, so the ASUS also receives the LG's VCP 0xF4 write. It is not addressable to
-one monitor. See ..\AGENTS.md.
+SAFETY: the I2C source address 0x50 is LG's service channel. It appears in exactly
+one function, NvDdc.WriteLgInput, which refuses to run unless the target's EDID
+manufacturer is GSM (0x1E6D). There is no generic "write to source N" entry point,
+so the sidechannel cannot be aimed at another vendor's panel by any caller.
 #>
 
-[CmdletBinding()]
+[CmdletBinding(SupportsShouldProcess = $true)]
 param(
     [Parameter(Position = 0)]
     [ValidateSet('windows', 'mac')]
@@ -64,23 +70,21 @@ $ASUS_VCP_INPUT = 0x60
 $ASUS_WIN       = 0x11           # 17 -- HDMI 1
 $ASUS_MAC       = 0x0F           # 15 -- DisplayPort
 
-# lg-input-switch verbs. Its INPUTS table maps dp->0xD0, usbc->0xD1, which is
-# exactly displays.toml's windows/mac values for this panel.
-$LG_WIN = 'dp'                   # 0xD0 -- DisplayPort
-$LG_MAC = 'usbc'                 # 0xD1 -- USB-C
+# The LG is identified from the EDID that NVAPI reads off the GPU output, never
+# from the Windows display list. In session 0 that list reports a phantom monitor
+# rather than nothing, so correlating against it silently mis-resolves -- see
+# ..\AGENTS.md. NVAPI is the sole identity source here.
+#
+# The vendor id is the safety gate; the product id says which panel. Both are
+# checked. NOTE: the product id is PER-INPUT on this panel (0x9e9d DP, 0x9e9f
+# USB-C, 0x9ea0 through the old KVM). 0x9E9D is what this host sees on its own
+# DisplayPort connection and is stable there -- but it is a local key, never a
+# value to copy to another host. See ..\displays.toml.
+$LG_EDID_VENDOR  = 0x1E6D        # GSM / LG Electronics
+$LG_EDID_PRODUCT = 0x9E9D        # this host's DP input on the 45GX950A
 
-# Every monitor allowed to be on the NVIDIA GPU when the LG path runs. See
-# AGENTS.md hard rule 5: lg-input-switch injects VCP 0xF4 on EVERY connected
-# output, so anything else attached to this GPU silently receives the LG's
-# service-channel write. The PG42UQ is known to ignore it; an unknown panel is
-# not, and nobody would find out until it misbehaved. Refuse instead.
-$LG_KNOWN_OUTPUTS = @('GSM9E9D', 'AUS42E0')
-
-$LG_EXE_CANDIDATES = @(
-    $env:DISPLAY_SWITCH_LG_EXE,
-    (Join-Path $PSScriptRoot 'lg-input-switch.exe'),
-    (Join-Path $env:LOCALAPPDATA 'Programs\display-switch\lg-input-switch.exe')
-) | Where-Object { $_ }
+$LG_WIN = 0xD0                   # DisplayPort
+$LG_MAC = 0xD1                   # USB-C
 
 # --- logging ---------------------------------------------------------------
 
@@ -165,34 +169,6 @@ public static class Ddc {
         return dd.DeviceID ?? "";
     }
 
-    // Every monitor hanging off an adapter whose name matches `vendor`, returned as
-    // PnP interface paths. Scoped to one vendor deliberately: lg-input-switch only
-    // blasts NVIDIA GPU outputs, so a virtual or iGPU display elsewhere is not in
-    // the blast radius and must not trip the guard.
-    //
-    // Enumerates adapters (EnumDisplayDevices with a null device) rather than
-    // EnumDisplayMonitors, so a monitor that is attached but not part of the
-    // desktop still counts -- it is still wired to an output that will receive the
-    // packet.
-    public static List<string> MonitorsOnVendor(string vendor) {
-        var found = new List<string>();
-        for (uint i = 0; ; i++) {
-            var ad = new DISPLAY_DEVICE();
-            ad.cb = Marshal.SizeOf(typeof(DISPLAY_DEVICE));
-            if (!EnumDisplayDevices(null, i, ref ad, 0)) break;
-            if (ad.DeviceString == null ||
-                ad.DeviceString.IndexOf(vendor, StringComparison.OrdinalIgnoreCase) < 0) continue;
-
-            for (uint j = 0; ; j++) {
-                var mon = new DISPLAY_DEVICE();
-                mon.cb = Marshal.SizeOf(typeof(DISPLAY_DEVICE));
-                if (!EnumDisplayDevices(ad.DeviceName, j, ref mon, EDD_GET_DEVICE_INTERFACE_NAME)) break;
-                if (!string.IsNullOrEmpty(mon.DeviceID)) found.Add(mon.DeviceID);
-            }
-        }
-        return found;
-    }
-
     public static List<IntPtr> Handles() {
         var list = new List<IntPtr>();
         EnumDisplayMonitors(IntPtr.Zero, IntPtr.Zero,
@@ -228,6 +204,337 @@ public static class Ddc {
 }
 '@
 
+# --- LG: aimed raw I2C through NVAPI ---------------------------------------
+#
+# Function ids and struct layouts from fiddyschmitt/SimpleKVM (MIT), with
+# Initialize / EnumPhysicalGPUs / I2CWrite independently corroborated by
+# meer-cha/lg-input-switch. Enumeration and EDID reads were verified against this
+# hardware on 2026-08-30 in four contexts, including session 0 with no desktop and
+# an at-startup task after a cold boot. The aimed write itself was confirmed
+# visually, both directions, from an inactive link. See ..\ideas\nvapi-transport.md.
+
+Add-Type -ErrorAction Stop @'
+using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+
+// One connected output, identified purely by the EDID the GPU read from it.
+public class NvDisplay {
+    public IntPtr Gpu;
+    public uint   OutputId;      // legacy single-bit output id -- what I2CWrite takes
+    public int    DisplayId;
+    public string Connector;
+    public ushort EdidVendor;
+    public ushort EdidProduct;
+    public uint   EdidSerial;
+
+    public override string ToString() {
+        return string.Format("outputId=0x{0:X8} connector={1} edid=0x{2:X4}:0x{3:X4} serial=0x{4:X8}",
+                             OutputId, Connector, EdidVendor, EdidProduct, EdidSerial);
+    }
+}
+
+public static class NvDdc {
+
+    // ---- loader ------------------------------------------------------------
+    // PowerShell 5.1 is .NET Framework, which has no NativeLibrary; use kernel32.
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Ansi, SetLastError = true)]
+    static extern IntPtr LoadLibrary(string lpFileName);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Ansi, SetLastError = true, BestFitMapping = false)]
+    static extern IntPtr GetProcAddress(IntPtr hModule, string procName);
+
+    const uint NVAPI_INITIALIZE                         = 0x0150E828;
+    const uint NVAPI_ENUMPHYSICALGPUS                   = 0xE5AC921F;
+    const uint NVAPI_GPU_GETCONNECTEDDISPLAYIDS         = 0x0078DBA2;
+    const uint NVAPI_GPU_GETEDID                        = 0x37D32E69;
+    const uint NVAPI_SYS_GETGPUANDOUTPUTIDFROMDISPLAYID = 0x112BA1A5;
+    const uint NVAPI_I2CWRITE                           = 0xE812EB07;
+
+    const int NVAPI_MAX_PHYSICAL_GPUS = 64;
+
+    // DDC/CI slave address 0x37, shifted left one bit for a write: 0x6E.
+    const byte DDC_I2C_ADDRESS = 0x6E;
+
+    // LG's manufacturer sidechannel. Standard DDC/CI is source 0x51 / VCP 0x60;
+    // on this panel VCP 0x60 is stubbed and input lives here instead.
+    const byte LG_I2C_SOURCE = 0x50;
+    const byte LG_VCP_INPUT  = 0xF4;
+
+    // The one vendor whose panels may be sent LG_I2C_SOURCE. 0x50 is a service /
+    // factory channel; sweeping it has bricked LG monitors, and what it means on
+    // another vendor's panel is unknown. See ..\AGENTS.md hard rule 1.
+    const ushort EDID_VENDOR_GSM = 0x1E6D;
+
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    delegate IntPtr QueryInterface_t(uint id);
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    delegate int Initialize_t();
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    delegate int EnumPhysicalGPUs_t([Out] IntPtr[] handles, out int count);
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    delegate int GetConnectedDisplayIds_t(IntPtr gpu, [In, Out] NV_GPU_DISPLAYIDS[] ids, ref int count, int flags);
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    delegate int GetEDID_t(IntPtr gpu, int outputId, ref NV_EDID edid);
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    delegate int GetGpuAndOutputIdFromDisplayId_t(uint displayId, out IntPtr gpu, out uint outputId);
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    delegate int I2CWrite_t(IntPtr gpu, ref NV_I2C_INFO info);
+
+    // Struct version is sizeof(struct) | (version << 16). Get the layout wrong and
+    // the encoded size is wrong and NvAPI rejects the call with an obscure error.
+    [StructLayout(LayoutKind.Sequential)]
+    public struct NV_GPU_DISPLAYIDS {
+        public int version;
+        public int connectorType;
+        public int displayId;
+        public uint flags;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct NV_EDID {
+        public int version;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 256)]
+        public byte[] edidData;
+        public int edidSize;
+        public uint edidId;   // NV_EDID_V3 has these two extra fields; without them
+        public uint offset;   // the size-encoded version is wrong and NvAPI refuses
+    }
+
+    // NV_I2C_INFO_V3. The trailing bIsPortIdSet is the same class of trap as
+    // NV_EDID's edidId/offset: omit it and the encoded size is wrong. On x64 this
+    // must come out at 64 bytes, i.e. version 0x00030040 -- checked at runtime.
+    [StructLayout(LayoutKind.Sequential)]
+    public struct NV_I2C_INFO {
+        public uint   version;
+        public uint   displayMask;      // the legacy single-bit output id
+        public byte   bIsDDCPort;
+        public byte   i2cDevAddress;
+        public IntPtr pbI2cRegAddress;
+        public uint   regAddrSize;
+        public IntPtr pbData;
+        public uint   cbSize;
+        public uint   i2cSpeed;         // deprecated, must be 0xFFFF
+        public uint   i2cSpeedKhz;
+        public byte   portId;
+        public uint   bIsPortIdSet;
+    }
+
+    static QueryInterface_t _qi;
+    static Initialize_t _init;
+    static EnumPhysicalGPUs_t _enumGpus;
+    static GetConnectedDisplayIds_t _getDisplayIds;
+    static GetEDID_t _getEdid;
+    static GetGpuAndOutputIdFromDisplayId_t _getOutputId;
+    static I2CWrite_t _i2cWrite;
+    static bool _ready;
+
+    static T Resolve<T>(uint id) where T : class {
+        IntPtr p = _qi(id);
+        if (p == IntPtr.Zero) return null;
+        return Marshal.GetDelegateForFunctionPointer(p, typeof(T)) as T;
+    }
+
+    public static string Init() {
+        if (_ready) return "OK";
+
+        if (!Environment.Is64BitProcess)
+            return "FAIL: not a 64-bit process; nvapi64.dll cannot be loaded";
+
+        IntPtr lib = LoadLibrary("nvapi64.dll");
+        if (lib == IntPtr.Zero)
+            return "FAIL: nvapi64.dll not found (no NVIDIA driver?)";
+
+        IntPtr qi = GetProcAddress(lib, "nvapi_QueryInterface");
+        if (qi == IntPtr.Zero) qi = GetProcAddress(lib, "nvapi64_QueryInterface");
+        if (qi == IntPtr.Zero)
+            return "FAIL: nvapi_QueryInterface not exported by nvapi64.dll";
+
+        _qi = (QueryInterface_t)Marshal.GetDelegateForFunctionPointer(qi, typeof(QueryInterface_t));
+
+        _init          = Resolve<Initialize_t>(NVAPI_INITIALIZE);
+        _enumGpus      = Resolve<EnumPhysicalGPUs_t>(NVAPI_ENUMPHYSICALGPUS);
+        _getDisplayIds = Resolve<GetConnectedDisplayIds_t>(NVAPI_GPU_GETCONNECTEDDISPLAYIDS);
+        _getEdid       = Resolve<GetEDID_t>(NVAPI_GPU_GETEDID);
+        _getOutputId   = Resolve<GetGpuAndOutputIdFromDisplayId_t>(NVAPI_SYS_GETGPUANDOUTPUTIDFROMDISPLAYID);
+        _i2cWrite      = Resolve<I2CWrite_t>(NVAPI_I2CWRITE);
+
+        List<string> missing = new List<string>();
+        if (_init          == null) missing.Add("NvAPI_Initialize");
+        if (_enumGpus      == null) missing.Add("NvAPI_EnumPhysicalGPUs");
+        if (_getDisplayIds == null) missing.Add("NvAPI_GPU_GetConnectedDisplayIds");
+        if (_getEdid       == null) missing.Add("NvAPI_GPU_GetEDID");
+        if (_getOutputId   == null) missing.Add("NvAPI_SYS_GetGpuAndOutputIdFromDisplayId");
+        if (_i2cWrite      == null) missing.Add("NvAPI_I2CWrite");
+        if (missing.Count > 0)
+            return "FAIL: QueryInterface returned NULL for: " + string.Join(", ", missing);
+
+        int size = Marshal.SizeOf(typeof(NV_I2C_INFO));
+        if (size != 64)
+            return string.Format("FAIL: NV_I2C_INFO marshals to {0} bytes, expected 64 " +
+                                 "(version would encode as 0x{1:X8}, not 0x00030040). " +
+                                 "The struct layout is wrong; NvAPI would reject the call.",
+                                 size, size | (3 << 16));
+
+        int rc = _init();
+        if (rc != 0)
+            return "FAIL: NvAPI_Initialize returned " + rc;
+
+        _ready = true;
+        return "OK";
+    }
+
+    // EDID manufacturer id is three 5-bit letters packed big-endian in bytes 8-9.
+    public static string DecodeMfg(ushort id) {
+        char a = (char)(((id >> 10) & 0x1F) + 64);
+        char b = (char)(((id >> 5)  & 0x1F) + 64);
+        char c = (char)((id         & 0x1F) + 64);
+        return new string(new char[] { a, b, c });
+    }
+
+    static string ConnectorName(int t) {
+        switch (t) {
+            case 0:  return "Uninitialized";
+            case 1:  return "VGA";
+            case 2:  return "Component";
+            case 3:  return "SVideo";
+            case 4:  return "HDMI";
+            case 5:  return "DVI";
+            case 6:  return "LVDS";
+            case 7:  return "DisplayPort";
+            case 8:  return "Composite";
+            default: return "Unknown(" + t + ")";
+        }
+    }
+
+    // Every connected output on every NVIDIA GPU, with its EDID decoded.
+    //
+    // Deliberately NOT correlated against the Windows display list: in session 0
+    // user32 reports a phantom monitor rather than nothing, so any such match is
+    // against a fiction. NVAPI is the sole identity source. See ..\AGENTS.md.
+    public static List<NvDisplay> Enumerate() {
+        var found = new List<NvDisplay>();
+
+        IntPtr[] gpus = new IntPtr[NVAPI_MAX_PHYSICAL_GPUS];
+        int gpuCount = 0;
+        if (_enumGpus(gpus, out gpuCount) != 0 || gpuCount == 0) return found;
+
+        int versionDisplayIds = Marshal.SizeOf(typeof(NV_GPU_DISPLAYIDS)) | (3 << 16);
+        int versionEdid       = Marshal.SizeOf(typeof(NV_EDID))           | (3 << 16);
+
+        for (int g = 0; g < gpuCount; g++) {
+            IntPtr gpu = gpus[g];
+
+            // Two-call pattern: null array first to learn the count.
+            int count = 0;
+            if (_getDisplayIds(gpu, null, ref count, 0) != 0 || count == 0) continue;
+
+            var ids = new NV_GPU_DISPLAYIDS[count];
+            for (int i = 0; i < count; i++) ids[i].version = versionDisplayIds;
+            if (_getDisplayIds(gpu, ids, ref count, 0) != 0) continue;
+
+            for (int d = 0; d < count; d++) {
+                // bit 6 (0x40) is isConnected. Do NOT gate on isActive (bit 2):
+                // it varied over time within a single session during phase 1.
+                if ((ids[d].flags & 0x40) == 0) continue;
+
+                IntPtr owner;
+                uint outputId;
+                if (_getOutputId((uint)ids[d].displayId, out owner, out outputId) != 0) continue;
+                if (outputId == 0) continue;
+
+                // GetEDID and I2CWrite take the LEGACY single-bit output id, not
+                // the displayId that GetConnectedDisplayIds returns.
+                var edid = new NV_EDID();
+                edid.version  = versionEdid;
+                edid.edidData = new byte[256];
+                if (_getEdid(gpu, (int)outputId, ref edid) != 0) continue;
+                if (edid.edidSize < 18) continue;
+                if (edid.edidData[0] != 0x00 || edid.edidData[1] != 0xFF) continue;
+
+                var nd = new NvDisplay();
+                nd.Gpu         = gpu;
+                nd.OutputId    = outputId;
+                nd.DisplayId   = ids[d].displayId;
+                nd.Connector   = ConnectorName(ids[d].connectorType);
+                nd.EdidVendor  = (ushort)((edid.edidData[8] << 8) | edid.edidData[9]);
+                nd.EdidProduct = (ushort)(edid.edidData[10] | (edid.edidData[11] << 8));
+                nd.EdidSerial  = (uint)(edid.edidData[12] | (edid.edidData[13] << 8)
+                                      | (edid.edidData[14] << 16) | (edid.edidData[15] << 24));
+                found.Add(nd);
+            }
+        }
+        return found;
+    }
+
+    // A DDC/CI SetVCP message: [source, 0x84, 0x03, vcp, valueMsb, valueLsb, checksum]
+    // Checksum is 0x6E XOR every preceding byte.
+    static byte[] BuildSetVcp(byte source, byte vcp, byte value) {
+        byte[] p = new byte[7];
+        p[0] = source; p[1] = 0x84; p[2] = 0x03; p[3] = vcp; p[4] = 0x00; p[5] = value;
+        byte sum = DDC_I2C_ADDRESS;
+        for (int i = 0; i < 6; i++) sum ^= p[i];
+        p[6] = sum;
+        return p;
+    }
+
+    public static string PacketForLgInput(byte value) {
+        return BitConverter.ToString(BuildSetVcp(LG_I2C_SOURCE, LG_VCP_INPUT, value)).Replace("-", " ");
+    }
+
+    // Send an LG input-select packet to ONE output.
+    //
+    // This is the only function in the codebase that can emit I2C source 0x50, and
+    // it refuses any target whose EDID manufacturer is not GSM. The source byte is
+    // not a parameter and there is no generic write entry point, so the LG service
+    // channel cannot be aimed at another vendor's panel by any caller. Enforcing it
+    // here rather than at the call site is deliberate: constraint 10 then holds by
+    // construction instead of by discipline.
+    public static int WriteLgInput(NvDisplay target, byte value) {
+        if (target == null)
+            throw new ArgumentNullException("target");
+        if (target.EdidVendor != EDID_VENDOR_GSM)
+            throw new InvalidOperationException(string.Format(
+                "REFUSING to send LG service-channel source 0x{0:X2} to a {1} (0x{2:X4}) panel at {3}. " +
+                "Only GSM (0x{4:X4}) may receive it.",
+                LG_I2C_SOURCE, DecodeMfg(target.EdidVendor), target.EdidVendor, target, EDID_VENDOR_GSM));
+
+        byte[] packet = BuildSetVcp(LG_I2C_SOURCE, LG_VCP_INPUT, value);
+
+        // Framing follows lg-input-switch: the whole packet goes in pbData with no
+        // separate register address. SimpleKVM instead puts the source byte in
+        // pbI2cRegAddress with regAddrSize = 1 and the rest in pbData. Both projects
+        // report their own shape working; lg-input-switch is the one demonstrably
+        // driving THIS panel today, so it wins the tie. If this ever stops working,
+        // the alternative is documented in ..\ideas\nvapi-transport.md -- change it
+        // here, do not add a switch.
+        IntPtr pData = Marshal.AllocHGlobal(packet.Length);
+        try {
+            Marshal.Copy(packet, 0, pData, packet.Length);
+
+            var info = new NV_I2C_INFO();
+            info.version         = (uint)(Marshal.SizeOf(typeof(NV_I2C_INFO)) | (3 << 16));
+            info.displayMask     = target.OutputId;
+            info.bIsDDCPort      = 1;
+            info.i2cDevAddress   = DDC_I2C_ADDRESS;
+            info.pbI2cRegAddress = IntPtr.Zero;
+            info.regAddrSize     = 0;
+            info.pbData          = pData;
+            info.cbSize          = (uint)packet.Length;
+            info.i2cSpeed        = 0xFFFF;   // deprecated field, must be this
+            info.i2cSpeedKhz     = 0;
+            info.portId          = 0;
+            info.bIsPortIdSet    = 0;
+
+            return _i2cWrite(target.Gpu, ref info);
+        } finally {
+            Marshal.FreeHGlobal(pData);
+        }
+    }
+}
+'@
+
 # Resolve a monitor's HMONITOR by the EDID id in its PnP interface path.
 function Resolve-Monitor {
     param([string]$Match)
@@ -251,6 +558,12 @@ function Switch-Asus {
         return $false
     }
 
+    $what = 'ASUS -> {0} (VCP 0x{1:X2} = 0x{2:X2}) on {3}' -f $Label, $ASUS_VCP_INPUT, $Value, $mon.Device
+    if (-not $PSCmdlet.ShouldProcess($mon.Device, $what)) {
+        Write-Log "WHATIF: would send $what"
+        return $true
+    }
+
     $ok = 0
     for ($i = 0; $i -lt $Tries; $i++) {
         $r = [Ddc]::SetVcp($mon.Handle, [byte]$ASUS_VCP_INPUT, [uint32]$Value)
@@ -258,94 +571,90 @@ function Switch-Asus {
     }
 
     if ($ok -eq 0) {
-        Write-Log ("ERROR: ASUS -> {0} (VCP 0x{1:X2} = 0x{2:X2}) -- no write succeeded on {3}" -f $Label, $ASUS_VCP_INPUT, $Value, $mon.Device)
+        Write-Log ("ERROR: {0} -- no write succeeded" -f $what)
         return $false
     }
-    Write-Log ("ASUS -> {0} (VCP 0x{1:X2} = 0x{2:X2}) on {3}" -f $Label, $ASUS_VCP_INPUT, $Value, $mon.Device)
+    Write-Log $what
     return $true
 }
 
-# --- LG: wrap lg-input-switch ----------------------------------------------
+# --- LG: aimed at the one output whose EDID says it is the LG ---------------
 
-function Get-LgExe {
-    foreach ($p in $LG_EXE_CANDIDATES) {
-        if (Test-Path -LiteralPath $p -PathType Leaf) { return $p }
-    }
-    return $null
-}
-
-# Enforce hard rule 5. lg-input-switch cannot be aimed: it writes VCP 0xF4 to every
-# connected output on the GPU. That is only acceptable while the exact set of panels
-# on that GPU is known to tolerate it. Refuse rather than warn -- this normally runs
-# from a background task whose log nobody reads, so a warning there is no warning.
+# Replaces the old Test-LgBlastRadius, which existed only to compensate for
+# lg-input-switch spraying VCP 0xF4 at every connected output. An aimed write needs
+# no blast-radius check: nothing else receives the packet. What remains is a
+# stronger and simpler rule -- refuse unless the LG is positively identified.
 #
-# Asymmetric on purpose: an UNKNOWN monitor is the hazard and blocks the switch. A
-# known monitor being absent is not a hazard (fewer panels receive the packet), so
-# it is only noted. Refusing on absence would break LG switching whenever the ASUS
-# was merely unplugged, for no safety gain.
-function Test-LgBlastRadius {
-    $paths = @([Ddc]::MonitorsOnVendor('NVIDIA'))
+# Note the behaviour change this buys: attaching a third monitor no longer blocks
+# LG switching, because the third monitor is no longer in the blast radius.
+function Switch-Lg {
+    param([int]$Value, [string]$Label)
 
-    if ($paths.Count -eq 0) {
-        Write-Log 'REFUSING LG switch: found no monitors on an NVIDIA GPU. lg-input-switch needs NVAPI, and an empty enumeration means this check cannot vouch for what would receive the VCP 0xF4 write. See AGENTS.md hard rule 5.'
+    $status = [NvDdc]::Init()
+    if ($status -ne 'OK') {
+        Write-Log "REFUSING LG switch: NVAPI unavailable -- $status"
         return $false
     }
 
-    # \\?\DISPLAY#GSM9E9D#5&aaaaaaaa&0&UID4353#{guid}  ->  GSM9E9D
-    $ids = @($paths | ForEach-Object {
-        if ($_ -match 'DISPLAY#([^#]+)#') { $Matches[1].ToUpper() } else { "UNPARSEABLE($_)" }
+    $all = @([NvDdc]::Enumerate())
+    $lg  = @($all | Where-Object {
+        $_.EdidVendor -eq $LG_EDID_VENDOR -and $_.EdidProduct -eq $LG_EDID_PRODUCT
     })
 
-    $unknown = @($ids | Where-Object { $LG_KNOWN_OUTPUTS -notcontains $_ })
-    if ($unknown.Count -gt 0) {
-        Write-Log ("REFUSING LG switch: {0} unexpected monitor(s) on the NVIDIA GPU: {1}. lg-input-switch writes VCP 0xF4 to EVERY connected output, so these would receive the LG's service-channel packet. Only {2} are known to tolerate it. Add it to LG_KNOWN_OUTPUTS only after confirming it is unharmed. See AGENTS.md hard rule 5." -f `
-                   $unknown.Count, ($unknown -join ', '), ($LG_KNOWN_OUTPUTS -join ', '))
+    if ($lg.Count -eq 0) {
+        $seen = if ($all.Count) { ($all | ForEach-Object { $_.ToString() }) -join '; ' } else { 'nothing' }
+        Write-Log ("REFUSING LG switch: no output identifies as the LG (EDID 0x{0:X4}:0x{1:X4}). NVAPI enumerated: {2}" -f `
+                   $LG_EDID_VENDOR, $LG_EDID_PRODUCT, $seen)
         return $false
     }
 
-    $missing = @($LG_KNOWN_OUTPUTS | Where-Object { $ids -notcontains $_ })
-    if ($missing.Count -gt 0) {
-        Write-Log ("note: {0} not attached to the NVIDIA GPU right now; proceeding (fewer panels receive the write, which is not a hazard)" -f ($missing -join ', '))
-    }
-    return $true
-}
-
-function Switch-Lg {
-    param([string]$Verb, [string]$Label)
-
-    if (-not (Test-LgBlastRadius)) { return $false }
-
-    $exe = Get-LgExe
-    if (-not $exe) {
-        Write-Log "ERROR: lg-input-switch.exe not found. Run install.ps1, or set DISPLAY_SWITCH_LG_EXE."
+    if ($lg.Count -gt 1) {
+        Write-Log ("REFUSING LG switch: {0} outputs identify as the LG, so the target is ambiguous: {1}" -f `
+                   $lg.Count, (($lg | ForEach-Object { $_.ToString() }) -join '; '))
         return $false
+    }
+
+    $target = $lg[0]
+    $packet = [NvDdc]::PacketForLgInput([byte]$Value)
+    $what   = 'LG -> {0} (src 0x50, VCP 0xF4 = 0x{1:X2}) on outputId 0x{2:X8} [{3}]' -f `
+              $Label, $Value, $target.OutputId, $packet
+
+    if (-not $PSCmdlet.ShouldProcess($target.ToString(), $what)) {
+        Write-Log "WHATIF: would send $what"
+        return $true
     }
 
     $ok = 0
     for ($i = 0; $i -lt $Tries; $i++) {
-        & $exe $Verb 2>&1 | Out-Null
-        if ($LASTEXITCODE -eq 0) { $ok++ }
+        try {
+            if ([NvDdc]::WriteLgInput($target, [byte]$Value) -eq 0) { $ok++ }
+        } catch {
+            # The vendor gate throwing is a bug in the caller, not a transient
+            # failure. Surface it rather than retrying into it.
+            Write-Log ("ERROR: LG write refused: {0}" -f $_.Exception.Message)
+            return $false
+        }
     }
 
     if ($ok -eq 0) {
-        Write-Log "ERROR: LG -> $Label ($Verb) -- lg-input-switch reported failure"
+        Write-Log ("ERROR: {0} -- NvAPI_I2CWrite reported failure on every attempt" -f $what)
         return $false
     }
-    Write-Log "LG -> $Label ($Verb)"
+    Write-Log $what
     return $true
 }
 
 # --- main -------------------------------------------------------------------
 
 if ($Target -eq 'windows') {
-    $asusValue = $ASUS_WIN; $lgVerb = $LG_WIN; $label = 'this PC'
+    $asusValue = $ASUS_WIN; $lgValue = $LG_WIN; $label = 'this PC'
 } else {
-    $asusValue = $ASUS_MAC; $lgVerb = $LG_MAC; $label = 'the Mac'
+    $asusValue = $ASUS_MAC; $lgValue = $LG_MAC; $label = 'the Mac'
 }
 
 $rc = 0
 if ($Only -in @('both', 'asus')) { if (-not (Switch-Asus -Value $asusValue -Label $label)) { $rc = 1 } }
-if ($Only -in @('both', 'lg'))   { if (-not (Switch-Lg   -Verb  $lgVerb    -Label $label)) { $rc = 1 } }
+if ($Only -in @('both', 'lg'))   { if (-not (Switch-Lg   -Value $lgValue   -Label $label)) { $rc = 1 } }
 
 # A zero exit means the writes were sent, NOT that the monitors switched. There is
 # no way to verify that from here: reads on this hardware lie. Confirm visually.

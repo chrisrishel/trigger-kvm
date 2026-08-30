@@ -48,41 +48,38 @@ window on a monitor you just switched away is still *there*, just invisible. Bef
 moving the monitor the terminal is on, have the user drag the terminal to the other
 one first.
 
-**5. `lg-input-switch` is a shotgun, not a scalpel.**
-Its `_i2c_write` loops over every connected output mask and ports 0-7, sending the
-packet to all of them. It does not identify the LG. With both monitors on one GPU,
-`lg-input-switch dp` therefore also delivers `SetVCP 0xF4` to the **ASUS**.
+**5. The LG service channel may only ever be aimed at the LG.**
+I2C source `0x50` carries VCP `0xF4`, and what that means on a non-LG panel is
+unknown. The rule is enforced in code, at the transport, not by caller discipline:
+`NvDdc.WriteLgInput` in `windows/switch-displays.ps1` is the only function that can
+emit source `0x50`, the source byte is not a parameter, and it **throws** unless the
+target's EDID manufacturer is GSM (`0x1E6D`). There is no generic "write to source
+N" entry point, so no caller can aim it at another vendor's panel, including by
+accident. Do not add one.
 
-Confirmed on 2026-08-30: the PG42UQ ignores it, with no flicker or setting change.
-Re-confirmed the same day with the ASUS write **isolated out** — a `-Only lg` run,
-so the `0xF4` spray was the only traffic on the wire — and observed directly: the LG
-flickered, the ASUS did not. Insist on that isolation if you ever re-test. A plain
-`switch-displays.ps1 windows` sends the ASUS its own VCP `0x60` write seconds
-earlier, so any ASUS flicker in *that* run is unattributable and proves nothing
-either way. Treat this as a property of this specific pair of monitors, not a
-general licence.
+The switcher also refuses the LG switch unless exactly one enumerated output
+identifies as the LG — zero is a refusal, and so is more than one, because an
+ambiguous target cannot be aimed at safely.
+
+**Historical, and the reason for the rule's shape.** Until 2026-08-30 the LG was
+driven by `lg-input-switch.exe`, whose `_i2c_write` loops over every connected
+output mask and ports 0-7, sending the packet to all of them. It did not identify
+the LG, so with both monitors on one GPU `lg-input-switch dp` also delivered
+`SetVCP 0xF4` to the **ASUS**. A `Test-LgBlastRadius` guard compensated by refusing
+whenever any panel outside `GSM9E9D`/`AUS42E0` was attached — which meant attaching
+a third monitor stopped LG switching entirely. Both the spray and the guard are gone:
+an aimed write has no blast radius, so a third monitor is now simply irrelevant.
+
+The old measurement is still worth keeping, because it is the only evidence anyone
+has about what `0xF4` does to a PG42UQ: the ASUS ignored it, with no flicker or
+setting change, confirmed with the ASUS write **isolated out** (a `-Only lg` run, so
+the spray was the only traffic on the wire). That was a property of that specific
+panel, never a general licence — and it is no longer relied upon.
 
 **Expect the LG to flicker briefly on every LG switch, including a re-assert to the
 input it is already on.** It is re-negotiating the link, and each write is sent
 twice by design (the bus is lossy). This is normal and was mistaken for a fault
 once already — do not go looking for a bug in it.
-Making the LG path selective means sourcing more NVAPI function ids, which the last
-bullet under Conventions exists to discourage; the current arrangement is the
-accepted trade.
-
-This is now enforced in code rather than left to the reader. `Test-LgBlastRadius`
-enumerates every monitor on the NVIDIA adapter before each LG switch and
-**refuses** the switch outright if it finds an EDID id outside `$LG_KNOWN_OUTPUTS`
-(`GSM9E9D`, `AUS42E0`). It refuses rather than warns because this normally runs from
-a background task whose log nobody reads, so a warning there is not a warning.
-
-The check is asymmetric on purpose: an **unknown** panel is the hazard and blocks
-the switch, while a **missing** known panel only logs a note, because fewer
-recipients is not a hazard and refusing there would break LG switching whenever the
-ASUS was merely unplugged. So attaching a third monitor stops LG switching until you
-add its id — that is the intended behaviour, not a bug. Confirm the new panel is
-unharmed by a `0xF4` write before adding it, and note that "unharmed" cannot be
-established by reading anything back (hard rule 2); it means looking at it.
 
 ## Known limitations, both platforms
 
@@ -207,10 +204,11 @@ See `ideas/nvapi-transport.md`.
 and `%LOCALAPPDATA%\display-switch\displayswitch.log` are appended to forever, with
 no rotation. Output is a few lines per switch so this is slow, but it is unbounded.
 
-**The two switchers differ in blast radius, and the macOS one is the safer.**
-`m1ddc display <uuid> set ...` addresses exactly one display. The Windows LG path
-cannot: see hard rule 5. Do not assume a technique that is safe on the Mac side
-carries over.
+**Both switchers now address exactly one display.** `m1ddc display <uuid> set ...`
+always did; the Windows LG path does since 2026-08-30, by aiming the NVAPI I2C
+write at the single output whose EDID identifies it. This entry previously said the
+macOS side was the safer of the two and that the asymmetry should not be assumed
+away — that gap is closed, and the warning it carried is spent.
 
 **The LG's EDID product id is per-input, so it is not a shared constant.** Three
 consecutive values have been measured on the one panel — `0x9e9d` (Windows, DP),
@@ -326,6 +324,9 @@ once with `another usb-watch is already running`.
   which is true of the `dxva2` path but **not** of NVAPI -- measured 2026-08-30,
   NVAPI enumerates and identifies both panels from session 0. Writing over NVAPI from
   there is still untested. macOS is unchanged and still blocked.
-- Prefer wrapping a known-working tool over reimplementing a vendor SDK. In
-  particular, do not hand-write NVAPI bindings from memory — its dispatch uses
-  magic function IDs that must be taken from a real source.
+- **Never hand-write NVAPI bindings from memory.** Its dispatch uses magic function
+  IDs and size-encoded struct versions; both must come from a real source, and the
+  ids in use here are recorded with their provenance in `ideas/nvapi-transport.md`.
+  This repo does now bind NVAPI directly rather than wrapping a tool — that was
+  earned by sourcing the ids, corroborating them against measured hardware, and
+  checking the struct sizes at runtime, not by recalling them.

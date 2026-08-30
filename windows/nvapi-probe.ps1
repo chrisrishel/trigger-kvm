@@ -3,7 +3,8 @@
 Read-only NVAPI display enumeration probe. Sends nothing to any monitor.
 
 .DESCRIPTION
-Phase 1 of the pre-login work (see ..\.context\PLAN.md). Answers one question:
+Phase 1 of the pre-login work (see ..\ideas\nvapi-transport.md). Answers one
+question:
 
     can this machine enumerate and identify its monitors through NVAPI, in a
     context that has no desktop?
@@ -34,7 +35,14 @@ sees 0, NVAPI path sees 2" is the result that makes pre-login switching possible
 
 Function ids and struct layouts are taken from fiddyschmitt/SimpleKVM (MIT), with
 NvAPI_Initialize / NvAPI_EnumPhysicalGPUs independently corroborated by
-meer-cha/lg-input-switch. See ..\.context\PLAN.md for provenance and the traps.
+meer-cha/lg-input-switch. See ..\ideas\nvapi-transport.md for provenance, the
+struct traps and the measured results.
+
+This file duplicates the enumeration bindings that switch-displays.ps1 also
+carries, deliberately. Sharing them would mean the probe loading a module that
+resolves NvAPI_I2CWrite, which would cost it the property stated above -- that the
+write function is absent from the file and cannot be called. A read-only probe is
+worth more than the deduplication.
 #>
 
 [CmdletBinding()]

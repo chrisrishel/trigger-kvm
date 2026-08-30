@@ -1,25 +1,29 @@
 # Idea: an NVAPI transport to replace lg-input-switch
 
-**Status:** enumeration half proven on this machine 2026-08-30 (see Measured, below).
-Write half unbuilt and untested. This note is the working reference for building it.
+**Status:** enumeration half proven on this machine 2026-08-30 in four contexts (see
+Measured, below). Write half **built** and living in `windows/switch-displays.ps1`;
+see "The write path, as built". This note stays as the reference for the ids, the
+struct traps and the framing fork.
 
 ## Why
 
-The Windows LG path currently shells out to `lg-input-switch.exe`, which cannot be
+The Windows LG path used to shell out to `lg-input-switch.exe`, which cannot be
 aimed: it loops every connected output mask against ports 0-7 and fires the packet
-at all of them, so the ASUS receives the LG's service-channel write on every switch.
-`Test-LgBlastRadius` exists solely to compensate, by refusing whenever an
-unrecognised panel is attached.
+at all of them, so the ASUS received the LG's service-channel write on every switch.
+`Test-LgBlastRadius` existed solely to compensate, by refusing whenever an
+unrecognised panel was attached.
 
-NVAPI can address a single output. Doing so would, in one change:
+NVAPI can address a single output. Doing so bought, in one change:
 
-- remove the `0xF4` spray, and with it hard rule 5 and `Test-LgBlastRadius` in its
-  current form (the guard simplifies to "refuse unless the LG was positively
-  identified" -- stronger, and it stops punishing a third monitor being attached)
-- delete a 16MB GPL-3.0 binary, its pinned download and SHA check, and the
-  install-time network dependency
-- collapse the dual code path if the ASUS moves onto the same transport
-- remove the last desktop dependency, which is what makes pre-login possible
+- **done** -- removed the `0xF4` spray and `Test-LgBlastRadius` with it. The guard
+  became "refuse unless the LG is positively identified", which is stronger, and it
+  stopped punishing a third monitor for being attached
+- **done** -- deleted a 16MB GPL-3.0 binary, its pinned download and SHA check, and
+  the install-time network dependency
+- **done** -- removed the LG half's desktop dependency, which is what makes
+  pre-login possible
+- **not yet** -- collapsing the dual code path, which needs the ASUS on the same
+  transport
 
 ## Function ids
 
@@ -116,6 +120,13 @@ contexts:
 | interactive user | 1 | 2 | 2 | yes |
 | SYSTEM | 0 | **1 (phantom)** | 2 | yes |
 | S4U user, unelevated | 0 | **1 (phantom)** | 2 | yes |
+| at-startup task after cold boot, both principals | 0 | **1 (phantom)** | 2 | yes |
+
+The boot row is three samples per principal, at uptime 38s / 72s / 132s, all six
+identical and correct -- so an at-startup trigger needs no delay and no retry loop.
+Caveat on that run: the login raced the wrapper's startup, so the earliest sample
+landed a few seconds *after* the shell came up. It proves an at-startup session-0
+task works from 38s onward; it does not isolate "nobody has ever logged on".
 
 Three conclusions:
 
@@ -137,23 +148,62 @@ GetEdidSerial(winDisplay)` and `GetEdidSerial` is a stub returning `0` -- so it
 always falls through to product+connector, then to product-only *in enumeration
 order*. Order-based fallback is exactly what this repo's conventions forbid.
 
+## The write path, as built
+
+`NvDdc` in `windows/switch-displays.ps1`. Three decisions worth keeping:
+
+**`NV_I2C_INFO_V3` must marshal to 64 bytes on x64**, i.e. version `0x00030040`.
+`Init()` computes it and refuses with an explicit message rather than handing NvAPI
+a wrong size and reading back an obscure error code. Confirmed 64 on this machine.
+
+**The `0x50` source byte is unrepresentable outside one function.** There is no
+generic `WriteVcp(source, vcp, value)`. The only entry point is
+`WriteLgInput(target, value)`, which hard-codes source `0x50` / VCP `0xF4` and
+throws unless `target.EdidVendor == 0x1E6D`. So "never aim the LG sidechannel at a
+non-LG panel" holds by construction rather than by caller discipline. Both branches
+of that gate were exercised against a target carrying a null GPU handle and a zero
+display mask, which cannot reach a real monitor: an ASUS-vendor target was refused,
+a GSM-vendor target passed the gate and reached `NvAPI_I2CWrite`, which returned
+`-1` for the invalid handle rather than crashing -- so the delegate marshalling and
+struct layout are exercised end to end.
+
+**Framing: lg-input-switch's.** Whole packet in `pbData`, `pbI2cRegAddress = NULL`,
+`regAddrSize = 0`. The tie above is broken by evidence rather than preference:
+lg-input-switch is what demonstrably drove *this* panel. There is deliberately no
+flag to select SimpleKVM's shape -- if this one ever fails, change the function and
+re-test.
+
+## Proven on hardware, 2026-08-30
+
+**`NvAPI_I2CWrite` drives this panel, aimed, in both directions -- confirmed
+visually.** `-Only lg` to USB-C and back to DisplayPort, then the ASUS both ways as a
+regression check on the shared code. The pull-back cases were run with the panel
+**displaying the Mac**, so the aimed write works from an inactive link -- the case the
+whole design depends on, and one that had only ever been established for
+`lg-input-switch`.
+
+lg-input-switch's framing is therefore the correct one for this panel, and
+SimpleKVM's alternative below is recorded for the next hardware, not for this one.
+
 ## Still unproven
 
-- **`NvAPI_I2CWrite` has never been called from any context here.** Enumeration
-  working does not imply writing works, in session 0 or anywhere else. Test the
-  write in a normal interactive session first, visually confirmed, before testing
-  it without a desktop.
-- Whether this holds at the actual logon screen, before any user has logged in.
-  Both privileged runs above happened while a user was logged on; only session 0
-  was empty of a desktop, not the machine of a session.
+- Whether the write works from session 0. Enumeration does there; writing has only
+  been done from an interactive session. This is the remaining gate on a pre-login
+  tier -- and the one thing phase 1 could not answer, because phase 1 sent no writes.
+- Whether this holds at the actual logon screen, before any user has logged in. See
+  the caveat on the boot row above.
 - Whether the ASUS can be driven over the same transport at source `0x51`
-  (would collapse the dual code path).
+  (would collapse the dual code path and remove the last `dxva2` dependency).
 
 ## Licence
 
-SimpleKVM is MIT, so the binding approach is liftable with attribution.
-lg-input-switch is GPL-3.0 -- fine to invoke as a separate binary, as today, but
-forking or vendoring it would make this repo GPL. That is a reason to build on
-SimpleKVM's approach rather than patching lg-input-switch to aim.
+SimpleKVM is MIT, so the binding approach is liftable with attribution -- which is
+what was done. lg-input-switch is GPL-3.0: invoking it as a separate binary was
+fine, but forking or vendoring it would have made this repo GPL. That is why the
+transport was built on SimpleKVM's approach rather than by patching lg-input-switch
+to aim. Nothing from lg-input-switch is copied; what it contributed is
+corroboration of three function ids and the packet framing choice, both facts
+rather than code. It is no longer a dependency.
 
-Related: [[autologin-tier]] (rejected), `.context/PLAN.md` phases 1-4.
+Related: [[autologin-tier]] (rejected). The implementation lives in
+`windows/switch-displays.ps1` (`NvDdc`) and `windows/nvapi-probe.ps1`.

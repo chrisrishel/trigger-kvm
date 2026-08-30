@@ -27,7 +27,7 @@ USB switch ──> peripherals ──> whichever machine gets them pulls both di
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | The design and its rationale — why pull-to-self, why two DDC dialects, why post-login |
 | [`AGENTS.md`](AGENTS.md) | Instructions for anyone (human or agent) changing this repo, including the hard safety rules |
 | `macos/` | Working implementation: `usb-watch` (IOKit) + `switch-displays.sh` (m1ddc) + LaunchAgent |
-| `windows/` | Working implementation: `usb-watch.ps1` (WMI) + `switch-displays.ps1` (dxva2 + `lg-input-switch`) + Scheduled Task |
+| `windows/` | Working implementation: `usb-watch.ps1` (WMI) + `switch-displays.ps1` (dxva2 for the ASUS, aimed NVAPI I2C for the LG) + Scheduled Task |
 
 Code is not shared between platforms — macOS goes through `IOAVService`, Windows
 through NVAPI and the Monitor Configuration API, with no common runtime.
@@ -63,8 +63,12 @@ plus the end-to-end USB trigger driven by the real switch on the Windows side:
 |---|---|---|
 | ASUS → DisplayPort (show the Mac) | `input 15` ✅ | `SetVCPFeature 0x60=0x0F` ✅ |
 | ASUS → HDMI 1 (show Windows) | `input 17` ✅ | `SetVCPFeature 0x60=0x11` ✅ |
-| LG → USB-C (show the Mac) | `input-alt 209` ✅ | `lg-input-switch usbc` ✅ |
-| LG → DisplayPort (show Windows) | `input-alt 208` ✅ | `lg-input-switch dp` ✅ |
+| LG → USB-C (show the Mac) | `input-alt 209` ✅ | NVAPI I2C `0x50`/`0xF4=0xD1`, aimed ✅ |
+| LG → DisplayPort (show Windows) | `input-alt 208` ✅ | NVAPI I2C `0x50`/`0xF4=0xD0`, aimed ✅ |
+
+The Windows LG rows were re-verified on the aimed NVAPI transport, both directions,
+confirmed visually. They previously read `lg-input-switch usbc` / `dp`; the bytes on
+the wire are unchanged, but they now reach one output instead of every output.
 
 Each machine's *pull-to-self* direction was exercised with the monitor actually
 displaying the other machine — the case that matters, since the machine issuing the
