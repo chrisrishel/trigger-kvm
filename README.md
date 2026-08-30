@@ -76,6 +76,25 @@ command it home.
 two machines with the real USB switch moves both monitors correctly every time, in
 both directions, with no spurious switches observed.
 
+## Monitor prerequisite: turn Auto Input Switch OFF
+
+**On every monitor in the setup, before installing anything.** This is not
+optional, and nothing in the software can compensate for it.
+
+A monitor with Auto Input Switch enabled will move itself to whichever input still
+has a signal the moment the current one goes quiet. That directly fights a design
+whose entire premise is that input selection is explicit and commanded. Observed on
+2026-08-30: a sleep cycle on the Mac cost it the ASUS, which saw the Mac's signal
+stop and defected to the Windows PC by itself. The LG, with the setting already
+off, stayed where it was told.
+
+Nothing brings a defected monitor back on its own, because **wake is not a
+trigger** — the watchers fire on USB arrival, and sleeping produces no USB event.
+The monitor stays defected until the USB switch next moves.
+
+The setting is usually under the monitor's OSD as *Auto Input Switch*, *Auto
+Source*, or *Input Auto Detect*.
+
 ## Install
 
 macOS: see [`macos/README.md`](macos/README.md) — `make install`.

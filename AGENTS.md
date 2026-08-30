@@ -72,23 +72,30 @@ wins and the webcam is never logged — observed on both platforms. This is the
 debounce working, not the webcam failing to register. Do not "fix" it, and do not
 read a single-device log as evidence that the other device is misconfigured.
 
-**Sleep/wake may fire a spurious switch on macOS, but probably not on Windows.**
-This is reasoned from the two designs and is **UNVERIFIED** — nobody has tested a
-sleep cycle on either side.
+**Sleep/wake does NOT fire a spurious switch on macOS. Tested 2026-08-30.**
+This entry previously predicted the opposite, reasoning that
+`kIOFirstMatchNotification` fires on any new matching service and that USB
+re-enumerates on wake. A real `pmset sleepnow` / wake cycle produced **zero** log
+entries. The premise appears to be wrong on a desktop: the Mac Studio keeps its USB
+ports powered through sleep, so the devices are never torn down and no new match
+occurs. Do not add edge-tracking to the macOS detector to solve a problem that does
+not exist here.
 
-macOS uses `kIOFirstMatchNotification`, which fires whenever a *new* matching
-service appears. USB devices re-enumerate on wake, so that is a fresh match and
-`usb-watch` will fire, subject only to the debounce. Windows tracks
-absent → present *edges* against a presence map, so a device that was present
-before sleep and is present after produces no edge and no fire.
+Scope of that result: one cycle, on a desktop with powered USB. A laptop, or a hub
+that drops power, could still re-enumerate and fire. Re-test rather than assume if
+the hardware changes.
 
-It only ever fires on the machine that already holds the peripherals, so it
-re-asserts a state the system already considers correct, which is why it is a
-limitation rather than a defect. It does bite in one real case: if you have
-deliberately left the displays on one machine while the peripherals sit on the
-other, waking the peripheral-holding Mac will yank them back. If that becomes
-annoying, the fix is to give the macOS side the same edge-tracking the Windows side
-has, not to lengthen the debounce.
+**What sleep actually breaks is the monitors, not the detector.** During that same
+cycle the ASUS defected to the Windows PC on its own: it lost the Mac's signal while
+asleep and its **Auto Input Switch** moved it to the other live input. The LG stayed
+put, because its Auto Input Switch had already been turned off. Nothing pulled the
+ASUS back, because **wake is not a trigger** — the watcher only fires on USB
+arrival, and sleep produces no USB event.
+
+This is why Auto Input Switch must be off on every monitor in the setup; see
+`README.md`. Resist fixing it with a wake trigger instead: re-asserting on every
+wake would break the legitimate case of deliberately leaving the displays on one
+machine while the peripherals sit on the other.
 
 **Logs grow without bound on both platforms.** `~/Library/Logs/displayswitch.log`
 and `%LOCALAPPDATA%\display-switch\displayswitch.log` are appended to forever, with
