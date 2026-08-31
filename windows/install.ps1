@@ -161,6 +161,13 @@ function New-DefaultConfig {
         '# --- triggers ---------------------------------------------------------'
         '#'
         '# A trigger is anything that runs:  trigger-kvm.ps1 pull'
+        '#'
+        '# The shipped one watches DEVICE PRESENCE. Its detection mechanism is not USB-'
+        '# specific -- Win32_PnPEntity also enumerates Bluetooth, PCI and Thunderbolt --'
+        '# so USB is the ID PATTERN it matches, not the mechanism. Hence the split:'
+        '# .usb is the id list (transport-specific), while .debounce and .settle apply'
+        '# to device detection as a whole, because one debounce must cover every'
+        '# transport. Two separate windows could not dedupe against each other.'
         '# A USB watcher is the one shipped here; the keys below configure it. Any'
         '# other trigger -- a hotkey, a Stream Deck button, a scheduled task -- needs'
         '# no support from this tool, it just runs that command.'
@@ -172,9 +179,9 @@ function New-DefaultConfig {
         '# constantly, because the keyboard and mouse share a vendor id with the'
         '# webcam and never move.'
         ''
-        "trigger.usb.device   = $SEED_DEVICES"
-        "trigger.usb.debounce = $SEED_DEBOUNCE"
-        "trigger.usb.settle   = $SEED_SETTLE"
+        "trigger.device.usb      = $SEED_DEVICES"
+        "trigger.device.debounce = $SEED_DEBOUNCE"
+        "trigger.device.settle   = $SEED_SETTLE"
         ''
         '# --- scenes -----------------------------------------------------------'
         '# Saved arrangements for MANUAL use:  trigger-kvm.ps1 to mac'
@@ -301,7 +308,7 @@ if ($Discover) {
     $cur = @()
     if (Test-Path -LiteralPath $CONFIG) {
         $c = Read-Config -Path $CONFIG
-        if ($c.ContainsKey('trigger.usb.device')) { $cur = @(($c['trigger.usb.device'] -replace '\s','') -split ',') }
+        if ($c.ContainsKey('trigger.device.usb')) { $cur = @(($c['trigger.device.usb'] -replace '\s','') -split ',') }
     }
 
     foreach ($d in (Get-TriggerCandidates)) {
@@ -312,7 +319,7 @@ if ($Discover) {
     Write-Host ''
     Write-Host 'TRAP: match the FULL vendor+product pair. A keyboard and mouse often share a'
     Write-Host 'vendor id with a webcam and are always present, so a vendor-only match fires'
-    Write-Host 'constantly. Set trigger.device in the config, then re-run install.ps1.'
+    Write-Host 'constantly. Set trigger.device.usb in the config, then re-run install.ps1.'
     Write-Host ("config: {0}" -f $CONFIG)
     exit 0
 }
@@ -422,24 +429,37 @@ New-DefaultConfig -Path $CONFIG
 
 # The config is the source of truth for what the task watches. Read it back rather
 # than using the seed values, so that a hand-edited config actually takes effect on
-# the next install -- otherwise editing trigger.device would silently do nothing.
+# the next install -- otherwise editing trigger.device.usb would silently do nothing.
 $cfg      = Read-Config -Path $CONFIG
 
-# The trigger keys were namespaced (trigger.device -> trigger.usb.device) so that a
-# future non-USB trigger has somewhere to live. Falling back to the seed values on
-# an old key would silently revert customised triggers, so say so instead. Drop this
-# check once no config can plausibly still use the old names.
-foreach ($old in @('trigger.device', 'trigger.debounce', 'trigger.settle')) {
+# The trigger keys settled at trigger.device.* after two earlier spellings. The
+# split is deliberate: debounce and settle belong to device-presence detection as a
+# whole -- you want ONE debounce across transports, since two could not dedupe
+# against each other -- while the id LIST is transport-specific, because a USB
+# VID:PID and a Bluetooth address are not the same kind of string. Hence
+# trigger.device.usb alongside trigger.device.debounce.
+#
+# Falling back to seed values on an unrecognised old key would silently revert
+# customised triggers, so say so instead. Drop this check once no config can
+# plausibly still use the old names.
+$renamed = @{
+    'trigger.device'       = 'trigger.device.usb'
+    'trigger.debounce'     = 'trigger.device.debounce'
+    'trigger.settle'       = 'trigger.device.settle'
+    'trigger.usb.device'   = 'trigger.device.usb'
+    'trigger.usb.debounce' = 'trigger.device.debounce'
+    'trigger.usb.settle'   = 'trigger.device.settle'
+}
+foreach ($old in $renamed.Keys) {
     if ($cfg.ContainsKey($old)) {
-        Write-Log ("WARNING: '{0}' is the old key name; rename it to 'trigger.usb.{1}' in {2}." -f `
-                   $old, $old.Substring(8), $CONFIG)
+        Write-Log ("WARNING: '{0}' is an old key name; rename it to '{1}' in {2}." -f $old, $renamed[$old], $CONFIG)
         Write-Log '         Until you do, the seed defaults are used instead of your value.'
     }
 }
 
-$devices  = $(if ($cfg.ContainsKey('trigger.usb.device'))   { $cfg['trigger.usb.device'] -replace '\s', '' } else { $SEED_DEVICES })
-$debounce = $(if ($cfg.ContainsKey('trigger.usb.debounce')) { $cfg['trigger.usb.debounce'] }                 else { $SEED_DEBOUNCE })
-$settle   = $(if ($cfg.ContainsKey('trigger.usb.settle'))   { $cfg['trigger.usb.settle'] }                   else { $SEED_SETTLE })
+$devices  = $(if ($cfg.ContainsKey('trigger.device.usb'))   { $cfg['trigger.device.usb'] -replace '\s', '' } else { $SEED_DEVICES })
+$debounce = $(if ($cfg.ContainsKey('trigger.device.debounce')) { $cfg['trigger.device.debounce'] }                 else { $SEED_DEBOUNCE })
+$settle   = $(if ($cfg.ContainsKey('trigger.device.settle'))   { $cfg['trigger.device.settle'] }                   else { $SEED_SETTLE })
 Write-Log "watching: $devices  (debounce ${debounce}s, settle ${settle}s)"
 
 New-Item -ItemType Directory -Force -Path $DEST              | Out-Null

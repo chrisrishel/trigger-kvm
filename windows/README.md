@@ -83,11 +83,29 @@ switcher are separate processes and that command line is the entire interface
 between them, so a hotkey binding, a Stream Deck button, a scheduled task, or an
 SSH command all work today with no support from this tool.
 
-What ships is one trigger: `usb-watch.ps1`, which fires on USB device arrival and is
-what `install.ps1` registers. Its settings are the `trigger.usb.*` keys in the
-config. The namespace is there so a second trigger type has somewhere to live —
-there is deliberately no plugin system or trigger registry, because the process
-boundary already is one and a second abstraction on top would earn nothing.
+What ships is one trigger: `usb-watch.ps1`, which fires on **device presence** and
+is what `install.ps1` registers. There is deliberately no plugin system or trigger
+registry — the process boundary already is one, and a second abstraction on top
+would earn nothing.
+
+**Its mechanism is not USB-specific.** `Win32_PnPEntity` enumerates Bluetooth, PCI
+and Thunderbolt devices too — measured on this machine, USB is only 44 of ~300 PnP
+entities, and the same query returns `BTHENUM`, `BTHLE`, `PCI` and `SWD` entries.
+USB is the *ID pattern* the watcher matches, not the mechanism, so watching a
+Bluetooth device would be a match-pattern change rather than a new watcher.
+
+That is why the config keys split where they do:
+
+```
+trigger.device.usb      = 046d:0843,1235:820a   # transport-specific: a USB VID:PID
+trigger.device.debounce = 3.0                   # device detection as a whole
+trigger.device.settle   = 0.75                  # likewise
+```
+
+A second transport adds `trigger.device.bluetooth` and **shares** the timings. That
+sharing is the point rather than a convenience: two independent debounce windows
+could not dedupe against each other, which is the same failure that forced the
+single-instance mutex to become machine-wide.
 
 **A trigger runs `pull`, and only `pull`.** Never wire one to a scene. A scene names
 inputs on hardware this machine cannot observe, which go stale the moment a cable
