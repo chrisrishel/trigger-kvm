@@ -755,6 +755,22 @@ function Read-YesNo {
     }
 }
 
+# Run one of the sibling scripts in a CHILD PROCESS, never in this runspace.
+#
+# trigger-kvm.ps1 and event-watch.ps1 both Add-Type their P/Invoke bindings, and .NET
+# cannot replace a type once a runspace has loaded it -- so calling them in-process
+# means the installer inherits whatever version the window happened to load earlier.
+# trigger-kvm.ps1 detects that and refuses (correctly: running stale code while
+# appearing to test new code is worse), but the refusal then lands in the middle of
+# the walkthrough as a stack trace, for a reason that has nothing to do with the
+# person's monitors. A fresh process has a fresh runspace and the question does not
+# arise. Costs a process start; none of this is the hot path -- the watcher already
+# spawns its own.
+function Invoke-Sibling {
+    param([string]$Script, [string[]]$Arguments)
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Script @Arguments
+}
+
 # The one place the installer actually moves a monitor. Everything that switches a
 # panel goes through here -- the probe, a batched round, a blind walk -- so there is
 # a single line to read when asking "what can send a packet?", and a single thing for
@@ -763,7 +779,7 @@ function Send-Input {
     param([string]$Label, [string]$Value, [string]$Config)
     $sw = Join-Path $PSScriptRoot 'trigger-kvm.ps1'
     if (-not (Test-Path $sw)) { $sw = $SWITCH }
-    & $sw set -Only $Label -Value $Value -Config $Config | Out-Null
+    Invoke-Sibling -Script $sw -Arguments @('set', '-Only', $Label, '-Value', $Value, '-Config', $Config) | Out-Null
 }
 
 # Switch one display to a candidate input, hold, bring it BACK automatically, and
@@ -1239,7 +1255,7 @@ function Invoke-Configure {
     # -Raw, not the human table: that one is Write-Host, which never reaches the
     # pipeline, so parsing it would silently find nothing.
     $found = @()
-    foreach ($line in (& $sw list -Raw -Config $CONFIG 2>$null)) {
+    foreach ($line in (Invoke-Sibling -Script $sw -Arguments @('list', '-Raw', '-Config', $CONFIG) 2>$null)) {
         $f = "$line" -split '\|'
         if ($f.Count -ge 4) {
             $found += [PSCustomObject]@{
@@ -1466,7 +1482,7 @@ function Invoke-TriggerTest {
         Write-Host '  displays for real. That is fine, and is the thing working.'
     }
 
-    & $ew -TestTrigger -Device ($Devices -join ',') -Config $CONFIG
+    Invoke-Sibling -Script $ew -Arguments @('-TestTrigger', '-Device', ($Devices -join ','), '-Config', $CONFIG)
     $code = $LASTEXITCODE
 
     if ($code -eq 0) { return [PSCustomObject]@{ Ok = $true; Text = 'saw the devices arrive' } }
@@ -1941,7 +1957,8 @@ function Get-TriggerCandidates {
     # display list.
     $bt = @()
     try {
-        $rows = & (Join-Path $PSScriptRoot 'event-watch.ps1') -ListBluetooth 2>$null
+        $rows = Invoke-Sibling -Script (Join-Path $PSScriptRoot 'event-watch.ps1') `
+                               -Arguments @('-ListBluetooth') 2>$null
         foreach ($row in $rows) {
             $parts = "$row" -split '\|', 3
             if ($parts.Count -lt 3) { continue }
@@ -1962,7 +1979,8 @@ function Get-TriggerCandidates {
 if ($Command -eq 'discover') {
     Write-Host ''
     Write-Host '=== displays on this machine ==='
-    & (Join-Path $PSScriptRoot 'trigger-kvm.ps1') list -Config $CONFIG
+    Invoke-Sibling -Script (Join-Path $PSScriptRoot 'trigger-kvm.ps1') `
+                   -Arguments @('list', '-Config', $CONFIG)
 
     Write-Host ''
     Write-Host '=== devices that could be a trigger ==='

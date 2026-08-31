@@ -55,6 +55,43 @@ trigger-kvm uninstall
 trigger-kvm pull | to <machine> | list
 ```
 
+### Tests
+
+```powershell
+cd windows	ests
+.un.ps1                 # all of them
+.un.ps1 menus           # just one file
+.un.ps1 -Verbose        # every prompt and answer
+```
+
+No framework. The Pester that ships with Windows PowerShell 5.1 is 3.4, and requiring
+`Install-Module` would put a gallery dependency in front of a project whose whole
+claim is that it needs nothing but stock PowerShell. A test here is a script that
+throws when something is wrong.
+
+Each file runs in its own `powershell.exe` — not tidiness: the walkthrough tests
+define stubs with the same names as real functions, and `types.tests.ps1` deliberately
+loads a stale copy of the switcher into its runspace.
+
+| file | what it holds down |
+|---|---|
+| `menus.tests.ps1` | cursor, the `Done` button, separators, `(current)`, and that nothing is ever truncated |
+| `walkthrough.tests.ps1` | the whole flow with scripted answers — first run, re-run, `-Fresh`, dialect escalation, blind walking, duplicate inputs |
+| `monitor-check.tests.ps1` | batching on a four-panel desk, the window's panel being scheduled last, and the single-monitor pre-flight |
+| `resolve.tests.ps1` | the real switcher under `-WhatIf`: the exact packets, and every refusal |
+| `types.tests.ps1` | the loaded-type guard still fires, and the installer cannot trip it |
+
+`Send-Input` is stubbed throughout, so the suite cannot move a monitor.
+`resolve.tests.ps1` needs the reference panels attached and says so and skips when
+they are not.
+
+**They are mutation-checked.** Five passing tests prove nothing until they can fail,
+so three regressions were reintroduced deliberately to confirm each is caught: the
+recovery instruction naming a machine instead of an input, `Write-MenuFrame`
+truncating again, and the installer calling its siblings in-process. The truncation
+one initially *passed* — `Split-Detail` pre-wraps, so a `Substring` only bites on a
+single unbreakable item, and that case had to be added.
+
 ### The walkthrough
 
 Every list question is an arrow-key menu, and the rule is the same in all of them:

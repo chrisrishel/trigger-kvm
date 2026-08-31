@@ -433,6 +433,17 @@ trigger-kvm configure -Fresh               # ask everything again, pre-fill noth
 .\trigger-kvm.ps1 pull -WhatIf         # resolve + print packets, send nothing
 ```
 
+There is a test suite, and it runs without hardware:
+
+```powershell
+cd windows	ests
+.un.ps1
+```
+
+Add to it when you change the walkthrough or the menus -- and then MUTATE the thing
+you changed and confirm the new test fails. Every regression listed in those files
+got there by being shipped once.
+
 Both scripts must parse clean before they are run against hardware:
 
 ```powershell
