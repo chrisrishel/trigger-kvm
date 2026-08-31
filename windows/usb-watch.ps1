@@ -51,7 +51,12 @@ param(
     # Append to this file as well as writing to the host. The watcher owns its own
     # log rather than relying on shell redirection, so it can be launched with no
     # console attached at all -- see install.ps1.
-    [string]$LogFile
+    [string]$LogFile,
+
+    # Rotate the log at startup once it exceeds this. One generation is kept as
+    # .1; the older one is discarded. Output is a few lines per switch, so this is
+    # years of normal use -- the point is that it is bounded at all.
+    [int]$MaxLogBytes = 1MB
 )
 
 Set-StrictMode -Version Latest
@@ -149,6 +154,26 @@ if (-not $mutex.WaitOne(0)) {
     exit 0
 }
 
+# Rotate here, and only here: after the mutex, so the installer's 1-minute
+# self-heal tick (which exits immediately while a watcher is alive) never rotates,
+# and once per real start rather than per write, so the switcher -- a separate
+# process appending to the same file -- can never race a rename mid-switch. The
+# watcher is the long-lived owner, so its startup is the one safe moment.
+if ($LogFile -and (Test-Path -LiteralPath $LogFile)) {
+    try {
+        $size = (Get-Item -LiteralPath $LogFile).Length
+        if ($size -gt $MaxLogBytes) {
+            $old = "$LogFile.1"
+            Remove-Item -LiteralPath $old -Force -ErrorAction SilentlyContinue
+            Move-Item -LiteralPath $LogFile -Destination $old -Force
+            Write-Log ("rotated log at {0:N0} bytes (previous kept as {1})" -f $size, $old)
+        }
+    } catch {
+        # A log that cannot be rotated is not a reason to stop watching displays.
+        Write-Log ("WARN: could not rotate log: {0}" -f $_.Exception.Message)
+    }
+}
+
 Unregister-Event -SourceIdentifier $SOURCE -ErrorAction SilentlyContinue
 Register-CimIndicationEvent -ClassName Win32_DeviceChangeEvent -SourceIdentifier $SOURCE | Out-Null
 
@@ -173,9 +198,20 @@ try {
 
         $now     = Get-PresenceMap
         $arrived = @($watch | Where-Object { $now[$_.Key] -and -not $present[$_.Key] } | ForEach-Object { $_.Key })
+        $departed = @($watch | Where-Object { $present[$_.Key] -and -not $now[$_.Key] } | ForEach-Object { $_.Key })
         $present = $now
 
-        if (-not $arrived) { continue }
+        # Log the rejection rather than dropping it silently. Without this line a
+        # quiet log cannot distinguish "no event was delivered" from "an event was
+        # delivered and correctly rejected" -- the outcome is the same, the claim is
+        # not, and AGENTS.md asks for exactly this before anyone tries to evidence
+        # which happened. Verbose rather than logged: the OS delivers these
+        # constantly and the steady state is noise, not news.
+        if (-not $arrived) {
+            $why = if ($departed) { 'departure of ' + ($departed -join ', ') } else { 'no watched device changed state' }
+            Write-Verbose ("device-change event yielded no arrival edge ({0}); ignoring" -f $why)
+            continue
+        }
 
         $since = ([DateTime]::UtcNow - $lastFire).TotalSeconds
         if ($since -lt $Debounce) {

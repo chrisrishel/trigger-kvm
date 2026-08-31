@@ -43,7 +43,8 @@ exists precisely so these two implementations can't drift.
 access. Earlier versions downloaded a 16MB `lg-input-switch.exe` from a pinned
 release; installing now deletes that binary if a previous install left one behind.
 
-Log: `%LOCALAPPDATA%\display-switch\displayswitch.log`
+Log: `%LOCALAPPDATA%\display-switch\displayswitch.log`, rotated by the watcher at
+startup once it passes 1MB (`-MaxLogBytes`), keeping one generation as `.log.1`.
 
 ## Manual use
 

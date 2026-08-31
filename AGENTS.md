@@ -117,12 +117,15 @@ logs `armed (2 already present, not firing)`. Both paths are safe, and so is the
 move in between: flipping the USB switch to this PC *while it is hibernating* does
 fire on resume, which is correct — the peripherals really did move here.
 
-**Do not read a quiet log as proof the edge guard rejected anything.**
-`usb-watch.ps1` drops a device-change event that yields no edge with a bare
-`continue` and no log line. "No arrival logged" therefore cannot distinguish "no
-event was delivered" from "an event was delivered and correctly rejected". The
-outcome is the same either way; the claim is not. Add a `Write-Verbose` on that
-branch before trying to evidence which one happened.
+**A quiet log is still not proof the edge guard rejected anything — but `-Verbose`
+now is.** `usb-watch.ps1` used to drop a no-edge device-change event with a bare
+`continue` and no line at all, so "no arrival logged" could not distinguish "no
+event was delivered" from "an event was delivered and correctly rejected". It now
+emits `device-change event yielded no arrival edge (...)` naming whether a watched
+device departed or nothing changed. That is `Write-Verbose`, not `Write-Log`: the
+OS delivers these constantly and the steady state is noise, so the installed
+watcher does not run with `-Verbose` and its log stays quiet. Run the watcher by
+hand with `-Verbose` to evidence which case happened.
 
 **`DEVPKEY_Device_LastArrivalDate` does not track this.** It read `03:28:57` (boot)
 for both watched devices *both before and after* a hibernate cycle in which bus
@@ -200,9 +203,17 @@ rather than by execution context, and what it actually tracks is not established
 here. `isConnected` (bit 6) was stable across every run and every context. Use that.
 See `ideas/nvapi-transport.md`.
 
-**Logs grow without bound on both platforms.** `~/Library/Logs/displayswitch.log`
-and `%LOCALAPPDATA%\display-switch\displayswitch.log` are appended to forever, with
-no rotation. Output is a few lines per switch so this is slow, but it is unbounded.
+**Windows rotates its log; macOS still does not.**
+`%LOCALAPPDATA%\display-switch\displayswitch.log` is rotated by `usb-watch.ps1` at
+startup once it passes `-MaxLogBytes` (default 1MB), keeping one generation as
+`.1`. `~/Library/Logs/displayswitch.log` on macOS is still appended to forever.
+Output is a few lines per switch so the macOS growth is slow, but it is unbounded.
+
+Rotation happens at watcher startup and nowhere else, for two reasons worth not
+undoing: it sits *after* the single-instance mutex, so the installer's 1-minute
+self-heal tick never rotates while a watcher is alive; and doing it once per start
+rather than per write means the switcher -- a separate process appending to the
+same file -- can never race a rename mid-switch.
 
 **Both switchers now address exactly one display.** `m1ddc display <uuid> set ...`
 always did; the Windows LG path does since 2026-08-30, by aiming the NVAPI I2C
