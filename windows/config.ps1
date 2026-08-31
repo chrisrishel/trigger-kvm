@@ -18,6 +18,9 @@
 #   display.<label>.name     human name, for logs
 #   display.<label>.method   standard | lg-alt
 #   display.<label>.self     input value where THIS machine is
+#   display.<label>.input.<value>  your name for that input, e.g.
+#                            display.lg.input.0xd1 = Mac. Value-first so the name
+#                            survives verbatim: keys are lower-cased, values are not
 #   scene.<name>.<label>     input value for that display in that scene
 #   trigger.device           usb:VVVV:PPPP / VVVV:PPPP / bt:AAAAAAAAAAAA, comma-sep
 #   trigger.debounce         seconds

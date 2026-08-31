@@ -212,6 +212,7 @@ public class NvDisplay {
     public ushort EdidVendor;
     public ushort EdidProduct;
     public uint   EdidSerial;
+    public string EdidName;      // the model name the panel reports, or ""
 
     public override string ToString() {
         return string.Format("outputId=0x{0:X8} connector={1} edid=0x{2:X4}:0x{3:X4} serial=0x{4:X8}",
@@ -375,6 +376,29 @@ public static class NvDdc {
     }
 
     // EDID manufacturer id is three 5-bit letters packed big-endian in bytes 8-9.
+    // The model name the panel reports about itself: EDID descriptor tag 0xFC, in
+    // one of the four 18-byte blocks at 54/72/90/108. Asking the hardware beats any
+    // table we could ship -- a database only ever knows the monitors we have met,
+    // and this knows every monitor. Returns "" when the descriptor is absent, which
+    // is legal and not rare on cheap panels.
+    public static string DecodeName(byte[] edid, int size) {
+        if (edid == null || size < 128) return "";
+        for (int b = 54; b + 18 <= 126; b += 18) {
+            // A descriptor with a non-zero pixel clock is a timing block, not text.
+            if (edid[b] != 0 || edid[b + 1] != 0 || edid[b + 2] != 0) continue;
+            if (edid[b + 3] != 0xFC) continue;
+            var sb = new System.Text.StringBuilder();
+            for (int i = b + 5; i < b + 18; i++) {
+                byte c = edid[i];
+                if (c == 0x0A) break;              // the field is newline-terminated
+                if (c < 0x20 || c > 0x7E) continue;
+                sb.Append((char)c);
+            }
+            return sb.ToString().Trim();
+        }
+        return "";
+    }
+
     public static string DecodeMfg(ushort id) {
         char a = (char)(((id >> 10) & 0x1F) + 64);
         char b = (char)(((id >> 5)  & 0x1F) + 64);
@@ -451,6 +475,7 @@ public static class NvDdc {
                 nd.EdidProduct = (ushort)(edid.edidData[10] | (edid.edidData[11] << 8));
                 nd.EdidSerial  = (uint)(edid.edidData[12] | (edid.edidData[13] << 8)
                                       | (edid.edidData[14] << 16) | (edid.edidData[15] << 24));
+                nd.EdidName    = DecodeName(edid.edidData, edid.edidSize);
                 found.Add(nd);
             }
         }
@@ -703,9 +728,11 @@ if ($Command -eq 'list') {
 
     if ($Raw) {
         foreach ($d in $found) {
-            Write-Output ('{0:X4}|{1:X4}|{2}|{3}|{4:X8}' -f `
+            # Name last: install.ps1 accepts >= 4 fields, so appending cannot break
+            # a copy of it that predates this.
+            Write-Output ('{0:X4}|{1:X4}|{2}|{3}|{4:X8}|{5}' -f `
                           $d.EdidVendor, $d.EdidProduct, [NvDdc]::DecodeMfg($d.EdidVendor),
-                          $d.Connector, $d.EdidSerial)
+                          $d.Connector, $d.EdidSerial, $d.EdidName)
         }
         exit 0
     }
@@ -718,13 +745,13 @@ if ($Command -eq 'list') {
     }
 
     Write-Host ''
-    Write-Host ('  {0,-8} {1,-12} {2,-9} {3,-11} {4,-12} {5}' -f 'vendor', 'product', 'mfg', 'connector', 'serial', 'configured as')
-    Write-Host ('  {0,-8} {1,-12} {2,-9} {3,-11} {4,-12} {5}' -f '------', '-------', '---', '---------', '------', '-------------')
+    Write-Host ('  {0,-8} {1,-9} {2,-11} {3,-22} {4}' -f 'vendor', 'product', 'connector', 'name (from the panel)', 'configured as')
+    Write-Host ('  {0,-8} {1,-9} {2,-11} {3,-22} {4}' -f '------', '-------', '---------', '---------------------', '-------------')
     foreach ($d in $found) {
         $key = '{0:X4}:{1:X4}' -f $d.EdidVendor, $d.EdidProduct
-        Write-Host ('  0x{0:X4}   0x{1:X4}       {2,-9} {3,-11} 0x{4:X8}   {5}' -f `
-                    $d.EdidVendor, $d.EdidProduct, [NvDdc]::DecodeMfg($d.EdidVendor),
-                    $d.Connector, $d.EdidSerial,
+        Write-Host ('  0x{0:X4}   0x{1:X4}    {2,-11} {3,-22} {4}' -f `
+                    $d.EdidVendor, $d.EdidProduct, $d.Connector,
+                    $(if ($d.EdidName) { $d.EdidName } else { '(' + [NvDdc]::DecodeMfg($d.EdidVendor) + ', unnamed)' }),
                     $(if ($known.ContainsKey($key)) { $known[$key] } else { '-- not in config --' }))
     }
     Write-Host ''

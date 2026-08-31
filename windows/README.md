@@ -118,6 +118,53 @@ implementation in the installer would be free to disagree with the one that
 actually fires, which is the worst possible place for a disagreement. It takes no
 lock and runs nothing, so a real watcher may be running alongside.
 
+### Monitors nobody has met
+
+**The panel says its own name.** It comes out of the EDID (descriptor tag `0xFC`) —
+`PG42UQ`, `LG ULTRAGEAR+` — so there is no name table to be absent from. Asking the
+hardware beats a database, which only ever knows the monitors its author owned.
+
+**Every panel starts on standard DDC/CI**, whatever the make: I2C source `0x51`,
+VCP `0x60`, MCCS values. That is what nearly everything answers to.
+
+**Manufacturer dialects are keyed by vendor, and offered, never probed.** `$DIALECTS`
+holds one row today — EDID vendor `1E6D` (LG), source `0x50`, VCP `0xF4`, values
+`D0 D1 90 91`. It is reached only when the monitor test shows standard did nothing,
+and then the values are *shown to you and offered*, because a value nobody
+documented is a value nobody should send (hard rule 1: a "Bricked LG Monitor" issue
+exists). The old table was keyed vendor:product — one row per monitor someone here
+happened to own, on a panel whose product id is per-*input*, so the key was nearly
+per-cable. The transport had this right all along: `WriteLgInput` gates on the
+vendor and does not care which LG it is.
+
+**The test asks what actually happened**, because three outcomes have three
+different fixes and a yes/no could only see two:
+
+```
+  What did the LG ULTRAGEAR+ do?
+  > It changed, then came back          everything works
+    It changed, but did not come back   the input you gave for THIS PC is wrong
+    Nothing happened at all             this panel does not answer on this channel
+```
+
+"Did not come back" means the channel is right and `self` is wrong — so it asks
+again, or walks the values for you. "Nothing at all" means the channel is wrong —
+so it offers the vendor's dialect if there is one, and says plainly that nothing
+known reaches this panel if there is not. Each fix retries immediately rather than
+sending you back to the review menu.
+
+**Blind value-walking is the last resort**, and only ever on standard DDC: each MCCS
+value in turn until the panel comes back. It is offered rather than automatic, with
+the cost stated first (every wrong value moves that panel; if none is right it stays
+there), and **refused outright when it would take the last display** — hard rule 4,
+and the question would otherwise be printed on the screen it just blacked out.
+
+**You name your own inputs.** After a monitor comes back, it asks what was on the
+input it visited. Your answer is stored as `display.lg.input.0xd1 = Mac` — value
+first, so the name survives exactly as typed — and offered ahead of the standard
+names on every later run. "Mac" is a better label than "HDMI 2", and it is the only
+one that is true about your room.
+
 **Testing the monitors happens before anything is written.** The switcher takes a panel's method
 and identity from a config file rather than from the command line — deliberately,
 so there is one description of a panel and not two — so the test writes a throwaway

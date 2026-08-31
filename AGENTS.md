@@ -21,6 +21,15 @@ That is a service/factory channel. Sweeping it has bricked LG monitors — the
 already documented in `displays.toml`. If you need a value that isn't there, ask;
 do not go looking for it experimentally.
 
+**1b. A manufacturer dialect is OFFERED, never probed, and only after standard
+DDC/CI has been shown not to work.** `$DIALECTS` in `install.ps1` is keyed by EDID
+**vendor** -- never vendor:product, which was one row per monitor someone here
+happened to own. Values in it come from documentation and measurement. The
+walkthrough sets every panel to `standard` first, whatever the make; only when the
+user reports that nothing happened is the vendor's channel offered, with its values
+shown. Blind value-walking is standard-DDC-only, one MCCS value at a time, offered
+with its cost stated, and refused when it would take the last display.
+
 **2. Never verify a switch by reading a VCP value back.**
 Reads are unreliable on both monitors and *have already produced false negatives*:
 
