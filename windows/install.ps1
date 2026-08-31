@@ -427,17 +427,398 @@ function Remove-LegacyInstall {
 
 # --- configure ---------------------------------------------------------------
 
-# Placeholder for the interactive walkthrough, which lands next. Deliberately does
-# not pretend: an installer that half-asks is worse than one that says it cannot yet.
+# Researched, cross-machine knowledge: which method a monitor MODEL needs and which
+# input values it accepts. Mirrors ..\displays.toml, which is the human-readable
+# source of truth -- if you add a model, add it there too and say how it was
+# verified.
+#
+# This is the gate on the manufacturer sidechannel. A panel absent from this table
+# is offered STANDARD DDC/CI only, never `lg-alt`, because what source 0x50 means on
+# an untested panel is unknown and sweeping it has bricked monitors. See AGENTS.md
+# hard rule 1.
+$KNOWN_MONITORS = @{
+    '1E6D:9E9D' = @{
+        Name   = 'LG 45GX950A'
+        Method = 'lg-alt'
+        # Per-INPUT product id on this panel: 0x9e9d is what a host sees on its own
+        # DisplayPort connection. Never copy it between hosts.
+        Inputs = [ordered]@{ 'DisplayPort' = '0xD0'; 'USB-C' = '0xD1'; 'HDMI 1' = '0x90'; 'HDMI 2' = '0x91' }
+    }
+    '06B3:42E0' = @{
+        Name   = 'ASUS PG42UQ'
+        Method = 'standard'
+        Inputs = [ordered]@{ 'HDMI 1' = '0x11'; 'HDMI 2' = '0x12'; 'DisplayPort' = '0x0F' }
+    }
+}
+
+# Published MCCS values for VCP 0x60, offered for any panel we have no entry for.
+# A labelled list the user picks from, one at a time -- NOT a sweep. Trying a
+# documented value on the documented input-select code is ordinary operation;
+# walking a range to see what happens is what the hard rule forbids.
+$MCCS_INPUTS = [ordered]@{
+    'DisplayPort 1' = '0x0F'
+    'DisplayPort 2' = '0x10'
+    'HDMI 1'        = '0x11'
+    'HDMI 2'        = '0x12'
+    'DVI 1'         = '0x03'
+    'DVI 2'         = '0x04'
+    'VGA 1'         = '0x01'
+    'USB-C'         = '0x1B'
+}
+
+# Can we actually hold a conversation? A prompt in a non-interactive context is a
+# hang, not a question -- and the elevated relaunch runs in a HIDDEN window, so
+# getting this wrong means an install that appears to freeze with no way to see why.
+function Test-CanPrompt {
+    return ([Environment]::UserInteractive -and -not $Relaunched -and -not [Console]::IsInputRedirected)
+}
+
+function Read-Default {
+    param([string]$Prompt, [string]$Default)
+    $shown = if ($Default) { "$Prompt [$Default]" } else { $Prompt }
+    $answer = Read-Host $shown
+    if ([string]::IsNullOrWhiteSpace($answer)) { return $Default }
+    return $answer.Trim()
+}
+
+function Read-YesNo {
+    param([string]$Prompt, [bool]$Default = $true)
+    $hint = if ($Default) { 'Y/n' } else { 'y/N' }
+    while ($true) {
+        $a = (Read-Host "$Prompt [$hint]").Trim().ToLower()
+        if (-not $a) { return $Default }
+        if ($a -in @('y', 'yes')) { return $true }
+        if ($a -in @('n', 'no'))  { return $false }
+    }
+}
+
+# Switch one display to a candidate input, hold, bring it BACK automatically, and
+# only then ask.
+#
+# The return is what makes this safe to run against the display you are reading:
+# the question always arrives on a panel that has already come back, so the
+# installer never needs to know which monitor its own window is on, and a wrong
+# guess costs a few seconds of black rather than a stranded session. Confirming
+# visually is the only verification this hardware permits -- reads lie on both
+# panels here (AGENTS.md hard rule 2).
+function Test-DisplayInput {
+    param([string]$Label, [string]$Name, [string]$Candidate, [string]$Current, [int]$Hold = 8)
+
+    $sw = Join-Path $PSScriptRoot 'trigger-kvm.ps1'
+    if (-not (Test-Path $sw)) { $sw = $SWITCH }
+
+    Write-Host ''
+    Write-Host ("  Sending $Name to $Candidate for ${Hold}s, then bringing it back.")
+    Write-Host '  Watch that monitor.'
+    & $sw set -Only $Label -Value $Candidate -Config $CONFIG | Out-Null
+    Start-Sleep -Seconds $Hold
+    if ($Current) { & $sw set -Only $Label -Value $Current -Config $CONFIG | Out-Null; Start-Sleep -Seconds 2 }
+    Write-Host ''
+    return (Read-YesNo "  Did $Name change to the input you expected?" $true)
+}
+
+# One display: identity is already known from NVAPI; what we need from the human is
+# whether to manage it, what to call it, and which input THIS machine is on.
+function Get-DisplayAnswers {
+    param($Found, [hashtable]$Existing, [bool]$AllowDemo)
+
+    $key   = '{0:X4}:{1:X4}' -f $Found.EdidVendor, $Found.EdidProduct
+    $known = $KNOWN_MONITORS[$key]
+    $desc  = if ($known) { $known.Name } else { ('{0} panel {1}' -f $Found.Mfg, $key) }
+
+    Write-Host ''
+    Write-Host ('  {0}   EDID {1}   {2}' -f $desc, $key, $Found.Connector)
+    if (-not $known) {
+        Write-Host '  Not in the known-monitor list, so only standard DDC/CI is offered.'
+    }
+
+    $default = if ($Existing) { $Existing.Label } else { ($desc -split ' ')[0].ToLower() }
+    if (-not (Read-YesNo '  Manage this monitor?' $true)) { return $null }
+
+    $label = Read-Default '  Short name for it' $default
+    $label = ($label -replace '[^A-Za-z0-9_-]', '').ToLower()
+    if (-not $label) { $label = $default }
+
+    $method = if ($known) { $known.Method } else { 'standard' }
+    $table  = if ($known) { $known.Inputs } else { $MCCS_INPUTS }
+
+    Write-Host ''
+    Write-Host '  Which input is THIS machine plugged into?'
+    $names = @($table.Keys)
+    for ($i = 0; $i -lt $names.Count; $i++) {
+        Write-Host ('    {0}) {1,-16} {2}' -f ($i + 1), $names[$i], $table[$names[$i]])
+    }
+    Write-Host '    t) type a value'
+
+    $self = $null
+    while (-not $self) {
+        $pick = Read-Default '  Choice' $(if ($Existing) { '' } else { '' })
+        if ($pick -eq 't') {
+            $typed = Read-Default '  Value (e.g. 0x11)' ''
+            if ($typed -match '^(0[xX])?[0-9A-Fa-f]{1,2}$') { $self = $typed }
+            else { Write-Host '  Not a byte.' }
+        }
+        elseif ($pick -match '^[0-9]+$' -and [int]$pick -ge 1 -and [int]$pick -le $names.Count) {
+            $self = $table[$names[[int]$pick - 1]]
+        }
+        else { Write-Host '  Pick a number, or t.' }
+    }
+
+    return [PSCustomObject]@{
+        Label = $label; Name = $desc; Method = $method
+        Vendor = ('0x{0:X4}' -f $Found.EdidVendor); Product = ('0x{0:X4}' -f $Found.EdidProduct)
+        Self = $self; Table = $table
+    }
+}
+
+# The walkthrough. Current settings pre-fill every default, so a re-run is a review
+# rather than a replay.
+#
+# Nothing is written until every answer is in: an interrupted run must leave a
+# working setup untouched, not a half-written config plus a task pointing at it.
 function Invoke-Configure {
-    Write-Log 'the interactive walkthrough is not built yet.'
+    if (-not (Test-CanPrompt)) {
+        Write-Log 'configure needs an interactive terminal.'
+        Write-Host ''
+        Write-Host ("Edit the config directly instead:  {0}" -f $CONFIG)
+        Write-Host 'Then:  trigger-kvm restart'
+        $global:LASTEXITCODE = 2
+        return
+    }
+
+    $existing = Read-Config -Path $CONFIG
+    $isFirst  = -not (Test-Path -LiteralPath $CONFIG)
+
     Write-Host ''
-    Write-Host ("Edit the config by hand for now:  {0}" -f (Get-ConfigPath))
-    Write-Host 'Then:  trigger-kvm restart'
+    Write-Host '=============================================================='
+    Write-Host $(if ($isFirst) { ' trigger-kvm setup' } else { ' trigger-kvm reconfigure' })
+    Write-Host '=============================================================='
+    if (-not $isFirst) {
+        Write-Host ' Current settings are the defaults -- press enter to keep one.'
+    }
+
+    # ---- displays ----------------------------------------------------------
+    $sw = Join-Path $PSScriptRoot 'trigger-kvm.ps1'
+    if (-not (Test-Path $sw)) { $sw = $SWITCH }
+
+    # -Raw, not the human table: that one is Write-Host, which never reaches the
+    # pipeline, so parsing it would silently find nothing.
+    $found = @()
+    foreach ($line in (& $sw list -Raw -Config $CONFIG 2>$null)) {
+        $f = "$line" -split '\|'
+        if ($f.Count -ge 4) {
+            $found += [PSCustomObject]@{
+                EdidVendor  = [Convert]::ToInt32($f[0], 16)
+                EdidProduct = [Convert]::ToInt32($f[1], 16)
+                Mfg         = $f[2]
+                Connector   = $f[3]
+            }
+        }
+    }
+    if ($found.Count -eq 0) {
+        Write-Log 'no displays found on an NVIDIA GPU -- nothing to configure.'
+        $global:LASTEXITCODE = 2
+        return
+    }
+
     Write-Host ''
-    Write-Host 'To see what is attached, in the form the config wants:'
-    Write-Host '    trigger-kvm discover'
-    $global:LASTEXITCODE = 2
+    Write-Host ('--- displays ({0} connected) ---' -f $found.Count)
+
+    $answers = @()
+    foreach ($f in $found) {
+        $key = '{0:X4}:{1:X4}' -f $f.EdidVendor, $f.EdidProduct
+        $prior = $null
+        foreach ($k in $existing.Keys) {
+            if ($k -match '^display\.([^.]+)\.vendor$') {
+                $l = $Matches[1]
+                if (($existing["display.$l.vendor"] -replace '^0[xX]','').ToUpper().PadLeft(4,'0') -eq $key.Split(':')[0] -and
+                    ($existing["display.$l.product"] -replace '^0[xX]','').ToUpper().PadLeft(4,'0') -eq $key.Split(':')[1]) {
+                    $prior = [PSCustomObject]@{ Label = $l }
+                }
+            }
+        }
+        $a = Get-DisplayAnswers -Found $f -Existing $prior -AllowDemo $true
+        if ($a) { $answers += $a }
+    }
+
+    if ($answers.Count -eq 0) {
+        Write-Log 'no monitors selected -- nothing to do.'
+        $global:LASTEXITCODE = 2
+        return
+    }
+
+    # ---- triggers ----------------------------------------------------------
+    Write-Host ''
+    Write-Host '--- triggers ---'
+    Write-Host 'Which devices move to this machine when you flip the switch?'
+    Write-Host 'Everything below is attached or connected right now.'
+    Write-Host ''
+
+    $cands = @(Get-TriggerCandidates)
+    $cur = @()
+    if ($existing.ContainsKey('trigger.device')) {
+        $cur = @(($existing['trigger.device'] -replace '\s','') -split ',' | Where-Object { $_ } | ForEach-Object {
+            if ($_ -match '^(usb:|bt:)') { $_.ToLower() } else { 'usb:' + $_.ToLower() } })
+    }
+    for ($i = 0; $i -lt $cands.Count; $i++) {
+        $mark = if ($cur -contains $cands[$i].Key) { '*' } else { ' ' }
+        Write-Host ('  {0}{1,3}) {2,-20} {3,-4} {4}' -f $mark, ($i + 1), $cands[$i].Key, $cands[$i].Bus, $cands[$i].Name)
+    }
+    Write-Host ''
+    Write-Host '  TRAP: keyboards and mice often share a vendor id with a webcam and never'
+    Write-Host '  move. Full vendor+product is matched, so pick the exact rows that travel.'
+
+    $defaultPick = ''
+    if ($cur) {
+        $idx = @()
+        for ($i = 0; $i -lt $cands.Count; $i++) { if ($cur -contains $cands[$i].Key) { $idx += ($i + 1) } }
+        $defaultPick = ($idx -join ',')
+    }
+
+    $devices = @()
+    while ($devices.Count -eq 0) {
+        $pick = Read-Default '  Numbers, comma-separated' $defaultPick
+        foreach ($n in ($pick -split ',')) {
+            $n = $n.Trim()
+            if ($n -match '^[0-9]+$' -and [int]$n -ge 1 -and [int]$n -le $cands.Count) {
+                $devices += $cands[[int]$n - 1].Key
+            }
+        }
+        if ($devices.Count -eq 0) { Write-Host '  Pick at least one.' }
+    }
+
+    # ---- tier --------------------------------------------------------------
+    Write-Host ''
+    Write-Host '--- when should it run? ---'
+    Write-Host '  1) from logon onward, INCLUDING while locked        no admin'
+    Write-Host '  2) from boot -- adds before-first-login and logoff  admin ONCE (UAC prompt)'
+    Write-Host ''
+    Write-Host '  Locking does not end your session, so 1 covers most days. 2 is for a'
+    Write-Host '  rebooted PC sitting at a login screen you cannot see.'
+    $curTier = if ($existing.ContainsKey('install.tier')) { $existing['install.tier'] } else { 'user' }
+    $tierPick = Read-Default '  Choice' $(if ($curTier -eq 's4u') { '2' } else { '1' })
+    $newTier = if ($tierPick -eq '2') { 's4u' } else { 'user' }
+
+    # ---- PATH --------------------------------------------------------------
+    $onPath = @((Get-UserPath -split ';')) -contains $BINDIR
+    $wantPath = $false
+    if (-not $onPath) {
+        Write-Host ''
+        Write-Host '--- PATH ---'
+        Write-Host ("  Add {0} to your PATH, so `trigger-kvm` works from anywhere?" -f $BINDIR)
+        Write-Host '  Only that directory is added, and it holds only the launcher.'
+        $wantPath = Read-YesNo '  Add it?' $true
+    }
+
+    # ---- write, then verify ------------------------------------------------
+    Write-Host ''
+    Write-Host '--- summary ---'
+    foreach ($a in $answers) { Write-Host ('  {0,-8} {1,-16} {2} self={3}' -f $a.Label, $a.Name, $a.Method, $a.Self) }
+    Write-Host ('  triggers  {0}' -f ($devices -join ', '))
+    Write-Host ('  tier      {0}' -f $newTier)
+    Write-Host ''
+    if (-not (Read-YesNo '  Write this?' $true)) {
+        Write-Log 'cancelled; nothing was changed.'
+        $global:LASTEXITCODE = 1
+        return
+    }
+
+    Write-ConfigFile -Path $CONFIG -Displays $answers -Devices $devices -Tier $newTier -Existing $existing
+    Write-Log "wrote $CONFIG"
+
+    # ---- prove it, one display at a time -----------------------------------
+    Write-Host ''
+    if (Read-YesNo '  Test each monitor now? (each one leaves and comes straight back)' $true) {
+        foreach ($a in $answers) {
+            $other = @($a.Table.Values | Where-Object { $_ -ne $a.Self })
+            if (-not $other) { continue }
+            $ok = Test-DisplayInput -Label $a.Label -Name $a.Name -Candidate $other[0] -Current $a.Self
+            if (-not $ok) {
+                Write-Host ''
+                Write-Host ('  {0} did not respond as expected.' -f $a.Name)
+                Write-Host '  Its input value may be wrong, or this panel may need a method'
+                Write-Host '  this tool does not have. Re-run `trigger-kvm configure` to try'
+                Write-Host '  another value; the config is written either way.'
+            }
+        }
+    }
+
+    if ($wantPath) { Add-ToUserPath -Dir $BINDIR }
+
+    Write-Host ''
+    Write-Log 'configured. Applying...'
+    $global:LASTEXITCODE = 0
+}
+
+# Rewrite the config, preserving every comment block and any key the walkthrough
+# does not own (scenes, in particular, which are hand-made and must survive).
+function Write-ConfigFile {
+    param([string]$Path, $Displays, [string[]]$Devices, [string]$Tier, [hashtable]$Existing)
+
+    $lines = @(
+        '# trigger-kvm configuration'
+        '#'
+        '# Written by `trigger-kvm configure`. Safe to edit by hand.'
+        '#'
+        '# Everything here is read at the point it is used, so there is no separate'
+        '# apply step: display and scene edits take effect on the next switch, and'
+        '# trigger edits when the watcher next starts --  trigger-kvm restart'
+        '#'
+        '# Displays are identified by the EDID the GPU reads off the output, never by'
+        '# index -- \\.\DISPLAYn numbers are not stable and have swapped on this'
+        '# machine. See what is attached with:  trigger-kvm list'
+        ''
+        '# --- install ----------------------------------------------------------'
+        ("install.tier = {0}" -f $Tier)
+        ''
+        '# --- displays ---------------------------------------------------------'
+        '# method: standard (I2C src 0x51, VCP 0x60) | lg-alt (src 0x50, VCP 0xF4)'
+        '# self:   the input value where THIS machine is. Required.'
+        ''
+    )
+    foreach ($d in $Displays) {
+        $lines += @(
+            ("display.{0}.vendor  = {1}" -f $d.Label, $d.Vendor)
+            ("display.{0}.product = {1}" -f $d.Label, $d.Product)
+            ("display.{0}.name    = {1}" -f $d.Label, $d.Name)
+            ("display.{0}.method  = {1}" -f $d.Label, $d.Method)
+            ("display.{0}.self    = {1}" -f $d.Label, $d.Self)
+            ''
+        )
+    }
+    $lines += @(
+        '# --- triggers ---------------------------------------------------------'
+        '#'
+        '# A trigger is anything that runs:  trigger-kvm pull'
+        '# The one shipped here watches device presence. A hotkey or a Stream Deck'
+        '# button needs no support from this tool -- it just runs that command.'
+        '#'
+        '# Triggers run `pull` and nothing else. Never wire one to a scene: a scene'
+        '# names inputs on hardware this machine cannot see, and a stale one would'
+        '# then be able to cause an AUTOMATIC switch to a dead input.'
+        '#'
+        '# device: usb:VVVV:PPPP (bare VVVV:PPPP means usb) or bt:AAAAAAAAAAAA.'
+        '#         Bluetooth matches on CONNECTED, not paired.'
+        ''
+        ("trigger.device   = {0}" -f ($Devices -join ', '))
+        ("trigger.debounce = {0}" -f $(if ($Existing.ContainsKey('trigger.debounce')) { $Existing['trigger.debounce'] } else { $SEED_DEBOUNCE }))
+        ("trigger.settle   = {0}" -f $(if ($Existing.ContainsKey('trigger.settle'))   { $Existing['trigger.settle'] }   else { $SEED_SETTLE }))
+        ''
+        '# --- scenes -----------------------------------------------------------'
+        '# Saved arrangements for MANUAL use:  trigger-kvm to mac'
+        '#'
+        '# The trigger never reads these. A scene names inputs on ANOTHER machine,'
+        '# which this machine cannot observe and which go stale the moment someone'
+        '# moves a cable over there. Keeping them out of the trigger means a stale'
+        '# scene can only spoil a command you typed and are watching.'
+        ''
+    )
+    # Scenes are hand-made and the walkthrough does not ask about them, so carry
+    # them across verbatim rather than silently dropping someone's work.
+    $sceneKeys = @($Existing.Keys | Where-Object { $_ -match '^scene\.' } | Sort-Object)
+    foreach ($k in $sceneKeys) { $lines += ("{0} = {1}" -f $k, $Existing[$k]) }
+
+    $lines | Set-Content -LiteralPath $Path -Encoding ASCII
 }
 
 # --- discovery ---------------------------------------------------------------
@@ -567,9 +948,17 @@ if ($Command -eq 'discover') {
 
 if ($Command -eq 'configure') {
     # The interactive walkthrough. Current settings pre-fill every default, so a
-    # re-run is a review rather than a replay, and it ends by applying whatever
-    # changed -- which is why there is no separate apply verb.
+    # re-run is a review rather than a replay.
     Invoke-Configure
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+    # Applying is a CONSEQUENCE of configuring, not a thing to invoke -- which is
+    # why there is no apply verb. Re-running the install path covers both cases:
+    # a tier change needs the task re-registered, and anything else just needs the
+    # watcher restarted, which registering does anyway.
+    Write-Log ''
+    $self = $PSCommandPath
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $self install
     exit $LASTEXITCODE
 }
 
@@ -744,7 +1133,25 @@ if ($EffectiveTier -eq 's4u' -and -not $IsElevated) {
     exit (Request-Elevation -ChildArgs $childArgs)
 }
 
-New-DefaultConfig -Path $CONFIG
+# No config means nothing to install FROM: the seed values describe one specific
+# desk and would be wrong for anyone else. Walk the user through it instead, and
+# refuse clearly when we cannot ask.
+if (-not (Test-Path -LiteralPath $CONFIG)) {
+    if (Test-CanPrompt) {
+        Write-Log 'no configuration yet -- starting setup.'
+        Invoke-Configure
+        if ($LASTEXITCODE -ne 0) {
+            Write-Log 'setup did not complete; nothing was installed.'
+            exit $LASTEXITCODE
+        }
+    } else {
+        Write-Log "no configuration at $CONFIG, and this is not an interactive terminal."
+        Write-Host ''
+        Write-Host 'Run this from a normal PowerShell window to set it up:'
+        Write-Host ("    {0}" -f $PSCommandPath)
+        exit 2
+    }
+}
 
 # The config is the source of truth for what the task watches. Read it back rather
 # than using the seed values, so that a hand-edited config actually takes effect on

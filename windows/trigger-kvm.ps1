@@ -63,12 +63,33 @@ param(
     # types one command and never has to know there are two scripts. Anyone
     # reaching this script directly with a manage verb gets told where to go, via
     # the ValidateSet error naming the valid set.
-    [ValidateSet('pull', 'to', 'list')]
+    [ValidateSet('pull', 'to', 'list', 'set')]
     [string]$Command = 'pull',
 
     # Scene name, for `to`.
     [Parameter(Position = 1)]
     [string]$Scene,
+
+    # `set` only: the input value to send to the single display named by -Only.
+    #
+    # This exists for the installer's guided input discovery, where the whole point
+    # is trying a candidate value and looking at the screen. It is deliberately NOT
+    # routed by trigger-kvm.cmd, so it is not part of the public verb surface --
+    # a general "write any value" command invites poking at monitors, which is the
+    # habit this project's first hard rule exists to discourage.
+    #
+    # It grants nothing the transport would not already allow: the 0x50 sidechannel
+    # stays behind NvDdc.WriteLgInput's GSM check, so `set` on a non-LG panel with
+    # method=lg-alt throws exactly as `pull` would.
+    [string]$Value,
+
+    # `list` only: emit "vendor|product|mfg|connector|serial" rows via the PIPELINE
+    # instead of the human table, so callers can consume it.
+    #
+    # This exists because the human output uses Write-Host, which writes to the host
+    # and NOT to stdout -- so `& trigger-kvm.ps1 list` returns nothing to a caller,
+    # silently. Same shape as event-watch.ps1 -ListBluetooth.
+    [switch]$Raw,
 
     # Move one monitor only, by its configured label. AGENTS.md rule 4 needs this:
     # moving every monitor at once can take the last display out from under the
@@ -680,6 +701,15 @@ if ($Command -eq 'list') {
     $found = @([NvDdc]::Enumerate())
     if ($found.Count -eq 0) { Write-Log 'no connected displays found on any NVIDIA GPU'; exit 2 }
 
+    if ($Raw) {
+        foreach ($d in $found) {
+            Write-Output ('{0:X4}|{1:X4}|{2}|{3}|{4:X8}' -f `
+                          $d.EdidVendor, $d.EdidProduct, [NvDdc]::DecodeMfg($d.EdidVendor),
+                          $d.Connector, $d.EdidSerial)
+        }
+        exit 0
+    }
+
     $known = @{}
     foreach ($d in (Get-ConfiguredDisplays -Cfg (Read-Config -Path $Config))) {
         if ($null -ne $d.Vendor -and $null -ne $d.Product) {
@@ -736,7 +766,18 @@ if ($Only -ne 'all') {
 # has to work out which half landed.
 $plan = @()
 foreach ($d in $displays) {
-    if ($Command -eq 'pull') {
+    if ($Command -eq 'set') {
+        if ($displays.Count -ne 1) {
+            Write-Log 'set requires -Only naming exactly one display'
+            exit 2
+        }
+        $value = ConvertTo-Byte $Value
+        if ($null -eq $value) {
+            Write-Log ("REFUSING: -Value '{0}' is not a byte (use 0x11 or 17)." -f $Value)
+            exit 2
+        }
+    }
+    elseif ($Command -eq 'pull') {
         $value = $d.Self
         if ($null -eq $value) {
             Write-Log ("REFUSING: display.{0}.self is missing or unparseable. This machine's own input is required." -f $d.Label)
