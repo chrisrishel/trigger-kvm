@@ -44,9 +44,12 @@ function Get-TriggerCandidates {
         [PSCustomObject]@{ Key='usb:046d:c547';  Bus='USB'; Name='Input Dev'; Class='HIDClass';  State=''; Rank=2 }
     )
 }
+$script:triggerPulled = $null
 function Invoke-TriggerTest {
-    param([string[]]$Devices)
-    return [PSCustomObject]@{ Ok = $true; Text = 'saw the devices arrive' }
+    param([string[]]$Devices, $Answers, [string]$This, [switch]$Pull)
+    $script:triggerPulled = [bool]$Pull
+    if ($Pull) { return [PSCustomObject]@{ Ok = $true; Text = 'fired, monitors followed' } }
+    return [PSCustomObject]@{ Ok = $true; Text = 'arrival seen' }
 }
 
 # Two panels, as reported by `list -Raw`. Not read from hardware: a test that only
@@ -102,8 +105,11 @@ $CONFIGURED = @(
 # The menu is the whole flow, so every case below is: land on the menu, pick a
 # section, come back to the menu.
 #
-#   1 Computers  2 Monitors  3 Trigger devices  4 Autostart?  5 Add to PATH?
-#   (6 blank)  7 Test the trigger  8 Test the monitors  (9 blank)  10 Save  11 Cancel
+#   1 Computers  2 Monitors  3 Triggers  4 Autostart?  5 Add to PATH?
+#   (6 blank)  7 Test the monitors  8 Test the triggers  (9 blank)  10 Save  11 Cancel
+#
+# Monitors are checked BEFORE the triggers: once their values are confirmed, the
+# trigger check can pull for real, which is what makes it worth doing last.
 #
 # The computers list is its own menu: 1..n the computers, then a blank, then Add,
 # then Done.
@@ -125,11 +131,11 @@ Set-Answers @(
     'y','',         #   LG: manage? / label
     '9','0xD0',     #     pc  -- not an MCCS value, so "Type a value..."
     '10','0xD1',    #     mac -- row 10 now, since pc was added to the list
-    '3',            # menu -> Trigger devices
+    '3',            # menu -> Triggers
     '1,3',
-    '7',            # menu -> Test the trigger
-    '8',            # menu -> Test the monitors
+    '7',            # menu -> Test the monitors
     '3','y','y',    #   window: not sure; two rounds
+    '8',            # menu -> Test the triggers, which may now pull for real
     '10'            # menu -> Save
 )
 Invoke-Configure
@@ -161,7 +167,7 @@ Assert-Match ((Get-Asked) -join '|') 'Choice' 'it stayed on the menu rather than
 Set-Config $CONFIGURED
 Set-Outcomes @()
 Set-Answers @(
-    '8',            # menu -> Test the monitors
+    '7',            # menu -> Test the monitors
     '3',            #   window: not sure
     'y','y',        #   two rounds
     '10'            # menu -> Save
@@ -222,7 +228,7 @@ Assert-Match ((Get-Asked) -join '|') 'short name for it' '-Fresh must ask again'
 Set-Config @($CONFIGURED | Where-Object { $_ -ne 'display.lg.method = lg-alt' })
 Set-Outcomes @(3, 0)        # LG answers nothing, then works on its own channel
 Set-Answers @(
-    '8','3',
+    '7','3',
     'y',            #   round 1: asus fine
     'n',            #   round 2: the LG did nothing
     'y',            #   try the LG channel? yes
@@ -239,7 +245,7 @@ Assert-Equal 'lg-alt' (Get-Written)['display.lg.method'] 'the offered dialect mu
 Set-Config $CONFIGURED
 Set-Outcomes @(2, 0)        # the ASUS changes but never comes back
 Set-Answers @(
-    '8','3',
+    '7','3',
     'n',            #   round 1: the ASUS did not come back
     'n',            #   do you know which input it is? no
     'y',            #   walk the standard values (the stub answers each)
@@ -281,6 +287,23 @@ Set-Answers @('4', '3', '10')       # Autostart? -> no -- I will start it myself
 Invoke-Configure
 Assert-Equal 0 $LASTEXITCODE
 Assert-Equal 'no' (Get-Written)['install.autostart'] 'the third answer has to survive the write'
+
+# ---- the trigger check only pulls once the monitors are proven ----------------
+
+# Pulling aims real values at real panels. Before someone has confirmed them by
+# looking, that could leave the desk somewhere nobody meant -- so the check reports
+# the arrival and stops there.
+Set-Config $CONFIGURED
+Set-Outcomes @()
+Set-Answers @('8', '10')                    # Test the triggers, then Save
+Invoke-Configure
+Assert-Equal $false $script:triggerPulled 'unchecked monitors must not be pulled at'
+
+Set-Config $CONFIGURED
+Set-Outcomes @()
+Set-Answers @('7','3','y','y', '8', '10')   # check the monitors first, then the triggers
+Invoke-Configure
+Assert-Equal $true $script:triggerPulled 'once they are proven, the flip back is the real thing'
 
 # ---- what a computer may be called -------------------------------------------
 

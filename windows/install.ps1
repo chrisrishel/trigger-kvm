@@ -1461,7 +1461,7 @@ function Invoke-Configure {
         #   "/"  joins things sharing one label
         # Not only tidiness -- Split-Detail wraps at ", ", so the monitors row could
         # not wrap at all while it used spaces, and a busy desk overran the line.
-        $items  = @('Computers', 'Monitors', 'Trigger devices', 'Autostart?')
+        $items  = @('Computers', 'Monitors', 'Triggers', 'Autostart?')
         $detail = @(
             $(if ($computers.Count -eq 0) { 'not set' } else {
                 ($computers | ForEach-Object { if ($_ -eq $this) { "$_ (this)" } else { $_ } }) -join ', ' })
@@ -1475,11 +1475,16 @@ function Invoke-Configure {
             $detail += $(if ($wantPath) { 'yes' } else { 'no' })
         }
 
+        # Monitors first, then the trigger. The trigger check asks someone to flip
+        # the switch away and back, and once the monitors are known good the flip
+        # back can PULL them for real -- so it stops being a report that an event
+        # was seen and becomes the whole thing working, which is the last thing you
+        # want to see before saving.
         $items  += ''; $detail += ''
-        $items  += 'Test the trigger'
-        $detail += $(if ($ranTriggers) { $ranTriggers.Text } else { 'untested' })
         $items  += $(if ($answers.Count -eq 1) { 'Test the monitor' } else { 'Test the monitors' })
         $detail += $(if ($ranDisplays) { $ranDisplays.Text } else { 'untested' })
+        $items  += $(if ($devices.Count -eq 1) { 'Test the trigger' } else { 'Test the triggers' })
+        $detail += $(if ($ranTriggers) { $ranTriggers.Text } else { 'untested' })
 
         $items  += ''; $detail += ''
         $save = $items.Count
@@ -1494,10 +1499,10 @@ function Invoke-Configure {
             if     ($computers.Count -eq 0) { 0 }
             elseif ($answers.Count   -eq 0) { 1 }
             elseif ($devices.Count   -eq 0) { 2 }
-            elseif (-not $ranTriggers)      { $save - 3 }
-            elseif (-not $ranTriggers.Ok)   { 2 }
-            elseif (-not $ranDisplays)      { $save - 2 }
+            elseif (-not $ranDisplays)      { $save - 3 }
             elseif (-not $ranDisplays.Ok)   { 1 }
+            elseif (-not $ranTriggers)      { $save - 2 }
+            elseif (-not $ranTriggers.Ok)   { 2 }
             else                            { $save }
 
         Write-Host ''
@@ -1517,7 +1522,7 @@ function Invoke-Configure {
             $missing = @()
             if ($computers.Count -eq 0) { $missing += 'Computers' }
             if ($answers.Count   -eq 0) { $missing += 'Monitors' }
-            if ($devices.Count   -eq 0) { $missing += 'Trigger devices' }
+            if ($devices.Count   -eq 0) { $missing += 'Triggers' }
             if ($missing.Count -eq 0) { break }
             Write-Host ''
             Write-Host ('  Still needed: {0}.' -f (Join-Names $missing))
@@ -1556,7 +1561,7 @@ function Invoke-Configure {
                 # would show "all responded" beside numbers nothing tried.
                 $ranDisplays = $null
             }
-            'Trigger devices' {
+            'Triggers' {
                 $devices = @(Read-Triggers -Cands $cands -Current $devices)
                 $ranTriggers = $null
             }
@@ -1565,7 +1570,13 @@ function Invoke-Configure {
             # prompt for something already shown as yes/no would just be a second way
             # to say the same thing.
             'Add to PATH?'    { $wantPath = -not $wantPath }
-            'Test the trigger'  { $ranTriggers = Invoke-TriggerTest -Devices $devices }
+            { $_ -like 'Test the trigger*' } {
+                # Only pull for real once the monitor values have been confirmed by
+                # someone looking at them. Before that, a pull would aim unverified
+                # values at panels and could leave the desk somewhere nobody meant.
+                $ranTriggers = Invoke-TriggerTest -Devices $devices -Answers $answers -This $this `
+                                                  -Pull:([bool]($ranDisplays -and $ranDisplays.Ok))
+            }
             { $_ -like 'Test the monitor*' } {
                 $ranDisplays = Invoke-DisplayTest -Answers $answers -This $this
                 foreach ($a in $answers) { $carry[$a.Key] = $a }
@@ -1590,29 +1601,71 @@ function Invoke-Configure {
 # is the worst possible place for a disagreement, since this test exists to tell you
 # the trigger works.
 function Invoke-TriggerTest {
-    param([string[]]$Devices)
+    param([string[]]$Devices, $Answers, [string]$This, [switch]$Pull)
 
     $ew = Join-Path $PSScriptRoot 'event-watch.ps1'
     if (-not (Test-Path $ew)) { $ew = $WATCH }
 
     Write-Host ''
     Write-Host '--- test the trigger ---'
-    Write-Host '  This watches for the devices you picked to ARRIVE -- which is the'
-    Write-Host '  event that switches your monitors.'
-    if (Test-Path -LiteralPath $CONFIG) {
-        Write-Host '  If trigger-kvm is already running, the flip will also switch your'
-        Write-Host '  displays for real. That is fine, and is the thing working.'
+    Write-Host '  Flip your switch AWAY from this computer, then back again. The way'
+    Write-Host '  back is what a trigger is: the devices ARRIVING here.'
+    if ($Pull) {
+        Write-Host ''
+        Write-Host '  When they do, the monitors will be pulled here for real, using the'
+        Write-Host '  values you just checked. That is the whole thing working end to end.'
+    } else {
+        Write-Host ''
+        Write-Host '  The arrival will be reported but the monitors will NOT be moved:'
+        Write-Host '  check them first (the row above) and this becomes the real thing.'
     }
 
-    Invoke-Sibling -Script $ew -Arguments @('-TestTrigger', '-Device', ($Devices -join ','), '-Config', $CONFIG)
-    $code = $LASTEXITCODE
+    # A throwaway config, for the same reason the monitor check uses one: the answers
+    # are not written yet, and pulling against the SAVED config would move the panels
+    # to whatever was configured before rather than to what is on screen now.
+    $tmp = Join-Path ([IO.Path]::GetTempPath()) ('trigger-kvm-trig-{0}.cfg' -f $PID)
+    $code = 1
+    try {
+        Write-ConfigFile -Path $tmp -Displays $Answers -Devices $Devices -Tier 'user' -This $This -Existing @{}
 
-    if ($code -eq 0) { return [PSCustomObject]@{ Ok = $true; Text = 'saw the devices arrive' } }
+        # Piped to the host, not returned. Invoke-Sibling emits the child's stdout on
+        # the success stream, so letting it fall out of this function made the caller
+        # receive [those lines..., the result object] -- and $ranTriggers.Text on an
+        # array throws under StrictMode, which is exactly how this was reported.
+        Invoke-Sibling -Script $ew -Arguments @('-TestTrigger', '-Device', ($Devices -join ','),
+                                                '-Config', $tmp) |
+            ForEach-Object { Write-Host "$_" }
+        $code = $LASTEXITCODE
+
+        if ($code -eq 0 -and $Pull) {
+            $sw = Join-Path $PSScriptRoot 'trigger-kvm.ps1'
+            if (-not (Test-Path $sw)) { $sw = $SWITCH }
+            Write-Host ''
+            Write-Host '  Pulling the monitors here...'
+            Invoke-Sibling -Script $sw -Arguments @('pull', '-Config', $tmp) |
+                ForEach-Object { Write-Host "$_" }
+        }
+    } finally {
+        Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+    }
+
+    if ($code -ne 0) {
+        Write-Host ''
+        Write-Host '  Nothing arrived, so these may be the wrong devices -- or they may not'
+        Write-Host '  be on the switch at all. Pick Triggers again to change them.'
+        return [PSCustomObject]@{ Ok = $false; Text = 'no arrival seen' }
+    }
+
+    if (-not $Pull) { return [PSCustomObject]@{ Ok = $true; Text = 'arrival seen' } }
 
     Write-Host ''
-    Write-Host '  Nothing arrived, so these may be the wrong devices -- or they may not'
-    Write-Host '  be on the switch at all. Pick Trigger devices again to change them.'
-    return [PSCustomObject]@{ Ok = $false; Text = 'no arrival seen' }
+    if (Read-YesNo '  Did the monitors come back to this computer?' $true) {
+        return [PSCustomObject]@{ Ok = $true; Text = 'fired, monitors followed' }
+    }
+    Write-Host ''
+    Write-Host '  The trigger fired, so the devices are right. Something about the'
+    Write-Host '  monitors is not -- check them again from the row above.'
+    return [PSCustomObject]@{ Ok = $false; Text = 'fired, but the monitors did not follow' }
 }
 
 # Prove the display answers BEFORE anything is written, against a throwaway config.

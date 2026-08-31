@@ -81,6 +81,7 @@ loads a stale copy of the switcher into its runspace.
 | `menus.tests.ps1` | cursor, the `Done` button, separators, `(current)`, and that nothing is ever truncated |
 | `walkthrough.tests.ps1` | the whole flow with scripted answers — first run, re-run, `-Fresh`, dialect escalation, blind walking, duplicate inputs |
 | `monitor-check.tests.ps1` | batching on a four-panel desk, the window's panel being scheduled last, and the single-monitor pre-flight |
+| `trigger-check.tests.ps1` | that the result is one object whatever the child printed, and that it only pulls once the monitors are proven |
 | `resolve.tests.ps1` | the real switcher under `-WhatIf`: the exact packets, and every refusal |
 | `types.tests.ps1` | the loaded-type guard still fires, and the installer cannot trip it |
 
@@ -128,12 +129,12 @@ and there is one place a change has to be made rather than two.
 
     Computers                    pc (this), mac
     Monitors                     asus: pc/mac, lg: pc/mac
-    Trigger devices              usb:046d:0843, bt:0011223344ff
+    Triggers                     usb:046d:0843, bt:0011223344ff
     Autostart?                   from boot
     Add to PATH?                 yes
 
-  > Test the trigger             untested
-    Test the monitors            untested
+  > Test the monitors            untested
+    Test the triggers            untested
 
     Save configuration and run
     Cancel (discard changes)
@@ -154,7 +155,7 @@ renaming the rows to imply grouping would have done badly.
 
   > Computers                    not set
     Monitors                     not set
-    Trigger devices              not set
+    Triggers                     not set
     Autostart?                   from boot
     Add to PATH?                 yes
 ```
@@ -176,6 +177,15 @@ trigger, then monitors, then save. A failure sends the cursor to the setting tha
 failed rather than onward. Neither pass survives editing what it was a pass *for* —
 it belonged to those values, and showing "all responded" beside numbers nothing
 tried would be a claim the user has no way to catch.
+
+**The monitors are checked before the triggers, and that ordering is the point.**
+The trigger check asks you to flip the switch away and back — and once the monitor
+values have been confirmed by someone looking at them, the flip *back* pulls the
+monitors here for real, using those values. So it stops being "an event was
+observed" and becomes the whole thing working end to end, which is the last thing
+worth seeing before saving. Until the monitors are checked it reports the arrival
+and deliberately does **not** move anything: pulling aims real values at real
+panels, and unverified ones could leave the desk somewhere nobody meant.
 
 **Testing the trigger watches for a real arrival.** `event-watch.ps1 -TestTrigger`
 prints what is present now, then waits for one of the chosen devices to *arrive* —
