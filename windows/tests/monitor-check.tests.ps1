@@ -57,46 +57,57 @@ function New-Solo { @( New-Panel 'lg' ([ordered]@{ pc='0x11'; mac='0x12' }) ) }
 
 Reset-Said; Reset-Sent; Set-Outcomes @()
 Set-Answers @(
-    '1',            # this window is on the LG
-    'y',            # mac round 1: asus, dell, big -- the LG is held back
-    '',             #   mac round 2 moves the LG: window dragged first
-    'y',
-    '',             #   the linux round moves the LG too
-    'y'
+    '1',            # which monitor to check -> All of them
+    '','y',         # mac round 1: three panels, one held back
+    '','y',         # mac round 2: the held-back one
+    '','y'          # the linux round
 )
 $r = Invoke-DisplayTest -Answers (New-Desk) -This 'pc'
 Assert-True $r.Ok 'everything working must read as a pass'
 Assert-Equal 'all responded' $r.Text
 
 $said = Get-Said
-Assert-Match $said 'Sending ASUS, DELL and BIG to mac' 'panels batch into one round'
-Assert-Match $said 'LG stays here'                     'and one is always held back'
-Assert-Match $said 'THIS WINDOW is on LG'              'the window is warned about before it moves'
-Assert-Match $said 'Drag it to ASUS first'
+Assert-Match $said 'Which monitor do you want to check' 'it asks about intent, not about the window'
+Assert-NoMatch $said 'Which monitor is this window on' 'that question is gone'
+Assert-Match $said 'Sending LG, ASUS and DELL to mac'  'panels batch into one round'
+Assert-Match $said 'BIG stays here'                    'and one is always held back'
+Assert-Match $said 'If this window is on LG, ASUS and DELL, drag it to BIG first' `
+    'every round says what is about to move, so it can be acted on if it applies'
 Assert-NoMatch $said 'Which ones did not' 'nothing is asked when nothing went wrong'
 
-# Three claims in one round, then the held-back panel, then the linux pair. The LG
-# is last in every group because that is where the window is.
+# Three claims in one round, then the held-back panel, then the linux pair.
 $sent = (Get-Sent) -join ' '
-Assert-Match $sent 'asus=0x12 dell=0x12 big=0x12' 'the batch goes out together'
-Assert-Match $sent 'asus=0x11 dell=0x11 big=0x11' 'and comes back together'
-Assert-Match $sent 'lg=0x12 lg=0x11'              'the window''s panel moves alone, and last'
+Assert-Match $sent 'lg=0x12 asus=0x12 dell=0x12' 'the batch goes out together'
+Assert-Match $sent 'lg=0x11 asus=0x11 dell=0x11' 'and comes back together'
+Assert-Match $sent 'big=0x12 big=0x11'           'then the one held back'
+
+# ---- checking ONE monitor leaves the others somewhere to put a window --------
+
+Reset-Said; Reset-Sent; Set-Outcomes @()
+Set-Answers @('2', '', 'y', '', 'y')      # just the LG: mac, then linux
+$r = Invoke-DisplayTest -Answers (New-Desk) -This 'pc'
+Assert-True $r.Ok
+$sent = (Get-Sent) -join ' '
+Assert-NoMatch $sent 'asus=' 'a panel nobody asked about must not be touched'
+Assert-Match (Get-Said) 'ASUS, DELL and BIG stay here' `
+    'but it is still somewhere to move a window to'
 
 # ---- one panel in a batch of three is wrong ----------------------------------
 
 Reset-Said; Reset-Sent; Set-Outcomes @(1)      # "changed, but that was not mac"
 Set-Answers @(
-    '5',            # window: not sure -- no scheduling, no drag prompt
+    '1',            # All of them
+    '',             #   enter when ready
     'n',            # mac round 1: not all of them
     '2',            #   which ones did not -> ASUS
     '4',            #   its mac input, re-picked
     'y',            #   retry of ASUS alone
-    'y',            # mac round 2 (big)
-    'y'             # linux round
+    '','y',         # mac round 2
+    '','y'          # linux round
 )
 $r = Invoke-DisplayTest -Answers (New-Desk) -This 'pc'
 Assert-Match (Get-Said) 'Which ones did not' 'a failed batch has to be narrowed'
-Assert-NoMatch (Get-Said) 'THIS WINDOW is on' '"not sure" means no scheduling claims'
+Assert-Match (Get-Said) 'If this window is on' 'the warning is unconditional now'
 
 # ---- one monitor: nothing can be held back -----------------------------------
 

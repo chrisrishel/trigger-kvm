@@ -1905,6 +1905,8 @@ function Invoke-TriggerTest {
 function Invoke-DisplayTest {
     param($Answers, [string]$This)
 
+    # Every managed panel, kept whole even when only one is being checked.
+    $All = @($Answers)
     $tmp = Join-Path ([IO.Path]::GetTempPath()) ('trigger-kvm-test-{0}.cfg' -f $PID)
     $bad = @()
     try {
@@ -1915,26 +1917,26 @@ function Invoke-DisplayTest {
             foreach ($m in $a.Map.Keys) { if ($m -ne $This -and -not ($others -contains $m)) { $others += $m } }
         }
 
-        # Which panel is this window on? Asked once, and worth the question: knowing
-        # it lets every round hold that panel back until there is no choice, so the
-        # screen carrying the prompt is the last thing to move. It matters most when
-        # something is WRONG -- a panel that does not come back has taken the window
-        # with it, and there is then no way to answer the question or fix anything.
-        $term = ''
-        if (@($Answers).Count -gt 1) {
-            $rows = @(@($Answers | ForEach-Object { $_.Name }) + @('Not sure'))
+        # Which monitor to check -- their intent, not the tool's convenience. It used
+        # to ask where this window was, so it could schedule that panel last; the
+        # same protection comes from saying what is about to move and letting someone
+        # act on it, which is one fewer question and one they were not able to answer
+        # confidently anyway.
+        $Answers = @($Answers)
+        if ($Answers.Count -gt 1) {
             Write-Host ''
-            Write-Host '  Which monitor is this window on?'
-            Write-Host '  It will be kept until last, and you will be told before it moves.'
-            $pick = Select-One -Items $rows -Default 0
-            if ($pick -lt @($Answers).Count) { $term = $Answers[$pick].Label }
+            Write-Host '  Which monitor do you want to check?'
+            $rows = @(@('All of them') + @($Answers | ForEach-Object { $_.Name }))
+            $pick = Select-One -Items $rows -Default 0 -Escapable
+            if ($pick -lt 0) { return [PSCustomObject]@{ Ok = $false; Text = 'not checked' } }
+            if ($pick -gt 0) { $Answers = @($Answers[$pick - 1]) }
         }
 
         if ($others.Count -eq 0) {
             # Nothing else is on this desk, so there is no claim to check beyond "the
             # transport reaches each panel".
             foreach ($a in $Answers) {
-                if (-not (Test-OneComputer -Answer $a -All $Answers -This $This -Target '' -Config $tmp)) { $bad += $a.Name }
+                if (-not (Test-OneComputer -Answer $a -All $All -This $This -Target '' -Config $tmp)) { $bad += $a.Name }
             }
         }
 
@@ -1943,13 +1945,9 @@ function Invoke-DisplayTest {
             if ($panels.Count -eq 0) { continue }
 
             # Hard rule 4: one panel always stays on this computer, so the question
-            # arrives on a screen you can still read. When every panel claims this
-            # machine, that means two rounds -- the second covers the one held back.
-            # Sorted so the window's panel is last: the split below holds back
-            # whatever ends up at the end.
-            if ($term) { $panels = @(@($panels | Where-Object { $_.Label -ne $term }) +
-                                     @($panels | Where-Object { $_.Label -eq $term })) }
-
+            # arrives on a screen you can still read. When every panel being checked
+            # claims this computer, that means two rounds -- the second covers the one
+            # held back.
             $rounds = @()
             if ($panels.Count -eq @($Answers).Count -and $panels.Count -gt 1) {
                 $rounds += ,@($panels[0..($panels.Count - 2)])
@@ -1959,9 +1957,13 @@ function Invoke-DisplayTest {
             }
 
             foreach ($r in $rounds) {
-                $stays = @($Answers | Where-Object { $n = $_.Label; -not (@($r | ForEach-Object { $_.Label }) -contains $n) })
-                foreach ($f in (Invoke-TestRound -Panels $r -Stays $stays -Target $m -All $Answers `
-                                                 -This $This -Terminal $term -Config $tmp)) {
+                # What stays is measured against EVERY managed panel, not just the
+                # ones in this check: a panel nobody asked to check is still on this
+                # computer, and still somewhere to put a window.
+                $moving = @($r | ForEach-Object { $_.Label })
+                $stays  = @($All | Where-Object { -not ($moving -contains $_.Label) })
+                foreach ($f in (Invoke-TestRound -Panels $r -Stays $stays -Target $m -All $All `
+                                                 -This $This -Config $tmp)) {
                     if (-not ($bad -contains $f)) { $bad += $f }
                 }
             }
@@ -2001,67 +2003,58 @@ function Get-InputName {
 # One round: send a group of panels to one machine together, bring them all back,
 # and ask once. Returns the names of the panels that did not do the right thing.
 function Invoke-TestRound {
-    param($Panels, $Stays, [string]$Target, $All, [string]$This, [string]$Terminal,
+    param($Panels, $Stays, [string]$Target, $All, [string]$This,
           [string]$Config, [int]$Hold = 8)
 
     $names = @($Panels | ForEach-Object { $_.Name })
     Write-Host ''
     Write-Host ('  Sending {0} to {1} for {2}s, then back automatically.' -f (Join-Names $names), $Target, $Hold)
-    if ($Stays) {
-        $sn = @($Stays | ForEach-Object { $_.Name })
-        Write-Host ('  {0} {1} here, so you can read this.' -f (Join-Names $sn),
-                    $(if ($sn.Count -eq 1) { 'stays' } else { 'stay' }))
-    }
-
-    # Two different warnings, and the gate is what is being LEFT, not what is known.
-    # Nothing held back means the screen goes dark whatever anyone answered about
-    # where the window is -- and with a single monitor that question is never even
-    # asked, which is how this branch first went unreachable in exactly the case it
-    # exists for.
-    $movesTerminal = $Terminal -and (@($Panels | ForEach-Object { $_.Label }) -contains $Terminal)
-    if ($movesTerminal -or -not $Stays) {
-        if ($Stays) {
-            Write-Host ('  If {0} is asleep or off you will see No Signal, which still proves' -f $Target)
-            Write-Host '  the switch worked.'
-            Write-Host ''
-            Write-Host ('  THIS WINDOW is on {0}, which is about to move. Drag it to {1} first.' -f `
-                        (@($Panels | Where-Object { $_.Label -eq $Terminal } | ForEach-Object { $_.Name }) | Select-Object -First 1),
-                        (@($Stays | ForEach-Object { $_.Name }) | Select-Object -First 1))
-            Write-Host '  If the switch back fails, the window goes dark with it and there is'
-            Write-Host '  no way to answer from there.'
-            # Last, and blocking: it is the thing to act on, so nothing may print
-            # after it and be read too late.
-            $null = Read-Default '  Enter when it has moved' ''
-            return (Invoke-TestRoundBody -Panels $Panels -Target $Target -All $All -This $This -Config $Config -Hold $Hold -Names $names)
-        }
-        # One monitor and no way to hold anything back: if the switch back fails,
-        # this person is looking at a black screen with no way to read a prompt, ask
-        # a question or undo anything. That is unavoidable -- but being stranded
-        # WITHOUT having been told how to get back is not, and the telling has to
-        # happen while there is still a screen to read it on.
-        $solo  = @($Panels) | Select-Object -First 1
-        $back  = $solo.Map[$This]
-        $bname = Get-InputName -Answer $solo -Value $back
-        Write-Host ''
-        Write-Host '  READ THIS FIRST -- this is your only monitor.'
-        Write-Host ('  It will show {0} for about {1} seconds, then come back on its own.' -f $Target, $Hold)
-        Write-Host '  You will not be able to read anything while it is away.'
-        Write-Host ''
-        Write-Host '  IF IT DOES NOT COME BACK there is nothing this tool can do for you --'
-        Write-Host '  it cannot draw on a screen that is showing another computer. The way'
-        Write-Host '  back is the monitor itself: press its input (or source) button and'
-        Write-Host ('  choose {0}. No software can take that button away from you.' -f `
-                    $(if ($bname) { '{0}, value {1}' -f $bname, $back } else { "value $back" }))
-        Write-Host ''
-        if (-not (Read-YesNo '  Ready?' $true)) {
-            Write-Host '  Skipped. Nothing was sent.'
-            return @('(skipped)')
-        }
-    }
     Write-Host ('  If {0} is asleep or off you will see No Signal, which still proves the' -f $Target)
     Write-Host '  switch worked.'
 
-    return (Invoke-TestRoundBody -Panels $Panels -Target $Target -All $All -This $This -Config $Config -Hold $Hold -Names $names)
+    if ($Stays) {
+        $sn = @($Stays | ForEach-Object { $_.Name })
+        Write-Host ''
+        Write-Host ('  {0} {1} here, so you can read this.' -f (Join-Names $sn),
+                    $(if ($sn.Count -eq 1) { 'stays' } else { 'stay' }))
+        # Told every round rather than asked once. This cannot see where the window
+        # is, and asking made someone answer a question about the tool's scheduling;
+        # saying what is about to move lets them act on it only if it applies.
+        Write-Host ('  If this window is on {0}, drag it to {1} first: if the switch back' -f `
+                    (Join-Names $names), $sn[0])
+        Write-Host '  fails, the window goes dark with it and there is no way to answer.'
+        # Last, and blocking: it is the thing to act on, so nothing may print after it
+        # and be read too late.
+        $null = Read-Default '  Enter when ready' ''
+        return (Invoke-TestRoundBody -Panels $Panels -Target $Target -All $All -This $This `
+                                     -Config $Config -Hold $Hold -Names $names)
+    }
+
+    # One monitor and no way to hold anything back: if the switch back fails, this
+    # person is looking at a black screen with no way to read a prompt, ask a question
+    # or undo anything. That is unavoidable -- but being stranded WITHOUT having been
+    # told how to get back is not, and the telling has to happen while there is still
+    # a screen to read it on.
+    $solo  = @($Panels) | Select-Object -First 1
+    $back  = $solo.Map[$This]
+    $bname = Get-InputName -Answer $solo -Value $back
+    Write-Host ''
+    Write-Host '  READ THIS FIRST -- this is your only monitor.'
+    Write-Host '  You will not be able to read anything while it is away.'
+    Write-Host ''
+    Write-Host '  IF IT DOES NOT COME BACK there is nothing this tool can do for you --'
+    Write-Host '  it cannot draw on a screen that is showing another computer. The way'
+    Write-Host '  back is the monitor itself: press its input (or source) button and'
+    Write-Host ('  choose {0}. No software can take that button away from you.' -f `
+                $(if ($bname) { '{0}, value {1}' -f $bname, $back } else { "value $back" }))
+    Write-Host ''
+    if (-not (Read-YesNo '  Ready?' $true)) {
+        Write-Host '  Skipped. Nothing was sent.'
+        return @('(skipped)')
+    }
+
+    return (Invoke-TestRoundBody -Panels $Panels -Target $Target -All $All -This $This `
+                                 -Config $Config -Hold $Hold -Names $names)
 }
 
 # The half after the explaining: send, wait, send back, and find out what happened.

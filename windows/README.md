@@ -319,10 +319,22 @@ is one keystroke, and the four-way diagnosis only appears for the panels you say
 went wrong ("Which ones did not?"). At two monitors that replaces two menus with one
 yes/no; at four panels and three machines it replaces twelve with four.
 
-**It asks which monitor this window is on, once**, and then holds that panel back
-until there is no choice, warning before the round that finally moves it. That
-matters most when something is *wrong*: a panel that does not come back has taken
-the window with it, and there is then no way to answer the question or fix anything.
+**It asks which monitor you want to check** — `All of them`, or one — and then, every
+round, says what is about to move:
+
+```
+  LG ULTRAGEAR+ stays here, so you can read this.
+  If this window is on PG42UQ, drag it to LG ULTRAGEAR+ first: if the switch back
+  fails, the window goes dark with it and there is no way to answer.
+
+  Enter when ready
+```
+
+It used to ask where *this window* was, so it could schedule that panel last. Saying
+what is about to move gives the same protection, is one fewer question, and asks
+about something the person actually knows — where they want to look, rather than a
+detail of the tool's scheduling. Checking one monitor still leaves the others
+counted as somewhere to move a window to, because they are still on this computer.
 
 **With one monitor you can genuinely get stuck, so it says so first.** Nothing can be
 held back, and if the switch back fails this tool cannot draw on a screen that is

@@ -138,7 +138,8 @@ Set-Answers @(
     '4','1',        # menu -> Autostart? -- not preset, so it must be answered
     '5','1',        # menu -> Add to PATH? -- likewise
     '7',            # menu -> Test the monitor inputs
-    '3','y','y',    #   window: not sure; two rounds
+    '1',            #   which monitor to check -> All of them
+    '','y','','y',  #   two rounds: 'enter when ready', then the answer
     '8',            # menu -> Test the triggers, which may now pull for real
     '10'            # menu -> Save
 )
@@ -186,8 +187,8 @@ Set-Config $CONFIGURED
 Set-Outcomes @()
 Set-Answers @(
     '7',            # menu -> Test the monitor inputs
-    '3',            #   window: not sure
-    'y','y',        #   two rounds
+    '1',            #   All of them
+    '','y','','y',  #   two rounds
     '5','1',        # menu -> Add to PATH? (never preset)
     '10'            # menu -> Save
 )
@@ -299,9 +300,9 @@ Assert-Match ((Get-Asked) -join '|') 'short name for it' '-Fresh must ask again'
 Set-Config @($CONFIGURED | Where-Object { $_ -ne 'display.lg.method = lg-alt' })
 Set-Outcomes @(3, 0)        # LG answers nothing, then works on its own channel
 Set-Answers @(
-    '7','3',
-    'y',            #   round 1: asus fine
-    'n',            #   round 2: the LG did nothing
+    '7','1',
+    '','y',         #   round 1: asus fine
+    '','n',         #   round 2: the LG did nothing
     '1',            #   try the LG channel? yes (a menu now, not a y/n)
     '1',            #   pc  is on DisplayPort (0xD0)
     '2',            #   mac is on USB-C (0xD1)
@@ -317,11 +318,11 @@ Assert-Equal 'lg-alt' (Get-Written)['display.lg.method'] 'the offered dialect mu
 Set-Config $CONFIGURED
 Set-Outcomes @(2, 0)        # the ASUS changes but never comes back
 Set-Answers @(
-    '7','3',
-    'n',            #   round 1: the ASUS did not come back
+    '7','1',
+    '','n',         #   round 1: the ASUS did not come back
     'n',            #   do you know which input it is? no
     'y',            #   walk the standard values (the stub answers each)
-    'y',            #   round 2: the LG is fine
+    '','y',         #   round 2: the LG is fine
     '5','1',
     '10'
 )
@@ -374,7 +375,7 @@ Assert-Equal $false $script:triggerPulled 'unchecked monitors must not be pulled
 
 Set-Config $CONFIGURED
 Set-Outcomes @()
-Set-Answers @('7','3','y','y', '8', '5','1', '10')   # monitors first, then the triggers
+Set-Answers @('7','1','','y','','y', '8', '5','1', '10')   # monitors, then triggers
 Invoke-Configure
 Assert-Equal $true $script:triggerPulled 'once they are proven, the flip back is the real thing'
 
