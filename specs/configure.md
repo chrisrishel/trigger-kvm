@@ -540,12 +540,25 @@ Platform notes, and the reason the row differs:
 
 | | Windows | macOS |
 |---|---|---|
-| boot | Scheduled Task, S4U principal — runs **as the user, unelevated**, in session 0. Admin once, to register. | **Not available.** A LaunchDaemon starts before login but runs as **root**, and the switcher must never run as root to obtain a tier. Row drawn and disabled. |
-| login | Scheduled Task, Interactive | LaunchAgent, `RunAtLoad` + `KeepAlive` |
+| boot | Scheduled Task, S4U principal — runs **as the user, unelevated**, in session 0. Admin once, to register. | LaunchDaemon in `/Library/LaunchDaemons` with `UserName` set — runs **as the user, unelevated**, with no session. sudo once, to install. |
+| login | Scheduled Task, Interactive | LaunchAgent in `~/Library/LaunchAgents`, `RunAtLoad` + `KeepAlive` |
 | no | task registered with no triggers | agent installed but not loaded; `restart` loads it |
 
-`status` must **say plainly** where a tier is unavailable rather than implying
-the platforms match.
+Both platforms hold the same property, and it is the point of the tier:
+**elevation is needed once, to register, and nothing elevated runs on the switch
+path.** A tier that required the switcher itself to run as root would not be
+this tier and must not be offered as it.
+
+The tiers are **mutually exclusive**. Installing one removes the other, because
+two live watchers would both fire on the same arrival and the debounce is
+per-process, so it cannot dedupe across them.
+
+Where elevation cannot be obtained — a headless or non-interactive install —
+the boot tier falls back to login and says so. Nothing elevates without someone
+choosing it.
+
+`status` must **say plainly** what the installed tier covers, and where a tier
+is unavailable rather than implying the platforms match.
 
 ---
 

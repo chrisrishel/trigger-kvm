@@ -767,41 +767,45 @@ EOF
 
 # --- autostart ---------------------------------------------------------------
 
-# On Windows "from boot" is offered first and is the default, because a computer
-# sitting at a login screen should still follow the switch, and the cost is one
-# admin prompt during setup.
+# From boot is offered FIRST and is the default, because a computer sitting at a
+# login screen should still follow the switch. The cost is one sudo prompt
+# during setup, and asking for it once beats discovering months later that
+# switching quietly does nothing until you log in.
 #
-# THERE IS NO EQUIVALENT ON macOS, and this says so rather than pretending. The
-# Windows boot tier runs AS THE USER, unelevated, in session 0. A LaunchDaemon
-# starts before login but runs as ROOT, which is a different thing, and
-# docs/macos-parity.md section 9 is explicit: never run the switcher as root to
-# obtain the tier. So the row is drawn, says why, and is disabled -- drawn
-# rather than hidden so the menu keeps the shape someone coming from the other
-# machine expects, and so the question it raises is answered where it is asked.
+# It runs AS THE USER, UNELEVATED -- a LaunchDaemon with UserName set. Root
+# installs it into the system domain; root does not run it. That is the same
+# property the Windows tier has, and the tier would not be worth having without
+# it: nothing elevated may run on the switch path.
+#
+# This row was disabled for a while, reading "not available on macOS -- needs
+# root", on two claims that were both measured wrong. A LaunchDaemon with
+# UserName does not run as root; and reading the displays does not need a
+# logged-in session -- IOKit identity, m1ddc and a full `pull` were all measured
+# working from a LaunchDaemon with no session at all. See specs/CHANGELOG.md
+# revision 4.
 wt_tier() {
   local _now _default
   printf '\n--- should it start on its own? ---\n' >&2
-  printf '  It can start when you log in. Starting BEFORE you log in is not\n' >&2
-  printf '  available on macOS: that needs a LaunchDaemon, which runs as root,\n' >&2
-  printf '  and the switcher must never run as root. There would be nothing for\n' >&2
-  printf '  it to do anyway -- reading the displays needs a logged-in session.\n\n' >&2
+  printf '  It can start as soon as the computer starts, or after you log in for\n' >&2
+  printf '  the first time. Starting before you log in needs your password once,\n' >&2
+  printf '  now, to install it. Nothing runs as an administrator afterwards.\n\n' >&2
   printf '  Answering no still installs and starts it now; it just will not come\n' >&2
   printf '  back after a restart until you run:  trigger-kvm restart\n\n' >&2
 
   menu_reset
-  menu_add 'From boot' 'not available on macOS -- needs root'
-  menu_disable 0
-  menu_add 'From login' 'a LaunchAgent, restarted for you if it dies'
+  menu_add 'From boot' 'needs your password once, to install'
+  menu_add 'From login' 'no password needed'
   menu_add 'No -- I will start it myself' ''
 
   _now=-1
-  case $WT_TIER in login) _now=1 ;; no) _now=2 ;; esac
-  _default=1
+  case $WT_TIER in boot) _now=0 ;; login) _now=1 ;; no) _now=2 ;; esac
+  _default=0
   [ "$_now" -ge 0 ] && _default=$_now
 
   select_one --default "$_default" --current "$_now" --escapable
   [ "$MENU_PICK" -lt 0 ] && return 0
   case $MENU_PICK in
+    0) WT_TIER=boot ;;
     1) WT_TIER=login ;;
     2) WT_TIER=no ;;
   esac
@@ -970,9 +974,10 @@ cmd_configure() {
     WT_DEVICES=()
     for _d in $(config_trigger_devices); do WT_DEVICES+=("$_d"); done
     case $(config_get 'install.autostart') in
-      boot|login) WT_TIER=login ;;
-      no)         WT_TIER=no ;;
-      *)          WT_TIER='' ;;
+      boot)  WT_TIER=boot ;;
+      login) WT_TIER=login ;;
+      no)    WT_TIER=no ;;
+      *)     WT_TIER='' ;;
     esac
   fi
 
@@ -1016,6 +1021,7 @@ cmd_configure() {
     # value column of a menu nobody has opened. One of those answers edits a
     # PATH; showing an answer nobody gave is the tool answering on their behalf.
     case $WT_TIER in
+      boot)  _d='from boot' ;;
       login) _d='from login' ;;
       no)    _d='no' ;;
       *)     _d='not set' ;;

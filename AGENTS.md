@@ -190,6 +190,16 @@ single-instance lock, and the fire.
 other than `computer.this` describes inputs on hardware this machine cannot observe,
 so a stale one must never be reachable from anything automatic.
 
+**MEASURE A PLATFORM LIMIT BEFORE WRITING IT DOWN.** Three claims in this file
+were wrong in a single day, each stated as measurement and each shaping a design
+decision: "IOBluetooth never returns" (an unanswered permission prompt was
+sitting behind it), "a LaunchAgent can never get Bluetooth permission" (the
+prompt simply had not arrived within the 15 seconds observed), and "reading the
+displays needs a logged-in session" (it does not, at all). Every one was a
+plausible inference from a real observation. A plausible inference is not a
+measurement -- run the thing in the context you are making a claim about, and if
+you cannot, say that instead of concluding.
+
 **On macOS, Bluetooth presence comes from `system_profiler`, and the reason is a
 PERMISSION GATE rather than a broken API.** IOBluetooth needs TCC Bluetooth
 permission, granted PER BINARY. An unapproved binary's first call BLOCKS until a
@@ -750,12 +760,19 @@ appears exactly once.
   before-first-login and
   after-logoff at the cost of admin *to register* (it still runs unelevated). Do not
   change which is the default without asking — no-admin is a deliberate posture.
-  macOS remains post-login only, and `trigger-kvm status` SAYS SO rather than
-  implying the tiers match: a LaunchDaemon starts before login but runs as ROOT,
-  which is not the Windows property (unelevated, as the user, in session 0), and
-  the switcher must never run as root to obtain a tier. There would be nothing
-  for it to do anyway -- `display-probe` and `m1ddc` both use CoreGraphics,
-  which needs a logged-in session.
+  macOS has BOTH TIERS TOO, since 2026-08-31. The boot tier is a LaunchDaemon in
+  `/Library/LaunchDaemons` with `UserName` set, so it runs AS THE USER,
+  UNELEVATED -- root installs it into the system domain, root does not run it.
+  That is the same property the Windows S4U tier has, and the tier is not worth
+  having without it.
+
+  **This entry previously said macOS was post-login only**, on two claims that
+  were both measured wrong. A LaunchDaemon with `UserName` does not run as root.
+  And "reading the displays needs a logged-in session" was wrong outright:
+  measured from a LaunchDaemon with no session, IOKit display identity works
+  with no CoreGraphics at all, `m1ddc display list` works, and a full
+  `trigger-kvm pull` works as uid 501 with both writes sent. See
+  `specs/CHANGELOG.md` revision 4.
 
   The old reasoning against pre-login (session 0 has no `HMONITOR`) was true of the
   `dxva2` path, which no longer exists. Measured 2026-08-30: NVAPI both enumerates

@@ -266,6 +266,13 @@ mutate 'redraw: select_many concatenates its detail instead of wrapping' lib/men
 mutate 'redraw: the frame pads to width instead of erasing the line' lib/menu.sh keys.tests.sh \
   "s@    printf '%s.033\[K.n' \"\$_l\" >&2@    printf '%-*s\\n' \"\$_width\" \"\$_l\" >\&2@"
 
+# --- revision 4: the boot tier ----------------------------------------------
+
+mutate 'tier: the boot row is disabled again' lib/walkthrough.sh walkthrough.tests.sh \
+  "s@  menu_add 'From boot' 'needs your password once, to install'@  menu_add 'From boot' 'x'; menu_disable 0@"
+mutate 'tier: choosing boot silently writes login' lib/walkthrough.sh walkthrough.tests.sh \
+  's@    0) WT_TIER=boot ;;@    0) WT_TIER=login ;;@'
+
 echo
 if [ "$survived" = "0" ]; then
   echo "all $checked mutations were caught"

@@ -173,8 +173,8 @@ Windows: [`windows/README.md`](windows/README.md) — `.\install.ps1`
 
 Both install a background watcher that is restarted if it dies. The Windows
 installer asks when it should start — from boot, from login, or not at all — and
-suggests from boot; macOS is post-login only, and `trigger-kvm status` says so
-rather than implying the tiers match. See [Scope](#scope).
+suggests from boot, and macOS offers it too — a LaunchDaemon with `UserName`
+set, which runs as the user unelevated. See [Scope](#scope).
 
 ### 5. Verify
 
@@ -233,13 +233,15 @@ From boot registers an S4U task and then runs **unelevated** at startup in sessi
 Measured 2026-08-30: NVAPI both enumerates *and writes* with no desktop, so no relay
 or token duplication is involved. See [`windows/README.md`](windows/README.md).
 
-**macOS** is post-login only. `m1ddc` links CoreGraphics and enumerates displays
-via `CGGetOnlineDisplayList`, which needs a window server connection a LaunchDaemon
-in session 0 does not have. The Windows argument used to be the same — session 0
-has no desktop, so no `HMONITOR` — and that was true of the `dxva2` path, which no
-longer exists. A CoreGraphics-free path for macOS is sketched in
-[`ARCHITECTURE.md`](ARCHITECTURE.md); the unsolved part is identity matching, not
-access.
+**macOS** offers the same tier, and holds the same property. From boot is a
+LaunchDaemon in `/Library/LaunchDaemons` with `UserName` set: your password
+installs it into the system domain, and it then runs **as you, unelevated**.
+
+This was documented as impossible until 2026-08-31, on the reasoning that
+`m1ddc` links CoreGraphics and `CGGetOnlineDisplayList` needs a window server a
+daemon has not got. Measured from a LaunchDaemon with no session, all of it
+works — IOKit identity with no CoreGraphics at all, `m1ddc display list`, and a
+full `pull` as uid 501. The reasoning was sound and the conclusion was wrong.
 
 ## Related work
 

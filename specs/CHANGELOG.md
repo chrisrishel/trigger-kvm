@@ -43,6 +43,33 @@ it does not have. It is blind to two things, and this closes them:
 
 ---
 
+## Revision 4 — 2026-08-31
+
+**macOS can offer the boot tier after all — the row stops being disabled.**
+
+Sections: [`configure.md`](configure.md) §8.
+
+**Act on (macOS only):** enable the `From boot` row and install a LaunchDaemon
+in `/Library/LaunchDaemons` with `UserName` set to the installing user. Windows
+already has this tier and is unaffected.
+
+**Why the row was disabled, and why that was wrong.** It read "not available on
+macOS — needs root", on the reasoning that a LaunchDaemon runs as root and the
+switcher must never run as root to obtain a tier. Both halves of that were
+measured wrong:
+
+- A LaunchDaemon with `UserName` runs **as that user, unelevated**. Root is
+  needed to *install* it into the system domain, not to run it — exactly the
+  Windows property, where admin registers the task and nothing elevated runs on
+  the switch path.
+- The supporting claim that "reading the displays needs a logged-in session" was
+  also wrong. Measured from a LaunchDaemon: IOKit display identity works with no
+  session and no CoreGraphics, `m1ddc display list` works, and a full
+  `trigger-kvm pull` works as uid 501 with no session, both writes sent.
+
+So the tier costs one plist and a single sudo at install. No root on the switch
+path, no second root-owned config, no replacement transport.
+
 ## Revision 3 — 2026-08-31
 
 **A multi-select must obey the same layout rules as every other menu.**

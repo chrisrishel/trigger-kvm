@@ -88,6 +88,15 @@ tk_domain() { printf 'gui/%s\n' "$(id -u)"; }
 tk_agent_loaded() { launchctl print "$(tk_domain)/$TK_LABEL" >/dev/null 2>&1; }
 
 cmd_restart() {
+  # The boot tier lives in the system domain, which needs a password to bounce.
+  if [ -f "$TK_DAEMON_PLIST" ]; then
+    tk_log 'restarting the boot-time start needs your password once.'
+    sudo launchctl bootout "system/$TK_LABEL" >/dev/null 2>&1 || true
+    sudo launchctl bootstrap system "$TK_DAEMON_PLIST" >/dev/null 2>&1 || true
+    sleep 1
+    tk_log 'restarted; the watcher has re-read the config.'
+    exit 0
+  fi
   if [ ! -f "$TK_PLIST" ]; then
     tk_log "not installed: $TK_PLIST is missing. Run the installer from the source tree."
     exit 1
@@ -110,6 +119,10 @@ cmd_restart() {
 # the same trap the Windows side documents about stopping a scheduled task, in
 # the platform's own terms.
 cmd_pause() {
+  if [ -f "$TK_DAEMON_PLIST" ]; then
+    tk_log 'standing down the boot-time start needs your password once.'
+    sudo launchctl bootout "system/$TK_LABEL" >/dev/null 2>&1 || true
+  fi
   launchctl bootout "$(tk_domain)/$TK_LABEL" >/dev/null 2>&1 || true
   tk_log 'paused: the agent is unloaded and the watcher stopped.'
   tk_log 'run one by hand now, e.g.:'
@@ -128,28 +141,41 @@ cmd_logs() {
 
 # --- status --------------------------------------------------------------------
 
+# Which tier is actually installed, read from the system rather than from the
+# config: the config records what was ASKED for, and these record what is there.
+tk_installed_tier() {
+  if [ -f "$TK_DAEMON_PLIST" ]; then printf 'boot\n'
+  elif [ -f "$TK_PLIST" ];      then printf 'login\n'
+  else                               printf 'none\n'; fi
+}
+
 cmd_status() {
   local _n _note _labels _this _machines _c _v _when _rev _commit
-  if [ ! -f "$TK_PLIST" ]; then
-    printf 'autostart: not installed\n'
-  elif tk_agent_loaded; then
-    printf 'autostart: when you log in  (LaunchAgent %s)\n' "$TK_LABEL"
-    printf '           covers: from login onward, including while the screen is LOCKED\n'
-    printf '           NOT covered: before you log in, and after you log out\n'
-  else
-    printf 'autostart: installed but NOT loaded -- start it with: trigger-kvm restart\n'
-  fi
-
-  # Said plainly rather than pretended away. The Windows "from boot" tier runs
-  # AS THE USER, unelevated, in session 0 -- admin is needed once to register
-  # and nothing elevated runs on the switch path. macOS has no equivalent: a
-  # LaunchDaemon starts before login but runs as ROOT, which is a different
-  # thing, and the switcher must not run as root to obtain a tier. There is also
-  # nothing to run it for -- both display-probe and m1ddc use CoreGraphics,
-  # which needs a logged-in session.
-  printf '           macOS has no equivalent of the Windows "from boot" tier: a\n'
-  printf '           LaunchDaemon would start before login but run as ROOT, and the\n'
-  printf '           switcher must not run as root. Login is the only tier here.\n'
+  # Say when it runs and what that therefore COVERS -- never just a tier name.
+  # What someone wants to know is whether a locked or logged-out machine still
+  # follows the switch.
+  case $(tk_installed_tier) in
+    boot)
+      printf 'autostart: at boot  (LaunchDaemon %s)\n' "$TK_LABEL"
+      printf '           covers: from boot onward -- before anyone logs in, while\n'
+      printf '           locked, and after logout\n'
+      printf '           runs as: %s, unelevated. Your password installed it; it\n' "$(id -un)"
+      printf '           does not run anything as an administrator.\n'
+      ;;
+    login)
+      if tk_agent_loaded; then
+        printf 'autostart: when you log in  (LaunchAgent %s)\n' "$TK_LABEL"
+        printf '           covers: from login onward, including while the screen is LOCKED\n'
+        printf '           NOT covered: before you log in, and after you log out\n'
+        printf '           to cover those too:  trigger-kvm configure  -> Autostart -> From boot\n'
+      else
+        printf 'autostart: installed but NOT loaded -- start it with: trigger-kvm restart\n'
+      fi
+      ;;
+    *)
+      printf 'autostart: not installed\n'
+      ;;
+  esac
 
   # `|| true`: pgrep exits 1 when nothing matches, and under `set -euo pipefail`
   # that made `status` stop dead at this line on a machine with no watcher --

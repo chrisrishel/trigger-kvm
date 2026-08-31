@@ -131,6 +131,10 @@ usb|usb:1235:820a|attached now|Clarett+ 2Pre
 bt|bt:0011223344ff|paired, not connected|AirPods Pro
 EOS
 
+  # Never the real /Library/LaunchDaemons.
+  TK_DAEMON_PLIST="$FAKE_DIR/fake-LaunchDaemons.plist"
+  export TK_DAEMON_PLIST
+
   M1DDC="$FAKE_DIR/m1ddc"
   TK_PROBE="$FAKE_DIR/display-probe"
   TK_WATCHER="$FAKE_DIR/event-watch"

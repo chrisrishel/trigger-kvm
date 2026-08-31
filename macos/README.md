@@ -138,13 +138,22 @@ command. There is no `apply` step either — everything is read at the point it 
 used, so display edits take effect on the next switch and trigger edits when the
 watcher next starts, which is what `restart` does.
 
-**Autostart is login-only on macOS, and `status` says so rather than pretending
-the tiers match.** The Windows "from boot" tier runs *as the user, unelevated*,
-in session 0 — admin is needed once to register it and nothing elevated runs on
-the switch path. There is no macOS equivalent: a LaunchDaemon starts before
-login but runs as **root**, and the switcher must not run as root to obtain a
-tier. There would be nothing for it to do anyway, since both `display-probe` and
-`m1ddc` use CoreGraphics, which needs a logged-in session.
+**Both autostart tiers are available.** `From boot` is a LaunchDaemon in
+`/Library/LaunchDaemons` with `UserName` set, so it runs **as you, unelevated** —
+your password installs it into the system domain, and nothing runs as an
+administrator afterwards. That is the same property the Windows S4U tier has,
+and the tier would not be worth having without it. `From login` is a LaunchAgent
+and needs no password at all.
+
+The two are mutually exclusive: installing one removes the other, because two
+live watchers would both fire on the same arrival and the debounce is
+per-process.
+
+This was documented as impossible for a while, on two claims that were both
+measured wrong — a LaunchDaemon with `UserName` does not run as root, and
+reading the displays does not need a logged-in session. Measured from a
+LaunchDaemon with no session: IOKit identity works with no CoreGraphics,
+`m1ddc display list` works, and a full `pull` works as uid 501.
 
 `pull` and `to` are one lookup but two verbs, and the split is a safety
 property, not style. `computer.this` describes inputs on hardware this Mac is
@@ -376,5 +385,7 @@ verified 2026-08-30 rather than assumed:
 `IOUSBHostDevice` is the correct matching class on Apple Silicon — the older
 `IOUSBDevice` name is not reliable here.
 
-The agent is post-login by design. `m1ddc` and `display-probe` both link
-CoreGraphics and cannot work in session 0; see the root README.
+Both `m1ddc` and `display-probe` link CoreGraphics, but that does **not** stop
+them working without a user session — measured from a LaunchDaemon, both work
+fine. Identity does not even need CoreGraphics: `display-probe`'s EDID walk is
+pure IOKit.

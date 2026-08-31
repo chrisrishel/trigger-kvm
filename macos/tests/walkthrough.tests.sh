@@ -190,6 +190,56 @@ assert_match "$c" 'trigger.settle   = 0.75'
 it 'writes the autostart answer'
 assert_match "$c" 'install.autostart = login'
 
+it 'offers the boot tier FIRST, and as a real choice'
+# specs/configure.md 8. It was drawn-and-disabled for a while on the claim that
+# a LaunchDaemon must run as root -- one with UserName set runs as the user, and
+# root is needed only to install it.
+assert_match "$WT_OUT" 'From boot'
+assert_no_match "$WT_OUT" 'not available on macOS'
+assert_no_match "$WT_OUT" '   -- From boot'
+
+it 'says what the boot tier actually costs'
+assert_match "$WT_OUT" 'needs your password once, to install'
+assert_match "$WT_OUT" 'Nothing runs as an administrator afterwards'
+
+it 'and choosing it writes boot'
+# Written out rather than derived from $FULL: deriving it needs to find "the
+# answer after the one that says 4", which is exactly the kind of cleverness
+# that has already produced two wrong test scripts here.
+BOOT='1
+mac
+
+pc
+5
+2
+1
+
+
+
+9
+0xD1
+10
+0xD0
+2
+
+asus
+1
+3
+4
+3
+1,2
+4
+1
+5
+2
+10'
+rm -f "$CFG"
+PATH=$SAVED_PATH configure_with "$BOOT"
+assert_match "$(cat "$CFG")" 'install.autostart = boot' "$WT_OUT"
+
+rm -f "$CFG"
+PATH=$SAVED_PATH configure_with "$FULL"
+
 it 'the config it wrote is one the switcher accepts'
 # The real test of "identical in shape": pull resolves against it and sends.
 fake_reset

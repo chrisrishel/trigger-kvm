@@ -261,14 +261,30 @@ treats arrivals as untrusted:
 
 Devices already present at startup never fire.
 
-## Scope: post-login only
+## Scope: both platforms can start before login
 
-Both platforms are post-login by design, and this is a deliberate limit rather than
-an oversight.
+Both offer the same two tiers, and both hold the same property: **elevation once,
+to register, and nothing elevated on the switch path.**
 
-`m1ddc` links CoreGraphics and enumerates displays via `CGGetOnlineDisplayList`,
-which requires a window server connection. A LaunchDaemon in session 0 has none and
-would enumerate zero displays. macOS remains blocked for this reason.
+| | boot | login |
+|---|---|---|
+| Windows | Scheduled Task, S4U principal, session 0, unelevated | Scheduled Task, Interactive |
+| macOS | LaunchDaemon with `UserName` set — as the user, unelevated, no session | LaunchAgent |
+
+**On macOS this section used to say the boot tier was impossible**, because
+`m1ddc` links CoreGraphics and `CGGetOnlineDisplayList` supposedly needs a window
+server connection a daemon has not got. That was reasoning, not measurement, and
+it was wrong. Measured 2026-08-31 from a LaunchDaemon with no session:
+
+- IOKit display identity works with **no CoreGraphics at all** — both panels
+  found by EDID vendor, product and name.
+- `m1ddc display list` works, returning both panels and their UUIDs.
+- A full `trigger-kvm pull` works **as uid 501, not root**, with both writes sent.
+
+So the tier costs one plist and a single `sudo` at install. `UserName` is what
+makes it the Windows tier rather than a root daemon: launchd drops privileges
+before running the job. A root daemon acting on a user-writable config would be a
+local privilege escalation, and is not what this is.
 
 **On Windows the desktop dependency is gone.** This section used to argue that
 session 0 blocked Windows too, because it has no desktop and therefore no
@@ -307,12 +323,16 @@ What remains is the permission trade, which is real and is the user's to make:
 
 See `ideas/nvapi-transport.md`.
 
-Pre-login on macOS has a known clean path if it ever becomes worth building:
-enumerate `DCPAVServiceProxy` entries where `Location = External` directly from
-IORegistry, match on the display's identity, then `IOAVServiceCreateWithService` +
-`IOAVServiceWriteI2C` — no CoreGraphics anywhere. Identity matching is the unsolved
-part: with two external monitors, order-based pairing could send the LG's `0xF4` to
-the ASUS.
+A CoreGraphics-free macOS transport — `IOAVServiceCreateWithService` +
+`IOAVServiceWriteI2C` against IORegistry entries — is no longer needed for the
+boot tier, since `m1ddc` works without a session. It remains the route if the
+`m1ddc` dependency is ever worth dropping. The identity half is already solved
+and shipped: `display-probe` matches on **EDID vendor and product read from
+IORegistry**, never on order, so the concern that order-based pairing could send
+the LG's `0xF4` to the ASUS does not apply. The symbol names are real, read from
+the installed binary: `IOAVServiceCreate`, `IOAVServiceCreateWithService`,
+`IOAVServiceReadI2C`, `IOAVServiceWriteI2C`. Their signatures would still need a
+real source — never memory.
 
 **Do not key that on the EDID product ID without checking it first.** The LG reports
 a *different product ID on every input* — three consecutive values have been

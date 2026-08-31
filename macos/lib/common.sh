@@ -13,6 +13,11 @@ TK_SUPPORT="$HOME/Library/Application Support/trigger-kvm"
 TK_LOG="$HOME/Library/Logs/trigger-kvm.log"
 TK_LOCK="$TK_SUPPORT/watcher.lock"
 TK_PLIST="$HOME/Library/LaunchAgents/$TK_LABEL.plist"
+# The boot tier. A LaunchDaemon in the system domain, but with UserName set so
+# it runs AS THE USER, unelevated -- root installs it, root does not run it.
+# Overridable so the suite can never touch the real system path. Everything
+# else a test needs to fake is already overridable for the same reason.
+TK_DAEMON_PLIST=${TK_DAEMON_PLIST:-/Library/LaunchDaemons/$TK_LABEL.plist}
 
 # Where an installed copy lives, and where the one symlink that goes on PATH
 # points from. Only a directory holding the launcher is published, never the
