@@ -65,7 +65,12 @@ mutate() {
     checked=$(( checked + 1 )); survived=$(( survived + 1 ))
   else
     checked=$(( checked + 1 ))
-    if bash "$HERE/$suite" >/tmp/tk-mutate.out 2>&1; then
+    # A mutant can HANG rather than fail -- one sat on a single configure for 28
+    # minutes because a prompt at EOF re-asked forever. Bound it, the same way
+    # run.sh bounds a test file.
+    if bash "$HERE/$suite" >/tmp/tk-mutate.out 2>&1 & p=$!
+       ( sleep "${TK_MUTATE_TIMEOUT:-300}"; kill -9 $p 2>/dev/null ) >/dev/null 2>&1 &
+       w=$!; wait $p; rc=$?; kill $w 2>/dev/null; [ $rc -eq 0 ]; then
       echo "  SURVIVED  $name"
       survived=$(( survived + 1 ))
     else
@@ -169,6 +174,54 @@ mutate 'keys: any escape byte is Esc, with no continuation read' lib/menu.sh key
   's%  if \[ "$_b" = "27" \]; then%  if false; then%'
 mutate 'keys: terminal state is never restored' lib/menu.sh keys.tests.sh \
   's%\[ -n "$_saved" \] && stty "$_saved" </dev/tty 2>/dev/null%:%g'
+
+# --- the walkthrough ---------------------------------------------------------
+
+mutate 'walkthrough: Save writes even with a section unset' lib/walkthrough.sh walkthrough.tests.sh \
+  's%      if \[ -z "$_missing" \]; then break; fi%      break%'
+mutate 'walkthrough: --fresh pre-fills from the existing config anyway' lib/walkthrough.sh walkthrough.tests.sh \
+  's%  if \[ "$_fresh" = "1" \]; then%  if false; then%'
+mutate 'walkthrough: panels are given a dialect by vendor instead of standard' lib/walkthrough.sh walkthrough.tests.sh \
+  's%    _method=standard%    _method=lg-alt%'
+mutate 'walkthrough: the PATH row is hidden when it is already on PATH' lib/walkthrough.sh walkthrough.tests.sh \
+  's%    \[ "$WT_ONPATH" = "1" \] && menu_disable "$_pathrow"%    :%'
+mutate 'walkthrough: Cancel writes the config anyway' lib/walkthrough.sh walkthrough.tests.sh \
+  '/cancelled; nothing was changed/{n;s%.*%      break%;}'
+mutate 'walkthrough: the input map is written under a key nothing reads' lib/walkthrough.sh walkthrough.tests.sh \
+  's@input\.%s@inputs.%s@'
+
+# --- the checks --------------------------------------------------------------
+
+mutate 'checks: every panel moves at once, keeping none here' lib/checks.sh checks.tests.sh \
+  's%    if \[ "$_np" -eq "$_nscoped" \] && \[ "$_np" -gt 1 \]; then%    if false; then%'
+mutate 'checks: the single-monitor recovery text is not shown' lib/checks.sh checks.tests.sh \
+  's%    printf ..n  READ THIS FIRST -- this is your only monitor..n. >&2%    :%'
+mutate 'checks: declining the single-monitor warning reads as a pass' lib/checks.sh checks.tests.sh \
+  's%      WT_ROUND_SKIPPED=1%      WT_ROUND_SKIPPED=0%'
+mutate 'checks: the trigger check pulls before the inputs are verified' lib/checks.sh checks.tests.sh \
+  's%  \[ "$WT_DISPLAYS_OK" = "1" \] && _pull=1%  _pull=1%'
+mutate 'checks: a manufacturer dialect is applied without being offered' lib/checks.sh checks.tests.sh \
+  's%    if \[ "$MENU_PICK" = "0" \]; then%    if true; then%'
+mutate 'checks: failures are joined on spaces, splitting panel names' lib/checks.sh checks.tests.sh \
+  's%^\$_f"%^ $_f"%'
+
+# --- shell scoping -----------------------------------------------------------
+#
+# Shell variables are global unless declared local, so a callee's loop index
+# silently overwrites its caller's. select_many's `_i` did exactly that to
+# wt_check_round's, and the check crashed on an unbound array subscript the
+# moment a batch was narrowed.
+
+# The defence is the CALLER declaring its own locals -- with dynamic scoping a
+# callee then writes to its own copy. So the mutation to make is removing the
+# locals from the function whose state was corrupted, not from the menu that
+# corrupted it.
+mutate 'scope: a function stops declaring its scratch local' lib/checks.sh conventions.tests.sh \
+  '/^wt_check_round() {/{n;s%^  local .*%  :%;}'
+mutate 'scope: a menu stops declaring its scratch local' lib/menu.sh conventions.tests.sh \
+  '/^select_many() {/{n;s%^  local .*%  :%;}'
+mutate 'sidechannel: input-alt appears somewhere else too' lib/display.sh conventions.tests.sh \
+  's%^# --- the packet%_unused_alt="input-alt"\n# --- the packet%'
 
 echo
 if [ "$survived" = "0" ]; then

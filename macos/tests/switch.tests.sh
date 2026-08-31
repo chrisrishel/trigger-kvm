@@ -275,16 +275,7 @@ assert_equal 1 "$TK_RC"
 assert_match "$TK_OUT" "unknown method"
 assert_nothing_sent
 
-it 'reaches the service channel from exactly one function in the sources'
-# The structural half of hard rule 5, checked mechanically rather than by
-# reading. `input-alt` is what m1ddc calls I2C source 0x50; if it ever appears
-# outside ddc_send, there is a second way to reach the sidechannel and the gate
-# is no longer a gate.
-hits=$(grep -rn 'input-alt' "$MAC_DIR/lib" "$TK" | grep -vc '^[^:]*:[0-9]*: *#')
-assert_equal 1 "$hits" 'input-alt must appear in exactly one non-comment line'
-# shellcheck disable=SC2016  # a literal to grep for, not an expansion
-owner=$(grep -rln 'set "$_sub"' "$MAC_DIR/lib")
-assert_equal "$MAC_DIR/lib/display.sh" "$owner"
+# The structural half of hard rule 5 is checked in conventions.tests.sh.
 
 # =============================================================================
 # list

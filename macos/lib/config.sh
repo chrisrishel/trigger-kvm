@@ -140,6 +140,7 @@ config_display_labels() {
 
 # One display's field, falling back to $3 when the config does not set it.
 config_display_field() {
+  local _v
   _v=$(config_get "display.$1.$2")
   if [ -n "$_v" ]; then printf '%s\n' "$_v"; else printf '%s\n' "$3"; fi
 }
@@ -159,6 +160,7 @@ config_display_field() {
 # and picking one would switch to an input nobody meant on a desk this machine
 # cannot see.
 config_input_map() {
+  local _k _val _who
   config_keys_under "display.$1.input." |
   while IFS= read -r _k; do
     [ -n "$_k" ] || continue
@@ -185,6 +187,7 @@ config_this_computer() {
 
 # Every computer the config names, in the order it first appears.
 config_known_computers() {
+  local _l
   for _l in $(config_display_labels); do config_input_map "$_l" | cut -f1; done | awk '!seen[$0]++'
 }
 
@@ -192,6 +195,7 @@ config_known_computers() {
 # A bare VVVV:PPPP means usb, so configs written before Bluetooth existed keep
 # working unchanged.
 config_trigger_devices() {
+  local _d
   config_get 'trigger.device' |
     tr ',' '\n' | tr -d ' \t' | tr '[:upper:]' '[:lower:]' |
     while IFS= read -r _d; do

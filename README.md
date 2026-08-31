@@ -39,7 +39,7 @@ USB switch ──> peripherals ──> whichever machine gets them pulls both di
 | [`docs/macos-parity.md`](docs/macos-parity.md) | The specification for the macOS side: what to build, what it must match, and what it must never do |
 | [`TODO.md`](TODO.md) | Deferred work, each with the trigger that should resurface it |
 | `ideas/` | Exploratory design notes, including `ideas/rejected/` for options deliberately declined |
-| `macos/` | **Catching up.** `trigger-kvm` (m1ddc) + `event-watch` (IOKit, USB and Bluetooth) + `display-probe` (CoreGraphics/IOKit). Reads the same config the Windows side writes; the walkthrough and the checks are still to come — see `docs/macos-parity.md` |
+| `macos/` | `trigger-kvm` (m1ddc) + `event-watch` (IOKit, USB and Bluetooth) + `display-probe` (CoreGraphics/IOKit), with the same verbs, the same config and the same walkthrough as Windows — see `docs/macos-parity.md` |
 | `windows/` | The reference implementation: `event-watch.ps1` (WMI + Bluetooth) + `trigger-kvm.ps1` (aimed NVAPI I2C) + `install.ps1` (the walkthrough) + Scheduled Task |
 | `windows/tests/` | The test suite. `.
 un.ps1` — no framework, no dependencies |
@@ -173,7 +173,8 @@ Windows: [`windows/README.md`](windows/README.md) — `.\install.ps1`
 
 Both install a background watcher that is restarted if it dies. The Windows
 installer asks when it should start — from boot, from login, or not at all — and
-suggests from boot; macOS is post-login only. See [Scope](#scope).
+suggests from boot; macOS is post-login only, and `trigger-kvm status` says so
+rather than implying the tiers match. See [Scope](#scope).
 
 ### 5. Verify
 

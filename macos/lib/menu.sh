@@ -42,6 +42,7 @@ menu_sep() { MENU_ITEMS+=(""); MENU_DETAIL+=(""); }
 menu_disable() { MENU_DISABLED+=("$1"); }
 
 menu_is_disabled() {
+  local _d
   for _d in ${MENU_DISABLED[@]+"${MENU_DISABLED[@]}"}; do
     [ "$_d" = "$1" ] && return 0
   done
@@ -51,6 +52,7 @@ menu_is_disabled() {
 # --- drawing -----------------------------------------------------------------
 
 menu_width() {
+  local _w
   _w=${COLUMNS:-0}
   [ "$_w" -gt 0 ] 2>/dev/null || _w=$(tput cols 2>/dev/null || echo 100)
   _w=$(( _w - 1 ))
@@ -94,6 +96,7 @@ EOF
 # straight on with no gap -- "Yes, and it changed back to pc everything works"
 # -- which reads as one sentence rather than a choice and its consequence.
 menu_itemw() {
+  local _iw _it _l
   _iw=28
   for _it in ${MENU_ITEMS[@]+"${MENU_ITEMS[@]}"}; do
     [ -n "$_it" ] || continue
@@ -107,6 +110,7 @@ menu_itemw() {
 # One row of text, possibly several lines when the detail does not fit.
 # Emits to stdout; the caller collects.
 menu_build_row() {
+  local _i _marker _width _itemw _current _d _avail _first _chunk
   _i=$1 _marker=$2 _width=$3 _itemw=$4 _current=$5
 
   _d=${MENU_DETAIL[$_i]}
@@ -142,6 +146,7 @@ menu_build_row() {
 # out the moment a caller changed the block's shape.
 MENU_DRAWN=0
 menu_frame() {
+  local _lines _width _n _l _len _rows
   _lines=$1 _width=$2
   if [ "$MENU_DRAWN" -gt 0 ]; then printf '\033[%dA' "$MENU_DRAWN" >&2; fi
   _n=0
@@ -188,6 +193,7 @@ menu_can_read_keys() {
 # NUL and newline in a command substitution, so Enter is 13 or 10 rather than
 # "the empty string, sometimes".
 menu_read_key() {
+  local _saved _b _rest
   _saved=$(stty -g </dev/tty 2>/dev/null || true)
   stty -icanon -echo min 1 time 0 </dev/tty 2>/dev/null || true
   _b=$(dd bs=1 count=1 2>/dev/null </dev/tty | od -An -tu1 | tr -d ' \n')
@@ -226,26 +232,45 @@ menu_read_key() {
   esac
 }
 
+# Running out of input is NOT an empty answer, and must not be treated as one.
+# A required prompt that re-asks on a blank answer will re-ask forever once
+# stdin is at EOF -- which is what a redirected or scripted run looks like the
+# moment its answers run out.
+#
+# EOF is signalled by a non-zero RETURN, not by exiting: almost every prompt is
+# read inside $(...), and `exit` there kills only the subshell. The caller then
+# sees an empty answer, re-asks, and spins forever -- measured, a mutation run
+# sat on one configure for 28 minutes. A return status crosses a command
+# substitution, so every call site is `... || menu_eof` and menu_eof runs in the
+# caller's own shell, where exiting means something.
+menu_eof() {
+  printf '\n' >&2
+  tk_log 'ran out of input. configure needs a terminal, or a complete script of answers.'
+  exit 2
+}
+
 # A prompt with a default. Reads from STDIN, which is what makes the walkthrough
 # scriptable end to end.
 menu_read_line() {
+  local _prompt _default _answer
   _prompt=$1 _default=${2:-}
   if [ -n "$_default" ]; then
     printf '%s [%s]: ' "$_prompt" "$_default" >&2
   else
     printf '%s: ' "$_prompt" >&2
   fi
-  if ! IFS= read -r _answer; then _answer=''; fi
+  IFS= read -r _answer || return 3
   _answer=$(printf '%s' "$_answer" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
   if [ -z "$_answer" ]; then printf '%s\n' "$_default"; else printf '%s\n' "$_answer"; fi
 }
 
 read_yesno() {
+  local _prompt _default _hint _a
   _prompt=$1 _default=${2:-y}
   if [ "$_default" = "y" ]; then _hint='Y/n'; else _hint='y/N'; fi
   while :; do
     printf '%s [%s] ' "$_prompt" "$_hint" >&2
-    if ! IFS= read -r _a; then _a=''; fi
+    IFS= read -r _a || menu_eof
     _a=$(printf '%s' "$_a" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')
     case $_a in
       '')      [ "$_default" = "y" ] && return 0 || return 1 ;;
@@ -266,6 +291,8 @@ read_yesno() {
 # offered on the top menu (which has Cancel, and should not discard a setup on a
 # stray keypress) nor on a question that must be answered.
 select_one() {
+  local _default _current _help _escapable _sel _i _ok _s _itemw _at _n _width
+  local _buf
   _default=0 _current=-1 _help='' _escapable=0
   while [ $# -gt 0 ]; do
     case $1 in
@@ -351,6 +378,7 @@ $_help
 
 # The typed fallback. A numbered list and a prompt -- and `q` is its `esc`.
 select_one_typed() {
+  local _default _current _help _escapable _itemw _i _l _first _pick _idx _s
   _default=$1 _current=$2 _help=$3 _escapable=$4 _itemw=$5
 
   _i=0
@@ -373,7 +401,7 @@ select_one_typed() {
   [ -n "$_help" ] && { printf '\n' >&2; printf '%s\n' "$_help" >&2; }
 
   while :; do
-    _pick=$(menu_read_line '  Choice' "$(( _default + 1 ))")
+    _pick=$(menu_read_line '  Choice' "$(( _default + 1 ))") || menu_eof
     if [ "$_escapable" = "1" ] && [ "$_pick" = "q" ]; then MENU_PICK=-1; return 0; fi
     case $_pick in
       ''|*[!0-9]*) ;;
@@ -402,6 +430,8 @@ select_one_typed() {
 # is distinct from any list of indices and from the empty list this refuses to
 # return.
 select_many() {
+  local _checked _help _escapable _donelabel _state _i _c _done _cursor _note
+  local _width _buf _m _b _n _s _count _key _out
   _checked='' _help='' _escapable=0 _donelabel='Done'
   while [ $# -gt 0 ]; do
     case $1 in
@@ -503,6 +533,7 @@ $_note"
 }
 
 select_many_typed() {
+  local _help _escapable _i _mark _pre _pick _out _old _n
   _help=$1 _escapable=$2
 
   _i=0
@@ -522,7 +553,7 @@ select_many_typed() {
   _pre=${_pre#,}
 
   while :; do
-    _pick=$(menu_read_line '  Numbers, comma-separated' "$_pre")
+    _pick=$(menu_read_line '  Numbers, comma-separated' "$_pre") || menu_eof
     if [ "$_escapable" = "1" ] && [ "$_pick" = "q" ]; then
       MENU_PICKED=''; MENU_ESCAPED=1; return 0
     fi

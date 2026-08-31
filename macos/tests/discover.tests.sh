@@ -15,6 +15,10 @@ fi
 
 fake_setup
 fake_displays "$FAKE_LG" "$FAKE_ASUS"
+# The DEVICE half runs against the real binary and this real machine, because
+# reporting what is actually attached is its whole job. fake_setup points
+# TK_WATCHER at a fixture for the tests that want one; this one does not.
+export TK_WATCHER="$MAC_DIR/event-watch"
 CFG=$(printf '%s' "$CONFIG_THIS_DESK" | make_config)
 export TK_TRIES=1
 

@@ -85,7 +85,8 @@ displays.toml          researched model knowledge — shared by both platforms
 │   ├── event-watch.c     watches for events →  execs the switcher
 │   ├── display-probe.c   EDID + m1ddc handle → identity, never an index
 │   ├── trigger-kvm       the one command    →  every verb
-│   └── lib/*.sh          config, display, manage
+│   ├── install.sh        the bootstrap; copies itself alongside the program
+│   └── lib/*.sh          config, display, menus, walkthrough, checks
 └── windows/
     ├── event-watch.ps1   watches for events →  execs the switcher
     ├── trigger-kvm.ps1   aimed NVAPI I2C, both panels → sends the DDC writes

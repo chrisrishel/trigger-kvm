@@ -61,6 +61,7 @@ display_describe() {
 # at, and taking the first would reintroduce exactly the order-dependence the
 # EDID matching exists to remove.
 display_resolve() {
+  local _want_v _want_p _name _all _hex _match _n _seen _r
   _want_v=$1 _want_p=$2 _name=$3
 
   _all=$(display_enumerate) || return 1
@@ -96,6 +97,7 @@ display_resolve() {
 # what is about to go on the wire, and so a test can assert the bytes against
 # displays.toml without a monitor being present.
 ddc_packet() {
+  local _src _vcp _val _sum
   _src=$(( $1 )) _vcp=$(( $2 )) _val=$(( $3 ))
   _sum=$(( 0x6E ^ _src ^ 0x84 ^ 0x03 ^ _vcp ^ 0x00 ^ _val ))
   printf '%02X %02X %02X %02X %02X %02X %02X\n' \
@@ -130,6 +132,7 @@ ddc_packet_for() {
 # It is also the single thing the test harness stands in for, which is what
 # keeps the suite from moving a developer's own monitors.
 ddc_send() {
+  local _uuid _vendor _method _value _what _sub _ok _i
   _uuid=$1 _vendor=$2 _method=$3 _value=$4 _what=$5
 
   case $_method in
@@ -179,6 +182,8 @@ ddc_send() {
 # used and that is the ONLY thing it changes -- resolution, aiming, retry and
 # logging are identical either way.
 display_switch() {
+  local _label _value _dry _vraw _praw _name _method _vendor _product _row
+  local _uuid _packet _chan _what
   _label=$1 _value=$2 _dry=$3
 
   _vraw=$(config_get "display.$_label.vendor")

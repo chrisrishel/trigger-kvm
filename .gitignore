@@ -5,6 +5,11 @@
 macos/usb-watch
 macos/display-probe
 macos/event-watch
+
+# A mutation run's in-flight backup. tests/run.sh refuses to run while one
+# exists, and tests/mutate.sh restores strays on startup -- but one must never
+# be committed, because the file beside it is a deliberately broken copy.
+*.mutbak
 *.o
 *.dSYM/
 

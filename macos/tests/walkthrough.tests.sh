@@ -1,0 +1,246 @@
+#!/bin/bash
+#
+# The walkthrough, driven end to end through the TYPED FALLBACK.
+#
+# That is what the fallback is for. Every prompt and every menu reads a line
+# from stdin when the host cannot read individual keys, so a complete script of
+# answers exercises the real flow -- the real menus, the real state, the real
+# config writer -- with nothing stubbed but the hardware.
+#
+# Nothing here can move a monitor: M1DDC points at a recorder, and the checks
+# are covered separately in checks.tests.sh.
+
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+
+fake_setup
+fake_displays "$FAKE_LG" "$FAKE_ASUS"
+
+# A HOME of our own, so ~/.local/bin is reliably NOT on PATH and the "Add to
+# PATH?" row is a live question rather than a disabled one. The disabled case
+# gets its own test below.
+export HOME="$FAKE_DIR/home"
+mkdir -p "$HOME"
+export TK_TYPED=1 TK_TRIES=1
+
+CFG="$FAKE_DIR/wt-config"
+SAVED_PATH=$PATH
+
+# Answer the walkthrough. Everything after the first argument is one answer per
+# line; running out of them makes configure stop and say so, which is what turns
+# a flow change into a failed test instead of a hung run.
+WT_OUT=''
+WT_RC=0
+configure_with() {
+  _answers=$1; shift
+  printf '%s\n' "$_answers" > "$FAKE_DIR/answers"
+  set +e
+  WT_OUT=$("$TK" configure --config "$CFG" "$@" <"$FAKE_DIR/answers" 2>&1)
+  WT_RC=$?
+  set -e
+}
+
+# The full script for a fresh desk: two computers, two panels, two triggers.
+FULL='1
+mac
+
+pc
+5
+2
+1
+
+
+9
+0xD1
+10
+0xD0
+2
+
+asus
+1
+3
+4
+3
+1,2
+4
+2
+5
+2
+10'
+
+# =============================================================================
+# from nothing, the menu alone produces a config
+# =============================================================================
+
+rm -f "$CFG"
+configure_with "$FULL"
+
+it 'the menu IS the flow -- an empty install is the same menu with "not set" in it'
+assert_match "$WT_OUT" 'Computers                    not set'
+assert_match "$WT_OUT" 'Monitors                     not set'
+assert_match "$WT_OUT" 'Triggers                     not set'
+assert_match "$WT_OUT" 'Autostart?                   not set'
+assert_match "$WT_OUT" 'Add to PATH?                 not set'
+
+it 'the checks are shown as untested, not as passed'
+assert_match "$WT_OUT" 'Test the monitor inputs      untested'
+assert_match "$WT_OUT" 'Test the triggers            untested'
+
+it 'the header says configuration until monitors and triggers are set'
+assert_match "$WT_OUT" '--- configuration ---'
+
+it 'writes a config'
+assert_true "$([ -f "$CFG" ] && echo 0 || echo 1)" "$WT_OUT"
+
+it 'names this computer and the other one'
+assert_match "$(cat "$CFG")" 'computer.this = mac'
+
+it 'writes both panels with the EDID ids read off the hardware'
+c=$(cat "$CFG")
+assert_match "$c" 'display.lg.vendor  = 0x1E6D'
+assert_match "$c" 'display.lg.product = 0x9E9F'
+assert_match "$c" 'display.asus.vendor  = 0x06B3'
+assert_match "$c" 'display.asus.product = 0x42E0'
+
+it "writes each panel's own name, from the EDID"
+assert_match "$c" 'display.lg.name    = LG ULTRAGEAR+'
+assert_match "$c" 'display.asus.name    = PG42UQ'
+
+it 'starts EVERY panel on standard, whatever the make'
+# A manufacturer dialect is OFFERED, never probed, and only after standard
+# DDC/CI has been shown not to work. The LG gets lg-alt from the check, not
+# from the walkthrough guessing by vendor.
+assert_match "$c" 'display.lg.method  = standard'
+assert_match "$c" 'display.asus.method  = standard'
+
+it 'writes the input map, and only the input map'
+assert_match "$c" 'display.lg.input.0xd1 = mac'
+assert_match "$c" 'display.lg.input.0xd0 = pc'
+assert_match "$c" 'display.asus.input.0x0f = mac'
+assert_match "$c" 'display.asus.input.0x11 = pc'
+assert_no_match "$c" 'display.lg.self'
+assert_no_match "$c" 'scene.'
+
+it 'writes the triggers it was given'
+assert_match "$c" 'trigger.device   = usb:046d:0843, usb:1235:820a'
+
+it 'writes the timings, with the shipped defaults'
+assert_match "$c" 'trigger.debounce = 3.0'
+assert_match "$c" 'trigger.settle   = 0.75'
+
+it 'writes the autostart answer'
+assert_match "$c" 'install.autostart = login'
+
+it 'the config it wrote is one the switcher accepts'
+# The real test of "identical in shape": pull resolves against it and sends.
+fake_reset
+run_tk pull --config "$CFG"
+assert_equal 0 "$TK_RC" "$TK_OUT"
+assert_match "$(fake_sent)" 'set input 15'
+assert_match "$(fake_sent)" 'set input 209'
+
+it 'moved nothing while being configured'
+# The walkthrough writes a config; it does not switch anything until asked.
+assert_no_match "$WT_OUT" 'DRY RUN'
+
+# =============================================================================
+# a re-run opens with nothing to fill in
+# =============================================================================
+
+# With the launcher's directory already on PATH -- the state a real install
+# leaves behind -- there is genuinely nothing left to fill in. PATH is not a
+# config value and is deliberately re-asked each run when it is still an open
+# question; that case has its own test below.
+export PATH="$HOME/.local/bin:$PATH"
+
+it 'a re-run opens with every answer already in it'
+configure_with '11'          # straight to Cancel
+assert_no_match "$WT_OUT" 'not set'
+assert_match "$WT_OUT" 'mac (this), pc'
+assert_match "$WT_OUT" 'lg: mac/pc'
+assert_match "$WT_OUT" 'asus: mac/pc'
+assert_match "$WT_OUT" 'usb:046d:0843, usb:1235:820a'
+assert_match "$WT_OUT" 'from login'
+
+it 'the header says REVIEW once monitors and triggers are set'
+assert_match "$WT_OUT" '--- review configuration ---'
+
+it 'the cursor lands on the first CHECK once every setting is answered'
+# Where the cursor lands is the recommendation, and it is "the next thing that
+# is not done": the unanswered sections in order, THEN the checks in order,
+# then Save. Nothing has been checked yet, so it lands there and not on Save.
+assert_match "$WT_OUT" 'Choice [7]'
+
+it 'Cancel changes nothing'
+before=$(cat "$CFG")
+configure_with '11'
+assert_equal 1 "$WT_RC"
+assert_match "$WT_OUT" 'cancelled; nothing was changed'
+assert_equal "$before" "$(cat "$CFG")"
+
+# =============================================================================
+# --fresh asks everything again
+# =============================================================================
+
+it '--fresh pre-fills nothing, even with a config present'
+configure_with '11' --fresh
+assert_match "$WT_OUT" 'Starting fresh'
+assert_match "$WT_OUT" 'Computers                    not set'
+assert_match "$WT_OUT" 'Monitors                     not set'
+assert_match "$WT_OUT" 'Triggers                     not set'
+
+it '--fresh still leaves the existing config alone when cancelled'
+before=$(cat "$CFG")
+configure_with '11' --fresh
+assert_equal "$before" "$(cat "$CFG")"
+
+# =============================================================================
+# save refuses while a section is unset
+# =============================================================================
+
+it 'Save REFUSES while a required section is not set, and names what is missing'
+# Writing half a setup produces a config the switcher then declines to act on,
+# which is a worse way to find out.
+rm -f "$CFG"
+configure_with '10
+11'
+assert_match "$WT_OUT" 'Still needed:'
+assert_match "$WT_OUT" 'Computers'
+assert_match "$WT_OUT" 'Monitors'
+assert_match "$WT_OUT" 'Triggers'
+assert_true "$([ ! -f "$CFG" ] && echo 0 || echo 1)" 'nothing may be written'
+
+it 'the checks are NOT required to save'
+# They move hardware, and someone may reasonably decline. Only the five
+# settings are required. Run with the original PATH, because $FULL answers the
+# PATH row and that row is disabled once the directory is on PATH -- which is
+# exactly the shape-change a scripted run would trip over.
+rm -f "$CFG"
+PATH=$SAVED_PATH configure_with "$FULL"
+assert_true "$([ -f "$CFG" ] && echo 0 || echo 1)" "$WT_OUT"
+
+it 'nothing is written until Save -- an interrupted run leaves the config alone'
+PATH=$SAVED_PATH configure_with "$FULL"
+before=$(cat "$CFG")
+set +e
+printf '1\nrenamed\n' | "$TK" configure --config "$CFG" >/dev/null 2>&1
+set -e
+assert_equal "$before" "$(cat "$CFG")" 'an aborted run must not write'
+
+# =============================================================================
+# the PATH row is always drawn
+# =============================================================================
+
+it 'the PATH row is drawn and DISABLED when there is nothing to decide'
+# Omitting it moved every row below it and left the cursor apparently skipping
+# a step, with no way to tell whether PATH had been handled or forgotten.
+configure_with '11'
+assert_match "$WT_OUT" 'Add to PATH?'
+assert_match "$WT_OUT" 'already on PATH'
+assert_match "$WT_OUT" '   -- Add to PATH?' 'drawn, and unpickable'
+
+it 'and it is still a live question when the directory is NOT on PATH'
+PATH=$SAVED_PATH configure_with '11'
+assert_match "$WT_OUT" 'Add to PATH?                 not set'
+assert_no_match "$WT_OUT" '   -- Add to PATH?'
+
+finish

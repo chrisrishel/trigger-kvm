@@ -1,12 +1,9 @@
 # macOS side
 
-> **Being brought to parity with Windows.** Phases 1-4 of
-> [`../docs/macos-parity.md`](../docs/macos-parity.md) have landed: the switcher
-> reads the same config file the Windows side writes, the `pull` / `to` / `list`
-> / `discover` / `status` / `restart` / `pause` / `logs` verbs work, and the
-> watcher is config-driven across USB and Bluetooth, and the menu primitives are
-> built and tested. The walkthrough and the checks are still to come. Read that
-> document before changing anything here.
+At parity with the Windows side, per
+[`../docs/macos-parity.md`](../docs/macos-parity.md). Read that document before
+changing anything here — almost everything in it was arrived at by getting it
+wrong first, on real hardware.
 
 A LaunchAgent runs `trigger-kvm watch`, which reads the config and execs the
 watcher; the watcher fires `trigger-kvm pull` when a watched device arrives.
@@ -22,17 +19,97 @@ Xcode command line tools for `clang` (you almost certainly already have them).
 ## Install
 
 ```sh
-make install     # build, install, write the plist, load the agent
-make status      # is the agent loaded?
-make logs        # tail ~/Library/Logs/trigger-kvm.log
-make uninstall
-make test        # the suite -- no hardware, cannot move a monitor
-make mutate      # reintroduce each bug the suite should catch
+cd macos && ./install.sh      # build, install, load the agent, walk you through it
+```
+
+That is what installing *is*, and it is why there is no `install` verb: installing
+is what produces the command. Upgrading and repairing both mean "fetch the source
+and run its installer", which works because the install is self-contained — the
+installer copies itself alongside the program, so managing and removing keep
+working after the source tree is gone.
+
+Nothing needs `sudo`, at install or at run time.
+
+```sh
+./install.sh uninstall        # remove the program; keep the config and the log
+make test                     # the suite -- no hardware, cannot move a monitor
+make mutate                   # reintroduce each bug the suite should catch
 ```
 
 Only `~/.local/bin/trigger-kvm`, a single symlink, goes on PATH. The program
 directory is never published: putting it on PATH would make every file in it a
 command.
+
+## The walkthrough
+
+`trigger-kvm configure` — **the menu is the flow.** There is no separate
+first-run questionnaire: an empty install is the same menu with `not set` in it
+and the cursor already on the first thing that needs an answer; a configured one
+is the same menu with the answers in it.
+
+```
+--- configuration ---
+
+ > 1) Computers                    not set
+   2) Monitors                     not set
+   3) Triggers                     not set
+   4) Autostart?                   not set
+   5) Add to PATH?                 not set
+
+   7) Test the monitor inputs      untested
+   8) Test the triggers            untested
+
+  10) Save configuration and run
+  11) Cancel (discard changes)
+```
+
+- **Nothing is preset.** Autostart and PATH have obvious answers, but the
+  suggestion belongs on the highlighted row *inside* their menu, not in the value
+  column of a menu nobody has opened.
+- **Nothing is written until Save**, so an interrupted run leaves a working setup
+  untouched. Save refuses while a required section is `not set`, naming what is
+  missing — writing half a setup produces a config the switcher then declines to
+  act on, which is a worse way to find out.
+- Where the cursor lands is the recommendation: unanswered sections in order,
+  then the checks in order, then Save. **A failed check sends the cursor to the
+  setting that failed**, not onward.
+- Computers are asked **before** the monitors, so a computer is described once
+  rather than once per screen, and every panel then offers the same names. A
+  rename is carried into every panel's map; the monitors are never re-asked.
+- Every panel starts on **standard** DDC/CI, whatever the make. A manufacturer
+  dialect is *offered*, never probed, and only after the check shows that
+  standard does not work.
+
+## The checks
+
+What is under test is the claim that **input V of panel P is computer C**. A
+panel that answers every command perfectly while its inputs are mapped to the
+wrong computers fails this and is not broken — hence "test the monitor
+**inputs**".
+
+Rounds are **batched across panels, never across computers**. Monitors sit side
+by side, so several are confirmed in one glance; a *sequence* over half a minute
+has to be held in memory and reported afterwards, and memory is the weak link.
+One question per round, and the four-way diagnosis only appears for the panels
+someone says went wrong.
+
+**One panel always stays on this computer**, so the question arrives on a screen
+that can be read. When every panel claims the target, that is two rounds. What
+stays is measured against *every* managed panel, not just the round's.
+
+With **one monitor** there is nothing to hold back. Being stranded is
+unavoidable; being stranded without having been told how to get back is not, and
+the telling happens while there is still a screen to read it on — naming the
+input in the monitor's own words, because the OSD has never heard of `mac`.
+
+Blind value-walking is the last resort: standard DDC only, MCCS values one at a
+time, offered with its cost stated, and **refused outright when it would take the
+last display**.
+
+The trigger check comes **after** the inputs, and that ordering is the point:
+once the values are confirmed, the flip back can pull the monitors for real, so
+it stops being "an event was observed" and becomes the whole thing working. Until
+then it reports the arrival and moves nothing, and says so.
 
 ## Manual use
 
@@ -207,6 +284,31 @@ byte and manages the terminal itself.
 make test        # shellcheck + the suite
 make mutate      # every mutation must be caught
 ```
+
+The walkthrough and the checks are driven end to end **through the typed
+fallback** — a complete script of answers piped in. That is what the fallback is
+for: it exercises the real menus, the real state and the real config writer with
+nothing stubbed but the hardware. Running out of answers stops the run and says
+so, which turns a flow change into a failed test rather than a hung one.
+
+That stopping is signalled by a non-zero **return**, not by exiting. Almost
+every prompt is read inside `$(...)`, and `exit` there kills only the subshell —
+the caller then sees an empty answer, re-asks, and spins. Measured: one mutation
+run sat on a single `configure` for 28 minutes before the harness grew a
+watchdog and the prompt grew a return status.
+
+Two rules are checked **structurally** rather than behaviourally, because no
+single mutation reproduces their failure:
+
+- `input-alt` — what m1ddc calls I2C source `0x50` — must appear in exactly one
+  non-comment line, inside the function that also holds the vendor gate.
+- Every `_`-prefixed variable a function assigns must be declared `local` in it.
+  Shell variables are global otherwise, and a callee's loop index silently
+  overwrote its caller's: `select_many`'s `_i` clobbered the monitor check's, and
+  the check crashed on an unbound array subscript the first time a batch was
+  narrowed. With the caller's locals in place a callee's missing ones are
+  harmless and vice versa, so it is the *convention* that holds — and the
+  convention is what gets scanned for.
 
 The suite cannot move a monitor. `M1DDC` points at a recorder and `display-probe`
 at a fixture, so even a test that drives the whole program end to end through an

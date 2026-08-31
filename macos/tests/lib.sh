@@ -113,9 +113,28 @@ EOS
   TK_FAKE_DISPLAYS="$FAKE_DIR/displays"
   : >"$TK_FAKE_DISPLAYS"
 
+  # Stands in for event-watch. Lists whatever the test says is attached, and
+  # reports whatever the test says a one-shot would.
+  cat >"$FAKE_DIR/event-watch" <<'EOS'
+#!/bin/sh
+case "$1" in
+  --list) [ -f "$TK_FAKE_DEVICES" ] && cat "$TK_FAKE_DEVICES"; exit 0 ;;
+  --test-trigger) exit "${TK_FAKE_TRIGGER_RC:-0}" ;;
+esac
+exit 0
+EOS
+  chmod +x "$FAKE_DIR/event-watch"
+  TK_FAKE_DEVICES="$FAKE_DIR/devices"
+  cat >"$TK_FAKE_DEVICES" <<'EOS'
+usb|usb:046d:0843|attached now|Logitech Webcam C930e
+usb|usb:1235:820a|attached now|Clarett+ 2Pre
+bt|bt:0011223344ff|paired, not connected|AirPods Pro
+EOS
+
   M1DDC="$FAKE_DIR/m1ddc"
   TK_PROBE="$FAKE_DIR/display-probe"
-  export TK_SENT TK_FAKE_DISPLAYS M1DDC TK_PROBE
+  TK_WATCHER="$FAKE_DIR/event-watch"
+  export TK_SENT TK_FAKE_DISPLAYS TK_FAKE_DEVICES M1DDC TK_PROBE TK_WATCHER
 
   trap 'rm -rf "$FAKE_DIR"' EXIT
 }
@@ -131,6 +150,9 @@ fake_displays() { printf '%s\n' "$@" >"$TK_FAKE_DISPLAYS"; }
 # LOCAL key; the Windows host sees 0x9E9D on its own DP cable.
 FAKE_LG='1E6D|9E9F|GSM|DP|00001111|AAAAAAAA-0000-4000-8000-000000000001|LG ULTRAGEAR+'
 FAKE_ASUS='06B3|42E0|AUS|DP|01010101|BBBBBBBB-0000-4000-8000-000000000002|PG42UQ'
+# A third panel, invented: batching across panels only becomes visible at three,
+# because at two hard rule 4 splits them into two rounds of one.
+FAKE_DELL='10AC|A123|DEL|HDMI|00000001|33333333-3333-3333-3333-333333333333|U2720Q'
 
 # --- configs -----------------------------------------------------------------
 

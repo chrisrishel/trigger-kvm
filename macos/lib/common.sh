@@ -42,6 +42,7 @@ TK_LOGFILE=${TK_LOGFILE:-}
 # identifies as it" straight into the variable the caller then treated as a
 # resolved panel, so the refusal reached nobody. Found by the tests below.
 tk_log() {
+  local _line _i
   _line="$(date '+%H:%M:%S') trigger-kvm: $*"
   printf '%s\n' "$_line" >&2
   if [ -n "$TK_LOGFILE" ]; then

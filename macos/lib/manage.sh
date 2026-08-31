@@ -18,6 +18,7 @@
 # which is the worst possible place for a disagreement, since this list is what
 # someone picks their trigger from.
 cmd_discover() {
+  local _cur _rows _kind _key _state _name _mark
   printf '\n=== displays on this computer ===\n'
   RAW=0 cmd_list_table
 
@@ -63,6 +64,7 @@ cmd_discover() {
 # the watcher holding the lock -- a trap that has caught people repeatedly.
 # There is deliberately no equivalent here to fall into.
 cmd_watch() {
+  local _devices _d _deb _set
   _devices=$(config_trigger_devices)
   if [ -z "$_devices" ]; then
     tk_log "no trigger.device in $CONFIG -- run: trigger-kvm configure"
@@ -127,6 +129,7 @@ cmd_logs() {
 # --- status --------------------------------------------------------------------
 
 cmd_status() {
+  local _n _note _labels _this _machines _c
   if [ ! -f "$TK_PLIST" ]; then
     printf 'autostart: not installed\n'
   elif tk_agent_loaded; then

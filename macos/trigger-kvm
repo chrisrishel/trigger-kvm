@@ -73,8 +73,14 @@ TK_WATCHER=${TK_WATCHER:-$TK_ROOT/event-watch}
 . "$TK_ROOT/lib/config.sh"
 # shellcheck source=lib/display.sh
 . "$TK_ROOT/lib/display.sh"
+# shellcheck source=lib/menu.sh
+. "$TK_ROOT/lib/menu.sh"
 # shellcheck source=lib/manage.sh
 . "$TK_ROOT/lib/manage.sh"
+# shellcheck source=lib/walkthrough.sh
+. "$TK_ROOT/lib/walkthrough.sh"
+# shellcheck source=lib/checks.sh
+. "$TK_ROOT/lib/checks.sh"
 
 # --- arguments ---------------------------------------------------------------
 
@@ -85,11 +91,14 @@ usage: trigger-kvm <verb> [options]
   pull                  point every configured monitor at THIS computer
   to <computer>         point them at another, by name (manual only)
   list                  connected displays, with their identifiers
+  configure             the walkthrough
+  configure --fresh     ...pre-filling nothing
   discover              what is attached, in the form the config wants
   status                is it running, what that covers, version, config
   restart               make a hand-edited config take effect now
   logs                  tail the log
   pause                 stand the watcher down to test by hand
+  uninstall             remove the program, keeping the config and the log
 
 options:
   --only <label>        one configured display only
@@ -116,6 +125,7 @@ DRY=0
 RAW=0
 VALUE=""
 CONFIG=""
+FRESH=""
 
 case $VERB in
   to)
@@ -129,6 +139,7 @@ while [ $# -gt 0 ]; do
     --value)   VALUE=${2:-}; shift 2 ;;
     --config)  CONFIG=${2:-}; shift 2 ;;
     --dry-run|--what-if) DRY=1; shift ;;
+    --fresh)   FRESH=--fresh; shift ;;
     --raw)     RAW=1; shift ;;
     -h|--help) usage ;;
     *)         printf 'trigger-kvm: unknown option %s\n' "$1" >&2; usage ;;
@@ -210,18 +221,18 @@ cmd_list() {
 # --- pull / to / set ---------------------------------------------------------
 
 cmd_switch() {
-  _labels=$(config_display_labels)
-  if [ -z "$_labels" ]; then
+  _labellist=$(config_display_labels)
+  if [ -z "$_labellist" ]; then
     tk_log "no displays configured. Expected a config at $CONFIG; run: trigger-kvm configure"
     exit 2
   fi
 
   if [ "$ONLY" != "all" ]; then
-    if ! printf '%s\n' "$_labels" | grep -qx "$ONLY"; then
-      tk_log "no configured display labelled '$ONLY'. Known: $(printf '%s' "$_labels" | tr '\n' ' ')"
+    if ! printf '%s\n' "$_labellist" | grep -qx "$ONLY"; then
+      tk_log "no configured display labelled '$ONLY'. Known: $(printf '%s' "$_labellist" | tr '\n' ' ')"
       exit 2
     fi
-    _labels=$ONLY
+    _labellist=$ONLY
   fi
 
   # Resolve every value BEFORE sending anything, and refuse the whole operation
@@ -231,7 +242,7 @@ cmd_switch() {
   # value went out as 0x00, an input no monitor has, so every switch silently
   # did nothing.
   _plan=""
-  for _l in $_labels; do
+  for _l in $_labellist; do
     if [ "$VERB" = "set" ]; then
       if [ "$ONLY" = "all" ]; then
         tk_log 'set requires --only naming exactly one display'
@@ -292,10 +303,12 @@ case $VERB in
   list)          cmd_list ;;
   pull|to|set)   cmd_switch ;;
   discover)      cmd_discover ;;
+  configure)     cmd_configure "$FRESH"; exec "$TK_SELF" restart ;;
   status)        cmd_status ;;
   restart)       cmd_restart ;;
   pause)         cmd_pause ;;
   logs)          cmd_logs ;;
   watch)         cmd_watch ;;
+  uninstall)     exec "$TK_ROOT/install.sh" uninstall ;;
   *) printf 'trigger-kvm: unknown verb %s\n' "$VERB" >&2; usage ;;
 esac

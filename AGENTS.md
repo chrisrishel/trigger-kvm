@@ -564,6 +564,19 @@ self-heal trigger would restart it within the minute regardless, so the task has
 be *disabled*, not merely stopped. `pause` does both; `trigger-kvm restart`
 re-enables and restarts.
 
+**Shell variables are GLOBAL unless declared `local`, and in `macos/lib/` every
+`_`-prefixed name must be.** A callee's loop index otherwise overwrites its
+caller's: `select_many`'s `_i` clobbered `wt_check_round`'s, and the monitor
+check crashed on an unbound array subscript the first time a batch was narrowed
+-- a path no unit test had reached. UPPERCASE names are the deliberate globals;
+`_lowercase` is scratch. A variable only READ is fine, and is how a helper reads
+its caller's state under bash's dynamic scoping.
+
+No single mutation reproduces this, because with the caller's locals in place a
+callee's missing ones are harmless and vice versa. `macos/tests/conventions.tests.sh`
+scans for it directly instead, alongside the structural check that `input-alt`
+appears exactly once.
+
 ## Conventions
 
 - Conventional commits: `feat:`, `fix:`, `refactor:`, `docs:`, `chore:`, scoped by
