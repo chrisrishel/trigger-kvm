@@ -10,6 +10,7 @@ no code. Everything they must agree on lives here.
 |---|---|
 | [`config-format.md`](config-format.md) | the flat `key = value` file both platforms read and write |
 | [`configure.md`](configure.md) | the `configure` walkthrough: its UI grammar, every menu, and the two checks |
+| [`CHANGELOG.md`](CHANGELOG.md) | behaviour changes implementations must act on, and the revision each is at |
 
 ## What does NOT belong here
 
@@ -78,8 +79,9 @@ the point:
 1. **Change the spec first.** If you cannot describe the new behaviour here, it
    is not ready to implement.
 2. **Implement it on the platform you are working on**, with tests.
-3. **Append an entry to the OTHER platform's `HANDOFF.md`** saying what changed,
-   which spec section, why, and what it now owes.
+3. **Add a [`CHANGELOG.md`](CHANGELOG.md) entry** and bump your platform's
+   `SPEC-REVISION`. Leave every other platform's alone — their suites now fail,
+   which is how they find out.
 
 `<platform>/HANDOFF.md` is an **inbox** — what that platform owes. Anyone may
 append; only that platform works through it and deletes from it, so crossing a
@@ -91,10 +93,43 @@ run its tests or see its hardware, and a half-made change there is worse than
 none. Appending to its queue is a different verb from editing it: prose cannot
 break their build.
 
-The same route carries a **defect you noticed in their code**, not just a spec
-change. Mark which it is, and say what you could and could not verify from where
-you were — a defect report written by someone who cannot run that platform is a
-reading, not a finding.
+### What goes in a HANDOFF.md, and what does not
+
+A `HANDOFF.md` is for what the machinery **cannot** tell a platform — chiefly a
+**defect you noticed in its code by reading it**. Nothing on that side will ever
+surface it on its own.
+
+A **spec change does not go there.** It is one fact, and it publishes itself:
+every platform's suite already checks the same spec, so they all learn at once
+and none of them can be forgotten. Appending to every other platform's inbox
+would be N−1 edits per change, worse with each platform added, and silent if one
+is missed.
+
+> **Fan out when the message is N different claims. Publish once when it is one
+> fact.**
+
+"Check whether your implementation has this bug too" is genuinely N separate
+claims, each of which may not apply — that one fans out, and it is rare enough
+to be fine.
+
+When you do write an entry, mark whether it is a spec change or a defect report,
+and say what you could and could not verify from where you were: a defect report
+written by someone who cannot run that platform is a reading, not a finding.
+
+## Knowing you are behind
+
+The conformance check tells a platform when the spec adds a string it does not
+have. It is blind to two things:
+
+- **a behavioural change with no new wording** — nothing to grep for
+- **a removed or renamed string** — the check tests presence only, so old wording
+  survives and the suite stays green
+
+[`CHANGELOG.md`](CHANGELOG.md) closes both. Its newest entry number is the spec
+revision; each implementation records the revision it implements in its own
+`SPEC-REVISION`; each platform's suite fails while that is behind, and names the
+entries in between. Nobody has to be told, and a third implementation costs
+nothing.
 
 ## Normative wording, and how it is enforced
 

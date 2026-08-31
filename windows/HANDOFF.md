@@ -83,6 +83,8 @@ user-facing strings still saying "machine":
 macOS already reads "computer" throughout; its 7 remaining uses of "machine" are
 all in code comments referring to a physical machine, which is correct.
 
+When 1a and 1b both land, bump `windows/SPEC-REVISION` to 1.
+
 ### 1b. `configure` must accept a complete script of answers on stdin
 
 Spec: [`specs/configure.md`](../specs/configure.md) §3.5 (The typed fallback).

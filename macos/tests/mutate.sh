@@ -236,6 +236,14 @@ mutate 'spec: an implementation drops a normative sentence' lib/walkthrough.sh s
 mutate 'spec: the checker stops reporting anything missing' ../specs/check-conformance.sh spec.tests.sh \
   's%MISSING=$(( MISSING + 1 ))%:%'
 
+# The revision check is what tells a platform it is behind on a spec change the
+# conformance check cannot see. It has to be able to fail in both directions.
+
+mutate 'revision: this platform falls behind the changelog' SPEC-REVISION spec.tests.sh \
+  's%^revision = 1%revision = 0%'
+mutate 'revision: this platform claims a revision that does not exist' SPEC-REVISION spec.tests.sh \
+  's%^revision = 1%revision = 99%'
+
 echo
 if [ "$survived" = "0" ]; then
   echo "all $checked mutations were caught"

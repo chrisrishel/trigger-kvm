@@ -66,6 +66,48 @@ rc=$?
 set -e
 assert_equal 0 "$rc" 'a two-character fragment must not be treated as normative'
 
+# =============================================================================
+# The spec revision this implementation claims to implement
+# =============================================================================
+#
+# The conformance check above is blind to two kinds of spec change: a
+# behavioural one with no new wording to grep for, and a REMOVED string, since
+# it only tests presence. The revision closes both -- and it is how a platform
+# finds out it is behind without anyone having to tell it, which is what makes a
+# third implementation cost nothing.
+
+spec_revision()  { sed -n 's/^revision[[:space:]]*=[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$1" | tail -1; }
+changelog_head() { sed -n 's/^## Revision \([0-9][0-9]*\).*/\1/p' "$SPECS/CHANGELOG.md" | head -1; }
+
+# assert_match is a substring test, not a regex one -- so "is this a number?"
+# is asked with a case, not a pattern string.
+is_number() { case ${1:-} in ''|*[!0-9]*) echo 1 ;; *) echo 0 ;; esac; }
+
+it 'this implementation records the spec revision it implements'
+mine=$(spec_revision "$MAC_DIR/SPEC-REVISION")
+assert_true "$(is_number "$mine")" "macos/SPEC-REVISION must carry a number, got '$mine'"
+
+it 'the changelog names a revision'
+head=$(changelog_head)
+assert_true "$(is_number "$head")" "specs/CHANGELOG.md must open with '## Revision N', got '$head'"
+
+it 'this implementation is not BEHIND the specs'
+# When this fails, read the changelog entries between the two numbers: they are
+# what this platform owes. Bump SPEC-REVISION in the commit that lands them.
+if [ "$mine" -lt "$head" ]; then
+  _fail "macOS implements spec revision $mine; specs/CHANGELOG.md is at $head.
+         Outstanding: $(awk -v a="$mine" -v b="$head" '
+           /^## Revision /{ n = $3 + 0; want = (n > a && n <= b) }
+           want && /^## Revision /{ printf "  rev %s", n }
+         ' "$SPECS/CHANGELOG.md")"
+fi
+
+it 'and is not AHEAD of them either'
+# Ahead means someone implemented a change without writing it down, which is the
+# spec-first rule broken in the direction that leaves no trace.
+assert_true "$([ "$mine" -le "$head" ] && echo 0 || echo 1)" \
+  "macos/SPEC-REVISION is $mine but the changelog only reaches $head"
+
 it 'the checker splits on placeholders rather than matching them literally'
 cat >"$FAKE_DIR/ph-spec.md" <<'EOS'
 ```normative

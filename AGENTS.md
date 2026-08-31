@@ -436,7 +436,8 @@ code**, update whichever of these the change affects:
 | `macos/README.md`, `windows/README.md` | That platform's install, components, or behaviour changes |
 | `AGENTS.md` | A new constraint or hazard is discovered that future work must respect |
 | `specs/*.md` | Any behaviour BOTH platforms must share changes -- and this happens FIRST, before the implementation |
-| `<platform>/HANDOFF.md` | That platform's INBOX. Append when it owes something -- a spec change, or a defect you found in its code. Only that platform deletes from it. |
+| `specs/CHANGELOG.md` | A behaviour change implementations must act on -- and bump your own `SPEC-REVISION` in the same commit |
+| `<platform>/HANDOFF.md` | That platform's INBOX, for what its own tests cannot tell it -- chiefly a defect you found in its code. NOT for spec changes. Only that platform deletes from it. |
 
 Two specific obligations:
 
@@ -464,16 +465,26 @@ the point:**
 1. **Change the spec first.** If you cannot describe the new behaviour there, it
    is not ready to implement.
 2. **Implement it on the platform you are working on**, with tests.
-3. **Append an entry to the OTHER platform's `HANDOFF.md`** -- what changed,
-   which spec section, why, and what it now owes.
+3. **Add a `specs/CHANGELOG.md` entry and bump YOUR platform's
+   `SPEC-REVISION`.** Leave every other platform's alone: their suites now fail
+   and name what they owe, which is how they find out without being told.
 
 **DO NOT CHANGE ANYTHING IN THE OTHER PLATFORM'S DIRECTORY** -- not its code,
 not its tests, not its docs. You cannot run its tests or see its hardware, and a
 half-made change there is worse than none.
 
 **Appending an entry to its `HANDOFF.md` is the one exception**, and it is a
-different verb from editing: prose cannot break their build. That is how work
-crosses the boundary, including a defect you noticed in their code.
+different verb from editing: prose cannot break their build.
+
+A `HANDOFF.md` is for what the machinery CANNOT tell a platform -- chiefly a
+DEFECT YOU NOTICED IN ITS CODE by reading it, which nothing on that side will
+ever surface on its own. **A spec change does NOT go there**: it is one fact, it
+publishes itself through the changelog and the conformance check, and fanning it
+out to every inbox would be N-1 edits per change, worse with each platform
+added, and silent if one is missed.
+
+Fan out when the message is N different claims. Publish once when it is one
+fact.
 
 `<platform>/HANDOFF.md` is an **INBOX** -- what THAT platform owes. Anyone may
 append; only that platform works through it, and only that platform deletes from
