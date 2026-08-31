@@ -89,6 +89,13 @@ param(
     # setup will ask properly once it exists.
     [switch]$AddToPath,
 
+    # `configure -Fresh`: ask everything from scratch instead of pre-filling the
+    # answers from the current setup. For when the desk changed enough that the old
+    # answers are the wrong starting point -- a new monitor, a rebuilt hub -- and
+    # enter-through would carry a stale value forward without you reading it.
+    # Hand-written config (scenes especially) is still preserved.
+    [switch]$Fresh,
+
     # Never show a UAC prompt; print what to run instead and exit non-zero. For
     # scripted installs, where a modal dialog on a headless run is a hang, not a
     # prompt.
@@ -481,23 +488,112 @@ function Read-Default {
     return $answer.Trim()
 }
 
-# Arrow up/down to move, space to toggle, enter to accept.
+# --- arrow-key menus ---------------------------------------------------------
 #
-# Falls back to a typed list when the host cannot read individual keys -- a
+# Every list question in the walkthrough is one of these two, and in both, ENTER
+# DOES WHAT THE HIGHLIGHTED ROW SAYS. That single rule is the whole design: with
+# "space toggles, enter accepts" the first thing people did was accept an empty
+# list, because enter is what you press. So a multi-select has no accept key --
+# it has a row you move to.
+#
+# Both fall back to a typed number when the host cannot read individual keys: a
 # redirected stdin, a non-console host, anything that is not a real terminal. The
-# fallback is not a nicety: it is what makes this testable, and what keeps the
-# installer usable over a remote session that does not forward key events.
-function Select-Many {
-    param([string[]]$Items, [string[]]$Detail, [int[]]$Checked = @(), [string]$Help)
+# fallback is not a nicety -- it is what makes the whole flow testable end to end,
+# and what keeps the installer usable over a session that does not forward keys.
 
-    $canKeys = $true
-    try { $null = [Console]::KeyAvailable } catch { $canKeys = $false }
-    if ([Console]::IsInputRedirected) { $canKeys = $false }
+function Test-CanReadKeys {
+    if ([Console]::IsInputRedirected) { return $false }
+    try { $null = [Console]::KeyAvailable } catch { return $false }
+    return $true
+}
+
+# The one place a key is read. A function so the key-driven path is reachable by a
+# test harness -- [Console]::ReadKey is a static and cannot be stubbed, and the
+# alternative was shipping the interactive half of the walkthrough unexercised.
+function Read-MenuKey {
+    return [Console]::ReadKey($true).Key
+}
+
+function Get-MenuWidth {
+    $w = 100
+    try { $w = [Math]::Max(40, [Math]::Min(110, [Console]::WindowWidth - 1)) } catch { }
+    return $w
+}
+
+# Repaint a block in place, returning the number of lines drawn -- which the next
+# call passes back as -Previous. Counting what was actually drawn is the point:
+# every earlier version of this inferred the height from the inputs and was one
+# line out the moment a caller changed the block's shape.
+function Write-MenuFrame {
+    param([string[]]$Lines, [int]$Width, [int]$Previous = 0)
+
+    if ($Previous -gt 0) {
+        try { [Console]::SetCursorPosition(0, [Math]::Max(0, [Console]::CursorTop - $Previous)) } catch { }
+    }
+    foreach ($l in $Lines) {
+        $t = "$l"
+        # Pad to overwrite the previous frame; truncate so a long name cannot wrap
+        # and silently add a line to the block.
+        if ($t.Length -gt $Width) { $t = $t.Substring(0, $Width) }
+        Write-Host $t.PadRight($Width)
+    }
+    return $Lines.Count
+}
+
+# One choice from a list. Returns the index.
+function Select-One {
+    param([string[]]$Items, [string[]]$Detail = @(), [int]$Default = 0, [string]$Help)
+
+    $rows = @()
+    for ($i = 0; $i -lt $Items.Count; $i++) {
+        $d = if ($i -lt $Detail.Count) { "$($Detail[$i])" } else { '' }
+        $rows += $(if ($d) { '{0,-28} {1}' -f $Items[$i], $d } else { $Items[$i] })
+    }
+
+    if (-not (Test-CanReadKeys)) {
+        for ($i = 0; $i -lt $rows.Count; $i++) { Write-Host ('    {0}) {1}' -f ($i + 1), $rows[$i]) }
+        if ($Help) { Write-Host ''; Write-Host $Help }
+        while ($true) {
+            $pick = Read-Default '  Choice' ([string]($Default + 1))
+            if ($pick -match '^[0-9]+$' -and [int]$pick -ge 1 -and [int]$pick -le $rows.Count) { return ([int]$pick - 1) }
+            Write-Host '  Pick a number from the list.'
+        }
+    }
+
+    $width    = Get-MenuWidth
+    $helpBody = if ($Help) { @('') + @($Help -split "`r?`n") } else { @() }
+    $cursor   = [Math]::Max(0, [Math]::Min($Default, $rows.Count - 1))
+    $drawn    = 0
+
+    while ($true) {
+        $lines = @()
+        for ($i = 0; $i -lt $rows.Count; $i++) {
+            $lines += '{0} {1}' -f $(if ($i -eq $cursor) { '  >' } else { '   ' }), $rows[$i]
+        }
+        $lines += $helpBody
+        $lines += ''
+        $lines += '  up/down move   enter choose'
+        $drawn = Write-MenuFrame -Lines $lines -Width $width -Previous $drawn
+
+        switch (Read-MenuKey) {
+            'UpArrow'   { $cursor = ($cursor - 1 + $rows.Count) % $rows.Count }
+            'DownArrow' { $cursor = ($cursor + 1) % $rows.Count }
+            'Enter'     { Write-Host ''; return $cursor }
+        }
+    }
+}
+
+# Several choices. Enter toggles the highlighted row, and the last row is the way
+# out -- so "how do I finish?" is answered by the list itself rather than by a
+# hint line nobody reads. Space toggles too, for anyone who reaches for it.
+function Select-Many {
+    param([string[]]$Items, [string[]]$Detail, [int[]]$Checked = @(), [string]$Help,
+          [string]$DoneLabel = 'Done -- use the checked rows')
 
     $state = @($Items | ForEach-Object { $false })
     foreach ($i in $Checked) { if ($i -ge 0 -and $i -lt $state.Count) { $state[$i] = $true } }
 
-    if (-not $canKeys) {
+    if (-not (Test-CanReadKeys)) {
         for ($i = 0; $i -lt $Items.Count; $i++) {
             $mark = if ($state[$i]) { '*' } else { ' ' }
             Write-Host ('  {0}{1,3}) {2}  {3}' -f $mark, ($i + 1), $Items[$i], $Detail[$i])
@@ -517,53 +613,40 @@ function Select-Many {
         }
     }
 
-    # Every iteration draws exactly this many lines, so the redraw can walk back up
-    # by the same count. $Help is a multi-line string, and the note line is always
-    # drawn (blank when there is nothing to say) -- both were off-by-N bugs waiting
-    # to happen if the height were inferred rather than counted.
-    $helpBody  = @($Help -split "`r?`n")
-    $helpLines = if ($Help) { 1 + $helpBody.Count } else { 0 }
-    $drawn     = $Items.Count + $helpLines + 2
+    $width    = Get-MenuWidth
+    $helpBody = if ($Help) { @('') + @($Help -split "`r?`n") } else { @() }
+    $done     = $Items.Count          # the index of the Done row
+    $cursor   = 0
+    $note     = ''
+    $drawn    = 0
 
-    $width = 100
-    try { $width = [Math]::Max(40, [Math]::Min(110, [Console]::WindowWidth - 1)) } catch { }
-
-    $cursor = 0
-    $note   = ''
-    $first  = $true
     while ($true) {
-        if (-not $first) {
-            try { [Console]::SetCursorPosition(0, [Math]::Max(0, [Console]::CursorTop - $drawn)) } catch { }
-        }
-        $first = $false
-
+        $lines = @()
         for ($i = 0; $i -lt $Items.Count; $i++) {
-            $mark = if ($state[$i]) { '[x]' } else { '[ ]' }
-            $arrow = if ($i -eq $cursor) { '>' } else { ' ' }
-            $line = '{0} {1} {2}  {3}' -f $arrow, $mark, $Items[$i], $Detail[$i]
-            # Pad to overwrite the previous frame; truncate so a long name cannot
-            # wrap and silently add a line to the block.
-            if ($line.Length -gt $width) { $line = $line.Substring(0, $width) }
-            Write-Host $line.PadRight($width)
+            $lines += '{0} {1} {2}  {3}' -f $(if ($i -eq $cursor) { '  >' } else { '   ' }),
+                                            $(if ($state[$i]) { '[x]' } else { '[ ]' }),
+                                            $Items[$i], $Detail[$i]
         }
-        if ($Help) {
-            Write-Host ''
-            foreach ($h in $helpBody) { Write-Host $h.PadRight($width) }
-        }
-        Write-Host '  up/down move   space toggle   enter accept'
-        Write-Host $note.PadRight($width)
+        $lines += ''
+        $lines += '{0}     {1}' -f $(if ($cursor -eq $done) { '  >' } else { '   ' }), $DoneLabel
+        $lines += $helpBody
+        $lines += ''
+        $lines += '  up/down move   enter toggles the highlighted row'
+        $lines += $note
+        $drawn = Write-MenuFrame -Lines $lines -Width $width -Previous $drawn
 
-        $k = [Console]::ReadKey($true)
+        $key  = Read-MenuKey
         $note = ''
-        switch ($k.Key) {
-            'UpArrow'   { $cursor = ($cursor - 1 + $Items.Count) % $Items.Count }
-            'DownArrow' { $cursor = ($cursor + 1) % $Items.Count }
-            'Spacebar'  { $state[$cursor] = -not $state[$cursor] }
+        switch ($key) {
+            'UpArrow'   { $cursor = ($cursor - 1 + $done + 1) % ($done + 1) }
+            'DownArrow' { $cursor = ($cursor + 1) % ($done + 1) }
+            'Spacebar'  { if ($cursor -ne $done) { $state[$cursor] = -not $state[$cursor] } }
             'Enter'     {
+                if ($cursor -ne $done) { $state[$cursor] = -not $state[$cursor]; break }
                 $out = @()
                 for ($i = 0; $i -lt $state.Count; $i++) { if ($state[$i]) { $out += $i } }
                 if ($out.Count -gt 0) { Write-Host ''; return $out }
-                $note = '  Pick at least one (space toggles the highlighted row).'
+                $note = '  Nothing is checked -- move to a row and press enter to check it.'
             }
         }
     }
@@ -625,12 +708,12 @@ function Get-DisplayAnswers {
         Write-Host '  Not in the known-monitor list, so only standard DDC/CI is offered.'
     }
 
-    $default = if ($Existing) { $Existing.Label } else { ($desc -split ' ')[0].ToLower() }
+    $defaultLabel = if ($Existing) { $Existing.Label } else { ($desc -split ' ')[0].ToLower() }
     if (-not (Read-YesNo '  Manage this monitor?' $true)) { return $null }
 
-    $label = Read-Default '  Short name for it' $default
+    $label = Read-Default '  Short name for it' $defaultLabel
     $label = ($label -replace '[^A-Za-z0-9_-]', '').ToLower()
-    if (-not $label) { $label = $default }
+    if (-not $label) { $label = $defaultLabel }
 
     $method = if ($known) { $known.Method } else { 'standard' }
     $table  = if ($known) { $known.Inputs } else { $MCCS_INPUTS }
@@ -639,33 +722,29 @@ function Get-DisplayAnswers {
     Write-Host ('  On the {0} itself, which input shows THIS PC?' -f $desc)
     Write-Host '  (the input you would pick on the monitor to see this computer)'
     $names = @($table.Keys)
-    for ($i = 0; $i -lt $names.Count; $i++) {
-        Write-Host ('    {0}) {1,-16} {2}' -f ($i + 1), $names[$i], $table[$names[$i]])
-    }
-    Write-Host '    t) type a value'
+    $rows  = @($names) + @('Type a value...')
+    $vals  = @($names | ForEach-Object { $table[$_] }) + @('')
 
-    # Pre-fill with the configured value's row, so enter-through keeps it. A
-    # re-run should be a review, not a re-entry.
-    $defaultPick = ''
+    # Start on the configured value's row, so a re-run is a review rather than a
+    # re-entry. An unlisted value starts on "type a value", which is where it
+    # came from.
+    $defaultRow = 0
     if ($Existing -and $Existing.Self) {
+        $defaultRow = $rows.Count - 1
         for ($i = 0; $i -lt $names.Count; $i++) {
-            if ($table[$names[$i]] -ieq $Existing.Self) { $defaultPick = [string]($i + 1) }
+            if ($table[$names[$i]] -ieq $Existing.Self) { $defaultRow = $i }
         }
-        if (-not $defaultPick) { $defaultPick = 't' }
     }
 
     $self = $null
     while (-not $self) {
-        $pick = Read-Default '  Choice' $defaultPick
-        if ($pick -eq 't') {
+        $pick = Select-One -Items $rows -Detail $vals -Default $defaultRow
+        if ($pick -lt $names.Count) { $self = $table[$names[$pick]] }
+        else {
             $typed = Read-Default '  Value (e.g. 0x11)' $(if ($Existing) { $Existing.Self } else { '' })
             if ($typed -match '^(0[xX])?[0-9A-Fa-f]{1,2}$') { $self = $typed }
             else { Write-Host '  Not a byte.' }
         }
-        elseif ($pick -match '^[0-9]+$' -and [int]$pick -ge 1 -and [int]$pick -le $names.Count) {
-            $self = $table[$names[[int]$pick - 1]]
-        }
-        else { Write-Host '  Pick a number, or t.' }
     }
 
     return [PSCustomObject]@{
@@ -704,13 +783,13 @@ function Read-Tier {
 
     Write-Host ''
     Write-Host '--- when should it run? ---'
-    Write-Host '  1) from logon onward, INCLUDING while locked        no admin'
-    Write-Host '  2) from boot -- adds before-first-login and logoff  admin ONCE (UAC prompt)'
+    Write-Host '  Locking does not end your session, so the first covers most days. The'
+    Write-Host '  second is for a rebooted PC sitting at a login screen you cannot see.'
     Write-Host ''
-    Write-Host '  Locking does not end your session, so 1 covers most days. 2 is for a'
-    Write-Host '  rebooted PC sitting at a login screen you cannot see.'
-    $pick = Read-Default '  Choice' $(if ($Current -eq 's4u') { '2' } else { '1' })
-    return $(if ($pick -eq '2') { 's4u' } else { 'user' })
+    $pick = Select-One -Default $(if ($Current -eq 's4u') { 1 } else { 0 }) `
+        -Items  @('From when you log in', 'From boot, before login') `
+        -Detail @('covers locking too; no admin', 'needs admin ONCE, a UAC prompt now')
+    return $(if ($pick -eq 1) { 's4u' } else { 'user' })
 }
 
 # Ask about every attached display, pre-filled from whatever the config already
@@ -742,11 +821,17 @@ function Get-AllDisplayAnswers {
 }
 
 # The walkthrough. Current settings pre-fill every default, so a re-run is a review
-# rather than a replay.
+# rather than a replay -- unless -Fresh, which starts from nothing.
+#
+# Two distinct roles for the old config, and -Fresh separates them: $seed supplies
+# DEFAULTS, $existing is what must SURVIVE. Dropping both would silently discard
+# hand-written scenes, so -Fresh clears the first and never touches the second.
 #
 # Nothing is written until every answer is in: an interrupted run must leave a
 # working setup untouched, not a half-written config plus a task pointing at it.
 function Invoke-Configure {
+    param([switch]$Fresh)
+
     if (-not (Test-CanPrompt)) {
         Write-Log 'configure needs an interactive terminal.'
         Write-Host ''
@@ -758,12 +843,16 @@ function Invoke-Configure {
 
     $existing = Read-Config -Path $CONFIG
     $isFirst  = -not (Test-Path -LiteralPath $CONFIG)
+    $seed     = if ($Fresh) { @{} } else { $existing }
 
     Write-Host ''
     Write-Host '=============================================================='
     Write-Host $(if ($isFirst) { ' trigger-kvm setup' } else { ' trigger-kvm reconfigure' })
     Write-Host '=============================================================='
-    if (-not $isFirst) {
+    if ($Fresh -and -not $isFirst) {
+        Write-Host ' Starting fresh -- nothing is pre-filled from the current setup.'
+        Write-Host ' Scenes and anything else you hand-wrote are still kept.'
+    } elseif (-not $isFirst) {
         Write-Host ' Current settings are the defaults -- press enter to keep one.'
     }
 
@@ -794,7 +883,7 @@ function Invoke-Configure {
     Write-Host ''
     Write-Host ('--- displays ({0} connected) ---' -f $found.Count)
 
-    $answers = @(Get-AllDisplayAnswers -Found $found -Existing $existing)
+    $answers = @(Get-AllDisplayAnswers -Found $found -Existing $seed)
 
     if ($answers.Count -eq 0) {
         Write-Log 'no monitors selected -- nothing to do.'
@@ -805,14 +894,14 @@ function Invoke-Configure {
     # ---- triggers ----------------------------------------------------------
     $cands = @(Get-TriggerCandidates)
     $cur = @()
-    if ($existing.ContainsKey('trigger.device')) {
-        $cur = @(($existing['trigger.device'] -replace '\s','') -split ',' | Where-Object { $_ } | ForEach-Object {
+    if ($seed.ContainsKey('trigger.device')) {
+        $cur = @(($seed['trigger.device'] -replace '\s','') -split ',' | Where-Object { $_ } | ForEach-Object {
             if ($_ -match '^(usb:|bt:)') { $_.ToLower() } else { 'usb:' + $_.ToLower() } })
     }
     $devices = @(Read-Triggers -Cands $cands -Current $cur)
 
     # ---- tier --------------------------------------------------------------
-    $newTier = Read-Tier $(if ($existing.ContainsKey('install.tier')) { $existing['install.tier'] } else { 'user' })
+    $newTier = Read-Tier $(if ($seed.ContainsKey('install.tier')) { $seed['install.tier'] } else { 'user' })
 
     # ---- PATH --------------------------------------------------------------
     $onPath = @((Get-UserPath -split ';')) -contains $BINDIR
@@ -828,45 +917,51 @@ function Invoke-Configure {
     }
 
     # ---- review, then write ------------------------------------------------
-    # A menu rather than a linear "go back one step": the answer you got wrong is
-    # rarely the last one you gave, and unwinding four sections to fix the first is
-    # worse than re-entering the one section that is wrong.
+    # The same menu as everywhere else, so the review is not a new thing to learn:
+    # the settings ARE the rows, and choosing one re-enters that section. Above the
+    # save row so they read as "what you have already done"; cancel below it.
+    #
+    # A menu rather than a linear "go back one step" because the answer you got
+    # wrong is rarely the last one you gave, and unwinding three sections to fix
+    # the first is worse than re-entering the one that is wrong.
     while ($true) {
         Write-Host ''
-        Write-Host '--- review ---'
-        foreach ($a in $answers) {
-            Write-Host ('    {0,-8} {1,-22} this PC is on {2}' -f $a.Label, $a.Name, $a.Self)
-        }
-        Write-Host ('    triggers {0}' -f ($devices -join ', '))
-        Write-Host ('    starts   {0}' -f $(if ($newTier -eq 's4u') { 'at boot, before login' } else { 'when you log in' }))
-        if (-not $onPath) { Write-Host ('    PATH     {0}' -f $(if ($wantPath) { 'add it' } else { 'leave it alone' })) }
+        Write-Host '--- review configuration ---'
         Write-Host ''
-        $menu = '    w) write it   1) monitors   2) triggers   3) when it starts'
-        if (-not $onPath) { $menu += '   p) PATH' }
-        Write-Host ($menu + '   q) cancel')
-        $go = (Read-Default '  Choice' 'w').ToLower()
 
-        if ($go -eq 'w') { break }
-        if ($go -eq 'q') {
+        $items  = @('Monitors', 'Trigger devices', 'When it starts')
+        $detail = @(
+            (($answers | ForEach-Object { '{0} on {1}' -f $_.Label, $_.Self }) -join ', ')
+            ($devices -join ', ')
+            $(if ($newTier -eq 's4u') { 'at boot, before login' } else { 'when you log in' })
+        )
+        if (-not $onPath) {
+            $items  += 'PATH'
+            $detail += $(if ($wantPath) { "add $BINDIR" } else { 'leave it alone' })
+        }
+        $save = $items.Count
+        $items += 'Save configuration and run'; $detail += ''
+        $items += 'Cancel, change nothing';     $detail += ''
+
+        $pick = Select-One -Items $items -Detail $detail -Default $save
+        if ($pick -eq $save) { break }
+        if ($pick -eq $save + 1) {
             Write-Log 'cancelled; nothing was changed.'
             $global:LASTEXITCODE = 1
             return
         }
-        switch ($go) {
-            '1' {
-                $again = @(Get-AllDisplayAnswers -Found $found -Existing $existing)
+        switch ($items[$pick]) {
+            'Monitors' {
+                $again = @(Get-AllDisplayAnswers -Found $found -Existing $seed)
                 if ($again.Count -gt 0) { $answers = $again }
                 else { Write-Host '  No monitors selected -- keeping the previous answers.' }
             }
-            '2' {
-                $devices = @(Read-Triggers -Cands $cands -Current $devices)
-            }
-            '3' {
-                $newTier = Read-Tier $newTier
-            }
-            'p' {
-                if (-not $onPath) { $wantPath = Read-YesNo ('  Add {0} to your PATH?' -f $BINDIR) $wantPath }
-            }
+            'Trigger devices' { $devices = @(Read-Triggers -Cands $cands -Current $devices) }
+            'When it starts'  { $newTier = Read-Tier $newTier }
+            # Binary, so the row is the control: selecting it flips it. A yes/no
+            # prompt for something already shown as "add it"/"leave it alone"
+            # would just be a second way to say the same thing.
+            'PATH'            { $wantPath = -not $wantPath }
         }
     }
 
@@ -1102,8 +1197,8 @@ if ($Command -eq 'discover') {
 
 if ($Command -eq 'configure') {
     # The interactive walkthrough. Current settings pre-fill every default, so a
-    # re-run is a review rather than a replay.
-    Invoke-Configure
+    # re-run is a review rather than a replay; -Fresh starts from nothing instead.
+    Invoke-Configure -Fresh:$Fresh
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
     # Applying is a CONSEQUENCE of configuring, not a thing to invoke -- which is

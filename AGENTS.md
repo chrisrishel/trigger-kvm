@@ -402,6 +402,7 @@ cd windows
 .\install.ps1                              # install, register the task, start
 .\install.ps1 -AddToPath                   # ...and put `trigger-kvm` on PATH
 trigger-kvm configure / status / discover / restart / logs / pause / uninstall
+trigger-kvm configure -Fresh               # ask everything again, pre-fill nothing
 .\trigger-kvm.ps1 pull                 # pull configured monitors to this machine
 .\trigger-kvm.ps1 to mac               # apply a saved scene (manual only)
 .\trigger-kvm.ps1 pull -Only asus      # one monitor only -- use when testing

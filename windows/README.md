@@ -45,6 +45,7 @@ from anywhere:
 ```
 trigger-kvm configure          interactive; current settings pre-fill the defaults,
                                and it applies whatever you changed
+trigger-kvm configure -Fresh   ...but pre-fill nothing; scenes are still kept
 trigger-kvm status             tier, coverage, version, what is configured
 trigger-kvm discover           what is attached, in the form the config wants
 trigger-kvm restart            make a hand-edited config take effect now
@@ -56,14 +57,36 @@ trigger-kvm pull | to <scene> | list
 
 ### The walkthrough
 
-Four sections — monitors, trigger devices, when it starts, PATH — then a **review**
-you can re-enter any section from, because the answer you got wrong is rarely the
-last one you gave. Nothing is written until you pick `w`, so an interrupted run
-leaves a working setup untouched.
+Every list question is an arrow-key menu, and the rule is the same in all of them:
+**enter does what the highlighted row says.** So a multi-select has no accept key —
+it has a `Done` row you move to. (The earlier "space toggles, enter accepts" lost
+people immediately: enter is what you press, and pressing it accepted an empty
+list.) Every menu falls back to a typed number when the host cannot read individual
+keys — redirected stdin, some remote sessions — which is also what makes the flow
+testable end to end.
 
-Devices are picked with arrow keys and space, and fall back to a typed list of
-numbers when the host cannot read individual keys (redirected stdin, some remote
-sessions). That fallback is also what makes the flow testable end to end.
+Four sections — monitors, trigger devices, when it starts, PATH — then a review
+that is the same kind of menu, with the settings themselves as the rows:
+
+```
+--- review configuration ---
+
+    Monitors                     asus on 0x11, lg on 0xD0
+    Trigger devices              usb:046d:0843, usb:1235:820a
+    When it starts               when you log in
+  > Save configuration and run
+    Cancel, change nothing
+```
+
+Choosing a setting re-enters that section — a menu rather than a linear "go back
+one step", because the answer you got wrong is rarely the last one you gave.
+Nothing is written until you pick save, so an interrupted run leaves a working
+setup untouched.
+
+`configure -Fresh` asks everything again with **nothing pre-filled**, for when the
+desk changed enough that the old answers are the wrong starting point and
+enter-through would carry a stale value forward unread. It clears the *defaults*,
+not the file: scenes and anything else you hand-wrote are still preserved.
 
 It then offers to prove each monitor: the panel is switched away for eight seconds
 and brought **back automatically** before you are asked anything, so the question
