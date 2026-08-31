@@ -273,6 +273,13 @@ mutate 'tier: the boot row is disabled again' lib/walkthrough.sh walkthrough.tes
 mutate 'tier: choosing boot silently writes login' lib/walkthrough.sh walkthrough.tests.sh \
   's@    0) WT_TIER=boot ;;@    0) WT_TIER=login ;;@'
 
+mutate 'tier: configure records the tier but never applies it' trigger-kvm walkthrough.tests.sh \
+  's@  configure)     cmd_configure "$FRESH"; tk_apply_tier "$CONFIG"; exit 0 ;;@  configure)     cmd_configure "$FRESH"; exit 0 ;;@'
+mutate 'tier: the daemon runs as root instead of the user' lib/manage.sh walkthrough.tests.sh \
+  's@  <key>UserName</key><string>$(id -un)</string>@  <key>UserName</key><string>root</string>@'
+mutate 'tier: a declined password leaves the config claiming boot' lib/manage.sh walkthrough.tests.sh \
+  "s@      sed -i '' 's/.*install@      : 's/^\\([[:space:]]*\\)install@"
+
 echo
 if [ "$survived" = "0" ]; then
   echo "all $checked mutations were caught"

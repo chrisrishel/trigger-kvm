@@ -45,6 +45,10 @@ SRC=$(cd -P "$(dirname "$0")" && pwd)
 
 # shellcheck source=lib/common.sh
 . "$SRC/lib/common.sh"
+# shellcheck source=lib/config.sh
+. "$SRC/lib/config.sh"
+# shellcheck source=lib/manage.sh
+. "$SRC/lib/manage.sh"
 
 VERB=${1:-install}
 
@@ -180,81 +184,14 @@ if [ ! -f "$CONFIG" ]; then
 fi
 
 # --- start -------------------------------------------------------------------
+#
+# The tier work lives in lib/manage.sh, because `configure` has to do exactly
+# the same thing and there must be one implementation of it. Applying is a
+# CONSEQUENCE of configuring, not something a user invokes -- which is why there
+# is no apply verb on the CLI.
 
-TIER=$(sed -n 's/^[[:space:]]*install\.autostart[[:space:]]*=[[:space:]]*//p' "$CONFIG" | tail -1)
-
-# Whichever tier is chosen, the OTHER one goes. Two live watchers would both
-# fire on the same arrival.
-launchctl bootout "$DOMAIN/$TK_LABEL" >/dev/null 2>&1 || true
-
-if [ "$TIER" = "boot" ]; then
-  # UserName is what makes this the Windows tier rather than a root daemon:
-  # launchd drops privileges to that user before running it. Root installs it;
-  # root does not run it.
-  TMP_DAEMON=$(mktemp -t trigger-kvm-daemon)
-  cat > "$TMP_DAEMON" <<EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict>
-  <key>Label</key><string>$TK_LABEL</string>
-  <key>UserName</key><string>$(id -un)</string>
-  <key>EnvironmentVariables</key><dict>
-    <key>HOME</key><string>$HOME</string>
-  </dict>
-  <key>ProgramArguments</key><array>
-    <string>$TK_PREFIX/trigger-kvm</string>
-    <string>watch</string>
-  </array>
-  <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><true/>
-  <key>ProcessType</key><string>Background</string>
-  <key>StandardOutPath</key><string>$TK_LOG</string>
-  <key>StandardErrorPath</key><string>$TK_LOG</string>
-</dict></plist>
-EOF
-  if ! plutil -lint "$TMP_DAEMON" >/dev/null; then
-    say 'the generated LaunchDaemon is malformed; not installing it.'
-    rm -f "$TMP_DAEMON"
-    exit 1
-  fi
-
-  say 'starting before login needs your password once, to install it.'
-  say 'Nothing runs as an administrator afterwards.'
-  if sudo -p 'Password (once, to install the boot-time start): ' \
-          install -o root -g wheel -m 644 "$TMP_DAEMON" "$TK_DAEMON_PLIST" 2>/dev/null; then
-    rm -f "$TMP_DAEMON"
-    sudo launchctl bootout "system/$TK_LABEL" >/dev/null 2>&1 || true
-    sudo launchctl bootstrap system "$TK_DAEMON_PLIST"
-    say "installed the boot-time start, running as $(id -un), unelevated"
-  else
-    # Nothing elevates without someone choosing it. Fall back and SAY SO --
-    # silently downgrading a tier is how someone discovers months later that
-    # switching does nothing until they log in.
-    rm -f "$TMP_DAEMON"
-    say 'no password given -- falling back to starting at login.'
-    say 'Re-run this and choose "From boot" to try again.'
-    TIER=login
-    sed -i '' 's/^\([[:space:]]*install\.autostart[[:space:]]*=[[:space:]]*\).*/\1login/' "$CONFIG"
-  fi
-fi
-
-if [ "$TIER" != "boot" ]; then
-  # The boot tier owns the daemon; anything else must not leave one behind.
-  if [ -f "$TK_DAEMON_PLIST" ]; then
-    say 'removing the previous boot-time start needs your password once.'
-    sudo launchctl bootout "system/$TK_LABEL" >/dev/null 2>&1 || true
-    sudo rm -f "$TK_DAEMON_PLIST" || true
-  fi
-  if [ "$TIER" = "no" ]; then
-    # The agent is installed but not loaded; `restart` loads it. It does not
-    # come back after a reboot until then, which is what "no" means.
-    say 'autostart is off; the agent is installed but not loaded.'
-    say 'start it with:  trigger-kvm restart'
-  else
-    launchctl bootstrap "$DOMAIN" "$TK_PLIST"
-    say 'loaded the LaunchAgent'
-  fi
-fi
+tk_apply_tier
+TIER=$TK_TIER_APPLIED
 
 # --- what is left to say -----------------------------------------------------
 #

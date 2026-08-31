@@ -303,7 +303,11 @@ case $VERB in
   list)          cmd_list ;;
   pull|to|set)   cmd_switch ;;
   discover)      cmd_discover ;;
-  configure)     cmd_configure "$FRESH"; exec "$TK_SELF" restart ;;
+  # configure APPLIES what it wrote. Applying is a consequence of configuring,
+  # not something a user invokes -- which is why there is no apply verb. It used
+  # to exec `restart`, which only bounces the LaunchAgent, so choosing the boot
+  # tier wrote it to the config and then silently did nothing.
+  configure)     cmd_configure "$FRESH"; tk_apply_tier "$CONFIG"; exit 0 ;;
   status)        cmd_status ;;
   restart)       cmd_restart ;;
   pause)         cmd_pause ;;

@@ -202,7 +202,7 @@ it 'says what the boot tier actually costs'
 assert_match "$WT_OUT" 'needs your password once, to install'
 assert_match "$WT_OUT" 'Nothing runs as an administrator afterwards'
 
-it 'and choosing it writes boot'
+it 'declining the password falls back to login, and says so'
 # Written out rather than derived from $FULL: deriving it needs to find "the
 # answer after the one that says 4", which is exactly the kind of cleverness
 # that has already produced two wrong test scripts here.
@@ -233,9 +233,84 @@ asus
 5
 2
 10'
+# Declining the password must FALL BACK to login and say so -- and it rewrites
+# the config, because the config has to record what actually happened rather
+# than what was asked for. Silently keeping "boot" is how someone finds out
+# months later that switching does nothing until they log in.
+mkdir -p "$FAKE_DIR/nosudo"
+cat >"$FAKE_DIR/nosudo/sudo" <<'EOS'
+#!/bin/sh
+exit 1
+EOS
+chmod +x "$FAKE_DIR/nosudo/sudo"
 rm -f "$CFG"
-PATH=$SAVED_PATH configure_with "$BOOT"
+PATH="$FAKE_DIR/nosudo:$SAVED_PATH" configure_with "$BOOT"
+assert_match "$WT_OUT" 'falling back to starting at login'
+assert_match "$(cat "$CFG")" 'install.autostart = login' \
+  'the config must record what happened, not what was asked for'
+
+it 'choosing boot APPLIES it, rather than only recording it'
+# THE BUG THIS EXISTS FOR: configure wrote install.autostart = boot and then
+# exec'd `restart`, which only bounces the LaunchAgent. The daemon was never
+# installed and the password was never even asked for, so the tier silently did
+# nothing while the config claimed it was on. A test that the config was WRITTEN
+# did not catch it; only a test that it was APPLIED does.
+#
+# sudo is stubbed to run the command unprivileged. It also drops `-o root -g
+# wheel`, because those cannot succeed without real privileges and the point of
+# the stub is to simulate the privileged OUTCOME -- ownership is not what is
+# under test here. launchctl is stubbed to a log, so the suite never touches the
+# real system domain.
+mkdir -p "$FAKE_DIR/bin"
+cat >"$FAKE_DIR/bin/sudo" <<'EOS'
+#!/bin/sh
+[ "$1" = "-p" ] && shift 2
+if [ "$1" = "install" ]; then
+  shift
+  set -- install "$(echo "$@" | sed 's/-o root -g wheel //')"
+  # shellcheck disable=SC2086
+  exec $1 $2
+fi
+exec "$@"
+EOS
+cat >"$FAKE_DIR/bin/launchctl" <<'EOS'
+#!/bin/sh
+printf 'launchctl %s
+' "$*" >>"$TK_FAKE_LAUNCHCTL"
+EOS
+chmod +x "$FAKE_DIR/bin/sudo" "$FAKE_DIR/bin/launchctl"
+export TK_FAKE_LAUNCHCTL="$FAKE_DIR/launchctl.log"
+: >"$TK_FAKE_LAUNCHCTL"
+rm -f "$TK_DAEMON_PLIST" "$CFG"
+PATH="$FAKE_DIR/bin:$SAVED_PATH" configure_with "$BOOT"
+
 assert_match "$(cat "$CFG")" 'install.autostart = boot' "$WT_OUT"
+assert_true "$([ -f "$TK_DAEMON_PLIST" ] && echo 0 || echo 1)" \
+  "the LaunchDaemon must actually be installed: $WT_OUT"
+
+it 'and the daemon it writes runs as the USER, not as root'
+# UserName is the whole property. Without it this is a root daemon acting on a
+# user-writable config, which is a local privilege escalation.
+d=$(cat "$TK_DAEMON_PLIST" 2>/dev/null)
+assert_match "$d" '<key>UserName</key>'
+assert_match "$d" "<string>$(id -un)</string>"
+assert_no_match "$d" '<string>root</string>'
+
+it 'and loads it into the SYSTEM domain, not the user one'
+assert_match "$(cat "$TK_FAKE_LAUNCHCTL")" 'bootstrap system'
+
+it 'and says the password is only for installing'
+assert_match "$WT_OUT" 'needs your password once, to install it'
+assert_match "$WT_OUT" 'Nothing runs as an administrator afterwards'
+
+it 'choosing login afterwards removes the boot daemon'
+# Mutually exclusive: two live watchers would both fire on the same arrival,
+# and the debounce is per-process.
+: >"$TK_FAKE_LAUNCHCTL"
+rm -f "$CFG"
+PATH="$FAKE_DIR/bin:$SAVED_PATH" configure_with "$FULL"
+assert_true "$([ ! -f "$TK_DAEMON_PLIST" ] && echo 0 || echo 1)" 'the daemon must be removed'
+assert_match "$(cat "$TK_FAKE_LAUNCHCTL")" 'bootstrap gui/'
 
 rm -f "$CFG"
 PATH=$SAVED_PATH configure_with "$FULL"

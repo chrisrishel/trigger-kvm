@@ -173,6 +173,99 @@ tk_warn_if_stale() {
   return 0
 }
 
+
+# Make the launchd side match install.autostart, and report which tier landed.
+#
+# ONE implementation, called by install.sh and by `configure`. configure used to
+# end with `exec trigger-kvm restart`, which only bounces the AGENT -- so
+# choosing the boot tier wrote `install.autostart = boot` to the config and then
+# silently did nothing, never even asking for the password. The config records
+# what was asked for; this is what makes the system match it.
+TK_TIER_APPLIED=''
+tk_apply_tier() {
+  local CONFIG TMP_DAEMON DOMAIN
+  DOMAIN="$(tk_domain)"
+  CONFIG="${1:-$TK_SUPPORT/config}"
+  [ -f "$CONFIG" ] || { TK_TIER_APPLIED=''; return 0; }
+  TK_TIER_APPLIED=$(sed -n 's/^[[:space:]]*install\.autostart[[:space:]]*=[[:space:]]*//p' "$CONFIG" | tail -1)
+
+  # Whichever tier is chosen, the OTHER one goes. Two live watchers would both
+  # fire on the same arrival.
+  launchctl bootout "$DOMAIN/$TK_LABEL" >/dev/null 2>&1 || true
+
+  if [ "$TK_TIER_APPLIED" = "boot" ]; then
+    # UserName is what makes this the Windows tier rather than a root daemon:
+    # launchd drops privileges to that user before running it. Root installs it;
+    # root does not run it.
+    TMP_DAEMON=$(mktemp -t trigger-kvm-daemon)
+    cat > "$TMP_DAEMON" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>$TK_LABEL</string>
+  <key>UserName</key><string>$(id -un)</string>
+  <key>EnvironmentVariables</key><dict>
+    <key>HOME</key><string>$HOME</string>
+  </dict>
+  <key>ProgramArguments</key><array>
+    <string>$TK_PREFIX/trigger-kvm</string>
+    <string>watch</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ProcessType</key><string>Background</string>
+  <key>StandardOutPath</key><string>$TK_LOG</string>
+  <key>StandardErrorPath</key><string>$TK_LOG</string>
+</dict></plist>
+EOF
+    if ! plutil -lint "$TMP_DAEMON" >/dev/null; then
+      tk_log 'the generated LaunchDaemon is malformed; not installing it.'
+      rm -f "$TMP_DAEMON"
+      return 1
+    fi
+
+    tk_log 'starting before login needs your password once, to install it.'
+    tk_log 'Nothing runs as an administrator afterwards.'
+    if sudo -p 'Password (once, to install the boot-time start): ' \
+            install -o root -g wheel -m 644 "$TMP_DAEMON" "$TK_DAEMON_PLIST" 2>/dev/null; then
+      rm -f "$TMP_DAEMON"
+      sudo launchctl bootout "system/$TK_LABEL" >/dev/null 2>&1 || true
+      sudo launchctl bootstrap system "$TK_DAEMON_PLIST"
+      tk_log "installed the boot-time start, running as $(id -un), unelevated"
+    else
+      # Nothing elevates without someone choosing it. Fall back and SAY SO --
+      # silently downgrading a tier is how someone discovers months later that
+      # switching does nothing until they log in.
+      rm -f "$TMP_DAEMON"
+      tk_log 'no password given -- falling back to starting at login.'
+      tk_log 'Re-run this and choose "From boot" to try again.'
+      TK_TIER_APPLIED=login
+      sed -i '' 's/^\([[:space:]]*install\.autostart[[:space:]]*=[[:space:]]*\).*/\1login/' "$CONFIG"
+    fi
+  fi
+
+  if [ "$TK_TIER_APPLIED" != "boot" ]; then
+    # The boot tier owns the daemon; anything else must not leave one behind.
+    if [ -f "$TK_DAEMON_PLIST" ]; then
+      tk_log 'removing the previous boot-time start needs your password once.'
+      sudo launchctl bootout "system/$TK_LABEL" >/dev/null 2>&1 || true
+      sudo rm -f "$TK_DAEMON_PLIST" || true
+    fi
+    if [ "$TK_TIER_APPLIED" = "no" ]; then
+      # The agent is installed but not loaded; `restart` loads it. It does not
+      # come back after a reboot until then, which is what "no" means.
+      tk_log 'autostart is off; the agent is installed but not loaded.'
+      tk_log 'start it with:  trigger-kvm restart'
+    else
+      launchctl bootstrap "$DOMAIN" "$TK_PLIST"
+      tk_log 'loaded the LaunchAgent'
+    fi
+  fi
+
+
+  return 0
+}
+
 # Which tier is actually installed, read from the system rather than from the
 # config: the config records what was ASKED for, and these record what is there.
 tk_installed_tier() {
