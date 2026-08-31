@@ -481,6 +481,94 @@ function Read-Default {
     return $answer.Trim()
 }
 
+# Arrow up/down to move, space to toggle, enter to accept.
+#
+# Falls back to a typed list when the host cannot read individual keys -- a
+# redirected stdin, a non-console host, anything that is not a real terminal. The
+# fallback is not a nicety: it is what makes this testable, and what keeps the
+# installer usable over a remote session that does not forward key events.
+function Select-Many {
+    param([string[]]$Items, [string[]]$Detail, [int[]]$Checked = @(), [string]$Help)
+
+    $canKeys = $true
+    try { $null = [Console]::KeyAvailable } catch { $canKeys = $false }
+    if ([Console]::IsInputRedirected) { $canKeys = $false }
+
+    $state = @($Items | ForEach-Object { $false })
+    foreach ($i in $Checked) { if ($i -ge 0 -and $i -lt $state.Count) { $state[$i] = $true } }
+
+    if (-not $canKeys) {
+        for ($i = 0; $i -lt $Items.Count; $i++) {
+            $mark = if ($state[$i]) { '*' } else { ' ' }
+            Write-Host ('  {0}{1,3}) {2}  {3}' -f $mark, ($i + 1), $Items[$i], $Detail[$i])
+        }
+        if ($Help) { Write-Host ''; Write-Host $Help }
+        $pre = @()
+        for ($i = 0; $i -lt $state.Count; $i++) { if ($state[$i]) { $pre += ($i + 1) } }
+        while ($true) {
+            $pick = Read-Default '  Numbers, comma-separated' ($pre -join ',')
+            $out = @()
+            foreach ($n in ($pick -split ',')) {
+                $n = $n.Trim()
+                if ($n -match '^[0-9]+$' -and [int]$n -ge 1 -and [int]$n -le $Items.Count) { $out += ([int]$n - 1) }
+            }
+            if ($out.Count -gt 0) { return $out }
+            Write-Host '  Pick at least one.'
+        }
+    }
+
+    # Every iteration draws exactly this many lines, so the redraw can walk back up
+    # by the same count. $Help is a multi-line string, and the note line is always
+    # drawn (blank when there is nothing to say) -- both were off-by-N bugs waiting
+    # to happen if the height were inferred rather than counted.
+    $helpBody  = @($Help -split "`r?`n")
+    $helpLines = if ($Help) { 1 + $helpBody.Count } else { 0 }
+    $drawn     = $Items.Count + $helpLines + 2
+
+    $width = 100
+    try { $width = [Math]::Max(40, [Math]::Min(110, [Console]::WindowWidth - 1)) } catch { }
+
+    $cursor = 0
+    $note   = ''
+    $first  = $true
+    while ($true) {
+        if (-not $first) {
+            try { [Console]::SetCursorPosition(0, [Math]::Max(0, [Console]::CursorTop - $drawn)) } catch { }
+        }
+        $first = $false
+
+        for ($i = 0; $i -lt $Items.Count; $i++) {
+            $mark = if ($state[$i]) { '[x]' } else { '[ ]' }
+            $arrow = if ($i -eq $cursor) { '>' } else { ' ' }
+            $line = '{0} {1} {2}  {3}' -f $arrow, $mark, $Items[$i], $Detail[$i]
+            # Pad to overwrite the previous frame; truncate so a long name cannot
+            # wrap and silently add a line to the block.
+            if ($line.Length -gt $width) { $line = $line.Substring(0, $width) }
+            Write-Host $line.PadRight($width)
+        }
+        if ($Help) {
+            Write-Host ''
+            foreach ($h in $helpBody) { Write-Host $h.PadRight($width) }
+        }
+        Write-Host '  up/down move   space toggle   enter accept'
+        Write-Host $note.PadRight($width)
+
+        $k = [Console]::ReadKey($true)
+        $note = ''
+        switch ($k.Key) {
+            'UpArrow'   { $cursor = ($cursor - 1 + $Items.Count) % $Items.Count }
+            'DownArrow' { $cursor = ($cursor + 1) % $Items.Count }
+            'Spacebar'  { $state[$cursor] = -not $state[$cursor] }
+            'Enter'     {
+                $out = @()
+                for ($i = 0; $i -lt $state.Count; $i++) { if ($state[$i]) { $out += $i } }
+                if ($out.Count -gt 0) { Write-Host ''; return $out }
+                $note = '  Pick at least one (space toggles the highlighted row).'
+            }
+        }
+    }
+}
+
 function Read-YesNo {
     param([string]$Prompt, [bool]$Default = $true)
     $hint = if ($Default) { 'Y/n' } else { 'y/N' }
@@ -502,19 +590,21 @@ function Read-YesNo {
 # visually is the only verification this hardware permits -- reads lie on both
 # panels here (AGENTS.md hard rule 2).
 function Test-DisplayInput {
-    param([string]$Label, [string]$Name, [string]$Candidate, [string]$Current, [int]$Hold = 8)
+    param([string]$Label, [string]$Name, [string]$Candidate, [string]$CandidateName,
+          [string]$Current, [int]$Hold = 8)
 
     $sw = Join-Path $PSScriptRoot 'trigger-kvm.ps1'
     if (-not (Test-Path $sw)) { $sw = $SWITCH }
 
     Write-Host ''
-    Write-Host ("  Sending $Name to $Candidate for ${Hold}s, then bringing it back.")
-    Write-Host '  Watch that monitor.'
+    Write-Host ("  Switching $Name to $CandidateName for ${Hold}s, then back automatically.")
+    Write-Host '  Watch that monitor. It only has to CHANGE -- if nothing is plugged into'
+    Write-Host '  that input it will say No Signal, and that still proves the switch worked.'
     & $sw set -Only $Label -Value $Candidate -Config $CONFIG | Out-Null
     Start-Sleep -Seconds $Hold
     if ($Current) { & $sw set -Only $Label -Value $Current -Config $CONFIG | Out-Null; Start-Sleep -Seconds 2 }
     Write-Host ''
-    return (Read-YesNo "  Did $Name change to the input you expected?" $true)
+    return (Read-YesNo "  Did $Name change at all (a picture, or No Signal)?" $true)
 }
 
 # One display: identity is already known from NVAPI; what we need from the human is
@@ -546,7 +636,8 @@ function Get-DisplayAnswers {
     $table  = if ($known) { $known.Inputs } else { $MCCS_INPUTS }
 
     Write-Host ''
-    Write-Host '  Which input is THIS machine plugged into?'
+    Write-Host ('  On the {0} itself, which input shows THIS PC?' -f $desc)
+    Write-Host '  (the input you would pick on the monitor to see this computer)'
     $names = @($table.Keys)
     for ($i = 0; $i -lt $names.Count; $i++) {
         Write-Host ('    {0}) {1,-16} {2}' -f ($i + 1), $names[$i], $table[$names[$i]])
@@ -582,6 +673,72 @@ function Get-DisplayAnswers {
         Vendor = ('0x{0:X4}' -f $Found.EdidVendor); Product = ('0x{0:X4}' -f $Found.EdidProduct)
         Self = $self; Table = $table
     }
+}
+
+# Which devices travel with the switch. Returns the chosen keys.
+function Read-Triggers {
+    param($Cands, [string[]]$Current)
+
+    Write-Host ''
+    Write-Host '--- triggers ---'
+    Write-Host 'Which devices move to this machine when you flip the switch?'
+    Write-Host 'Everything below is attached or connected right now.'
+    Write-Host ''
+
+    $checked = @()
+    for ($i = 0; $i -lt $Cands.Count; $i++) { if ($Current -contains $Cands[$i].Key) { $checked += $i } }
+
+    $help = '  Keyboards and mice often share a vendor id with something that never' + "`n" +
+            '  moves. The full vendor+product is matched, so pick the exact rows.'
+
+    $picked = Select-Many -Checked $checked -Help $help `
+        -Items  @($Cands | ForEach-Object { '{0,-20} {1,-4}' -f $_.Key, $_.Bus }) `
+        -Detail @($Cands | ForEach-Object { $_.Name })
+
+    return @($picked | ForEach-Object { $Cands[$_].Key })
+}
+
+# When the watcher should start running. Returns 'user' or 's4u'.
+function Read-Tier {
+    param([string]$Current)
+
+    Write-Host ''
+    Write-Host '--- when should it run? ---'
+    Write-Host '  1) from logon onward, INCLUDING while locked        no admin'
+    Write-Host '  2) from boot -- adds before-first-login and logoff  admin ONCE (UAC prompt)'
+    Write-Host ''
+    Write-Host '  Locking does not end your session, so 1 covers most days. 2 is for a'
+    Write-Host '  rebooted PC sitting at a login screen you cannot see.'
+    $pick = Read-Default '  Choice' $(if ($Current -eq 's4u') { '2' } else { '1' })
+    return $(if ($pick -eq '2') { 's4u' } else { 'user' })
+}
+
+# Ask about every attached display, pre-filled from whatever the config already
+# says about that EDID. A function rather than an inline loop because the review
+# menu re-enters it: "the monitors" has to be revisitable as one unit.
+function Get-AllDisplayAnswers {
+    param($Found, [hashtable]$Existing)
+
+    $out = @()
+    foreach ($f in $Found) {
+        $key = '{0:X4}:{1:X4}' -f $f.EdidVendor, $f.EdidProduct
+        $prior = $null
+        foreach ($k in $Existing.Keys) {
+            if ($k -match '^display\.([^.]+)\.vendor$') {
+                $l = $Matches[1]
+                if (($Existing["display.$l.vendor"] -replace '^0[xX]','').ToUpper().PadLeft(4,'0') -eq $key.Split(':')[0] -and
+                    ($Existing["display.$l.product"] -replace '^0[xX]','').ToUpper().PadLeft(4,'0') -eq $key.Split(':')[1]) {
+                    $prior = [PSCustomObject]@{
+                        Label = $l
+                        Self  = $(if ($Existing.ContainsKey("display.$l.self")) { $Existing["display.$l.self"] } else { '' })
+                    }
+                }
+            }
+        }
+        $a = Get-DisplayAnswers -Found $f -Existing $prior
+        if ($a) { $out += $a }
+    }
+    return $out
 }
 
 # The walkthrough. Current settings pre-fill every default, so a re-run is a review
@@ -637,25 +794,7 @@ function Invoke-Configure {
     Write-Host ''
     Write-Host ('--- displays ({0} connected) ---' -f $found.Count)
 
-    $answers = @()
-    foreach ($f in $found) {
-        $key = '{0:X4}:{1:X4}' -f $f.EdidVendor, $f.EdidProduct
-        $prior = $null
-        foreach ($k in $existing.Keys) {
-            if ($k -match '^display\.([^.]+)\.vendor$') {
-                $l = $Matches[1]
-                if (($existing["display.$l.vendor"] -replace '^0[xX]','').ToUpper().PadLeft(4,'0') -eq $key.Split(':')[0] -and
-                    ($existing["display.$l.product"] -replace '^0[xX]','').ToUpper().PadLeft(4,'0') -eq $key.Split(':')[1]) {
-                    $prior = [PSCustomObject]@{
-                        Label = $l
-                        Self  = $(if ($existing.ContainsKey("display.$l.self")) { $existing["display.$l.self"] } else { '' })
-                    }
-                }
-            }
-        }
-        $a = Get-DisplayAnswers -Found $f -Existing $prior
-        if ($a) { $answers += $a }
-    }
+    $answers = @(Get-AllDisplayAnswers -Found $found -Existing $existing)
 
     if ($answers.Count -eq 0) {
         Write-Log 'no monitors selected -- nothing to do.'
@@ -664,56 +803,16 @@ function Invoke-Configure {
     }
 
     # ---- triggers ----------------------------------------------------------
-    Write-Host ''
-    Write-Host '--- triggers ---'
-    Write-Host 'Which devices move to this machine when you flip the switch?'
-    Write-Host 'Everything below is attached or connected right now.'
-    Write-Host ''
-
     $cands = @(Get-TriggerCandidates)
     $cur = @()
     if ($existing.ContainsKey('trigger.device')) {
         $cur = @(($existing['trigger.device'] -replace '\s','') -split ',' | Where-Object { $_ } | ForEach-Object {
             if ($_ -match '^(usb:|bt:)') { $_.ToLower() } else { 'usb:' + $_.ToLower() } })
     }
-    for ($i = 0; $i -lt $cands.Count; $i++) {
-        $mark = if ($cur -contains $cands[$i].Key) { '*' } else { ' ' }
-        Write-Host ('  {0}{1,3}) {2,-20} {3,-4} {4}' -f $mark, ($i + 1), $cands[$i].Key, $cands[$i].Bus, $cands[$i].Name)
-    }
-    Write-Host ''
-    Write-Host '  TRAP: keyboards and mice often share a vendor id with a webcam and never'
-    Write-Host '  move. Full vendor+product is matched, so pick the exact rows that travel.'
-
-    $defaultPick = ''
-    if ($cur) {
-        $idx = @()
-        for ($i = 0; $i -lt $cands.Count; $i++) { if ($cur -contains $cands[$i].Key) { $idx += ($i + 1) } }
-        $defaultPick = ($idx -join ',')
-    }
-
-    $devices = @()
-    while ($devices.Count -eq 0) {
-        $pick = Read-Default '  Numbers, comma-separated' $defaultPick
-        foreach ($n in ($pick -split ',')) {
-            $n = $n.Trim()
-            if ($n -match '^[0-9]+$' -and [int]$n -ge 1 -and [int]$n -le $cands.Count) {
-                $devices += $cands[[int]$n - 1].Key
-            }
-        }
-        if ($devices.Count -eq 0) { Write-Host '  Pick at least one.' }
-    }
+    $devices = @(Read-Triggers -Cands $cands -Current $cur)
 
     # ---- tier --------------------------------------------------------------
-    Write-Host ''
-    Write-Host '--- when should it run? ---'
-    Write-Host '  1) from logon onward, INCLUDING while locked        no admin'
-    Write-Host '  2) from boot -- adds before-first-login and logoff  admin ONCE (UAC prompt)'
-    Write-Host ''
-    Write-Host '  Locking does not end your session, so 1 covers most days. 2 is for a'
-    Write-Host '  rebooted PC sitting at a login screen you cannot see.'
-    $curTier = if ($existing.ContainsKey('install.tier')) { $existing['install.tier'] } else { 'user' }
-    $tierPick = Read-Default '  Choice' $(if ($curTier -eq 's4u') { '2' } else { '1' })
-    $newTier = if ($tierPick -eq '2') { 's4u' } else { 'user' }
+    $newTier = Read-Tier $(if ($existing.ContainsKey('install.tier')) { $existing['install.tier'] } else { 'user' })
 
     # ---- PATH --------------------------------------------------------------
     $onPath = @((Get-UserPath -split ';')) -contains $BINDIR
@@ -728,17 +827,47 @@ function Invoke-Configure {
         $wantPath = Read-YesNo '  Add it?' $true
     }
 
-    # ---- write, then verify ------------------------------------------------
-    Write-Host ''
-    Write-Host '--- summary ---'
-    foreach ($a in $answers) { Write-Host ('  {0,-8} {1,-16} {2} self={3}' -f $a.Label, $a.Name, $a.Method, $a.Self) }
-    Write-Host ('  triggers  {0}' -f ($devices -join ', '))
-    Write-Host ('  tier      {0}' -f $newTier)
-    Write-Host ''
-    if (-not (Read-YesNo '  Write this?' $true)) {
-        Write-Log 'cancelled; nothing was changed.'
-        $global:LASTEXITCODE = 1
-        return
+    # ---- review, then write ------------------------------------------------
+    # A menu rather than a linear "go back one step": the answer you got wrong is
+    # rarely the last one you gave, and unwinding four sections to fix the first is
+    # worse than re-entering the one section that is wrong.
+    while ($true) {
+        Write-Host ''
+        Write-Host '--- review ---'
+        foreach ($a in $answers) {
+            Write-Host ('    {0,-8} {1,-22} this PC is on {2}' -f $a.Label, $a.Name, $a.Self)
+        }
+        Write-Host ('    triggers {0}' -f ($devices -join ', '))
+        Write-Host ('    starts   {0}' -f $(if ($newTier -eq 's4u') { 'at boot, before login' } else { 'when you log in' }))
+        if (-not $onPath) { Write-Host ('    PATH     {0}' -f $(if ($wantPath) { 'add it' } else { 'leave it alone' })) }
+        Write-Host ''
+        $menu = '    w) write it   1) monitors   2) triggers   3) when it starts'
+        if (-not $onPath) { $menu += '   p) PATH' }
+        Write-Host ($menu + '   q) cancel')
+        $go = (Read-Default '  Choice' 'w').ToLower()
+
+        if ($go -eq 'w') { break }
+        if ($go -eq 'q') {
+            Write-Log 'cancelled; nothing was changed.'
+            $global:LASTEXITCODE = 1
+            return
+        }
+        switch ($go) {
+            '1' {
+                $again = @(Get-AllDisplayAnswers -Found $found -Existing $existing)
+                if ($again.Count -gt 0) { $answers = $again }
+                else { Write-Host '  No monitors selected -- keeping the previous answers.' }
+            }
+            '2' {
+                $devices = @(Read-Triggers -Cands $cands -Current $devices)
+            }
+            '3' {
+                $newTier = Read-Tier $newTier
+            }
+            'p' {
+                if (-not $onPath) { $wantPath = Read-YesNo ('  Add {0} to your PATH?' -f $BINDIR) $wantPath }
+            }
+        }
     }
 
     Write-ConfigFile -Path $CONFIG -Displays $answers -Devices $devices -Tier $newTier -Existing $existing
@@ -748,9 +877,16 @@ function Invoke-Configure {
     Write-Host ''
     if (Read-YesNo '  Test each monitor now? (each one leaves and comes straight back)' $true) {
         foreach ($a in $answers) {
-            $other = @($a.Table.Values | Where-Object { $_ -ne $a.Self })
+            # Any input but this machine's will do -- the test is only that the panel
+            # CHANGES, so there is nothing to pick cleverly. Named, so the prompt can
+            # say where it is going instead of showing a bare hex value.
+            $otherName = $null; $other = $null
+            foreach ($n in @($a.Table.Keys)) {
+                if ($a.Table[$n] -ine $a.Self) { $otherName = $n; $other = $a.Table[$n]; break }
+            }
             if (-not $other) { continue }
-            $ok = Test-DisplayInput -Label $a.Label -Name $a.Name -Candidate $other[0] -Current $a.Self
+            $ok = Test-DisplayInput -Label $a.Label -Name $a.Name -Candidate $other `
+                                    -CandidateName $otherName -Current $a.Self
             if (-not $ok) {
                 Write-Host ''
                 Write-Host ('  {0} did not respond as expected.' -f $a.Name)
@@ -1439,28 +1575,44 @@ Set-ConfigValue -Path $CONFIG -Key 'install.tier' -Value $EffectiveTier
 
 Start-ScheduledTask -TaskName $TASK
 Write-Log "registered and started task '$TASK' ($EffectiveTier tier)"
-Write-Log "log: $LOG"
 
 if ($AddToPath) { Add-ToUserPath -Dir $BINDIR }
-else {
-    $onPath = @((Get-UserPath -split ';')) -contains $BINDIR
-    if (-not $onPath) {
-        Write-Log ''
-        Write-Log 'To run `trigger-kvm` from anywhere, re-run this with:  -AddToPath'
-        Write-Log "Until then, invoke it as:  $SHIM"
-    }
+
+# What is left to say is short: it works, here is how to see that, here are the
+# four things you can do to it. Everything else -- tiers, sessions, the transport --
+# is in the docs for the day someone needs it, and is noise on the day they don't.
+#
+# Two different questions, and printing the wrong one sends people to a "not
+# recognized" error: the User PATH says whether `trigger-kvm` will resolve in a NEW
+# terminal, $env:PATH whether it resolves in THIS one. A PATH entry added a moment
+# ago -- here, or by the walkthrough that invoked this -- satisfies the first and
+# not the second.
+$onPath      = @((Get-UserPath -split ';')) -contains $BINDIR
+$inThisShell = @(($env:PATH -split ';')) -contains $BINDIR
+$cmd = if ($onPath) { 'trigger-kvm' } else { $SHIM }
+
+Write-Host ''
+Write-Host '  Done. trigger-kvm is running.'
+Write-Host ''
+Write-Host '  Flip your switch to this PC -- the monitors should follow.'
+Write-Host ''
+Write-Host ("    {0} status      is it running?" -f $cmd)
+Write-Host ("    {0} pull        bring the displays here now" -f $cmd)
+Write-Host ("    {0} logs        what has it been doing" -f $cmd)
+Write-Host ("    {0} configure   change any of this" -f $cmd)
+Write-Host ''
+
+if (-not $onPath) {
+    Write-Host ('  (Re-run with -AddToPath to put {0} on your PATH and shorten that.)' -f $BINDIR)
+    Write-Host ''
+} elseif (-not $inThisShell) {
+    Write-Host '  (Open a new terminal first -- this one has not picked up the PATH change.)'
+    Write-Host ''
 }
 
 if ($EffectiveTier -eq 's4u') {
-    Write-Log ''
-    Write-Log 'Installed the pre-login tier. It runs at startup in session 0, as you,'
-    Write-Log 'unelevated. Nothing elevated runs on the switch path.'
-    Write-Log ''
-    Write-Log 'UNVERIFIED until you test it: log out (or reboot) and flip the USB switch'
-    Write-Log 'to this PC. The displays should follow with no one logged in. The SWITCHER'
-    Write-Log 'is proven in session 0; what that test exercises is whether the WMI device'
-    Write-Log 'notification reaches a session-0 watcher.'
-} else {
-    Write-Log 'Installed the no-admin tier: covers logon onward, including while locked.'
-    Write-Log 'For before-first-login and after-logoff:  trigger-kvm configure  (or -Tier s4u)'
+    Write-Host '  It starts at boot, before anyone logs in -- but that part is UNVERIFIED'
+    Write-Host '  on this machine until you try it: log out, flip the switch, and see'
+    Write-Host '  whether the monitors follow with nobody logged in.'
+    Write-Host ''
 }

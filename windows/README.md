@@ -54,6 +54,22 @@ trigger-kvm uninstall
 trigger-kvm pull | to <scene> | list
 ```
 
+### The walkthrough
+
+Four sections — monitors, trigger devices, when it starts, PATH — then a **review**
+you can re-enter any section from, because the answer you got wrong is rarely the
+last one you gave. Nothing is written until you pick `w`, so an interrupted run
+leaves a working setup untouched.
+
+Devices are picked with arrow keys and space, and fall back to a typed list of
+numbers when the host cannot read individual keys (redirected stdin, some remote
+sessions). That fallback is also what makes the flow testable end to end.
+
+It then offers to prove each monitor: the panel is switched away for eight seconds
+and brought **back automatically** before you are asked anything, so the question
+always arrives on a display that has already returned. The test is only that the
+panel *changes* — "No Signal" on an empty input proves the switch just as well.
+
 **There is no `install` verb on the CLI**, deliberately: installing is what got you
 the CLI. Upgrading and repairing both mean "fetch the source and run its installer",
 which works because the install is self-contained — `install.ps1` copies itself, so
