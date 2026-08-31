@@ -169,32 +169,35 @@ single-instance lock, and the fire.
 other than `computer.this` describes inputs on hardware this machine cannot observe,
 so a stale one must never be reachable from anything automatic.
 
-**On macOS, IOBluetooth cannot be used from a LAUNCHAGENT, and the reason is
-TCC rather than the API.** IOBluetooth needs per-caller Bluetooth permission.
-From a terminal macOS prompts for it, and once granted the API is perfectly
-fine -- a bare `[IOBluetoothDevice pairedDevices]` returns every paired device
-with its connected state, no run loop required. **A LaunchAgent cannot raise
-that prompt, so the call blocks forever.** Measured 2026-08-31 by running one
-probe binary both ways: from a terminal it printed 10 devices; from a
-LaunchAgent, no output, no error, still running.
+**On macOS, Bluetooth presence comes from `system_profiler`, and the reason is a
+PERMISSION GATE rather than a broken API.** IOBluetooth needs TCC Bluetooth
+permission, granted PER BINARY. An unapproved binary's first call BLOCKS until a
+human approves a prompt, and that prompt can arrive minutes later. Once approved
+it works fine -- from a terminal and from a LaunchAgent alike. Measured
+2026-08-31 both ways with one probe binary: 10 paired devices with connected
+state, no run loop needed, exits cleanly.
 
-That is the worst failure shape available here -- the watcher would hang at
-startup with the process still ALIVE, so `KeepAlive` would not restart it and
-the trigger would silently never fire.
+What makes it unusable here is the FIRST run on a fresh install. The watcher's
+first Bluetooth sweep would block until someone noticed a prompt, with the
+process still ALIVE -- so `KeepAlive` would not restart it, and the trigger would
+silently never fire until it was answered. A background watcher must not wait on
+a human.
 
-So `event-watch.c` gets both paired and connected state from
-`system_profiler SPBluetoothDataType -xml`, which is Apple-signed and carries
-its own entitlement: it answered from a terminal before that prompt had ever
-been accepted, and answers from a LaunchAgent (17 rows, exited cleanly). It
-costs about 60ms and is a property list, so CoreFoundation parses it with no
-JSON dependency. There is no notification to subscribe to on that route, so
-Bluetooth is POLLED -- and only when a `bt:` device is configured, so a USB-only
-setup pays nothing for it.
+`system_profiler SPBluetoothDataType -xml` never raises that prompt: it is
+Apple-signed and carries its own entitlement, which is why it answered on the
+very first attempt here, before any prompt had been seen. It costs about 60ms
+and is a property list, so CoreFoundation parses it with no JSON dependency.
+There is no notification to subscribe to on that route, so Bluetooth is POLLED --
+and only when a `bt:` device is configured, so a USB-only setup pays nothing.
 
-**Do not "modernise" this onto IOBluetooth.** It will work in every test you run
-by hand and hang the moment it is installed. This entry previously claimed the
-API simply never returns; that was measured with an unanswered permission prompt
-sitting behind it, and was wrong.
+**A HANG UNDER TCC IS INDISTINGUISHABLE FROM A SLOW PROMPT. Do not conclude
+anything about a permission-gated API from a timeout.** This entry was wrong
+TWICE before it was right: first "the API never returns" (measured with an
+unanswered prompt behind it), then "a LaunchAgent can never get permission"
+(measured in a 15-second window, and the prompt simply had not arrived yet).
+Both readings were confidently stated and both were artefacts of the measuring
+window. If something TCC-gated appears to hang, look for a pending prompt before
+concluding anything -- and prefer the route that needs no permission at all.
 
 **Bluetooth is BUILT, and matches on CONNECTED, never on paired.** `event-watch.ps1`
 takes `bt:AAAAAAAAAAAA` entries alongside `usb:VVVV:PPPP` (and bare `VVVV:PPPP`,

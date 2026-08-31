@@ -204,27 +204,28 @@ static bool usb_present(uint32_t vendor, uint32_t product) {
 
 // --------------------------------------------------------- BT, via plist ----
 //
-// system_profiler, not IOBluetooth -- and the reason is TCC, not the API.
+// system_profiler, not IOBluetooth -- and the reason is a PERMISSION GATE, not
+// a broken API.
 //
-// IOBluetooth needs per-caller Bluetooth permission. From a terminal macOS
-// PROMPTS for it, and once granted the API is fine: a bare
-// [IOBluetoothDevice pairedDevices] returns every paired device with its
-// connected state, no run loop needed. A LAUNCHAGENT CANNOT RAISE THAT PROMPT,
-// so the call blocks forever -- measured 2026-08-31 by running the same probe
-// binary from a LaunchAgent: no output, no error, still running.
+// IOBluetooth needs TCC Bluetooth permission, granted PER BINARY. An unapproved
+// binary's first call BLOCKS until a human approves a prompt, and that prompt
+// can arrive minutes later. Once approved the API is fine, from a terminal and
+// from a LaunchAgent alike -- measured 2026-08-31 both ways with one probe:
+// 10 paired devices with connected state, no run loop needed, exits cleanly.
 //
-// That is the worst failure shape available here. The watcher would hang at
-// startup with the process still ALIVE, so KeepAlive would not restart it, and
-// the trigger would silently never fire.
+// The problem is the FIRST run on a fresh install. The watcher's first
+// Bluetooth sweep would block until someone happened to notice a prompt, with
+// the process still ALIVE -- so KeepAlive would not restart it, and the trigger
+// would silently never fire until the prompt was answered.
 //
-// system_profiler is Apple-signed and carries its own entitlement: it answered
-// from a terminal before that prompt had ever been accepted, and it answers
-// from a LaunchAgent -- measured the same way, 17 rows, exited cleanly. It also
-// costs about 60ms, and -xml is a property list, so CoreFoundation parses it
-// with no JSON dependency.
+// system_profiler never raises that prompt: it is Apple-signed and carries its
+// own entitlement, which is why it answered on the very first attempt here,
+// before any prompt had been seen. It costs about 60ms, and -xml is a property
+// list, so CoreFoundation parses it with no JSON dependency.
 //
-// Do not "modernise" this onto IOBluetooth. It will work perfectly in every
-// test you run by hand and hang the moment it is installed.
+// So this is not "IOBluetooth is broken". It is "IOBluetooth makes an
+// unattended first run wait for a human", which is a thing a background watcher
+// must not do.
 //
 // It answers both questions this project needs and keeps them distinct:
 // firing is on CONNECTED, offering is on PAIRED. Conflating them cost the

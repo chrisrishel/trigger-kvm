@@ -190,22 +190,22 @@ USB is `IOServiceAddMatchingNotification` on `IOUSBHostDevice`, filtered by
 `idVendor`/`idProduct`. Bluetooth is **polled** via `system_profiler
 SPBluetoothDataType -xml`, and only when a `bt:` device is configured.
 
-**Not IOBluetooth, and the reason is TCC rather than the API.** IOBluetooth
-needs per-caller Bluetooth permission; from a terminal macOS prompts for it, and
-once granted a bare `[IOBluetoothDevice pairedDevices]` works fine with no run
-loop. **A LaunchAgent cannot raise that prompt, so the call blocks forever** —
-measured 2026-08-31 by running the same probe binary from a LaunchAgent: no
-output, no error, still running. That is the worst failure shape here, because
-the watcher would hang at startup with the process *alive*, so `KeepAlive` would
-not restart it and the trigger would silently never fire.
+**Not IOBluetooth, and the reason is a permission gate rather than a broken
+API.** IOBluetooth needs TCC Bluetooth permission, granted *per binary*. An
+unapproved binary's first call blocks until a human approves a prompt, and that
+prompt can arrive minutes later; once approved the API works fine from a
+terminal and from a LaunchAgent alike (measured both ways — 10 paired devices
+with connected state, no run loop needed, exits cleanly).
 
-`system_profiler` is Apple-signed and carries its own entitlement: it answered
-from a terminal before that prompt had ever been accepted, and answers from a
-LaunchAgent (measured the same way — 17 rows, exited cleanly). It costs about
-60ms, and `-xml` is a property list, so CoreFoundation parses it natively.
+The problem is the **first run on a fresh install**: the watcher's first
+Bluetooth sweep would block until someone happened to notice a prompt, with the
+process still *alive*, so `KeepAlive` would not restart it and the trigger would
+silently never fire until it was answered.
 
-Do not "modernise" this onto IOBluetooth. It will work perfectly in every test
-run by hand and hang the moment it is installed.
+`system_profiler` never raises that prompt — it is Apple-signed and carries its
+own entitlement, which is why it answered on the very first attempt here, before
+any prompt had been seen. It costs about 60ms, and `-xml` is a property list, so
+CoreFoundation parses it natively.
 
 Bluetooth fires on **connected**; the candidate list offers every **paired**
 device with its state shown but not filtered on. Two different questions: a
