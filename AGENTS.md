@@ -135,15 +135,35 @@ single-instance lock, and the fire.
 hardware this machine cannot observe, so a stale one must never be reachable from
 anything automatic.
 
-**Measured obstacle, Windows-specific:** the connection-aware APIs
-(`Windows.Devices.Enumeration.DeviceWatcher` with `System.Devices.Aep.IsConnected`)
-load fine in Windows PowerShell 5.1, but `Register-ObjectEvent` on the watcher fails
-outright with *"Windows PowerShell cannot subscribe to Windows RT events"*, and
-`FindAllAsync` timed out through the `AsTask` bridge. A Bluetooth source therefore
-needs a small inline C# shim to subscribe to the WinRT event and re-raise it as an
-ordinary .NET event that PowerShell can bind. That is the same `Add-Type` idiom the
-NVAPI transport already uses, so it is in-keeping rather than a new dependency --
-but it is real work, not a match-pattern change.
+**Route for a Bluetooth source on Windows, with three dead ends already ruled out.**
+Measured 2026-08-30, in this order, each one killing the previous plan:
+
+```
+widen the match pattern        NO -- PnP presence is "paired", not "connected"
+Register-ObjectEvent on WinRT  NO -- "Windows PowerShell cannot subscribe to
+                                     Windows RT events"
+Add-Type referencing .winmd    NO -- "Could not load ... Windows.Devices.winmd ...
+                                     assembly name or codebase was invalid" 0x80131047
+P/Invoke the classic Win32 API YES
+```
+
+The classic `bthprops.cpl` API works from `Add-Type` and reports what is needed:
+`BluetoothFindFirstDevice` / `BluetoothFindNextDevice` fill `BLUETOOTH_DEVICE_INFO`,
+whose `fConnected` is distinct from `fRemembered`. Verified with real hardware --
+a pair of AirPods and an iPhone both read `fRemembered=True, fConnected=False` while
+PnP claimed `Present=True` for both. That is the same P/Invoke idiom the NVAPI
+transport already uses, so it stays IN-PROCESS: no separate binary, no new
+dependency, and the watcher is still `powershell.exe`.
+
+Note what that does to the shape. The classic API is a QUERY, not an event, so a
+Bluetooth source is not a new event source at all -- it is a second *presence
+evaluator* woken by the `Win32_DeviceChangeEvent` subscription that already exists.
+One event source, N presence evaluators, which is simpler than N event sources.
+
+**Still unverified, and it is the gate:** whether `Win32_DeviceChangeEvent` actually
+fires on Bluetooth connect/disconnect. It is plausible -- the child function nodes
+do flip `Present` -- but if it does not fire, the only route left is polling, which
+this project deliberately avoids. Test that before building anything.
 
 **WMI device notifications DO reach session 0.** Measured 2026-08-30 from an
 unelevated S4U task: 45 indications in 90s, and `Win32_PnPEntity` presence queries

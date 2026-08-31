@@ -129,13 +129,25 @@ That is the line between the two kinds of boundary here: the watcher and the
 switcher are separate *processes* because they share no mutable state; two presence
 sources share the debounce clock and the presence map, so they belong in one.
 
-**It is not free, though.** `Windows.Devices.Enumeration.DeviceWatcher` with
-`System.Devices.Aep.IsConnected` is the right API and its types load in PowerShell
-5.1 -- but `Register-ObjectEvent` on it fails with *"Windows PowerShell cannot
-subscribe to Windows RT events"*, and `FindAllAsync` timed out through the `AsTask`
-bridge. A Bluetooth source needs a small inline C# shim to catch the WinRT event and
-re-raise it as a plain .NET event. That is the same `Add-Type` pattern the NVAPI
-transport already uses, so it fits the codebase -- but it is real work.
+**The route to it is settled, after three dead ends.** Widening the match pattern
+fails (presence means paired). `Register-ObjectEvent` on a WinRT `DeviceWatcher`
+fails outright -- *"Windows PowerShell cannot subscribe to Windows RT events"*. And
+`Add-Type` cannot reference `.winmd`, so an inline WinRT shim fails too. What works
+is P/Invoke to the classic `bthprops.cpl` API, whose `BLUETOOTH_DEVICE_INFO` carries
+`fConnected` separately from `fRemembered` -- verified against real hardware, where
+AirPods and an iPhone both read `fRemembered=True, fConnected=False` while PnP
+claimed `Present=True` for both.
+
+That is the same P/Invoke idiom the NVAPI transport already uses, so a Bluetooth
+source stays in-process: no separate binary, no new dependency, and the watcher
+remains `powershell.exe`. It also simplifies the shape — the classic API is a query
+rather than an event, so Bluetooth is not a new *event source* but a second
+*presence evaluator* woken by the `Win32_DeviceChangeEvent` subscription that
+already exists.
+
+**One thing gates it:** whether that WMI event fires on Bluetooth connect at all. If
+it does not, the only route left is polling, which this project avoids. Test before
+building.
 
 The config keys stay flat anyway — `trigger.device`, `trigger.debounce`,
 `trigger.settle`. Nesting them under a transport was tried and reverted: it
