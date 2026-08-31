@@ -42,9 +42,18 @@ if [[ ! -x "$M1DDC" ]]; then
   exit 1
 fi
 
-# Resolve a display's UUID by name. Deliberately not hardcoded: m1ddc's index
-# numbers shift when a display drops, and index 1 silently becoming the other
-# monitor would send LG service-channel writes to the ASUS.
+# Resolve a display's UUID by name, on every invocation. Deliberately not hardcoded,
+# and deliberately NOT cached.
+#
+# Display ordering is not stable, and a display dropping is not the only thing that
+# reorders it: on Windows the two indices were observed swapping outright -- DISPLAY1
+# going from the ASUS to the LG -- across a reboot and hibernate cycle, with both
+# monitors attached the whole time. Index 1 silently becoming the other monitor would
+# send LG service-channel writes to the ASUS.
+#
+# Do not "optimize" this into a cached lookup to skip the per-switch call. The cost
+# is one m1ddc invocation; a stale mapping is a service-channel write to the wrong
+# panel, which is the failure this whole approach exists to prevent.
 resolve_uuid() {
   local want=$1
   "$M1DDC" display list 2>/dev/null \
