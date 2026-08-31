@@ -335,6 +335,15 @@ to another, or treating `displays.toml`'s field as authoritative, will silently
 match nothing. Nothing reads it today; this matters if the pre-login path is ever
 built. The ASUS reports `0x42e0` everywhere, which makes the trap easy to walk into.
 
+**Running `setup` elevated poisons the task for later unelevated runs.** The task
+definition under `System32\Tasks` is owned by whoever registered it, so one run
+from an admin shell -- or installing the s4u tier, which requires elevation --
+leaves an ordinary user with Read only on their own user-tier task. Every later
+unelevated `setup` or `uninstall` then fails with `Access is denied`, after the
+scripts have already been copied, which reads like a broken installer rather than a
+fixable permission. Both paths detect it and explain; do not "simplify" those catch
+blocks away. Recovery is `uninstall` elevated once, then `setup` normally.
+
 ## Keep the docs current
 
 Documentation is part of the change, not a follow-up. **In the same commit as the
@@ -390,8 +399,9 @@ devices that were already plugged in.
 
 ```powershell
 cd windows
-.\install.ps1                              # install, register the logon task, start
-.\install.ps1 -Status / -Logs / -Uninstall
+.\install.ps1 setup                        # install, register the task, start
+.\install.ps1 setup -AddToPath             # ...and put `trigger-kvm` on PATH
+trigger-kvm status / logs / discover / pause / uninstall
 .\trigger-kvm.ps1 pull                 # pull configured monitors to this machine
 .\trigger-kvm.ps1 to mac               # apply a saved scene (manual only)
 .\trigger-kvm.ps1 pull -Only asus      # one monitor only -- use when testing
@@ -409,7 +419,7 @@ $e
 The equivalent watcher smoke test, which fires nothing:
 
 ```powershell
-.\install.ps1 -Pause                        # stand the installed watcher down
+trigger-kvm pause                           # stand the installed watcher down
 .\event-watch.ps1 -Exec .\some-harmless-script.ps1 -Arg TEST -Device 046d:c547 -Verbose
 .\install.ps1                               # restore it afterwards
 ```
@@ -417,13 +427,13 @@ The equivalent watcher smoke test, which fires nothing:
 `046d:c547` is the keyboard, which is always present, so this is the direct check
 that already-present devices do not fire.
 
-**`-Pause` rather than `Stop-ScheduledTask`, and the difference has caught people.**
+**`pause` rather than `Stop-ScheduledTask`, and the difference has caught people.**
 Stopping the task is insufficient twice over: the watcher is a *grandchild* of the
 task (task -> `wscript.exe` -> `powershell.exe`), so stopping the task kills only
 the shim and leaves the watcher holding the single-instance mutex -- a hand-run one
 then exits at once with `another watcher is already running`. And the 1-minute
 self-heal trigger would restart it within the minute regardless, so the task has to
-be *disabled*, not merely stopped. `-Pause` does both; a plain `.\install.ps1`
+be *disabled*, not merely stopped. `pause` does both; a plain `trigger-kvm setup`
 re-enables and restarts.
 
 ## Conventions

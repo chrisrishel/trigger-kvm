@@ -58,6 +58,11 @@ param(
     # trigger ever runs, and the only verb that touches `self` values.
     # to   -- apply a saved scene by name. Manual use only.
     [Parameter(Position = 0)]
+    # Only the switching verbs live here. setup/status/logs/pause/uninstall are
+    # handled by install.ps1; `trigger-kvm.cmd` routes between the two, so a user
+    # types one command and never has to know there are two scripts. Anyone
+    # reaching this script directly with a manage verb gets told where to go, via
+    # the ValidateSet error naming the valid set.
     [ValidateSet('pull', 'to', 'list')]
     [string]$Command = 'pull',
 

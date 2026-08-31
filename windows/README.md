@@ -33,12 +33,54 @@ exists precisely so these two implementations can't drift.
 ## Install
 
 ```powershell
-.\install.ps1              # user tier -- no admin. Install, register, start.
-.\install.ps1 -Tier s4u    # pre-login tier -- NEEDS ADMIN to register
-.\install.ps1 -Status      # which tier is installed, and what it therefore covers
-.\install.ps1 -Logs        # tail the log
-.\install.ps1 -Uninstall
+.\install.ps1 setup               # install and start. No admin.
+.\install.ps1 setup -AddToPath    # ...and put `trigger-kvm` on your PATH
 ```
+
+After that it is one command, from anywhere:
+
+```
+trigger-kvm pull                 pull every configured monitor to this machine
+trigger-kvm to mac               apply a saved scene
+trigger-kvm list                 connected displays, with their EDID ids
+trigger-kvm status               tier, coverage, version, config
+trigger-kvm discover             what is attached, in the form the config wants
+trigger-kvm logs                 tail the log
+trigger-kvm pause                stand the watcher down to test one by hand
+trigger-kvm setup -Tier s4u      switch to the pre-login tier (needs admin)
+trigger-kvm uninstall
+```
+
+**Verbs, and the same verbs on macOS.** You use both machines daily, so the words
+typed constantly are where cross-platform muscle memory is worth buying. Flags stay
+idiomatic per platform -- `-Tier` here, `--tier` there -- because forcing `--tier`
+into PowerShell means hand-parsing `$args` and losing parameter binding, validation
+and completion, which is a real cost for a cosmetic gain.
+
+**`trigger-kvm` is a `.cmd`, not a `.ps1`**, so it runs from cmd, PowerShell and the
+Run dialog alike with no execution-policy friction. It dispatches `pull`/`to`/`list`
+to the switcher and everything else to the installer. Two scripts stay behind one
+command deliberately: `trigger-kvm.ps1` runs on **every** device arrival and is kept
+lean, while `install.ps1` is large and rarely used, so merging them would load
+installer code on the hot path.
+
+**The install is self-contained.** `install.ps1` copies itself alongside the others,
+so status, reconfiguration and uninstall all keep working after the source tree is
+deleted -- the difference between something you clone and something you install.
+Updating is "fetch the new source, run `trigger-kvm setup`"; there is deliberately
+no auto-updater, since that would reintroduce the network access and pinned hashes
+this project just got rid of. `status` reports the installed version and the commit
+it was built from, which answers the question that actually bites: is what is
+installed what I think it is?
+
+**A trap worth knowing before it costs you an afternoon.** Run `setup` from an
+*elevated* shell -- easy to do if you have one open -- and the task definition under
+`System32\Tasks` becomes Administrators-owned, leaving you Read-only on your own
+user-tier task. Every later *unelevated* `setup` or `uninstall` then fails with
+`Access is denied`. Installing the s4u tier does the same thing, so going back down
+to the user tier hits it every time. Both paths now detect it and say what to do
+instead of throwing. To get back to a fully unelevated install: run `uninstall`
+elevated once, then `setup` normally.
 
 ### Two tiers
 
@@ -61,7 +103,7 @@ alive and the displays still follow. The s4u tier buys the two genuinely
 uncovered cases. The one that stings is a rebooted PC sitting at a login screen you
 cannot see, because the monitors are still showing the other machine.
 
-`-Status` reports the tier *and* what it covers, deliberately -- a tier name on its
+`status` reports the tier *and* what it covers, deliberately -- a tier name on its
 own invites you to guess the capability, and the capability is the entire point of
 having tiers.
 
@@ -159,11 +201,11 @@ to parameterise it.
 ## Discovery
 
 ```powershell
-.\install.ps1 -Discover      # what's attached, in the form the config wants
-.\trigger-kvm.ps1 list       # just the displays
+trigger-kvm discover         # what's attached, in the form the config wants
+trigger-kvm list             # just the displays
 ```
 
-`-Discover` lists connected displays with their EDID ids, and devices attached or
+`discover` lists connected displays with their EDID ids, and devices attached or
 connected **right now** — which is the filter doing most of the work, since you install on the
 machine currently holding the peripherals, so whatever moves is by definition
 present. Hubs and host controllers are dropped, and the several PnP nodes one

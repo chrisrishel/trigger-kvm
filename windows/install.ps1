@@ -1,17 +1,27 @@
 <#
 .SYNOPSIS
-Install the Windows half of trigger-kvm as a Scheduled Task.
+Install and manage trigger-kvm on Windows.
 
 .DESCRIPTION
-    .\install.ps1              install and start (user tier -- no admin needed)
-    .\install.ps1 -Tier s4u    pre-login tier -- NEEDS ADMIN to register
-    .\install.ps1 -Status      which tier is installed, and what it can do
-    .\install.ps1 -Discover    what is attached, in the form the config wants
-    .\install.ps1 -Pause       stand the watcher down to test one by hand
-    .\install.ps1 -Logs        tail the log
-    .\install.ps1 -Uninstall   stop, unregister, remove installed files
+Invoked as `trigger-kvm <verb>` once installed, or directly from the repo:
 
-Mirrors macos/Makefile. Installs to %LOCALAPPDATA%\Programs\trigger-kvm.
+    trigger-kvm setup              install / reconfigure and start  (no admin)
+    trigger-kvm setup -Tier s4u    pre-login tier -- NEEDS ADMIN to register
+    trigger-kvm status             which tier, what it covers, what is configured
+    trigger-kvm discover           what is attached, in the form the config wants
+    trigger-kvm logs               tail the log
+    trigger-kvm pause              stand the watcher down to test one by hand
+    trigger-kvm uninstall          stop, unregister, remove installed files
+
+VERBS, not PowerShell switches, and the same verbs on macOS. You use both machines
+daily, so the words you type constantly are where cross-platform muscle memory is
+worth buying. Flags stay idiomatic per platform (-Tier here, --tier there): forcing
+`--tier` into PowerShell means hand-parsing $args and losing parameter binding,
+validation and completion, which is a real cost for a cosmetic gain.
+
+SELF-CONTAINED. This script installs ITSELF alongside the others, so uninstalling,
+reconfiguring and checking status all work after the source tree is gone. That is
+the difference between something you clone and something you install.
 
 TWO TIERS, and you pick by what you are willing to grant:
 
@@ -49,24 +59,21 @@ its pinned SHA256 check and the install-time network dependency are all gone. A
 stale copy left by an older install is removed below.
 #>
 
-[CmdletBinding(DefaultParameterSetName = 'Install')]
+[CmdletBinding()]
 param(
+    [Parameter(Position = 0)]
+    [ValidateSet('setup', 'status', 'discover', 'logs', 'pause', 'uninstall')]
+    [string]$Command = 'setup',
+
     # user: logon task, your session, no admin. s4u: at-startup task, session 0,
     # still runs as you and still unelevated, but needs admin ONCE to register.
-    [Parameter(ParameterSetName = 'Install')]
     [ValidateSet('user', 's4u')]
     [string]$Tier = 'user',
 
-    [Parameter(ParameterSetName = 'Uninstall')] [switch]$Uninstall,
-    [Parameter(ParameterSetName = 'Status')]    [switch]$Status,
-    [Parameter(ParameterSetName = 'Logs')]      [switch]$Logs,
-
-    # Show what is attached, in the form the config wants. Changes nothing.
-    [Parameter(ParameterSetName = 'Discover')]  [switch]$Discover,
-
-    # Stand the installed watcher down so one can be run by hand. Re-run
-    # install.ps1 (no switch) to bring it back.
-    [Parameter(ParameterSetName = 'Pause')]     [switch]$Pause
+    # Put the install directory on the user PATH so `trigger-kvm` works anywhere.
+    # Opt-in: editing someone's PATH without asking is rude, and the interactive
+    # setup will ask properly once it exists.
+    [switch]$AddToPath
 )
 
 Set-StrictMode -Version Latest
@@ -79,6 +86,16 @@ $WATCH   = Join-Path $DEST 'event-watch.ps1'
 $SWITCH  = Join-Path $DEST 'trigger-kvm.ps1'
 $LGEXE   = Join-Path $DEST 'lg-input-switch.exe'   # legacy; removed on install/uninstall
 $VBS     = Join-Path $DEST 'launcher.vbs'
+$MANAGE  = Join-Path $DEST 'install.ps1'      # this script, installed alongside
+$SHIM    = Join-Path $DEST 'trigger-kvm.cmd'  # the `trigger-kvm` on PATH
+$STAMP   = Join-Path $DEST 'version.txt'
+
+# Files a previous version of THIS layout installed under names no longer used.
+# Remove-LegacyInstall handles the pre-rename DIRECTORY; these are leftovers inside
+# the current one, which nothing else would ever clean up.
+$STALE = @(
+    (Join-Path $DEST 'usb-watch.ps1')         # renamed to event-watch.ps1
+)
 
 # This project was called display-switch until 2026-08-30, and was renamed to avoid
 # collision with haimgel/display-switch, a well-established project of that exact
@@ -99,11 +116,42 @@ $CONFIG = Join-Path (Split-Path $LOG) 'config'
 # Seed values, used ONLY when generating a config that does not exist yet. Once the
 # file is written it is the source of truth and these are never consulted again --
 # so editing the config is how you change things, not editing this.
+# Recorded at install time and shown by `status`. Not an updater -- updating is
+# "fetch the new source, run setup" -- but it answers the question that actually
+# bites: is what is installed what I think it is?
+$VERSION = '0.2.0'
+
 $SEED_DEVICES  = '046d:0843,1235:820a'
 $SEED_DEBOUNCE = '3.0'
 $SEED_SETTLE   = '0.75'
 
 function Write-Log { param([string]$m) Write-Host "install: $m" }
+
+# --- PATH -------------------------------------------------------------------
+
+# User PATH only -- never the machine one. This installs per-user and needs no
+# admin, and quietly editing a system-wide setting would be a much bigger thing
+# than the user agreed to.
+function Get-UserPath { [Environment]::GetEnvironmentVariable('Path', 'User') }
+
+function Add-ToUserPath {
+    param([string]$Dir)
+    $cur = Get-UserPath
+    $parts = @(($cur -split ';') | Where-Object { $_ })
+    if ($parts -contains $Dir) { Write-Log "already on PATH: $Dir"; return }
+    [Environment]::SetEnvironmentVariable('Path', (@($parts + $Dir) -join ';'), 'User')
+    Write-Log "added to your PATH: $Dir"
+    Write-Log 'open a NEW terminal for that to take effect'
+}
+
+function Remove-FromUserPath {
+    param([string]$Dir)
+    $cur = Get-UserPath
+    $parts = @(($cur -split ';') | Where-Object { $_ })
+    if ($parts -notcontains $Dir) { return }
+    [Environment]::SetEnvironmentVariable('Path', (@($parts | Where-Object { $_ -ne $Dir }) -join ';'), 'User')
+    Write-Log "removed from your PATH: $Dir"
+}
 
 # --- configuration ----------------------------------------------------------
 
@@ -338,7 +386,7 @@ function Get-TriggerCandidates {
     return @(@($usb) + @($bt) | Sort-Object Rank, Name)
 }
 
-if ($Discover) {
+if ($Command -eq 'discover') {
     Write-Host ''
     Write-Host '=== displays on this machine ==='
     & (Join-Path $PSScriptRoot 'trigger-kvm.ps1') list -Config $CONFIG
@@ -384,7 +432,7 @@ if ($Discover) {
 
 # --- status / logs / uninstall ---------------------------------------------
 
-if ($Pause) {
+if ($Command -eq 'pause') {
     # Stopping the task is NOT enough, twice over, and both traps have caught
     # people (including the docs, which used to give this advice incompletely):
     #
@@ -404,7 +452,7 @@ if ($Pause) {
     exit 0
 }
 
-if ($Status) {
+if ($Command -eq 'status') {
     $t = Get-ScheduledTask -TaskName $TASK -ErrorAction SilentlyContinue
     if (-not $t) { Write-Host 'not installed'; exit 1 }
     $i = Get-ScheduledTaskInfo -TaskName $TASK
@@ -446,7 +494,18 @@ if ($Status) {
            Where-Object { $_.CommandLine -and $_.Name -eq 'powershell.exe' -and $_.CommandLine -match '(usb|event)-watch\.ps1' }).Count
     Write-Host ("watchers : {0}{1}" -f $n, $(if ($n -eq 1) { '' } else { '  <- expected exactly 1' }))
     Write-Host ("log      : {0}" -f $LOG)
-    Write-Host ("config   : {0}{1}" -f $CONFIG, $(if (Test-Path -LiteralPath $CONFIG) { '' } else { '  <- MISSING; run install.ps1' }))
+    Write-Host ("config   : {0}{1}" -f $CONFIG, $(if (Test-Path -LiteralPath $CONFIG) { '' } else { '  <- MISSING; run: trigger-kvm setup' }))
+
+    if (Test-Path -LiteralPath $STAMP) {
+        $v = Read-Config -Path $STAMP
+        Write-Host ("version  : {0}  (installed {1}, commit {2})" -f `
+                    $v['version'], $v['installed'], $v['commit'])
+    } else {
+        Write-Host 'version  : unknown  <- installed before version stamping'
+    }
+
+    $onPath = @((Get-UserPath -split ';')) -contains $DEST
+    Write-Host ("path     : {0}" -f $(if ($onPath) { "$DEST (on PATH)" } else { "$DEST  <- not on PATH; add with: trigger-kvm setup -AddToPath" }))
 
     $c = Read-Config -Path $CONFIG
     $labels = @($c.Keys | Where-Object { $_ -match '^display\.([^.]+)\.vendor$' } | ForEach-Object { $Matches[1] } | Sort-Object -Unique)
@@ -456,25 +515,53 @@ if ($Status) {
     exit 0
 }
 
-if ($Logs) {
+if ($Command -eq 'logs') {
     if (-not (Test-Path -LiteralPath $LOG)) { Write-Host "no log yet at $LOG"; exit 1 }
     Get-Content -LiteralPath $LOG -Tail 50 -Wait
     exit 0
 }
 
-if ($Uninstall) {
+if ($Command -eq 'uninstall') {
     if (Get-ScheduledTask -TaskName $TASK -ErrorAction SilentlyContinue) {
-        Stop-ScheduledTask    -TaskName $TASK -ErrorAction SilentlyContinue
-        Unregister-ScheduledTask -TaskName $TASK -Confirm:$false
-        Write-Log "unregistered task '$TASK'"
+        Stop-ScheduledTask -TaskName $TASK -ErrorAction SilentlyContinue
+        try {
+            Unregister-ScheduledTask -TaskName $TASK -Confirm:$false -ErrorAction Stop
+            Write-Log "unregistered task '$TASK'"
+        } catch {
+            # Same ownership trap as setup. Removing the files but leaving the task
+            # would be the worst outcome: a registered task pointing at scripts that
+            # are gone, failing silently at every logon. Stop instead.
+            Write-Log "cannot unregister '$TASK': $($_.Exception.Message)"
+            Write-Host ''
+            Write-Host 'That task was registered by an elevated process. Re-run this ONCE elevated:'
+            Write-Host ''
+            Write-Host ("    {0} uninstall" -f $(if (Test-Path $SHIM) { 'trigger-kvm' } else { '.\install.ps1' }))
+            Write-Host ''
+            Write-Log 'nothing removed -- files left in place so the task keeps working.'
+            exit 1
+        }
     }
     Stop-Watchers
     Remove-LegacyInstall
-    # Leave the log in place; it is the only record of what happened.
-    foreach ($f in @($WATCH, $SWITCH, $LGEXE, $VBS)) {
+    Remove-FromUserPath -Dir $DEST
+
+    # Leave the log AND the config in place. The log is the only record of what
+    # happened, and a config can represent real work -- reinstalling should not
+    # make you redo it. Both live outside $DEST for exactly this reason.
+    foreach ($f in @($WATCH, $SWITCH, $LGEXE, $VBS, $SHIM, $STAMP) + $STALE) {
         if (Test-Path -LiteralPath $f) { Remove-Item -LiteralPath $f -Force; Write-Log "removed $f" }
     }
+
+    # This script last: it is running from here when invoked as `trigger-kvm
+    # uninstall`, and PowerShell has already read it, so deleting it now is safe.
+    if (Test-Path -LiteralPath $MANAGE) { Remove-Item -LiteralPath $MANAGE -Force; Write-Log "removed $MANAGE" }
+    if ((Test-Path -LiteralPath $DEST) -and -not (Get-ChildItem -LiteralPath $DEST -Force)) {
+        Remove-Item -LiteralPath $DEST -Force
+        Write-Log "removed empty $DEST"
+    }
+
     Write-Log 'uninstalled.'
+    Write-Log "config and log kept: $CONFIG"
     exit 0
 }
 
@@ -548,9 +635,63 @@ Write-Log "watching: $devices  (debounce ${debounce}s, settle ${settle}s)"
 New-Item -ItemType Directory -Force -Path $DEST              | Out-Null
 New-Item -ItemType Directory -Force -Path (Split-Path $LOG)  | Out-Null
 
-Copy-Item (Join-Path $PSScriptRoot 'event-watch.ps1')     $WATCH  -Force
-Copy-Item (Join-Path $PSScriptRoot 'trigger-kvm.ps1') $SWITCH -Force
+Copy-Item (Join-Path $PSScriptRoot 'event-watch.ps1')  $WATCH  -Force
+Copy-Item (Join-Path $PSScriptRoot 'trigger-kvm.ps1')  $SWITCH -Force
+
+# Install THIS script too, so status/logs/pause/uninstall keep working after the
+# source tree is deleted. Skipped when already running from $DEST -- copying a file
+# onto itself throws, and `trigger-kvm setup` re-run in place does exactly that.
+if ((Resolve-Path $PSScriptRoot).Path -ne (Resolve-Path $DEST).Path) {
+    Copy-Item $PSCommandPath $MANAGE -Force
+}
 Write-Log "installed scripts to $DEST"
+
+# Leftovers from earlier layouts inside this same directory.
+foreach ($f in $STALE) {
+    if (Test-Path -LiteralPath $f) { Remove-Item -LiteralPath $f -Force; Write-Log "removed stale $f" }
+}
+
+# The `trigger-kvm` on PATH. A .cmd rather than a .ps1 so it runs from cmd.exe,
+# PowerShell and the Run dialog alike, with no execution-policy friction: it calls
+# powershell with -ExecutionPolicy Bypass itself.
+#
+# Two scripts stay behind one command deliberately. trigger-kvm.ps1 runs on EVERY
+# device arrival and is kept lean; install.ps1 is large and rarely used. Merging
+# them would load installer code on the hot path.
+@(
+    '@echo off'
+    'rem Generated by install.ps1 -- do not edit; re-run `trigger-kvm setup` instead.'
+    'setlocal'
+    'set "TK_DIR=%~dp0"'
+    'if "%~1"=="" goto :switch'
+    'if /i "%~1"=="pull" goto :switch'
+    'if /i "%~1"=="to"   goto :switch'
+    'if /i "%~1"=="list" goto :switch'
+    'goto :manage'
+    ':switch'
+    'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%TK_DIR%trigger-kvm.ps1" %*'
+    'exit /b %ERRORLEVEL%'
+    ':manage'
+    'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%TK_DIR%install.ps1" %*'
+    'exit /b %ERRORLEVEL%'
+) | Set-Content -LiteralPath $SHIM -Encoding ASCII
+
+# Version stamp. Records the commit too when the source is a git checkout, which is
+# how you tell a released copy from one built off a dirty tree.
+$commit = ''
+try {
+    Push-Location $PSScriptRoot
+    $commit = (& git rev-parse --short HEAD 2>$null)
+    if ($LASTEXITCODE -ne 0) { $commit = '' }
+    if ($commit -and (& git status --porcelain 2>$null)) { $commit += '+dirty' }
+} catch { } finally { Pop-Location -ErrorAction SilentlyContinue }
+
+@(
+    "version   = $VERSION"
+    "installed = $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
+    "source    = $PSScriptRoot"
+    "commit    = $(if ($commit) { $commit } else { '(not a git checkout)' })"
+) | Set-Content -LiteralPath $STAMP -Encoding ASCII
 
 # Migration: older installs downloaded lg-input-switch.exe here. The LG is now
 # driven by an aimed NVAPI write inside trigger-kvm.ps1, so the binary is dead
@@ -647,9 +788,42 @@ $settings = New-ScheduledTaskSettingsSet `
 $settings.DisallowStartIfOnBatteries = $false
 $settings.StopIfGoingOnBatteries     = $false
 
+# Replacing the task means deleting it first, and that can be denied even though
+# this is your own user-tier task: the task FILE under System32\Tasks is owned by
+# whoever registered it. Register once from an elevated shell -- or install the s4u
+# tier, which requires elevation -- and the file becomes Administrators-owned, with
+# the user left holding Read only. Every later unelevated setup then fails here.
+#
+# That is not exotic. Installing s4u and later going back to the user tier hits it
+# every time, and so does running setup once from an admin window by habit. Left
+# raw it surfaces as "Access is denied" with the scripts already copied, which reads
+# like a broken installer rather than a fixable permission.
 if (Get-ScheduledTask -TaskName $TASK -ErrorAction SilentlyContinue) {
     Stop-ScheduledTask -TaskName $TASK -ErrorAction SilentlyContinue
-    Unregister-ScheduledTask -TaskName $TASK -Confirm:$false
+    try {
+        Unregister-ScheduledTask -TaskName $TASK -Confirm:$false -ErrorAction Stop
+    } catch {
+        Write-Host ''
+        Write-Log "cannot replace the existing '$TASK' task: $($_.Exception.Message)"
+        Write-Host ''
+        Write-Host 'The task was registered by an elevated process, so its definition is owned by'
+        Write-Host 'Administrators and an ordinary user can only read it. That happens if setup was'
+        Write-Host 'run from an admin shell, or if the s4u tier was installed.'
+        Write-Host ''
+        Write-Host 'Re-run this ONCE from an elevated PowerShell:'
+        Write-Host ''
+        Write-Host ("    {0} setup{1}" -f $(if (Test-Path $SHIM) { 'trigger-kvm' } else { '.\install.ps1' }),
+                                          $(if ($Tier -ne 'user') { " -Tier $Tier" } else { '' }))
+        Write-Host ''
+        Write-Host 'Installing the user tier from an elevated shell is safe -- the task still runs'
+        Write-Host 'unelevated -- but it leaves the definition admin-owned, so later unelevated'
+        Write-Host 'setups keep needing elevation. To get back to a fully unelevated install, run'
+        Write-Host 'uninstall elevated once, then setup normally.'
+        Write-Host ''
+        Write-Log 'the scripts on disk are up to date; the task was left exactly as it was,'
+        Write-Log 'so whatever was running before is still running. Nothing is broken.'
+        exit 1
+    }
 }
 Stop-Watchers
 Remove-LegacyInstall
@@ -664,6 +838,16 @@ Enable-ScheduledTask -TaskName $TASK -ErrorAction SilentlyContinue | Out-Null
 Start-ScheduledTask -TaskName $TASK
 Write-Log "registered and started task '$TASK' ($Tier tier)"
 Write-Log "log: $LOG"
+
+if ($AddToPath) { Add-ToUserPath -Dir $DEST }
+else {
+    $onPath = @((Get-UserPath -split ';')) -contains $DEST
+    if (-not $onPath) {
+        Write-Log ''
+        Write-Log 'To run `trigger-kvm` from anywhere:  trigger-kvm setup -AddToPath'
+        Write-Log "Until then, invoke it as:  $SHIM"
+    }
+}
 
 if ($Tier -eq 's4u') {
     Write-Log ''
