@@ -31,7 +31,8 @@ USB switch ──> peripherals ──> whichever machine gets them pulls both di
 
 | Path | Purpose |
 |---|---|
-| `displays.toml` | **The contract.** Monitor identities, DDC method, input values, trigger devices. Both platforms read from this. |
+| `displays.toml` | **Researched knowledge.** Which method and VCP code a given monitor model needs, which values are known safe. True of that model everywhere, and expensive to rediscover. |
+| *(generated config)* | **Machine-local facts.** Which panels are on this desk and the input where this machine sits. Written by the installer, hand-editable. Not in the repo. |
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | The design and its rationale — why pull-to-self, why two DDC dialects, why post-login |
 | [`AGENTS.md`](AGENTS.md) | Instructions for anyone (human or agent) changing this repo, including the hard safety rules |
 | `docs/decisions/` | Architectural trade-offs and why they went the way they did, so they don't get relitigated |
@@ -41,8 +42,10 @@ USB switch ──> peripherals ──> whichever machine gets them pulls both di
 
 Code is not shared between platforms — macOS goes through `IOAVService`, Windows
 through NVAPI, with no common runtime.
-`displays.toml` exists so the *values* can't silently drift apart between two
-independent implementations.
+`displays.toml` holds the model knowledge both implementations depend on, so it
+can't silently drift apart between them. Per-desk facts live in each machine's own
+generated config instead -- each machine only ever selects its *own* inputs, so two
+hosts' configs never have to agree.
 
 ## The two things that will waste your time if you forget them
 
@@ -133,7 +136,7 @@ produces a system that installs cleanly and then behaves strangely.
 | | Needs |
 |---|---|
 | macOS | `brew install m1ddc`; Xcode command line tools for `clang` |
-| Windows | **An NVIDIA GPU**, with only recognised monitors attached to it — the LG's sidechannel is reached through NVAPI and has no vendor-neutral equivalent, and the write lands on *every* output of that GPU, so the switcher refuses to move the LG if it sees a panel it does not know ([`windows/README.md`](windows/README.md)). Windows PowerShell 5.1 (stock). No admin rights. |
+| Windows | **An NVIDIA GPU** — the LG's sidechannel is reached through NVAPI and has no vendor-neutral equivalent ([`docs/decisions/001`](docs/decisions/001-nvapi-as-the-only-windows-transport.md)). Windows PowerShell 5.1 (stock). No admin rights for the default tier. Other monitors on the same GPU are irrelevant: each write is aimed at one EDID-identified output. |
 
 ### 1. Cable each machine to each monitor
 

@@ -307,8 +307,10 @@ devices that were already plugged in.
 cd windows
 .\install.ps1                              # install, register the logon task, start
 .\install.ps1 -Status / -Logs / -Uninstall
-.\trigger-kvm.ps1 windows | mac        # manual switch
-.\trigger-kvm.ps1 windows -Only asus   # one monitor only -- use when testing
+.\trigger-kvm.ps1 pull                 # pull configured monitors to this machine
+.\trigger-kvm.ps1 to mac               # apply a saved scene (manual only)
+.\trigger-kvm.ps1 pull -Only asus      # one monitor only -- use when testing
+.\trigger-kvm.ps1 pull -WhatIf         # resolve + print packets, send nothing
 ```
 
 Both scripts must parse clean before they are run against hardware:
@@ -352,6 +354,19 @@ once with `another usb-watch is already running`.
   as ANSI, so a UTF-8 em dash in a comment surfaces as a parse error at an
   unrelated line. Prose files are unaffected; use ASCII punctuation in scripts.
 - Send DDC writes more than once. They are idempotent and the bus is lossy.
+- **Machine-local facts belong in the generated config, not in the scripts.**
+  Since 2026-08-30 the Windows switcher has no hardcoded monitors: which panels are
+  here, their EDID ids, their methods and their input values all live in
+  `%LOCALAPPDATA%\trigger-kvm\config`. `displays.toml` keeps the *researched,
+  cross-machine* knowledge — which methods and VCP codes a given monitor model
+  needs, and which values are safe to send it. Do not push discovered, per-desk
+  facts back into either the scripts or `displays.toml`.
+- **`pull` and `to` are separate verbs for a safety reason.** `pull` uses only
+  `self` values, so it holds no belief about any other machine and cannot be
+  invalidated by a change over there. `to <scene>` names inputs on hardware this
+  machine cannot observe. The trigger may only ever run `pull` — never wire a scene
+  into the trigger path, or a stale scene becomes able to cause an automatic switch
+  to a dead input.
 - **The install tier is a property of the HOST, not the switcher.** All tier logic
   lives in `windows/install.ps1`. Nothing in `trigger-kvm.ps1` or
   `usb-watch.ps1` knows or asks which tier it runs under, and if either ever needs
