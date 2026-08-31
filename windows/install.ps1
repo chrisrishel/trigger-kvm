@@ -73,7 +73,16 @@ param(
     # Put the install directory on the user PATH so `trigger-kvm` works anywhere.
     # Opt-in: editing someone's PATH without asking is rude, and the interactive
     # setup will ask properly once it exists.
-    [switch]$AddToPath
+    [switch]$AddToPath,
+
+    # Never show a UAC prompt; print what to run instead and exit non-zero. For
+    # scripted installs, where a modal dialog on a headless run is a hang, not a
+    # prompt.
+    [switch]$NoElevate,
+
+    # Set only on the elevated relaunch, to stop an elevation that does not take
+    # from looping UAC prompts forever. Not for humans.
+    [switch]$Relaunched
 )
 
 Set-StrictMode -Version Latest
@@ -113,19 +122,73 @@ $OLD_LOG  = Join-Path $env:LOCALAPPDATA 'display-switch\displayswitch.log'
 # leaving the log in place.
 $CONFIG = Join-Path (Split-Path $LOG) 'config'
 
-# Seed values, used ONLY when generating a config that does not exist yet. Once the
-# file is written it is the source of truth and these are never consulted again --
-# so editing the config is how you change things, not editing this.
 # Recorded at install time and shown by `status`. Not an updater -- updating is
 # "fetch the new source, run setup" -- but it answers the question that actually
 # bites: is what is installed what I think it is?
 $VERSION = '0.2.0'
 
+# Seed values, used ONLY when generating a config that does not exist yet. Once the
+# file is written it is the source of truth and these are never consulted again --
+# so editing the config is how you change things, not editing this.
 $SEED_DEVICES  = '046d:0843,1235:820a'
 $SEED_DEBOUNCE = '3.0'
 $SEED_SETTLE   = '0.75'
 
 function Write-Log { param([string]$m) Write-Host "install: $m" }
+
+# --- elevation --------------------------------------------------------------
+
+$IsElevated = ([Security.Principal.WindowsPrincipal] `
+               [Security.Principal.WindowsIdentity]::GetCurrent()
+              ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+
+# Re-run this script elevated, wait for it, and print what it did.
+#
+# Two things make this worth doing rather than telling the user to open an admin
+# terminal. The s4u tier CANNOT be registered without elevation, so the alternative
+# is a dead end mid-install. And the admin-owned task it leaves behind means
+# UNINSTALL needs elevation too -- so a prompt on the way in without one on the way
+# out would trap people in a tier they cannot remove.
+#
+# The elevated child writes to a temp file and the parent prints it, because
+# -Verb RunAs cannot be combined with -RedirectStandardOutput: without this the
+# output would land in a window that closes before it can be read.
+function Request-Elevation {
+    param([string[]]$ChildArgs)
+
+    if ($Relaunched) {
+        # We already asked and came back still unelevated. Something is refusing
+        # (policy, or an account with no admin rights available). Do not prompt
+        # again -- an elevation loop is far worse than a clear failure.
+        Write-Log 'still not elevated after relaunching; not asking again.'
+        return 1
+    }
+    if ($NoElevate) {
+        Write-Log 'elevation required, and -NoElevate was given.'
+        Write-Host ''
+        Write-Host ("Run this from an elevated PowerShell:  {0} {1}" -f $PSCommandPath, ($ChildArgs -join ' '))
+        return 1
+    }
+
+    $transcript = Join-Path ([IO.Path]::GetTempPath()) ("trigger-kvm-elevated-{0}.log" -f [Guid]::NewGuid().ToString('N').Substring(0,8))
+    $inner = "& '{0}' {1} -Relaunched *> '{2}'" -f $PSCommandPath, ($ChildArgs -join ' '), $transcript
+
+    Write-Log 'this needs administrator rights; approving the UAC prompt will continue.'
+    try {
+        $p = Start-Process powershell.exe -Verb RunAs -Wait -WindowStyle Hidden -PassThru `
+             -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', $inner)
+    } catch {
+        # The user declined the prompt, or no admin credentials were available.
+        Write-Log 'elevation was declined or unavailable; nothing was changed.'
+        return 1
+    }
+
+    if (Test-Path -LiteralPath $transcript) {
+        Get-Content -LiteralPath $transcript | ForEach-Object { Write-Host $_ }
+        Remove-Item -LiteralPath $transcript -Force -ErrorAction SilentlyContinue
+    }
+    return $p.ExitCode
+}
 
 # --- PATH -------------------------------------------------------------------
 
@@ -528,19 +591,22 @@ if ($Command -eq 'uninstall') {
             Unregister-ScheduledTask -TaskName $TASK -Confirm:$false -ErrorAction Stop
             Write-Log "unregistered task '$TASK'"
         } catch {
-            # Same ownership trap as setup. Removing the files but leaving the task
-            # would be the worst outcome: a registered task pointing at scripts that
-            # are gone, failing silently at every logon. Stop instead.
-            Write-Log "cannot unregister '$TASK': $($_.Exception.Message)"
-            Write-Host ''
-            Write-Host 'That task was registered by an elevated process. Re-run this ONCE elevated:'
-            Write-Host ''
-            Write-Host ("    {0} uninstall" -f $(if (Test-Path $SHIM) { 'trigger-kvm' } else { '.\install.ps1' }))
-            Write-Host ''
+            # Same ownership trap as setup, and the more important of the two:
+            # removing the FILES while leaving the task registered would be the
+            # worst outcome -- a task pointing at scripts that are gone, failing
+            # silently at every logon. So elevate, or stop.
+            if (-not $IsElevated) {
+                Write-Log "'$TASK' was registered by an elevated process."
+                $rc = Request-Elevation -ChildArgs @('uninstall')
+                if ($rc -ne 0) { Write-Log 'nothing removed -- files left in place so the task keeps working.' }
+                exit $rc
+            }
+            Write-Log "cannot unregister '$TASK' even elevated: $($_.Exception.Message)"
             Write-Log 'nothing removed -- files left in place so the task keeps working.'
             exit 1
         }
     }
+
     Stop-Watchers
     Remove-LegacyInstall
     Remove-FromUserPath -Dir $DEST
@@ -569,25 +635,12 @@ if ($Command -eq 'uninstall') {
 
 # Constraint: never install a tier that will silently fail. The s4u tier cannot be
 # registered without elevation -- measured, S4U registration returns "Access is
-# denied" for an ordinary user -- so check up front and say so, rather than letting
-# Register-ScheduledTask fail halfway through with the files already copied.
-$elevated = ([Security.Principal.WindowsPrincipal] `
-             [Security.Principal.WindowsIdentity]::GetCurrent()
-            ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-
-if ($Tier -eq 's4u' -and -not $elevated) {
-    Write-Host ''
-    Write-Host 'The s4u tier needs admin to REGISTER the task (it then runs unelevated).'
-    Write-Host 'Re-run this from an elevated PowerShell:'
-    Write-Host ''
-    Write-Host '    .\install.ps1 -Tier s4u'
-    Write-Host ''
-    Write-Host 'Or install the no-admin tier instead, which covers everything from logon'
-    Write-Host 'onward including while locked:'
-    Write-Host ''
-    Write-Host '    .\install.ps1'
-    Write-Host ''
-    throw 'elevation required for -Tier s4u'
+# denied" for an ordinary user -- so ask for it UP FRONT, before copying anything,
+# rather than letting Register-ScheduledTask fail halfway through.
+if ($Tier -eq 's4u' -and -not $IsElevated) {
+    $childArgs = @('setup', '-Tier', 's4u')
+    if ($AddToPath) { $childArgs += '-AddToPath' }
+    exit (Request-Elevation -ChildArgs $childArgs)
 }
 
 New-DefaultConfig -Path $CONFIG
@@ -803,30 +856,32 @@ if (Get-ScheduledTask -TaskName $TASK -ErrorAction SilentlyContinue) {
     try {
         Unregister-ScheduledTask -TaskName $TASK -Confirm:$false -ErrorAction Stop
     } catch {
-        Write-Host ''
-        Write-Log "cannot replace the existing '$TASK' task: $($_.Exception.Message)"
-        Write-Host ''
-        Write-Host 'The task was registered by an elevated process, so its definition is owned by'
-        Write-Host 'Administrators and an ordinary user can only read it. That happens if setup was'
-        Write-Host 'run from an admin shell, or if the s4u tier was installed.'
-        Write-Host ''
-        Write-Host 'Re-run this ONCE from an elevated PowerShell:'
-        Write-Host ''
-        Write-Host ("    {0} setup{1}" -f $(if (Test-Path $SHIM) { 'trigger-kvm' } else { '.\install.ps1' }),
-                                          $(if ($Tier -ne 'user') { " -Tier $Tier" } else { '' }))
-        Write-Host ''
-        Write-Host 'Installing the user tier from an elevated shell is safe -- the task still runs'
-        Write-Host 'unelevated -- but it leaves the definition admin-owned, so later unelevated'
-        Write-Host 'setups keep needing elevation. To get back to a fully unelevated install, run'
-        Write-Host 'uninstall elevated once, then setup normally.'
-        Write-Host ''
-        Write-Log 'the scripts on disk are up to date; the task was left exactly as it was,'
-        Write-Log 'so whatever was running before is still running. Nothing is broken.'
+        # Denied because the task DEFINITION is owned by whoever registered it.
+        # One earlier run from an admin shell -- or an s4u install, which requires
+        # one -- leaves an ordinary user with Read only on their own user-tier task.
+        #
+        # Ask for elevation rather than sending the user away to another terminal.
+        # Being unable to remove a tier you installed is a trap, and it is the same
+        # trap on the way out as on the way in.
+        if (-not $IsElevated) {
+            Write-Log "the existing '$TASK' task was registered by an elevated process."
+            $childArgs = @('setup', '-Tier', $Tier)
+            if ($AddToPath) { $childArgs += '-AddToPath' }
+            $rc = Request-Elevation -ChildArgs $childArgs
+            if ($rc -eq 0) {
+                Write-Log 'done (elevated).'
+            } else {
+                Write-Log 'the task was left exactly as it was, so what was running still is.'
+            }
+            exit $rc
+        }
+
+        # Already elevated and STILL denied: not an ownership problem.
+        Write-Log "cannot replace the existing '$TASK' task even elevated: $($_.Exception.Message)"
+        Write-Log 'the task was left as it was; nothing is broken, but nothing changed either.'
         exit 1
     }
 }
-Stop-Watchers
-Remove-LegacyInstall
 
 Register-ScheduledTask -TaskName $TASK -Action $action -Trigger $triggers `
     -Principal $principal -Settings $settings `
