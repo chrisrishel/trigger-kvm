@@ -30,7 +30,7 @@ the task. The watcher now reads the config itself, so the task action carries no
 configuration at all and edits take effect when it next starts. `configure`
 restarts it for you; `restart` is there for hand-edits.
 
-VERBS, and the same verbs on macOS. You use both machines daily, so the words you
+VERBS, and the same verbs on macOS. You use both computers daily, so the words you
 type constantly are where cross-platform muscle memory is worth buying. Flags stay
 idiomatic per platform (-AddToPath here, --add-to-path there): forcing the POSIX
 spelling into PowerShell means hand-parsing $args and losing parameter binding,
@@ -61,8 +61,8 @@ reader nothing they could act on:
 The two are mutually exclusive by construction -- they share one task name, so
 installing either replaces the other. Two live watchers in different sessions
 would both fire on the same arrival, and the debounce is per-process, so it
-cannot dedupe across them. event-watch.ps1 also takes a machine-wide mutex as
-defence in depth.
+cannot dedupe across them. event-watch.ps1 also takes a mutex covering the whole
+computer as defence in depth.
 
 This is a property of the HOST, not of the switcher. Nothing in trigger-kvm.ps1
 or event-watch.ps1 knows or asks when it was started. If either ever needs to,
@@ -414,14 +414,66 @@ $MCCS_INPUTS = [ordered]@{
 # Can we actually hold a conversation? A prompt in a non-interactive context is a
 # hang, not a question -- and the elevated relaunch runs in a HIDDEN window, so
 # getting this wrong means an install that appears to freeze with no way to see why.
+# Can questions be asked AT ALL? Distinct from Test-CanReadKeys, which asks the
+# narrower "can individual keystrokes be read", and decides menu style rather than
+# whether the walkthrough runs.
+#
+# A REDIRECTED STDIN IS A SCRIPT OF ANSWERS, NOT AN ABSENCE OF INPUT. This used to
+# refuse one, which made specs/configure.md 3.5 unreachable: the menus grew a typed
+# fallback precisely so a piped answer stream could drive the whole flow end to end,
+# and the one caller that needs it bailed out before reaching it. Running out of
+# that stream is a separate condition with its own message -- see Read-Line.
+#
+# $Relaunched still refuses. That is the elevated child, running hidden with its
+# output going to a transcript file, so a prompt there would block a window nobody
+# can see.
 function Test-CanPrompt {
-    return ([Environment]::UserInteractive -and -not $Relaunched -and -not [Console]::IsInputRedirected)
+    if ($Relaunched) { return $false }
+    if ([Console]::IsInputRedirected) { return $true }
+    return [Environment]::UserInteractive
+}
+
+# THE ONE PLACE A LINE OF ANSWER IS READ, and it is deliberately not Read-Host.
+#
+# WINDOWS POWERSHELL 5.1's Read-Host READS THE CONSOLE, NOT STANDARD INPUT.
+# Measured here: `configure` fed "11" on a redirected stdin got '' back from
+# Read-Host on the first call, while [Console]::In.Peek() still held the
+# unconsumed '1'. They are two different streams. So every answer in a scripted
+# run was silently blank -- and since every required prompt re-asks on a blank,
+# `configure` spun forever printing "A name is needed here." down the screen with
+# nothing driving it.
+#
+# That is what specs/configure.md 3.5 is about. The typed fallback in the menus is
+# only half of it; a fallback that cannot be fed is not a fallback.
+#
+# [Console]::In is the process's actual stdin, and its ReadLine() returns $null at
+# end of input -- a THIRD state, distinct from both an answer and a blank, which is
+# the distinction the spec turns on. Nothing peeks: Peek() BLOCKS on a real
+# console, which hung the suite for two minutes when this guard was written the
+# other way round.
+function Read-Line {
+    param([string]$Prompt)
+
+    if (-not [Console]::IsInputRedirected) { return (Read-Host $Prompt) }
+
+    Write-Host ("{0}: " -f $Prompt) -NoNewline
+    $line = [Console]::In.ReadLine()
+    if ($null -eq $line) {
+        Write-Host ''
+        Write-Host ''
+        Write-Host 'ran out of input. configure needs a terminal, or a complete script of answers.'
+        exit 1
+    }
+    # Echoed, so a scripted run's transcript reads like the session it stands in
+    # for. A console echoes what was typed; this is the same courtesy.
+    Write-Host $line
+    return $line
 }
 
 function Read-Default {
     param([string]$Prompt, [string]$Default)
     $shown = if ($Default) { "$Prompt [$Default]" } else { $Prompt }
-    $answer = Read-Host $shown
+    $answer = Read-Line $shown
     if ([string]::IsNullOrWhiteSpace($answer)) { return $Default }
     return $answer.Trim()
 }
@@ -707,7 +759,7 @@ function Read-YesNo {
     param([string]$Prompt, [bool]$Default = $true)
     $hint = if ($Default) { 'Y/n' } else { 'y/N' }
     while ($true) {
-        $a = (Read-Host "$Prompt [$hint]").Trim().ToLower()
+        $a = (Read-Line "$Prompt [$hint]").Trim().ToLower()
         if (-not $a) { return $Default }
         if ($a -in @('y', 'yes')) { return $true }
         if ($a -in @('n', 'no'))  { return $false }
@@ -1218,7 +1270,7 @@ function Read-Triggers {
 
     Write-Host ''
     Write-Host '--- triggers ---'
-    Write-Host 'Which devices move to this machine when you flip the switch?'
+    Write-Host 'Which devices move to this computer when you flip the switch?'
     Write-Host 'USB rows are attached right now; Bluetooth rows are everything paired.'
     Write-Host ''
 
@@ -2053,12 +2105,12 @@ function Write-ConfigFile {
         '#'
         '# Displays are identified by the EDID the GPU reads off the output, never by'
         '# index -- \\.\DISPLAYn numbers are not stable and have swapped on this'
-        '# machine. See what is attached with:  trigger-kvm list'
+        '# computer. See what is attached with:  trigger-kvm list'
         ''
         '# --- install ----------------------------------------------------------'
         ("install.autostart = {0}" -f $(switch ($Tier) { 's4u' { 'boot' } 'manual' { 'no' } default { 'login' } }))
         ''
-        '# --- machines ---------------------------------------------------------'
+        '# --- computers --------------------------------------------------------'
         '# What this computer is called below. `trigger-kvm pull` means "point every'
         '# display at this one"; `trigger-kvm to mac` names any other.'
         ''
@@ -2067,10 +2119,10 @@ function Write-ConfigFile {
         '# --- displays ---------------------------------------------------------'
         '# method: standard (I2C src 0x51, VCP 0x60) -- what nearly every panel takes'
         '#         lg-alt   (src 0x50, VCP 0xF4) -- LG panels whose 0x60 is stubbed'
-        '# input.<value> = <machine>: which computer is on which input of that panel.'
+        '# input.<value> = <computer>: which computer is on which input of that panel.'
         '#         This is the whole map. pull and to are the same lookup against it,'
         '#         differing only in which name they look up, so the two can never'
-        '#         disagree about where a machine is.'
+        '#         disagree about where a computer is.'
         ''
     )
     foreach ($d in $Displays) {
@@ -2092,8 +2144,8 @@ function Write-ConfigFile {
         '# The one shipped here watches device presence. A hotkey or a Stream Deck'
         '# button needs no support from this tool -- it just runs that command.'
         '#'
-        '# Triggers run `pull` and nothing else. Never wire one to another machine: a'
-        '# name like `mac` describes inputs on hardware this machine cannot observe,'
+        '# Triggers run `pull` and nothing else. Never wire one to another computer: a'
+        '# name like `mac` describes inputs on hardware this computer cannot observe,'
         '# and a stale one would then be able to cause an AUTOMATIC switch to a dead'
         '# input. Getting there by hand, watching, is a different risk entirely.'
         '#'
@@ -2210,7 +2262,7 @@ function Get-TriggerCandidates {
 
 if ($Command -eq 'discover') {
     Write-Host ''
-    Write-Host '=== displays on this machine ==='
+    Write-Host '=== displays on this computer ==='
     Invoke-Sibling -Script (Join-Path $PSScriptRoot 'trigger-kvm.ps1') `
                    -Arguments @('list', '-Config', $CONFIG)
 
@@ -2382,7 +2434,7 @@ if ($Command -eq 'status') {
     $this = $(if ($c.ContainsKey('computer.this')) { "$($c['computer.this'])".Trim().ToLower() } else { '' })
     $computers = @(Get-KnownComputers -Cfg $c)
     Write-Host ("displays : {0}" -f $(if ($labels) { $labels -join ', ' } else { 'none configured' }))
-    Write-Host ("machines : {0}" -f $(if ($computers) {
+    Write-Host ("computers: {0}" -f $(if ($computers) {
         (@($computers | ForEach-Object { if ($_ -eq $this) { "$_ (this one)" } else { $_ } }) -join ', ') +
         '   (trigger-kvm to <name>; only pull is automatic)'
     } else { 'none' }))
@@ -2812,7 +2864,7 @@ if ($EffectiveTier -eq 'manual') {
                   else { 'each time you log in' }))
 }
 Write-Host ''
-Write-Host '  Flip your switch to this PC -- the monitors should follow.'
+Write-Host '  Flip your switch to this computer -- the monitors should follow.'
 Write-Host ''
 Write-Host ("    {0} status      is it running?" -f $cmd)
 Write-Host ("    {0} pull        bring the displays here now" -f $cmd)

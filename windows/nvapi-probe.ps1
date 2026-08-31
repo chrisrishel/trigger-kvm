@@ -6,7 +6,7 @@ Read-only NVAPI display enumeration probe. Sends nothing to any monitor.
 Phase 1 of the pre-login work (see ..\ideas\nvapi-transport.md). Answers one
 question:
 
-    can this machine enumerate and identify its monitors through NVAPI, in a
+    can this computer enumerate and identify its monitors through NVAPI, in a
     context that has no desktop?
 
 That matters because every display path the Windows switcher uses today is

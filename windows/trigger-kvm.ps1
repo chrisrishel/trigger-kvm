@@ -1,14 +1,14 @@
 <#
 .SYNOPSIS
-Point this machine's monitors at an input.
+Point this computer's monitors at an input.
 
 .DESCRIPTION
-    trigger-kvm.ps1 pull                 pull every configured monitor to THIS machine
-    trigger-kvm.ps1 to mac               point them at the machine called "mac"
+    trigger-kvm.ps1 pull                 pull every configured monitor to THIS computer
+    trigger-kvm.ps1 to mac               point them at the computer called "mac"
     trigger-kvm.ps1 pull -Only lg        one monitor only
     trigger-kvm.ps1 pull -WhatIf         resolve and build the packets, send nothing
 
-A monitor's inputs are named after the machines plugged into them, and that one map
+A monitor's inputs are named after the computers plugged into them, and that one map
 answers both verbs:
 
     display.lg.input.0xD0 = pc
@@ -17,14 +17,14 @@ answers both verbs:
 
 `pull` points every configured monitor at `computer.this`. `to mac` points them at
 `mac`. Same lookup, same code path, different name -- there is no second table, so
-the two can never disagree about where a machine is.
+the two can never disagree about where a computer is.
 
 `to` is MANUAL ONLY: the trigger cannot reach it by any path. A name that has gone
-stale -- someone moved a cable on the other machine -- can therefore only spoil a
+stale -- someone moved a cable on the other computer -- can therefore only spoil a
 command you typed and are watching, never an automatic switch. That separation is
 why the two verbs are distinct rather than one verb with an optional argument.
 
-Everything is resolved BEFORE anything is sent. A machine that two displays know
+Everything is resolved BEFORE anything is sent. A computer that two displays know
 about and a third does not moves neither: a half-applied arrangement leaves the desk
 in a state nobody configured, and you have to work out which half landed.
 
@@ -791,7 +791,7 @@ if ($Command -eq 'list') {
                     $(if ($known.ContainsKey($key)) { $known[$key] } else { '-- not in config --' }))
     }
     Write-Host ''
-    Write-Host 'To add one, put this in the config and name the input each machine is on:'
+    Write-Host 'To add one, put this in the config and name the input each computer is on:'
     Write-Host ''
     $ex = $found[0]
     Write-Host ('    display.<label>.vendor  = 0x{0:X4}' -f $ex.EdidVendor)
@@ -802,7 +802,7 @@ if ($Command -eq 'list') {
     Write-Host  '    display.<label>.input.0x0f = mac          # `pull` uses computer.this; `to mac` uses this'
     Write-Host ''
     Write-Host 'NOTE: some panels report a DIFFERENT product id per input -- the LG 45GX950A does.'
-    Write-Host 'Use the value shown HERE, measured on this machine. Never copy one from another host.'
+    Write-Host 'Use the value shown HERE, measured on this computer. Never copy one from another host.'
     exit 0
 }
 
@@ -852,7 +852,7 @@ foreach ($d in $displays) {
             if ($Command -eq 'pull') {
                 Write-Log ("REFUSING: computer.this is missing from {0}. Run: trigger-kvm configure" -f $Config)
             } else {
-                Write-Log 'usage: trigger-kvm.ps1 to <machine>'
+                Write-Log 'usage: trigger-kvm.ps1 to <computer>'
             }
             exit 2
         }

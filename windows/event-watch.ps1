@@ -1,9 +1,9 @@
 <#
 .SYNOPSIS
-Fire trigger-kvm when something happens that means "this machine owns the desk now".
+Fire trigger-kvm when something happens that means "this computer owns the desk now".
 
 .DESCRIPTION
-The single persistent process on this machine. It watches for events that should
+The single persistent process on this computer. It watches for events that should
 pull the displays here and runs `trigger-kvm.ps1 pull` when one occurs.
 
     event-watch.ps1 -Exec ..\trigger-kvm.ps1 -Arg pull [-Verbose]
@@ -44,17 +44,17 @@ event is followed by a targeted query to establish identity. That combination
 gives push latency with exact identity, and needs no elevation.
 
 TRAP: the keyboard and mouse are Logitech too (VID_046D, PID_C547) and are always
-present, because they are wired directly to this PC's motherboard and do not pass
-through the USB switch. Matching on vendor id alone would fire constantly. Always
-match the full VID+PID pair.
+present, because they are wired directly to this computer's motherboard and do not
+pass through the USB switch. Matching on vendor id alone would fire constantly.
+Always match the full VID+PID pair.
 
 TRAP: this presence model works for USB and NOT for Bluetooth, where a PAIRED
 device keeps its PnP node whether or not it is connected. Adding Bluetooth needs a
 connection-aware source, not a wider match pattern. See ..\AGENTS.md.
 
-Whatever the source, it runs `pull` -- never a scene. A scene names inputs on
-hardware this machine cannot observe, so a stale one must never be reachable from
-anything automatic.
+Whatever the source, it runs `pull` -- never another computer's name. A name
+other than `computer.this` describes inputs on hardware this computer cannot
+observe, so a stale one must never be reachable from anything automatic.
 #>
 
 [CmdletBinding(DefaultParameterSetName = 'Watch')]
@@ -62,8 +62,9 @@ param(
     [Parameter(Mandatory = $true, ParameterSetName = 'Watch')]
     [string]$Exec,
 
-    # What to run the switcher with. Always `pull`: a trigger may never apply a
-    # scene, because a scene names inputs on hardware this machine cannot observe.
+    # What to run the switcher with. Always `pull`: a trigger may never name
+    # another computer, because a name other than `computer.this` describes inputs
+    # on hardware this machine cannot observe.
     [Parameter(ParameterSetName = 'Watch')]
     [string]$Arg = 'pull',
 
@@ -426,7 +427,7 @@ if ($TestTrigger) {
         Write-Host ('  {0,-20} {1}' -f $w.Key, $(if ($state[$w.Key]) { 'here now' } else { 'not here' }))
     }
     Write-Host ''
-    Write-Host '  Flip your switch AWAY from this PC, then back again.'
+    Write-Host '  Flip your switch AWAY from this computer, then back again.'
     Write-Host ("  Waiting up to {0}s. Ctrl+C to give up." -f $Timeout)
     Write-Host ''
 

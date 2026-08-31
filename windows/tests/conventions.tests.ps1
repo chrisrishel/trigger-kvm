@@ -71,6 +71,49 @@ foreach ($s in $scripts) {
 
 Assert-Equal 0 $complaints.Count ("duplicate definitions:`n  " + ($complaints -join "`n  "))
 
+# ---- "computer", never "machine", in anything the user can see ---------------
+#
+# specs/configure.md 2. The conformance check cannot ask this: it tests PRESENCE,
+# so it can require the right word and never notice the wrong one sitting beside
+# it. Absence needs its own check.
+#
+# Scope is what the user reads -- strings printed at runtime, and the
+# comment-based help block Get-Help renders. Source comments are not user-visible
+# and are left alone; several of them use "machine" correctly, about the host as
+# hardware.
+
+function Get-UserVisibleLine {
+    param([string]$Path)
+
+    $lines = @(Get-Content -LiteralPath $Path)
+    $out   = @()
+    $inHelp = $false
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        $l = $lines[$i]
+        if ($l -match '^<#')  { $inHelp = $true;  continue }
+        if ($l -match '^#>')  { $inHelp = $false; continue }
+        if ($inHelp) { $out += [pscustomobject]@{ Line = $i + 1; Text = $l }; continue }
+        # A quoted string reaching the user: Write-Host, Write-Log, or a prompt.
+        if ($l -match '^\s*#') { continue }
+        if ($l -match 'Write-(Host|Log)|Read-Line|Read-Default|Read-YesNo') {
+            $out += [pscustomobject]@{ Line = $i + 1; Text = $l }
+        }
+    }
+    return $out
+}
+
+$saidMachine = @()
+foreach ($s in @(Get-ChildItem -LiteralPath $WinDir -Filter '*.ps1' -File)) {
+    foreach ($l in (Get-UserVisibleLine $s.FullName)) {
+        # -cmatch: "Machine" capitalised at the start of a sentence counts too.
+        if ($l.Text -imatch '\bmachines?\b') {
+            $saidMachine += ("{0}:{1}: {2}" -f $s.Name, $l.Line, $l.Text.Trim())
+        }
+    }
+}
+
+Assert-Equal 0 $saidMachine.Count ("the user must never be shown ""machine"":`n  " + ($saidMachine -join "`n  "))
+
 # ---- the check can actually see one ------------------------------------------
 
 # A structural check that cannot fail is decoration, and this one is easy to

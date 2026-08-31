@@ -92,16 +92,21 @@ function Assert-NoMatch {
 
 # ---- a scripted person ------------------------------------------------------
 
-# Every prompt in the walkthrough goes through Read-Host, so one stub drives all of
+# Every prompt in the walkthrough goes through Read-Line, so one stub drives all of
 # them. Running out of answers throws rather than blocking, which is what makes a
 # flow change show up as a failed test instead of a hung run.
+#
+# Read-Line, not Read-Host: the real one reads [Console]::In when stdin is
+# redirected, because Windows PowerShell 5.1's Read-Host reads the CONSOLE and
+# never sees a piped answer at all. Stubbing Read-Host would leave the function
+# that actually decides that untested -- which is stdin.tests.ps1's job.
 $script:Answers = @()
 $script:Asked   = @()
 
 function Set-Answers { param([string[]]$A) $script:Answers = @($A); $script:Asked = @() }
 function Get-Asked   { return $script:Asked }
 
-function Read-Host {
+function Read-Line {
     param([string]$Prompt)
     $script:Asked += $Prompt.Trim()
     if ($script:Answers.Count -eq 0) { throw "ran out of scripted answers at: $($Prompt.Trim())" }
