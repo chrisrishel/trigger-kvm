@@ -160,10 +160,21 @@ Bluetooth source is not a new event source at all -- it is a second *presence
 evaluator* woken by the `Win32_DeviceChangeEvent` subscription that already exists.
 One event source, N presence evaluators, which is simpler than N event sources.
 
-**Still unverified, and it is the gate:** whether `Win32_DeviceChangeEvent` actually
-fires on Bluetooth connect/disconnect. It is plausible -- the child function nodes
-do flip `Present` -- but if it does not fire, the only route left is polling, which
-this project deliberately avoids. Test that before building anything.
+**The gate is cleared: `Win32_DeviceChangeEvent` DOES fire on Bluetooth connect.**
+Measured 2026-08-30 -- AirPods connecting produced `fConnected False -> True` with
+3 WMI events within the same second, and disconnecting produced the reverse with 3
+more. Both edges, both accompanied. So a Bluetooth evaluator needs no new event
+plumbing and no polling: it hangs off the subscription event-watch.ps1 already has.
+
+Note the contrast in volume, which matters for tuning: one physical USB plug
+produces ~32 events, a Bluetooth connect only 3. Do not calibrate anything on the
+USB number alone.
+
+**Still unverified for Bluetooth, and it only matters for the s4u tier:** whether
+`BluetoothFindFirstDevice` works from session 0. The WMI event reaches there
+(measured), but the classic Bluetooth API has not been tried without a desktop --
+and on this machine session 0 has already behaved differently from prediction once,
+with the phantom monitor. Test before claiming Bluetooth works pre-login.
 
 **WMI device notifications DO reach session 0.** Measured 2026-08-30 from an
 unelevated S4U task: 45 indications in 90s, and `Win32_PnPEntity` presence queries

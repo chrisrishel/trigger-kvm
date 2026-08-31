@@ -145,9 +145,14 @@ rather than an event, so Bluetooth is not a new *event source* but a second
 *presence evaluator* woken by the `Win32_DeviceChangeEvent` subscription that
 already exists.
 
-**One thing gates it:** whether that WMI event fires on Bluetooth connect at all. If
-it does not, the only route left is polling, which this project avoids. Test before
-building.
+**And the last gate is cleared.** `Win32_DeviceChangeEvent` does fire on Bluetooth
+connect -- measured, both edges, 3 events within the same second each way. So a
+Bluetooth evaluator needs no new event plumbing and no polling; it hangs off the
+subscription already in place. Worth knowing for tuning: a USB plug produces ~32
+events, a Bluetooth connect only 3.
+
+The one thing still untested is whether the classic Bluetooth API works from
+session 0, which matters only for the `s4u` tier.
 
 The config keys stay flat anyway — `trigger.device`, `trigger.debounce`,
 `trigger.settle`. Nesting them under a transport was tried and reverted: it
