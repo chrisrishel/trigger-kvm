@@ -524,9 +524,21 @@ could not run the code they are reporting on.
 
 This is enforced, not merely asked for. Each platform's suite runs a conformance
 check asserting that every string the spec marks normative is present in that
-platform's sources, so **a spec edit fails the other platform's tests until it
-catches up**. On macOS that is `macos/tests/spec.tests.sh` driving
-`specs/check-conformance.sh`.
+platform's sources, plus a revision check against `specs/CHANGELOG.md`, so **a
+spec edit fails the other platform's tests until it catches up**. On macOS that
+is `macos/tests/spec.tests.sh` driving `specs/check-conformance.sh`.
+
+**THE BOOTSTRAP GAP.** Publishing once only reaches a platform that has
+implemented those checks. One that has not cannot be told it is behind by a
+mechanism it has not got, so **the first thing any implementation owes is the
+checks themselves**, and until they exist its `HANDOFF.md` must carry what the
+machinery would otherwise say -- and say that it is doing so. Windows is in that
+state today: revision 0 against a changelog at 3, with nothing on its side to
+report either.
+
+A handoff entry points AT a mechanism rather than pasting its output. A pasted
+list is a snapshot of something that changes and goes stale silently; the one in
+`windows/HANDOFF.md` rotted within two revisions of being written.
 
 Know what that check does not prove: it proves a string is PRESENT, not that it
 is REACHABLE. A shadowed function can still contain it -- which is exactly how

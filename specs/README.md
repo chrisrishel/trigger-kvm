@@ -116,6 +116,27 @@ When you do write an entry, mark whether it is a spec change or a defect report,
 and say what you could and could not verify from where you were: a defect report
 written by someone who cannot run that platform is a reading, not a finding.
 
+### The bootstrap gap
+
+Publishing once only reaches a platform that has **implemented the checks**. A
+platform without them cannot be told it is behind by a mechanism it has not got,
+and nothing will surface the gap on its own.
+
+So **the first thing any implementation owes is the conformance and revision
+checks themselves** — before conforming to anything else. Until they exist, that
+platform's `HANDOFF.md` has to carry what the machinery would otherwise say, and
+should say plainly that it is doing so.
+
+This is the state Windows is in today: `windows/SPEC-REVISION` is 0, the
+changelog is at 3, and nothing in `windows/tests/` would report either fact.
+
+### Point at mechanisms, not at their output
+
+A handoff entry says *run the checker*; it does not paste the checker's list.
+A pasted list is a snapshot of something that changes, it goes stale silently,
+and it is the same duplication that `specs/` exists to prevent — the one in
+`windows/HANDOFF.md` rotted within two revisions of being written.
+
 ## Knowing you are behind
 
 The conformance check tells a platform when the spec adds a string it does not

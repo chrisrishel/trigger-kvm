@@ -115,9 +115,11 @@ implementation and the macOS one built to match it, and superseding
 **Act on:** conform to every `normative` block, and to the behaviour described in
 the prose around them.
 
-- **macOS** conforms — 149 of 149 fragments.
-- **Windows** has three outstanding items, listed in
-  [`../windows/HANDOFF.md`](../windows/HANDOFF.md). Two are wording
-  (`computer`, never `machine`) and one is behaviour (`configure` must accept a
-  scripted answer stream on stdin). Bump `windows/SPEC-REVISION` to 1 once they
-  land.
+- **macOS** conformed at the time this was written.
+- **Windows** did not, and still does not. Two of its gaps are wording —
+  §2 requires "computer", never "machine", in anything the user sees — and one
+  is behaviour: §3.5 requires `configure` to accept a scripted answer stream on
+  stdin, which is what makes the walkthrough testable end to end.
+
+Run the conformance checker for the current list rather than working from one
+written down here; this entry is dated and that list is not.
