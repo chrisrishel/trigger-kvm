@@ -6,9 +6,10 @@ Fire trigger-kvm when something happens that means "this machine owns the desk n
 The single persistent process on this machine. It watches for events that should
 pull the displays here and runs `trigger-kvm.ps1 pull` when one occurs.
 
-    event-watch.ps1 -Exec .	rigger-kvm.ps1 -Arg pull `
-                    -Device 046d:0843,1235:820a `
-                    [-Debounce 3.0] [-Settle 0.75] [-Verbose]
+    event-watch.ps1 -Exec ..\trigger-kvm.ps1 -Arg pull [-Verbose]
+
+Device list, debounce and settle come from the CONFIG unless passed explicitly;
+the task action carries no configuration at all.
 
 ONE process, N event sources. Today there is one source -- USB device presence --
 but the shape is deliberate: every additional persistent listener a user has to run
@@ -61,12 +62,15 @@ param(
     [Parameter(Mandatory = $true, ParameterSetName = 'Watch')]
     [string]$Exec,
 
+    # What to run the switcher with. Always `pull`: a trigger may never apply a
+    # scene, because a scene names inputs on hardware this machine cannot observe.
     [Parameter(ParameterSetName = 'Watch')]
-    [string]$Arg = 'windows',
+    [string]$Arg = 'pull',
 
     # Comma-separated. usb:VVVV:PPPP, bare VVVV:PPPP (= usb), or bt:AAAAAAAAAAAA.
-    # Generated from the config by install.ps1.
-    [Parameter(Mandatory = $true, ParameterSetName = 'Watch')]
+    # Omitted, it comes from the config -- which is the normal case. Passing it
+    # explicitly is for testing a device by hand without editing anything.
+    [Parameter(ParameterSetName = 'Watch')]
     [string[]]$Device,
 
     # Print "address|connected|name" for every paired Bluetooth device and exit.
@@ -90,11 +94,25 @@ param(
     # Rotate the log at startup once it exceeds this. One generation is kept as
     # .1; the older one is discarded. Output is a few lines per switch, so this is
     # years of normal use -- the point is that it is bounded at all.
-    [int]$MaxLogBytes = 1MB
+    [int]$MaxLogBytes = 1MB,
+
+    # Read at STARTUP for anything not passed explicitly. The task action carries
+    # no configuration at all, deliberately: baking trigger settings into the task
+    # command line meant every config edit needed the task re-registered to take
+    # effect, which is a coupling nobody could see and the reason an "apply"
+    # step had to exist as a separate concept.
+    [string]$Config
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+
+# Shared config reader. Dot-sourced rather than duplicated: three consumers parsing
+# the same format independently is a drift risk where the watcher and the switcher
+# could silently disagree about what is configured.
+. (Join-Path $PSScriptRoot 'config.ps1')
+
+if (-not $Config) { $Config = Get-ConfigPath }
 
 $SOURCE = 'TriggerKvmDeviceChange'
 
@@ -255,6 +273,26 @@ if ('BtPresence' -as [type]) {
 } else {
     Add-Type -ErrorAction Stop -TypeDefinition $BtSource
     [AppDomain]::CurrentDomain.SetData($btStampKey, $btStamp)
+}
+
+# --- settings: explicit parameters win, config fills the rest ----------------
+#
+# $PSBoundParameters rather than checking for empty values: -Debounce has a default,
+# so "not supplied" and "supplied as the default" are otherwise indistinguishable,
+# and a config value would silently lose to a default nobody chose.
+$cfg = Read-Config -Path $Config
+
+if (-not $PSBoundParameters.ContainsKey('Device')) {
+    if (-not $cfg.ContainsKey('trigger.device')) {
+        throw "no -Device given and no trigger.device in $Config -- run: trigger-kvm configure"
+    }
+    $Device = @($cfg['trigger.device'])
+}
+if (-not $PSBoundParameters.ContainsKey('Debounce') -and $cfg.ContainsKey('trigger.debounce')) {
+    $Debounce = [double]$cfg['trigger.debounce']
+}
+if (-not $PSBoundParameters.ContainsKey('Settle') -and $cfg.ContainsKey('trigger.settle')) {
+    $Settle = [double]$cfg['trigger.settle']
 }
 
 # Answer the Bluetooth question and stop. Placed here, after the binding is loaded

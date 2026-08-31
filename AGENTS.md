@@ -399,9 +399,9 @@ devices that were already plugged in.
 
 ```powershell
 cd windows
-.\install.ps1 setup                        # install, register the task, start
-.\install.ps1 setup -AddToPath             # ...and put `trigger-kvm` on PATH
-trigger-kvm status / logs / discover / pause / uninstall
+.\install.ps1                              # install, register the task, start
+.\install.ps1 -AddToPath                   # ...and put `trigger-kvm` on PATH
+trigger-kvm configure / status / discover / restart / logs / pause / uninstall
 .\trigger-kvm.ps1 pull                 # pull configured monitors to this machine
 .\trigger-kvm.ps1 to mac               # apply a saved scene (manual only)
 .\trigger-kvm.ps1 pull -Only asus      # one monitor only -- use when testing
@@ -433,7 +433,7 @@ task (task -> `wscript.exe` -> `powershell.exe`), so stopping the task kills onl
 the shim and leaves the watcher holding the single-instance mutex -- a hand-run one
 then exits at once with `another watcher is already running`. And the 1-minute
 self-heal trigger would restart it within the minute regardless, so the task has to
-be *disabled*, not merely stopped. `pause` does both; a plain `trigger-kvm setup`
+be *disabled*, not merely stopped. `pause` does both; `trigger-kvm restart`
 re-enables and restarts.
 
 ## Conventions

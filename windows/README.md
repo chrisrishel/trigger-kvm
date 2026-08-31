@@ -32,55 +32,63 @@ exists precisely so these two implementations can't drift.
 
 ## Install
 
+From the source tree — this is what installing *is*:
+
 ```powershell
-.\install.ps1 setup               # install and start. No admin.
-.\install.ps1 setup -AddToPath    # ...and put `trigger-kvm` on your PATH
+.\install.ps1                 # copy files, register the task, start it
+.\install.ps1 -AddToPath      # ...and put `trigger-kvm` on your PATH
 ```
 
-After that it is one command, from anywhere:
+With no config yet it runs the walkthrough for you. Afterwards it is one command
+from anywhere:
 
 ```
-trigger-kvm pull                 pull every configured monitor to this machine
-trigger-kvm to mac               apply a saved scene
-trigger-kvm list                 connected displays, with their EDID ids
-trigger-kvm status               tier, coverage, version, config
-trigger-kvm discover             what is attached, in the form the config wants
-trigger-kvm logs                 tail the log
-trigger-kvm pause                stand the watcher down to test one by hand
-trigger-kvm setup -Tier s4u      switch to the pre-login tier (needs admin)
+trigger-kvm configure          interactive; current settings pre-fill the defaults,
+                               and it applies whatever you changed
+trigger-kvm status             tier, coverage, version, what is configured
+trigger-kvm discover           what is attached, in the form the config wants
+trigger-kvm restart            make a hand-edited config take effect now
+trigger-kvm logs               tail the log
+trigger-kvm pause              stand the watcher down to test one by hand
 trigger-kvm uninstall
+trigger-kvm pull | to <scene> | list
 ```
+
+**There is no `install` verb on the CLI**, deliberately: installing is what got you
+the CLI. Upgrading and repairing both mean "fetch the source and run its installer",
+which works because the install is self-contained — `install.ps1` copies itself, so
+managing and removing keep working after the source tree is gone.
+
+**And no `apply` step.** One used to be needed because trigger settings were baked
+into the scheduled task's command line, so every config edit required re-registering
+the task — a coupling nobody could see, and the reason that verb never had a good
+name. The watcher now reads the config itself, the task action carries no
+configuration at all, and edits take effect when it next starts. `configure`
+restarts it for you; `restart` exists for hand-edits.
 
 **Verbs, and the same verbs on macOS.** You use both machines daily, so the words
 typed constantly are where cross-platform muscle memory is worth buying. Flags stay
-idiomatic per platform -- `-Tier` here, `--tier` there -- because forcing `--tier`
+idiomatic per platform — `-Tier` here, `--tier` there — because forcing `--tier`
 into PowerShell means hand-parsing `$args` and losing parameter binding, validation
 and completion, which is a real cost for a cosmetic gain.
 
-**`trigger-kvm` is a `.cmd`, not a `.ps1`**, so it runs from cmd, PowerShell and the
-Run dialog alike with no execution-policy friction. It dispatches `pull`/`to`/`list`
-to the switcher and everything else to the installer. Two scripts stay behind one
-command deliberately: `trigger-kvm.ps1` runs on **every** device arrival and is kept
-lean, while `install.ps1` is large and rarely used, so merging them would load
-installer code on the hot path.
+**`trigger-kvm` is a `.cmd`**, so it runs from cmd, PowerShell and the Run dialog
+alike with no execution-policy friction. It routes `pull`/`to`/`list` to the
+switcher and everything else to the installer: two scripts behind one command,
+because `trigger-kvm.ps1` runs on **every** device arrival and is kept lean while
+`install.ps1` is large and rare.
 
-**The install is self-contained.** `install.ps1` copies itself alongside the others,
-so status, reconfiguration and uninstall all keep working after the source tree is
-deleted -- the difference between something you clone and something you install.
-Updating is "fetch the new source, run `trigger-kvm setup`"; there is deliberately
-no auto-updater, since that would reintroduce the network access and pinned hashes
-this project just got rid of. `status` reports the installed version and the commit
-it was built from, which answers the question that actually bites: is what is
-installed what I think it is?
+**s4u prompts for UAC.** Choosing the pre-login tier raises the elevation prompt and
+carries on, rather than sending you to find an admin terminal — and `uninstall` does
+the same, because registering an S4U task leaves the definition admin-owned, so
+removing it needs elevation too. A prompt on the way in without one on the way out
+would trap you in a tier you could not remove.
 
-**A trap worth knowing before it costs you an afternoon.** Run `setup` from an
-*elevated* shell -- easy to do if you have one open -- and the task definition under
-`System32\Tasks` becomes Administrators-owned, leaving you Read-only on your own
-user-tier task. Every later *unelevated* `setup` or `uninstall` then fails with
-`Access is denied`. Installing the s4u tier does the same thing, so going back down
-to the user tier hits it every time. Both paths now detect it and say what to do
-instead of throwing. To get back to a fully unelevated install: run `uninstall`
-elevated once, then `setup` normally.
+**A trap worth knowing.** Running the installer from an *elevated* shell — easy if
+you have one open — leaves the task definition Administrators-owned, so later
+*unelevated* runs need elevation as well. Both paths detect it and offer the prompt
+instead of throwing. To get back to a fully unelevated install: `uninstall`, then
+install again normally.
 
 ### Two tiers
 

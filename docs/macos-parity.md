@@ -46,9 +46,11 @@ display.lg.name    = LG 45GX950A
 display.lg.method  = lg-alt     # standard | lg-alt
 display.lg.self    = 0xD1       # the input where THIS machine is. Required.
 
-trigger.device   = 046d:0843,1235:820a
+trigger.device   = usb:046d:0843, bt:0011223344ff
 trigger.debounce = 3.0
 trigger.settle   = 0.75
+
+install.tier     = user         # user | s4u -- a configured value like any other
 
 scene.windows.lg = 0xD0         # manual only -- the trigger never reads scenes
 ```
@@ -106,7 +108,8 @@ trigger-kvm status               tier, coverage, version, config
 trigger-kvm discover             what is attached, in the form the config wants
 trigger-kvm logs
 trigger-kvm pause                stand the watcher down to test one by hand
-trigger-kvm setup [--tier ...]
+trigger-kvm configure            interactive; applies what changed
+trigger-kvm restart              make a hand-edited config take effect
 trigger-kvm uninstall
 ```
 
@@ -118,7 +121,13 @@ rare, and forcing PowerShell to accept `--only` would cost parameter binding,
 validation and completion for a cosmetic gain.
 
 `make` stays the **build** tool, not the user interface: `make install` compiles and
-then calls `trigger-kvm setup`.
+then does the install, running `configure` if there is no config yet.
+
+**There is no `install` or `apply` verb**, and the reason is worth copying. Applying
+was only ever needed on Windows because trigger settings were baked into the
+scheduled task's arguments, so config edits needed re-registration. Have the watcher
+read the config itself and that whole concept disappears -- the LaunchAgent's
+arguments should carry no configuration either.
 
 **`pull` is the only thing a trigger may ever run.** Keep a dry-run mode — it is
 what makes the installer's guided discovery safe, and it caught real mistakes on the
@@ -127,13 +136,13 @@ Windows side before anything reached a monitor.
 **Install self-contained.** The Windows installer copies itself into the install
 directory, so `status` and `uninstall` keep working after the source tree is gone —
 the difference between something you clone and something you install. Do the same.
-Updating is "fetch the new source, run `trigger-kvm setup`"; there is deliberately
+Updating is "fetch the new source, run its installer"; there is deliberately
 no auto-updater, and a version stamp shown by `status` covers the question that
 actually matters (is what is installed what I think it is?).
 
 **Watch for the elevation trap in whatever form launchd has it.** On Windows,
-running `setup` from an elevated shell leaves the scheduled-task definition
-admin-owned, so every later unelevated `setup` or `uninstall` fails with access
+running the installer from an elevated shell leaves the scheduled-task definition
+admin-owned, so every later unelevated install or `uninstall` fails with access
 denied. Check whether a LaunchDaemon installed with `sudo` leaves an equivalent
 mess for a later user-level `launchctl` operation, and if so, detect and explain it
 rather than letting it throw.

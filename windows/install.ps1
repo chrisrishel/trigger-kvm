@@ -3,27 +3,41 @@
 Install and manage trigger-kvm on Windows.
 
 .DESCRIPTION
-Invoked as `trigger-kvm <verb>` once installed, or directly from the repo:
+BOOTSTRAP, run from the source tree. This is what installing IS:
 
-    trigger-kvm setup              install / reconfigure and start  (no admin)
-    trigger-kvm setup -Tier s4u    pre-login tier -- NEEDS ADMIN to register
-    trigger-kvm status             which tier, what it covers, what is configured
+    .\install.ps1                  copy files, register the task, start it
+                                   no config yet? -> runs `configure` for you
+
+Afterwards it is one command from anywhere (add -AddToPath, or use the full path):
+
+    trigger-kvm configure          interactive; current settings pre-fill the
+                                   defaults, and it applies what you changed
+    trigger-kvm status             tier, coverage, version, what is configured
     trigger-kvm discover           what is attached, in the form the config wants
+    trigger-kvm restart            make a hand-edited config take effect now
     trigger-kvm logs               tail the log
     trigger-kvm pause              stand the watcher down to test one by hand
-    trigger-kvm uninstall          stop, unregister, remove installed files
+    trigger-kvm uninstall
 
-VERBS, not PowerShell switches, and the same verbs on macOS. You use both machines
-daily, so the words you type constantly are where cross-platform muscle memory is
-worth buying. Flags stay idiomatic per platform (-Tier here, --tier there): forcing
-`--tier` into PowerShell means hand-parsing $args and losing parameter binding,
-validation and completion, which is a real cost for a cosmetic gain.
+THERE IS NO `install` VERB ON THE CLI, deliberately: installing is what got you
+the CLI. Upgrading and repairing both mean "fetch the source and run its
+installer", which the self-contained install makes coherent -- this script copies
+itself, so managing and removing work after the source tree is gone.
 
-SELF-CONTAINED. This script installs ITSELF alongside the others, so uninstalling,
-reconfiguring and checking status all work after the source tree is gone. That is
-the difference between something you clone and something you install.
+AND NO `apply` STEP EITHER. It used to be needed because trigger settings were
+baked into the task's command line, so every config edit required re-registering
+the task. The watcher now reads the config itself, so the task action carries no
+configuration at all and edits take effect when it next starts. `configure`
+restarts it for you; `restart` is there for hand-edits.
 
-TWO TIERS, and you pick by what you are willing to grant:
+VERBS, and the same verbs on macOS. You use both machines daily, so the words you
+type constantly are where cross-platform muscle memory is worth buying. Flags stay
+idiomatic per platform (-Tier here, --tier there): forcing `--tier` into PowerShell
+means hand-parsing $args and losing parameter binding, validation and completion,
+which is a real cost for a cosmetic gain.
+
+TWO TIERS, recorded in the config as install.tier, and you pick by what you are
+willing to grant:
 
   user (default)  Runs at logon, in your interactive session, unelevated.
                   NO ADMIN, at install or at run time.
@@ -33,8 +47,8 @@ TWO TIERS, and you pick by what you are willing to grant:
                   a full logoff.
 
   s4u             Runs at startup, in session 0, as you, still UNELEVATED.
-                  ADMIN ONCE, to register the task. Nothing elevated runs on
-                  the switch path afterwards.
+                  ADMIN ONCE, to register the task -- prompted for via UAC.
+                  Nothing elevated runs on the switch path afterwards.
                   Adds: before-first-login and after-logoff.
 
 The tiers are mutually exclusive by construction -- they share one task name, so
@@ -53,22 +67,22 @@ both directions, confirmed visually. The old blocker was dxva2 needing an
 HMONITOR, and that path no longer exists. See ..\ARCHITECTURE.md.
 
 No third-party binary and no network access: both monitors are driven by code in
-this repo. The LG used to need lg-input-switch.exe, a 16MB GPL-3.0 download; it is
-now driven by an aimed NVAPI I2C write from trigger-kvm.ps1, so the download,
-its pinned SHA256 check and the install-time network dependency are all gone. A
-stale copy left by an older install is removed below.
+this repo.
 #>
 
 [CmdletBinding()]
 param(
+    # 'install' is the default and is NOT offered on the CLI shim -- it is what
+    # running this script from the source tree means.
     [Parameter(Position = 0)]
-    [ValidateSet('setup', 'status', 'discover', 'logs', 'pause', 'uninstall')]
-    [string]$Command = 'setup',
+    [ValidateSet('install', 'configure', 'status', 'discover', 'restart', 'logs', 'pause', 'uninstall')]
+    [string]$Command = 'install',
 
-    # user: logon task, your session, no admin. s4u: at-startup task, session 0,
-    # still runs as you and still unelevated, but needs admin ONCE to register.
+    # Overrides install.tier from the config, for scripted installs. Normally the
+    # tier is a configured value like everything else machine-local, so that
+    # `configure` can ask about it and the installer just applies what it finds.
     [ValidateSet('user', 's4u')]
-    [string]$Tier = 'user',
+    [string]$Tier,
 
     # Put the install directory on the user PATH so `trigger-kvm` works anywhere.
     # Opt-in: editing someone's PATH without asking is rude, and the interactive
@@ -98,6 +112,7 @@ $VBS     = Join-Path $DEST 'launcher.vbs'
 $MANAGE  = Join-Path $DEST 'install.ps1'      # this script, installed alongside
 $SHIM    = Join-Path $DEST 'trigger-kvm.cmd'  # the `trigger-kvm` on PATH
 $STAMP   = Join-Path $DEST 'version.txt'
+$CFGLIB  = Join-Path $DEST 'config.ps1'        # shared reader, dot-sourced by all three
 
 # Files a previous version of THIS layout installed under names no longer used.
 # Remove-LegacyInstall handles the pre-rename DIRECTORY; these are leftovers inside
@@ -135,6 +150,19 @@ $SEED_DEBOUNCE = '3.0'
 $SEED_SETTLE   = '0.75'
 
 function Write-Log { param([string]$m) Write-Host "install: $m" }
+
+# --- the effective tier ------------------------------------------------------
+
+# Config is the source of truth; -Tier overrides it for scripted installs and is
+# what `configure` writes back. Resolved once, here, so every later decision --
+# whether to elevate, which principal to register, what status reports -- reads the
+# same answer.
+function Get-EffectiveTier {
+    if ($PSBoundParameters.ContainsKey('Tier') -and $Tier) { return $Tier }
+    $c = Read-Config -Path (Get-ConfigPath)
+    if ($c.ContainsKey('install.tier') -and $c['install.tier'] -in @('user', 's4u')) { return $c['install.tier'] }
+    return 'user'
+}
 
 # --- elevation --------------------------------------------------------------
 
@@ -218,19 +246,27 @@ function Remove-FromUserPath {
 
 # --- configuration ----------------------------------------------------------
 
-# Same three-line reader as trigger-kvm.ps1. Duplicated rather than shared: a
-# dot-sourced module would be a fourth file to keep in step across two install
-# locations, and this is smaller than the plumbing that would avoid it.
-function Read-Config {
-    param([string]$Path)
-    $map = @{}
-    if (-not (Test-Path -LiteralPath $Path)) { return $map }
-    foreach ($line in (Get-Content -LiteralPath $Path)) {
-        if ($line -match '^\s*([A-Za-z0-9_.\-]+)\s*=\s*(.*?)\s*(?:#.*)?$') {
-            $map[$Matches[1].ToLower()] = $Matches[2]
-        }
+# Shared config reader. Dot-sourced rather than duplicated: three consumers parsing
+# the same format independently is a drift risk where the watcher and the switcher
+# could silently disagree about what is configured.
+. (Join-Path $PSScriptRoot 'config.ps1')
+
+# Update ONE key in place, preserving comments, order and every other line.
+#
+# Rewriting the whole file from a hashtable would be simpler and would silently
+# destroy the comments -- which are most of the file, and are where the traps are
+# documented. A config you cannot safely round-trip is one people stop hand-editing.
+function Set-ConfigValue {
+    param([string]$Path, [string]$Key, [string]$Value)
+    if (-not (Test-Path -LiteralPath $Path)) { return }
+    $lines = @(Get-Content -LiteralPath $Path)
+    $pattern = '^\s*' + [regex]::Escape($Key) + '\s*='
+    $hit = $false
+    $out = foreach ($l in $lines) {
+        if ($l -match $pattern) { $hit = $true; ('{0} = {1}' -f $Key, $Value) } else { $l }
     }
-    return $map
+    if (-not $hit) { $out = @($out) + @('', ('{0} = {1}' -f $Key, $Value)) }
+    $out | Set-Content -LiteralPath $Path -Encoding ASCII
 }
 
 # Write a starter config, once. Never overwrites: re-running the installer must not
@@ -252,12 +288,19 @@ function New-DefaultConfig {
         '# Generated by install.ps1. Safe to edit by hand -- re-running the installer'
         '# will NOT overwrite this file.'
         '#'
-        '# Displays and scenes take effect on the next switch. Trigger settings are'
-        '# baked into the scheduled task, so changing those needs install.ps1 re-run.'
+        '# Everything here is read at the point it is used, so there is no separate'
+        '# apply step: display and scene edits take effect on the next switch, and'
+        '# trigger edits when the watcher next starts --  trigger-kvm restart'
         '#'
         '# Displays are identified by the EDID the GPU reads off the output, never by'
         '# index -- \\.\DISPLAYn numbers are not stable and have swapped on this'
         '# machine. Find yours with:  .\nvapi-probe.ps1'
+        ''
+        '# --- install ----------------------------------------------------------'
+        '# tier: user (no admin, from logon onward incl. locked)'
+        '#       s4u  (admin ONCE to register; adds before-first-login and logoff)'
+        ''
+        'install.tier = user'
         ''
         '# --- displays ---------------------------------------------------------'
         '# method: standard (I2C src 0x51, VCP 0x60) | lg-alt (src 0x50, VCP 0xF4)'
@@ -368,6 +411,21 @@ function Remove-LegacyInstall {
         Move-Item -LiteralPath $OLD_LOG -Destination "$LOG.pre-rename" -Force -ErrorAction SilentlyContinue
         Write-Log "kept the pre-rename log as $LOG.pre-rename"
     }
+}
+
+# --- configure ---------------------------------------------------------------
+
+# Placeholder for the interactive walkthrough, which lands next. Deliberately does
+# not pretend: an installer that half-asks is worse than one that says it cannot yet.
+function Invoke-Configure {
+    Write-Log 'the interactive walkthrough is not built yet.'
+    Write-Host ''
+    Write-Host ("Edit the config by hand for now:  {0}" -f (Get-ConfigPath))
+    Write-Host 'Then:  trigger-kvm restart'
+    Write-Host ''
+    Write-Host 'To see what is attached, in the form the config wants:'
+    Write-Host '    trigger-kvm discover'
+    $global:LASTEXITCODE = 2
 }
 
 # --- discovery ---------------------------------------------------------------
@@ -495,6 +553,30 @@ if ($Command -eq 'discover') {
 
 # --- status / logs / uninstall ---------------------------------------------
 
+if ($Command -eq 'configure') {
+    # The interactive walkthrough. Current settings pre-fill every default, so a
+    # re-run is a review rather than a replay, and it ends by applying whatever
+    # changed -- which is why there is no separate apply verb.
+    Invoke-Configure
+    exit $LASTEXITCODE
+}
+
+if ($Command -eq 'restart') {
+    # For a hand-edited config. The watcher reads its settings at startup, so
+    # bouncing it is the whole of "make my edit take effect" -- no re-registration,
+    # because the task action carries no configuration.
+    Enable-ScheduledTask -TaskName $TASK -ErrorAction SilentlyContinue | Out-Null
+    Stop-ScheduledTask   -TaskName $TASK -ErrorAction SilentlyContinue
+    Stop-Watchers
+    Start-ScheduledTask  -TaskName $TASK -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 2
+    $n = @(Get-CimInstance Win32_Process -Property ProcessId,Name,CommandLine -Verbose:$false |
+           Where-Object { $_.CommandLine -and $_.Name -eq 'powershell.exe' -and $_.CommandLine -match '(usb|event)-watch\.ps1' }).Count
+    if ($n -ge 1) { Write-Log 'restarted; the watcher has re-read the config.' }
+    else { Write-Log 'restarted, but no watcher came up -- check: trigger-kvm logs' }
+    exit $(if ($n -ge 1) { 0 } else { 1 })
+}
+
 if ($Command -eq 'pause') {
     # Stopping the task is NOT enough, twice over, and both traps have caught
     # people (including the docs, which used to give this advice incompletely):
@@ -510,8 +592,9 @@ if ($Command -eq 'pause') {
     Stop-Watchers
     Write-Log "paused: task disabled and watcher stopped"
     Write-Log 'run one by hand now, e.g.:'
-    Write-Log '    .\event-watch.ps1 -Exec .\nvapi-probe.ps1 -Arg TEST -Device bt:AAAAAAAAAAAA -Verbose'
-    Write-Log 'then restore with:  .\install.ps1'
+    Write-Log '    .\event-watch.ps1 -Exec .\nvapi-probe.ps1 -Arg TEST -Verbose'
+    Write-Log '(it reads the config, so -Device is only needed to try something else)'
+    Write-Log 'then restore with:  trigger-kvm restart'
     exit 0
 }
 
@@ -557,7 +640,7 @@ if ($Command -eq 'status') {
            Where-Object { $_.CommandLine -and $_.Name -eq 'powershell.exe' -and $_.CommandLine -match '(usb|event)-watch\.ps1' }).Count
     Write-Host ("watchers : {0}{1}" -f $n, $(if ($n -eq 1) { '' } else { '  <- expected exactly 1' }))
     Write-Host ("log      : {0}" -f $LOG)
-    Write-Host ("config   : {0}{1}" -f $CONFIG, $(if (Test-Path -LiteralPath $CONFIG) { '' } else { '  <- MISSING; run: trigger-kvm setup' }))
+    Write-Host ("config   : {0}{1}" -f $CONFIG, $(if (Test-Path -LiteralPath $CONFIG) { '' } else { '  <- MISSING; run: trigger-kvm configure' }))
 
     if (Test-Path -LiteralPath $STAMP) {
         $v = Read-Config -Path $STAMP
@@ -568,7 +651,7 @@ if ($Command -eq 'status') {
     }
 
     $onPath = @((Get-UserPath -split ';')) -contains $DEST
-    Write-Host ("path     : {0}" -f $(if ($onPath) { "$DEST (on PATH)" } else { "$DEST  <- not on PATH; add with: trigger-kvm setup -AddToPath" }))
+    Write-Host ("path     : {0}" -f $(if ($onPath) { "$DEST (on PATH)" } else { "$DEST  <- not on PATH; re-run the installer with -AddToPath" }))
 
     $c = Read-Config -Path $CONFIG
     $labels = @($c.Keys | Where-Object { $_ -match '^display\.([^.]+)\.vendor$' } | ForEach-Object { $Matches[1] } | Sort-Object -Unique)
@@ -614,7 +697,7 @@ if ($Command -eq 'uninstall') {
     # Leave the log AND the config in place. The log is the only record of what
     # happened, and a config can represent real work -- reinstalling should not
     # make you redo it. Both live outside $DEST for exactly this reason.
-    foreach ($f in @($WATCH, $SWITCH, $LGEXE, $VBS, $SHIM, $STAMP) + $STALE) {
+    foreach ($f in @($WATCH, $SWITCH, $LGEXE, $VBS, $SHIM, $STAMP, $CFGLIB) + $STALE) {
         if (Test-Path -LiteralPath $f) { Remove-Item -LiteralPath $f -Force; Write-Log "removed $f" }
     }
 
@@ -637,8 +720,10 @@ if ($Command -eq 'uninstall') {
 # registered without elevation -- measured, S4U registration returns "Access is
 # denied" for an ordinary user -- so ask for it UP FRONT, before copying anything,
 # rather than letting Register-ScheduledTask fail halfway through.
-if ($Tier -eq 's4u' -and -not $IsElevated) {
-    $childArgs = @('setup', '-Tier', 's4u')
+$EffectiveTier = Get-EffectiveTier
+
+if ($EffectiveTier -eq 's4u' -and -not $IsElevated) {
+    $childArgs = @('install', '-Tier', 's4u')
     if ($AddToPath) { $childArgs += '-AddToPath' }
     exit (Request-Elevation -ChildArgs $childArgs)
 }
@@ -683,11 +768,12 @@ foreach ($old in $renamed.Keys) {
 $devices  = $(if ($cfg.ContainsKey('trigger.device'))   { $cfg['trigger.device'] -replace '\s', '' } else { $SEED_DEVICES })
 $debounce = $(if ($cfg.ContainsKey('trigger.debounce')) { $cfg['trigger.debounce'] }                 else { $SEED_DEBOUNCE })
 $settle   = $(if ($cfg.ContainsKey('trigger.settle'))   { $cfg['trigger.settle'] }                   else { $SEED_SETTLE })
-Write-Log "watching: $devices  (debounce ${debounce}s, settle ${settle}s)"
+Write-Log "config says: watch $devices  (debounce ${debounce}s, settle ${settle}s)"
 
 New-Item -ItemType Directory -Force -Path $DEST              | Out-Null
 New-Item -ItemType Directory -Force -Path (Split-Path $LOG)  | Out-Null
 
+Copy-Item (Join-Path $PSScriptRoot 'config.ps1')       $CFGLIB -Force
 Copy-Item (Join-Path $PSScriptRoot 'event-watch.ps1')  $WATCH  -Force
 Copy-Item (Join-Path $PSScriptRoot 'trigger-kvm.ps1')  $SWITCH -Force
 
@@ -713,13 +799,14 @@ foreach ($f in $STALE) {
 # them would load installer code on the hot path.
 @(
     '@echo off'
-    'rem Generated by install.ps1 -- do not edit; re-run `trigger-kvm setup` instead.'
+    'rem Generated by install.ps1 -- do not edit; re-run the installer instead.'
     'setlocal'
     'set "TK_DIR=%~dp0"'
     'if "%~1"=="" goto :switch'
     'if /i "%~1"=="pull" goto :switch'
     'if /i "%~1"=="to"   goto :switch'
     'if /i "%~1"=="list" goto :switch'
+    'if /i "%~1"=="install" goto :noinstall'
     'goto :manage'
     ':switch'
     'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%TK_DIR%trigger-kvm.ps1" %*'
@@ -727,6 +814,14 @@ foreach ($f in $STALE) {
     ':manage'
     'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%TK_DIR%install.ps1" %*'
     'exit /b %ERRORLEVEL%'
+    ':noinstall'
+    'rem Installing is what produced this command, so re-running it here would only'
+    'rem copy the installed files onto themselves. Upgrading and repairing both mean'
+    'rem fetching the source and running ITS installer.'
+    'echo trigger-kvm: there is no `install` verb here -- installing is what got you'
+    'echo                this command. To upgrade or repair, run install.ps1 from the'
+    'echo                source tree. To change settings: trigger-kvm configure'
+    'exit /b 2'
 ) | Set-Content -LiteralPath $SHIM -Encoding ASCII
 
 # Version stamp. Records the commit too when the source is a git checkout, which is
@@ -765,9 +860,6 @@ $psCmd = @(
     '-File', "`"$WATCH`"",
     '-Exec', "`"$SWITCH`"",
     '-Arg', 'pull',
-    '-Device', $devices,
-    '-Debounce', $debounce,
-    '-Settle', $settle,
     '-LogFile', "`"$LOG`""
 ) -join ' '
 
@@ -796,7 +888,7 @@ $action = New-ScheduledTaskAction -Execute 'wscript.exe' -Argument "`"$VBS`""
 # The tier differs in exactly two things: when it starts, and as whom. Everything
 # below this point -- the self-heal trigger, the settings, the action -- is shared,
 # because the tier is not supposed to change what the watcher does.
-if ($Tier -eq 's4u') {
+if ($EffectiveTier -eq 's4u') {
     # At startup, so it is running before anyone logs in. S4U means "run as this
     # user without their password": no stored credential (which is rejected
     # outright), and RunLevel Limited means ordinary user rights at run time even
@@ -865,7 +957,7 @@ if (Get-ScheduledTask -TaskName $TASK -ErrorAction SilentlyContinue) {
         # trap on the way out as on the way in.
         if (-not $IsElevated) {
             Write-Log "the existing '$TASK' task was registered by an elevated process."
-            $childArgs = @('setup', '-Tier', $Tier)
+            $childArgs = @('install', '-Tier', $EffectiveTier)
             if ($AddToPath) { $childArgs += '-AddToPath' }
             $rc = Request-Elevation -ChildArgs $childArgs
             if ($rc -eq 0) {
@@ -885,13 +977,17 @@ if (Get-ScheduledTask -TaskName $TASK -ErrorAction SilentlyContinue) {
 
 Register-ScheduledTask -TaskName $TASK -Action $action -Trigger $triggers `
     -Principal $principal -Settings $settings `
-    -Description "trigger-kvm ($Tier tier): pull both monitors to this PC when the shared USB peripherals arrive." | Out-Null
+    -Description "trigger-kvm ($EffectiveTier tier): pull both monitors to this PC when the shared USB peripherals arrive." | Out-Null
 
 # -Pause disables the task; installing again must undo that or the watcher would
 # be registered, reported healthy, and never actually start.
 Enable-ScheduledTask -TaskName $TASK -ErrorAction SilentlyContinue | Out-Null
+# Persist the tier that was actually installed, so a later bare `install` -- or the
+# elevated relaunch -- keeps it instead of silently reverting to the default.
+Set-ConfigValue -Path $CONFIG -Key 'install.tier' -Value $EffectiveTier
+
 Start-ScheduledTask -TaskName $TASK
-Write-Log "registered and started task '$TASK' ($Tier tier)"
+Write-Log "registered and started task '$TASK' ($EffectiveTier tier)"
 Write-Log "log: $LOG"
 
 if ($AddToPath) { Add-ToUserPath -Dir $DEST }
@@ -899,12 +995,12 @@ else {
     $onPath = @((Get-UserPath -split ';')) -contains $DEST
     if (-not $onPath) {
         Write-Log ''
-        Write-Log 'To run `trigger-kvm` from anywhere:  trigger-kvm setup -AddToPath'
+        Write-Log 'To run `trigger-kvm` from anywhere, re-run this with:  -AddToPath'
         Write-Log "Until then, invoke it as:  $SHIM"
     }
 }
 
-if ($Tier -eq 's4u') {
+if ($EffectiveTier -eq 's4u') {
     Write-Log ''
     Write-Log 'Installed the pre-login tier. It runs at startup in session 0, as you,'
     Write-Log 'unelevated. Nothing elevated runs on the switch path.'
@@ -915,5 +1011,5 @@ if ($Tier -eq 's4u') {
     Write-Log 'notification reaches a session-0 watcher.'
 } else {
     Write-Log 'Installed the no-admin tier: covers logon onward, including while locked.'
-    Write-Log 'For before-first-login and after-logoff, see: .\install.ps1 -Tier s4u'
+    Write-Log 'For before-first-login and after-logoff:  trigger-kvm configure  (or -Tier s4u)'
 }

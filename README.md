@@ -9,7 +9,7 @@ Make two monitors follow a USB switch between a Mac Studio and a Windows PC, wit
 > [haimgel/display-switch](https://github.com/haimgel/display-switch), an
 > established project doing something similar, and the collision was going to
 > confuse anyone searching for either. Nothing about the design changed with the
-> name; `trigger-kvm setup` removes a pre-rename install automatically.
+> name; the installer removes a pre-rename install automatically.
 
 Each machine connects to both monitors on its own input. A USB switch moves the
 shared peripherals. Whichever machine receives those peripherals commands both
