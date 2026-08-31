@@ -158,6 +158,13 @@ which still means usb). Connection state comes from the classic Win32
 `bthprops.cpl` API by P/Invoke -- `BLUETOOTH_DEVICE_INFO.fConnected`, distinct from
 `fRemembered`.
 
+**But the CANDIDATE LIST offers every PAIRED device, connected or not.** Two
+different questions, and conflating them cost a round: firing is on connected,
+*offering* is on paired. A trigger fires on arrival, so the device that is
+disconnected right now is exactly the one that will produce one -- filtering the
+list to connected-only hid the choice a user most wants. Show the state; do not
+filter on it.
+
 Do not "simplify" it onto the PnP path. Three routes were tried and ruled out first,
 and the reasoning is not obvious:
 

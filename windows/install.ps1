@@ -542,12 +542,18 @@ function Write-MenuFrame {
 
 # One choice from a list. Returns the index.
 function Select-One {
-    param([string[]]$Items, [string[]]$Detail = @(), [int]$Default = 0, [string]$Help)
+    param([string[]]$Items, [string[]]$Detail = @(), [int]$Default = 0, [string]$Help,
+          # The row that is configured RIGHT NOW, if any. Starting the cursor there
+          # is not enough on its own -- the cursor also means "where you are", so a
+          # re-run gave no way to tell an unchanged default from a deliberate one.
+          [int]$Current = -1)
 
     $rows = @()
     for ($i = 0; $i -lt $Items.Count; $i++) {
         $d = if ($i -lt $Detail.Count) { "$($Detail[$i])" } else { '' }
-        $rows += $(if ($d) { '{0,-28} {1}' -f $Items[$i], $d } else { $Items[$i] })
+        $row = $(if ($d) { '{0,-28} {1}' -f $Items[$i], $d } else { $Items[$i] })
+        if ($Current -ge 0) { $row = $(if ($i -eq $Current) { '[now] ' } else { '      ' }) + $row }
+        $rows += $row
     }
 
     if (-not (Test-CanReadKeys)) {
@@ -588,7 +594,7 @@ function Select-One {
 # hint line nobody reads. Space toggles too, for anyone who reaches for it.
 function Select-Many {
     param([string[]]$Items, [string[]]$Detail, [int[]]$Checked = @(), [string]$Help,
-          [string]$DoneLabel = 'Done -- use the checked rows')
+          [string]$DoneLabel = 'Done')
 
     $state = @($Items | ForEach-Object { $false })
     foreach ($i in $Checked) { if ($i -ge 0 -and $i -lt $state.Count) { $state[$i] = $true } }
@@ -627,8 +633,14 @@ function Select-Many {
                                             $(if ($state[$i]) { '[x]' } else { '[ ]' }),
                                             $Items[$i], $Detail[$i]
         }
+        # Drawn as a button, not as another list row: the last version read as a
+        # fourth thing to check, and people did not see that it was the way out.
+        # The count is live so the button also answers "what will this use?".
+        $n = @($state | Where-Object { $_ }).Count
+        $button = $(if ($n -gt 0) { '[ {0} -- use the {1} checked ]' -f $DoneLabel, $n }
+                   else           { '[ {0} -- nothing checked yet ]' -f $DoneLabel })
         $lines += ''
-        $lines += '{0}     {1}' -f $(if ($cursor -eq $done) { '  >' } else { '   ' }), $DoneLabel
+        $lines += '{0} {1}' -f $(if ($cursor -eq $done) { '  >' } else { '   ' }), $button
         $lines += $helpBody
         $lines += ''
         $lines += '  up/down move   enter toggles the highlighted row'
@@ -674,7 +686,7 @@ function Read-YesNo {
 # panels here (AGENTS.md hard rule 2).
 function Test-DisplayInput {
     param([string]$Label, [string]$Name, [string]$Candidate, [string]$CandidateName,
-          [string]$Current, [int]$Hold = 8)
+          [string]$Current, [int]$Hold = 8, [string]$Config = $CONFIG)
 
     $sw = Join-Path $PSScriptRoot 'trigger-kvm.ps1'
     if (-not (Test-Path $sw)) { $sw = $SWITCH }
@@ -683,9 +695,9 @@ function Test-DisplayInput {
     Write-Host ("  Switching $Name to $CandidateName for ${Hold}s, then back automatically.")
     Write-Host '  Watch that monitor. It only has to CHANGE -- if nothing is plugged into'
     Write-Host '  that input it will say No Signal, and that still proves the switch worked.'
-    & $sw set -Only $Label -Value $Candidate -Config $CONFIG | Out-Null
+    & $sw set -Only $Label -Value $Candidate -Config $Config | Out-Null
     Start-Sleep -Seconds $Hold
-    if ($Current) { & $sw set -Only $Label -Value $Current -Config $CONFIG | Out-Null; Start-Sleep -Seconds 2 }
+    if ($Current) { & $sw set -Only $Label -Value $Current -Config $Config | Out-Null; Start-Sleep -Seconds 2 }
     Write-Host ''
     return (Read-YesNo "  Did $Name change at all (a picture, or No Signal)?" $true)
 }
@@ -738,7 +750,8 @@ function Get-DisplayAnswers {
 
     $self = $null
     while (-not $self) {
-        $pick = Select-One -Items $rows -Detail $vals -Default $defaultRow
+        $pick = Select-One -Items $rows -Detail $vals -Default $defaultRow `
+                           -Current $(if ($Existing -and $Existing.Self) { $defaultRow } else { -1 })
         if ($pick -lt $names.Count) { $self = $table[$names[$pick]] }
         else {
             $typed = Read-Default '  Value (e.g. 0x11)' $(if ($Existing) { $Existing.Self } else { '' })
@@ -761,7 +774,7 @@ function Read-Triggers {
     Write-Host ''
     Write-Host '--- triggers ---'
     Write-Host 'Which devices move to this machine when you flip the switch?'
-    Write-Host 'Everything below is attached or connected right now.'
+    Write-Host 'USB rows are attached right now; Bluetooth rows are everything paired.'
     Write-Host ''
 
     $checked = @()
@@ -772,7 +785,7 @@ function Read-Triggers {
 
     $picked = Select-Many -Checked $checked -Help $help `
         -Items  @($Cands | ForEach-Object { '{0,-20} {1,-4}' -f $_.Key, $_.Bus }) `
-        -Detail @($Cands | ForEach-Object { $_.Name })
+        -Detail @($Cands | ForEach-Object { Get-CandidateLabel $_ })
 
     return @($picked | ForEach-Object { $Cands[$_].Key })
 }
@@ -786,7 +799,8 @@ function Read-Tier {
     Write-Host '  Locking does not end your session, so the first covers most days. The'
     Write-Host '  second is for a rebooted PC sitting at a login screen you cannot see.'
     Write-Host ''
-    $pick = Select-One -Default $(if ($Current -eq 's4u') { 1 } else { 0 }) `
+    $now = $(if ($Current -eq 's4u') { 1 } elseif ($Current -eq 'user') { 0 } else { -1 })
+    $pick = Select-One -Default ([Math]::Max(0, $now)) -Current $now `
         -Items  @('From when you log in', 'From boot, before login') `
         -Detail @('covers locking too; no admin', 'needs admin ONCE, a UAC prompt now')
     return $(if ($pick -eq 1) { 's4u' } else { 'user' })
@@ -924,6 +938,7 @@ function Invoke-Configure {
     # A menu rather than a linear "go back one step" because the answer you got
     # wrong is rarely the last one you gave, and unwinding three sections to fix
     # the first is worse than re-entering the one that is wrong.
+    $tested = $null
     while ($true) {
         Write-Host ''
         Write-Host '--- review configuration ---'
@@ -939,11 +954,18 @@ function Invoke-Configure {
             $items  += 'PATH'
             $detail += $(if ($wantPath) { "add $BINDIR" } else { 'leave it alone' })
         }
+        $items  += 'Test the monitors'
+        $detail += $(if ($tested) { $tested.Text } else { 'not tried yet' })
+
         $save = $items.Count
         $items += 'Save configuration and run'; $detail += ''
         $items += 'Cancel, change nothing';     $detail += ''
 
-        $pick = Select-One -Items $items -Detail $detail -Default $save
+        # Where the cursor lands is the recommendation: test first, save once it
+        # passed, and go fix the monitors if it did not.
+        $land = if (-not $tested) { $save - 1 } elseif ($tested.Ok) { $save } else { 0 }
+
+        $pick = Select-One -Items $items -Detail $detail -Default $land
         if ($pick -eq $save) { break }
         if ($pick -eq $save + 1) {
             Write-Log 'cancelled; nothing was changed.'
@@ -955,6 +977,9 @@ function Invoke-Configure {
                 $again = @(Get-AllDisplayAnswers -Found $found -Existing $seed)
                 if ($again.Count -gt 0) { $answers = $again }
                 else { Write-Host '  No monitors selected -- keeping the previous answers.' }
+                # A pass belongs to the values that passed. Carrying it across an edit
+                # would show "every monitor responded" beside numbers nothing tried.
+                $tested = $null
             }
             'Trigger devices' { $devices = @(Read-Triggers -Cands $cands -Current $devices) }
             'When it starts'  { $newTier = Read-Tier $newTier }
@@ -962,16 +987,34 @@ function Invoke-Configure {
             # prompt for something already shown as "add it"/"leave it alone"
             # would just be a second way to say the same thing.
             'PATH'            { $wantPath = -not $wantPath }
+            'Test the monitors' { $tested = Invoke-DisplayTest -Answers $answers }
         }
     }
 
     Write-ConfigFile -Path $CONFIG -Displays $answers -Devices $devices -Tier $newTier -Existing $existing
     Write-Log "wrote $CONFIG"
 
-    # ---- prove it, one display at a time -----------------------------------
+    if ($wantPath) { Add-ToUserPath -Dir $BINDIR }
+
     Write-Host ''
-    if (Read-YesNo '  Test each monitor now? (each one leaves and comes straight back)' $true) {
-        foreach ($a in $answers) {
+    Write-Log 'configured. Applying...'
+    $global:LASTEXITCODE = 0
+}
+
+# Prove the display answers BEFORE anything is written, against a throwaway config.
+#
+# The switcher takes its method and identity from a config file rather than from the
+# command line -- deliberately, so there is one description of a panel and not two --
+# so testing early means writing a temp one, not weakening the rule that nothing is
+# written until you save. Returns what the review row should say.
+function Invoke-DisplayTest {
+    param($Answers)
+
+    $tmp = Join-Path ([IO.Path]::GetTempPath()) ('trigger-kvm-test-{0}.cfg' -f $PID)
+    $bad = @()
+    try {
+        Write-ConfigFile -Path $tmp -Displays $Answers -Devices @() -Tier 'user' -Existing @{}
+        foreach ($a in $Answers) {
             # Any input but this machine's will do -- the test is only that the panel
             # CHANGES, so there is nothing to pick cleverly. Named, so the prompt can
             # say where it is going instead of showing a bare hex value.
@@ -981,22 +1024,22 @@ function Invoke-Configure {
             }
             if (-not $other) { continue }
             $ok = Test-DisplayInput -Label $a.Label -Name $a.Name -Candidate $other `
-                                    -CandidateName $otherName -Current $a.Self
+                                    -CandidateName $otherName -Current $a.Self -Config $tmp
             if (-not $ok) {
+                $bad += $a.Name
                 Write-Host ''
                 Write-Host ('  {0} did not respond as expected.' -f $a.Name)
                 Write-Host '  Its input value may be wrong, or this panel may need a method'
-                Write-Host '  this tool does not have. Re-run `trigger-kvm configure` to try'
-                Write-Host '  another value; the config is written either way.'
+                Write-Host '  this tool does not have. Pick Monitors again to try another'
+                Write-Host '  value -- nothing has been written yet.'
             }
         }
+    } finally {
+        Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
     }
 
-    if ($wantPath) { Add-ToUserPath -Dir $BINDIR }
-
-    Write-Host ''
-    Write-Log 'configured. Applying...'
-    $global:LASTEXITCODE = 0
+    if ($bad.Count -gt 0) { return [PSCustomObject]@{ Ok = $false; Text = ('no response from ' + ($bad -join ', ')) } }
+    return [PSCustomObject]@{ Ok = $true; Text = 'every monitor responded' }
 }
 
 # Rewrite the config, preserving every comment block and any key the walkthrough
@@ -1082,6 +1125,14 @@ function Write-ConfigFile {
 # ONE list across transports, with a column saying which. You think "the stuff that
 # moves when I switch", not "my USB things and separately my Bluetooth things", so
 # the transport is metadata detected for you rather than a question to answer.
+# Connected-vs-paired belongs beside the name in both places that show candidates,
+# so it is built once here rather than formatted twice.
+function Get-CandidateLabel {
+    param($Candidate)
+    if ($Candidate.State) { return ('{0}  ({1})' -f $Candidate.Name, $Candidate.State) }
+    return $Candidate.Name
+}
+
 function Get-TriggerCandidates {
     $rows = @()
 
@@ -1092,14 +1143,18 @@ function Get-TriggerCandidates {
         $name = $d.FriendlyName
         if (-not $name) { continue }
 
-        # Hubs and controllers are attached permanently and never move.
+        # Hubs, controllers and the Bluetooth radio itself are attached permanently
+        # and never move. A failed enumeration (vid 0000) is not addressable at all.
         if ($name -match 'Hub|Host Controller|Root Complex') { continue }
+        if ($d.Class -eq 'Bluetooth') { continue }
+        if ($key -like 'usb:0000:*') { continue }
 
         $rows += [PSCustomObject]@{
             Key   = $key
             Bus   = 'USB'
             Name  = $name
             Class = $d.Class
+            State = ''
             # Rank by how specific the class is: 'USB' is the generic fallback node,
             # while a Camera/AudioEndpoint/Image entry names the device far better.
             Rank  = $(switch -Regex ($d.Class) {
@@ -1117,28 +1172,35 @@ function Get-TriggerCandidates {
     # children), so keep the best-named entry of each group.
     $usb = @($rows | Group-Object Key | ForEach-Object {
         $best = $_.Group | Sort-Object Rank | Select-Object -First 1
-        [PSCustomObject]@{ Key = $_.Name; Bus = 'USB'; Name = $best.Name; Class = $best.Class; Rank = $best.Rank }
+        [PSCustomObject]@{ Key = $_.Name; Bus = 'USB'; Name = $best.Name; Class = $best.Class
+                           State = ''; Rank = $best.Rank }
     })
 
-    # --- Bluetooth: CONNECTED, not merely paired ----------------------------
+    # --- Bluetooth: every PAIRED device, connected or not --------------------
     #
-    # PnP cannot answer this. A paired device keeps its node for years after it last
-    # connected, so listing paired devices would offer triggers that can never fire.
-    # Only currently-connected ones are candidates, for the same reason USB lists
-    # only attached ones.
-    # event-watch.ps1 owns the Bluetooth binding, so ask it rather than keeping a
-    # second copy of the P/Invoke here. Two copies would drift, and a drifted struct
-    # layout is a marshalling bug that presents as WRONG DATA rather than an error.
-    # Same shape as asking trigger-kvm.ps1 for the display list.
+    # Filtering to connected-only was wrong, and backwards. A trigger fires on
+    # ARRIVAL, so the device that is disconnected right now is precisely the one
+    # that will produce one: the headphones on the Mac connect to this PC when you
+    # flip the switch. Hiding them meant the choice a user most wants was the one
+    # they could not see. Connected/not is still shown -- it is useful context, but
+    # it is not a filter.
+    #
+    # PnP cannot answer connected-vs-paired at all: a paired device keeps its node
+    # for years after it last connected. event-watch.ps1 owns the Bluetooth binding,
+    # so ask it rather than keeping a second copy of the P/Invoke here. Two copies
+    # would drift, and a drifted struct layout is a marshalling bug that presents as
+    # WRONG DATA rather than an error. Same shape as asking trigger-kvm.ps1 for the
+    # display list.
     $bt = @()
     try {
         $rows = & (Join-Path $PSScriptRoot 'event-watch.ps1') -ListBluetooth 2>$null
         foreach ($row in $rows) {
             $parts = "$row" -split '\|', 3
             if ($parts.Count -lt 3) { continue }
-            if ($parts[1] -ne 'True') { continue }   # paired but not connected
             $bt += [PSCustomObject]@{
-                Key = 'bt:' + $parts[0]; Bus = 'BT'; Name = $parts[2]; Class = 'Bluetooth'; Rank = 1
+                Key = 'bt:' + $parts[0]; Bus = 'BT'; Name = $parts[2]; Class = 'Bluetooth'
+                State = $(if ($parts[1] -eq 'True') { 'connected now' } else { 'paired, not connected' })
+                Rank = 1
             }
         }
     } catch {
@@ -1155,10 +1217,10 @@ if ($Command -eq 'discover') {
     & (Join-Path $PSScriptRoot 'trigger-kvm.ps1') list -Config $CONFIG
 
     Write-Host ''
-    Write-Host '=== USB devices attached right now ==='
+    Write-Host '=== devices that could be a trigger ==='
     Write-Host ''
-    Write-Host 'The trigger is whatever MOVES when you flip the switch. Everything below is'
-    Write-Host 'attached or connected to this machine at this moment; pick the ones that travel.'
+    Write-Host 'The trigger is whatever MOVES when you flip the switch. Pick the ones that'
+    Write-Host 'travel; USB rows are what is attached right now, Bluetooth rows what is paired.'
     Write-Host ''
 
     $cur = @()
@@ -1178,12 +1240,14 @@ if ($Command -eq 'discover') {
 
     foreach ($d in (Get-TriggerCandidates)) {
         $mark = $(if ($cur -contains $d.Key) { ' <- currently a trigger' } else { '' })
-        Write-Host ('  {0,-20} {1,-4} {2,-18} {3}{4}' -f $d.Key, $d.Bus, $d.Class, $d.Name, $mark)
+        Write-Host ('  {0,-20} {1,-4} {2,-18} {3}{4}' -f $d.Key, $d.Bus, $d.Class, (Get-CandidateLabel $d), $mark)
     }
 
     Write-Host ''
-    Write-Host 'Bluetooth entries list only devices CONNECTED right now, not merely paired --'
-    Write-Host 'a paired-but-disconnected device would never produce an arrival to fire on.'
+    Write-Host 'Bluetooth entries are every PAIRED device. One that is not connected right now'
+    Write-Host 'is still a fine trigger -- better, even: a trigger fires on ARRIVAL, and that is'
+    Write-Host 'what connecting is. USB rows are only devices attached at this moment, because'
+    Write-Host 'PnP cannot tell you about a USB device that is somewhere else.'
 
     Write-Host ''
     Write-Host 'TRAP: match the FULL vendor+product pair. A keyboard and mouse often share a'

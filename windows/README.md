@@ -59,9 +59,21 @@ trigger-kvm pull | to <scene> | list
 
 Every list question is an arrow-key menu, and the rule is the same in all of them:
 **enter does what the highlighted row says.** So a multi-select has no accept key —
-it has a `Done` row you move to. (The earlier "space toggles, enter accepts" lost
-people immediately: enter is what you press, and pressing it accepted an empty
-list.) Every menu falls back to a typed number when the host cannot read individual
+it has a `Done` button you move to, drawn as a button and not as another list row,
+with a live count of what it will use:
+
+```
+  > [x] usb:046d:0843    USB   Logitech Webcam C930e
+    [ ] bt:0011223344ff  BT    AirPods Pro  (paired, not connected)
+    [x] usb:1235:820a    USB   Clarett+ 2Pre
+
+    [ Done -- use the 2 checked ]
+```
+
+(The first version had "space toggles, enter accepts" and lost people immediately:
+enter is what you press, so the first thing it did was accept an empty list. The
+one after that put `Done` in the list as a fourth row, where it read as a fourth
+thing to check rather than the way out.) Every menu falls back to a typed number when the host cannot read individual
 keys — redirected stdin, some remote sessions — which is also what makes the flow
 testable end to end.
 
@@ -72,9 +84,11 @@ that is the same kind of menu, with the settings themselves as the rows:
 --- review configuration ---
 
     Monitors                     asus on 0x11, lg on 0xD0
-    Trigger devices              usb:046d:0843, usb:1235:820a
+    Trigger devices              usb:046d:0843, bt:0011223344ff
     When it starts               when you log in
-  > Save configuration and run
+    PATH                         add ...	rigger-kvmin
+  > Test the monitors            not tried yet
+    Save configuration and run
     Cancel, change nothing
 ```
 
@@ -83,15 +97,32 @@ one step", because the answer you got wrong is rarely the last one you gave.
 Nothing is written until you pick save, so an interrupted run leaves a working
 setup untouched.
 
+**Where the cursor lands is the recommendation**: test first, save once it passed,
+go back to the monitors if it did not. A pass does not survive editing the monitors
+— it belonged to the values that passed, and showing "every monitor responded"
+beside numbers nothing tried would be a lie the user has no way to catch.
+
+**Testing happens before anything is written.** The switcher takes a panel's method
+and identity from a config file rather than from the command line — deliberately,
+so there is one description of a panel and not two — so the test writes a throwaway
+config, uses it, and deletes it. The alternative was writing the real config early,
+which would have traded the "nothing is written until you save" rule for a
+convenience.
+
+The test switches a panel away for eight seconds and brings it **back
+automatically** before asking anything, so the question always arrives on a display
+that has already returned. It only has to *change* — "No Signal" on an empty input
+proves the switch just as well.
+
+Anywhere a value is already configured, the row carrying it is marked `[now]`.
+Starting the cursor there is not enough on its own: the cursor also means "where you
+are", so on a re-run there was no way to tell an unchanged default from a deliberate
+choice.
+
 `configure -Fresh` asks everything again with **nothing pre-filled**, for when the
 desk changed enough that the old answers are the wrong starting point and
 enter-through would carry a stale value forward unread. It clears the *defaults*,
 not the file: scenes and anything else you hand-wrote are still preserved.
-
-It then offers to prove each monitor: the panel is switched away for eight seconds
-and brought **back automatically** before you are asked anything, so the question
-always arrives on a display that has already returned. The test is only that the
-panel *changes* — "No Signal" on an empty input proves the switch just as well.
 
 **There is no `install` verb on the CLI**, deliberately: installing is what got you
 the CLI. Upgrading and repairing both mean "fetch the source and run its installer",
@@ -285,9 +316,17 @@ present. Hubs and host controllers are dropped, and the several PnP nodes one
 physical device produces are collapsed to one row per `VID:PID`, keeping the
 best-named entry.
 
-Bluetooth rows list only devices **connected** at that moment, not merely paired --
-a paired-but-disconnected device could never produce an arrival to fire on, so
-offering it would be offering a trigger that cannot work.
+Bluetooth rows list every **paired** device, connected or not, each labelled with
+which it is. The first version filtered to connected-only by analogy with USB, and
+that was backwards: a trigger fires on *arrival*, so the device that is
+disconnected right now is precisely the one that will produce one — the headphones
+sitting on the Mac connect to this PC when you flip the switch. Hiding them hid the
+choice a user most wants. Connected-vs-paired is still shown, because it is useful
+context; it is just not a filter.
+
+The Bluetooth **radio** is dropped from the USB rows along with hubs: it is
+soldered to this machine and can never travel. So is a device whose enumeration
+failed (vendor id `0000`), which has no address to match on.
 
 It deliberately still shows your keyboard and mouse. They share a vendor id with the
 webcam on this desk, and seeing that is how you avoid the vendor-only match that
