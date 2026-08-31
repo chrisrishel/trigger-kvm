@@ -59,6 +59,28 @@ function Import-Subject {
     }
 }
 
+# ---- capturing what was printed ---------------------------------------------
+
+# Every test that asserts on output stubs Write-Host, and the stub HAS TO HONOUR
+# -NoNewline, because the real one does and Write-MenuFrame relies on it: a frame
+# line is written in three parts -- the text, the erase to the end of the line,
+# then the newline. A stub without the switch fails the call outright, and one
+# that ignores it turns every frame line into three.
+#
+# So the accumulator lives here, once, rather than being re-typed per file with a
+# subtly different signature each time.
+$script:Printed = @()
+$script:Partial = ''
+
+function Add-Printed {
+    param($Object, [switch]$NoNewline)
+    if ($NoNewline) { $script:Partial += "$Object"; return }
+    $script:Printed += ($script:Partial + "$Object")
+    $script:Partial  = ''
+}
+function Get-Printed   { return ($script:Printed -join "`n") }
+function Reset-Printed { $script:Printed = @(); $script:Partial = '' }
+
 # ---- assertions -------------------------------------------------------------
 
 function Assert-Equal {

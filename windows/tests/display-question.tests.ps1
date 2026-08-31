@@ -8,16 +8,18 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'lib.ps1')
 
 Import-Subject -Script 'install.ps1' -Variables @('MCCS_INPUTS','DIALECTS') -Functions @(
-    'Read-Default','Read-YesNo','Get-MenuWidth','Write-MenuFrame','Split-Detail',
+    'Read-Default','Read-YesNo','Get-MenuWidth','Write-MenuFrame','Clear-ToLineEnd',
+    'Split-Detail','Get-ItemWidth','Get-MenuRow',
     'Select-One','Test-DisplayInput')
 
 # Test-DisplayInput defaults -Config to $CONFIG, which install.ps1 sets at load.
 $global:CONFIG = Join-Path $env:TEMP 'trigger-kvm-question.cfg'
 
-$script:said = @()
-function Write-Host { param([Parameter(ValueFromPipeline=$true)]$Object) $script:said += "$Object" }
-function Get-Said { return ($script:said -join "`n") }
-function Reset-Said { $script:said = @() }
+function Write-Host { param([Parameter(ValueFromPipeline=$true)]$Object, [switch]$NoNewline)
+    Add-Printed -Object $Object -NoNewline:$NoNewline
+}
+function Get-Said { return (Get-Printed) }
+function Reset-Said { Reset-Printed }
 
 function Ask {
     param([string[]]$Answers)

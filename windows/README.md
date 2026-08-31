@@ -58,13 +58,10 @@ trigger-kvm pull | to <computer> | list
 ### Tests
 
 ```powershell
-cd windows	ests
-.
-un.ps1                 # all of them
-.
-un.ps1 menus           # just one file
-.
-un.ps1 -Verbose        # every prompt and answer
+cd windows\tests
+.\run.ps1                 # all of them
+.\run.ps1 menus           # just one file
+.\run.ps1 -Verbose        # every prompt and answer
 ```
 
 No framework. The Pester that ships with Windows PowerShell 5.1 is 3.4, and requiring
@@ -85,6 +82,9 @@ loads a stale copy of the switcher into its runspace.
 | `display-question.tests.ps1` | the one place a human's answer becomes a diagnosis: every answer, to the right outcome |
 | `resolve.tests.ps1` | the real switcher under `-WhatIf`: the exact packets, and every refusal |
 | `types.tests.ps1` | the loaded-type guard still fires, and the installer cannot trip it |
+| `spec.tests.ps1` | conformance to [`../specs`](../specs), and that this side is level with the changelog's revision |
+| `conventions.tests.ps1` | no function defined twice in one file, and "computer" never "machine" in anything the user reads |
+| `stdin.tests.ps1` | the real `configure`, as a real process, driven by a real answer stream |
 
 `Send-Input` is stubbed throughout, so the suite cannot move a monitor. The harness
 runs `Set-StrictMode -Version Latest` because the scripts do — without it a whole
@@ -92,19 +92,27 @@ class of failure is invisible in the tests and lands on the user instead.
 `resolve.tests.ps1` needs the reference panels attached and says so and skips when
 they are not.
 
-**They are mutation-checked.** Five passing tests prove nothing until they can fail,
-so three regressions were reintroduced deliberately to confirm each is caught: the
-recovery instruction naming a machine instead of an input, `Write-MenuFrame`
-truncating again, and the installer calling its siblings in-process. The truncation
-one initially *passed* — `Split-Detail` pre-wraps, so a `Substring` only bites on a
-single unbreakable item, and that case had to be added.
+**They are mutation-checked.** Passing tests prove nothing until they can fail, so
+every regression the suite is meant to catch gets reintroduced deliberately and the
+test has to go red. Several did not, first time, and each was a test that looked
+right and asserted nothing:
+
+- `Write-MenuFrame` truncating again *passed* — `Split-Detail` pre-wraps, so a
+  `Substring` only bites on a single unbreakable item, and that case had to be added.
+- "the escalation shows its values" passed with the value listing deleted, because
+  the same values reappear in the input menus afterwards. The assertion now pins the
+  **order**, which is what the spec actually says.
+- the conformance checker's two length floors collapsed into one and stayed green,
+  because the fixtures sat on the wrong side of the boundary — a "too short to pin"
+  fragment that turned up in the sources anyway, and a "whole line" that was over
+  the floor being tested.
 
 ### The walkthrough
 
 Every list question is an arrow-key menu, and the rule is the same in all of them:
-**enter does what the highlighted row says**, and **esc goes back**. So a multi-select has no accept key —
-it has a `Done` button you move to, drawn as a button and not as another list row,
-with a live count of what it will use:
+**enter does what the highlighted row says**. So a multi-select has no accept key —
+it has a `Done` row you move to, with a live count of what it will use sitting in
+the detail column where every other menu puts a value:
 
 ```
   > [x] usb:046d:0843    USB   Logitech Webcam C930e
@@ -118,18 +126,32 @@ with a live count of what it will use:
 enter is what you press, so the first thing it did was accept an empty list. The one
 after that drew `Done` as a bracketed button, to stop it reading as a fourth thing to
 check — but the blank line above it and the missing checkbox already say that, and
-every other menu here ends with a bare `Done`. The count moved to the detail column,
-where every other menu puts a value.) Every menu falls back to a typed number when the host cannot read individual
-keys — redirected stdin, some remote sessions — which is also what makes the flow
-testable end to end.
+every other menu here ends with a bare `Done`.)
 
-**Esc backs out of a submenu**, changing nothing — the triggers you had stay
-selected, the computers keep their names. It is opt-in per menu rather than
-universal, because "back" only has a meaning somewhere you arrived *from*: the main
-menu deliberately does not take it, since it has Cancel and a setup should not be
-discarded by a stray keypress, and neither do the questions that must be answered
-before the code can go on. In the typed fallback (a redirected stdin, some remote
-sessions) the same thing is `q`.
+A multi-select lays its rows out the way every other menu does — the same item
+column, the same wrapping of the detail at the `", "` between items. It is where
+that matters most: device names are long and come from the system rather than being
+chosen, and a row that overflows wraps, leaving a tail the next frame does not
+clear.
+
+Every menu falls back to a typed number when the host cannot read individual keys —
+redirected stdin, some remote sessions — which is also what makes the flow testable
+end to end. `configure` reads that answer stream from **standard input**, not from
+`Read-Host`, which in Windows PowerShell 5.1 reads the console and never sees a
+piped answer at all.
+
+**Esc always means "take me to the way out"**, and what the way out is depends on
+the menu:
+
+| menu | esc does |
+|---|---|
+| a submenu you entered from somewhere | returns, changing nothing — the triggers you had stay selected, the computers keep their names |
+| the main menu | moves the cursor to `Cancel`. It does **not** press it |
+| a question that must be answered | nothing |
+
+On the main menu it moves rather than acts, so a setup still cannot be discarded by
+a stray keypress: you have to press enter on a row that says
+`Cancel (discard changes)`. In the typed fallback the same thing is `q`.
 
 **The menu is the whole flow.** There is no separate first-run questionnaire: an
 empty install is this same menu with `not set` in it and the cursor already on the
@@ -259,13 +281,25 @@ VCP `0x60`, MCCS values. That is what nearly everything answers to.
 
 **Manufacturer dialects are keyed by vendor, and offered, never probed.** `$DIALECTS`
 holds one row today — EDID vendor `1E6D` (LG), source `0x50`, VCP `0xF4`, values
-`D0 D1 90 91`. It is reached only when the monitor test shows standard did nothing,
-and then the values are *shown to you and offered*, because a value nobody
-documented is a value nobody should send (hard rule 1: a "Bricked LG Monitor" issue
-exists). The old table was keyed vendor:product — one row per monitor someone here
-happened to own, on a panel whose product id is per-*input*, so the key was nearly
-per-cable. The transport had this right all along: `WriteLgInput` gates on the
+`D0 D1 90 91`. The values are always *shown to you and offered*, because a value
+nobody documented is a value nobody should send (hard rule 1: a "Bricked LG Monitor"
+issue exists). The old table was keyed vendor:product — one row per monitor someone
+here happened to own, on a panel whose product id is per-*input*, so the key was
+nearly per-cable. The transport had this right all along: `WriteLgInput` gates on the
 vendor and does not care which LG it is.
+
+**The choice is offered up front, and again if the check fails.** Configuring a
+panel whose vendor has a documented alternative asks which method to use, right
+after its short name and before any input question — the values on offer depend on
+the answer. Standard is the default and stays the default. It used to be reachable
+only by failing the check first, which made someone who already knew their model
+needed it move a panel and send packets purely in order to fail, and gave someone
+who did not know it existed no reason to think the tool had heard of it.
+
+The check still offers it, and now **in either direction**: a panel on standard that
+answers nothing is offered the manufacturer method, and a panel already on the
+manufacturer method that answers nothing is offered standard. Either way the map is
+cleared — every value in it was an address on a channel that does not work.
 
 **The test asks what was watched, in the order it happened**, because the outcomes
 have entirely different fixes and a yes/no could only see two of them:
@@ -283,11 +317,11 @@ happened" (a wrong *channel*). One question with four answers made the reader ho
 every failure in mind at once to find their own; this asks about the thing they just
 watched, and the common answer is the first one.
 
-"Did not come back" means the channel is right and `self` is wrong — so it asks
-again, or walks the values for you. "Nothing at all" means the channel is wrong —
-so it offers the vendor's dialect if there is one, and says plainly that nothing
-known reaches this panel if there is not. Each fix retries immediately rather than
-sending you back to the review menu.
+"Did not come back" means the channel is right and this computer's input is wrong —
+so it asks again, or walks the values for you. "Nothing at all" means the channel is
+wrong — so it offers the other one, whichever way round that is, and says plainly
+that nothing known reaches this panel when there is no other one to offer. Each fix
+retries immediately rather than sending you back to the review menu.
 
 **Blind value-walking is the last resort**, and only ever on standard DDC: each MCCS
 value in turn until the panel comes back. It is offered rather than automatic, with
@@ -301,10 +335,10 @@ first, so the name survives exactly as typed — and offered ahead of the standa
 names on every later run. "Mac" is a better label than "HDMI 2", and it is the only
 one that is true about your room.
 
-**Checking the monitors batches across panels, never across machines.** Monitors sit
+**Checking the monitors batches across panels, never across computers.** Monitors sit
 side by side, so several can be confirmed in one glance; a *sequence* of switches
 over half a minute has to be held in memory and reported afterwards, and memory is
-the weak link. So each round sends every panel that claims a computer to that machine
+the weak link. So each round sends every panel that claims a computer to that computer
 at once and asks straight away:
 
 ```
@@ -317,7 +351,7 @@ at once and asks straight away:
 The win is the question, not the wall clock. The common case — everything worked —
 is one keystroke, and the four-way diagnosis only appears for the panels you say
 went wrong ("Which ones did not?"). At two monitors that replaces two menus with one
-yes/no; at four panels and three machines it replaces twelve with four.
+yes/no; at four panels and three computers it replaces twelve with four.
 
 **It asks which monitor you want to check** — `All of them`, or one — and then, every
 round, says what is about to move:
@@ -340,7 +374,7 @@ counted as somewhere to move a window to, because they are still on this compute
 held back, and if the switch back fails this tool cannot draw on a screen that is
 showing another computer. The way back is the monitor's own input button — so the
 pre-flight names the input in the panel's own words (`HDMI 1, value 0x11`), never as
-a machine name the OSD has never heard of, and waits for a Ready? before sending
+a computer name the OSD has never heard of, and waits for a Ready? before sending
 anything. Declining reads as **not checked**, never as a pass.
 
 **Testing the monitors happens before anything is written.** The switcher takes a panel's method
@@ -383,7 +417,7 @@ name. The watcher now reads the config itself, the task action carries no
 configuration at all, and edits take effect when it next starts. `configure`
 restarts it for you; `restart` exists for hand-edits.
 
-**Verbs, and the same verbs on macOS.** You use both machines daily, so the words
+**Verbs, and the same verbs on macOS.** You use both computers daily, so the words
 typed constantly are where cross-platform muscle memory is worth buying. Flags stay
 idiomatic per platform — `-AddToPath` here, `--add-to-path` there — because forcing
 the POSIX spelling into PowerShell means hand-parsing `$args` and losing parameter
@@ -642,7 +676,7 @@ the installer reads them back out of the config rather than from its own default
 
 ```powershell
 .\trigger-kvm.ps1 pull               # pull every configured monitor here
-.\trigger-kvm.ps1 to mac             # point them at the machine called "mac"
+.\trigger-kvm.ps1 to mac             # point them at the computer called "mac"
 .\trigger-kvm.ps1 pull -Only asus    # one monitor only
 .\trigger-kvm.ps1 pull -WhatIf       # resolve and print packets, send nothing
 ```

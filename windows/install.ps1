@@ -520,21 +520,57 @@ function Write-MenuFrame {
     if ($Previous -gt 0) {
         try { [Console]::SetCursorPosition(0, [Math]::Max(0, [Console]::CursorTop - $Previous)) } catch { }
     }
-    # Pad to overwrite the previous frame. Callers wrap their own long content
-    # (Split-Detail) rather than having it cut here: this used to truncate, which on
-    # the review screen hid the very values someone opened it to check. A line that
-    # is still over-long wraps in the terminal and is counted, so the frame height
-    # stays honest.
+
+    # How wide a row really is, which is NOT the menu's width. Get-MenuWidth caps at
+    # 110 so a menu does not sprawl across a wide window, and the previous frame is
+    # still sitting in every column past that.
+    $cols = $Width
+    try { $cols = [Console]::BufferWidth } catch { }
+
+    # Callers wrap their own long content (Split-Detail) rather than having it cut
+    # here: this used to truncate, which on the review screen hid the very values
+    # someone opened it to check. A line that is still over-long wraps in the
+    # terminal and is counted, so the frame height stays honest.
     $n = 0
     foreach ($l in $Lines) {
         $t = "$l"
-        Write-Host $t.PadRight($Width)
-        $n += [Math]::Max(1, [Math]::Ceiling(($t.Length + 1) / [double]$Width))
+        Write-Host $t -NoNewline
+        Clear-ToLineEnd
+        Write-Host ''
+        # Rows the line occupies. A line of exactly $cols characters occupies ONE:
+        # measured here, a full-width write followed by a newline advances the
+        # cursor a single row, because conhost delays the wrap until the next
+        # character. The old count added 1 to guard against the opposite, and would
+        # now over-count every erased line.
+        $n += [Math]::Max(1, [Math]::Ceiling($t.Length / [double]$cols))
     }
     return $n
 }
 
-# One choice from a list. Returns the index.
+# Erase from the cursor to the end of the line it is on.
+#
+# ERASING, NOT PADDING, and the difference is what specs/configure.md 3.1 asks
+# for. PadRight had two faults. It padded to the MENU's width, which is capped at
+# 110, so on a 120-column window ten columns of the previous frame survived every
+# redraw. And it measured the STRING: .Length counts UTF-16 units, and a line's end
+# is a column, which part company on the first surrogate pair or combining mark.
+#
+# This asks the CONSOLE where the cursor is, so nothing is measured that is not a
+# column. Filling to the full BufferWidth is safe rather than costing a row --
+# measured: a full-width line plus a newline advances exactly one row.
+#
+# ESC[K would say this more directly and was measured to work in this host, but it
+# needs VT processing, which is not on in every console PowerShell 5.1 runs in --
+# and where it is off the escape prints as garbage, which is worse than the bug.
+# The cursor position is available wherever there is a console at all.
+function Clear-ToLineEnd {
+    try {
+        $left = [Console]::CursorLeft
+        $end  = [Console]::BufferWidth
+        if ($left -lt $end) { Write-Host (' ' * ($end - $left)) -NoNewline }
+    } catch { }
+}
+
 # A row's detail, wrapped to the width left for it -- broken at the ", " between
 # items wherever possible, so a line never ends mid-identifier.
 #
@@ -558,6 +594,52 @@ function Split-Detail {
     return @($out)
 }
 
+# THE LAYOUT, shared by both menus -- specs/configure.md 3.1, and 3.4 for why the
+# multi-select is not exempt.
+#
+# The item column is 28 unless something does not fit, and then as wide as the
+# longest item, capped at 44. Fixed at 28, a long row ran its detail straight on
+# with no gap -- "Yes, and it changed back to pc everything works" -- which reads
+# as one sentence rather than as a choice and its consequence.
+#
+# +1 so the longest item still has two spaces before its detail; one reads as a
+# word break rather than as a column.
+function Get-ItemWidth {
+    param([string[]]$Items)
+    $w = 28
+    foreach ($it in $Items) { if ($it -and ($it.Length + 1) -gt $w) { $w = $it.Length + 1 } }
+    return [Math]::Min($w, 44)
+}
+
+# One row: the item in its column, its detail wrapped at ", " onto continuation
+# lines aligned under that column. Returns one line or several.
+#
+# SHARED rather than reimplemented per menu. Select-Many concatenated instead, and
+# it is the menu where this matters most: device names are long and arrive from the
+# system rather than being chosen, so a row overflows, wraps, and the wrapped tail
+# is not cleared by the next frame -- which is a corrupted redraw, reported from a
+# real 80-column terminal.
+#
+# The lead comes from the marker, so a caller cannot get the continuation indent
+# out of step with the marker it chose. That was two constants before.
+function Get-MenuRow {
+    param([string]$Item, [string]$Detail, [string]$Marker, [int]$ItemWidth, [int]$Width)
+
+    $lead = $Marker.Length + 1
+    if (-not $Detail) { return @(('{0} {1}' -f $Marker, $Item).TrimEnd()) }
+
+    # @(...) around the call, not just inside it: PowerShell unrolls a one-element
+    # array on return, and $chunks[0] on a bare string is its first CHARACTER --
+    # which renders as a menu of single letters.
+    $chunks = @(Split-Detail -Text $Detail -Width ([Math]::Max(12, $Width - $lead - $ItemWidth - 1)))
+    $out = @('{0} {1} {2}' -f $Marker, $Item.PadRight($ItemWidth), $chunks[0])
+    foreach ($c in @($chunks | Select-Object -Skip 1)) {
+        $out += '{0} {1} {2}' -f (' ' * $Marker.Length), (' ' * $ItemWidth), $c
+    }
+    return @($out)
+}
+
+# One choice from a list. Returns the index.
 function Select-One {
     param([string[]]$Items, [string[]]$Detail = @(), [int]$Default = 0, [string]$Help,
           # The row that is configured RIGHT NOW, if any. Starting the cursor there
@@ -593,33 +675,15 @@ function Select-One {
     if ($sel.Count -eq 0) { throw 'Select-One: nothing selectable' }
     if ($sel -notcontains $Default) { $Default = $sel[0] }
 
-    # The item column is 28 unless something does not fit, and then as wide as the
-    # longest item. Fixed at 28, a long row ran its detail straight on with no gap --
-    # "Yes, and it changed back to pc everything works" -- which reads as one
-    # sentence rather than a choice and its consequence.
-    $LEAD  = 4                                      # '  > ' before it
-    $ITEMW = 28
-    # +1 so the longest item still has two spaces before its detail; one reads as a
-    # word break rather than a column.
-    foreach ($it in $Items) { if ($it -and ($it.Length + 1) -gt $ITEMW) { $ITEMW = $it.Length + 1 } }
-    $ITEMW = [Math]::Min($ITEMW, 44)
+    $ITEMW = Get-ItemWidth -Items $Items
 
     # One row of text, possibly several lines when the detail does not fit.
     function Build-Row {
         param([int]$Index, [int]$Width, [string]$Marker)
         $d = if ($Index -lt $Detail.Count) { "$($Detail[$Index])" } else { '' }
         if ($Index -eq $Current) { $d = ($d + '   (current)').TrimStart() }
-        if (-not $d) { return @(('{0} {1}' -f $Marker, $Items[$Index]).TrimEnd()) }
-
-        # @(...) around the call, not just inside it: PowerShell unrolls a
-        # one-element array on return, and $chunks[0] on a bare string is its first
-        # CHARACTER -- which renders as a menu of single letters.
-        $chunks = @(Split-Detail -Text $d -Width ([Math]::Max(12, $Width - $LEAD - $ITEMW - 1)))
-        $out = @('{0} {1} {2}' -f $Marker, $Items[$Index].PadRight($ITEMW), $chunks[0])
-        foreach ($c in @($chunks | Select-Object -Skip 1)) {
-            $out += '{0} {1} {2}' -f (' ' * $Marker.Length), (' ' * $ITEMW), $c
-        }
-        return @($out)
+        return (Get-MenuRow -Item $Items[$Index] -Detail $d -Marker $Marker `
+                            -ItemWidth $ITEMW -Width $Width)
     }
 
     if (-not (Test-CanReadKeys)) {
@@ -696,10 +760,23 @@ function Select-Many {
     $state = @($Items | ForEach-Object { $false })
     foreach ($i in $Checked) { if ($i -ge 0 -and $i -lt $state.Count) { $state[$i] = $true } }
 
+    # THE SAME LAYOUT AS EVERY OTHER MENU -- specs/configure.md 3.4. This used to
+    # concatenate the item and its detail, which is fine until the content is long,
+    # and Bluetooth device names are: the row overflowed an 80-column terminal,
+    # wrapped, and the wrapped tail was not cleared by the next frame, so the
+    # previous frame showed through at the right edge.
+    $ITEMW = Get-ItemWidth -Items $Items
+
     if (-not (Test-CanReadKeys)) {
         for ($i = 0; $i -lt $Items.Count; $i++) {
-            $mark = if ($state[$i]) { '*' } else { ' ' }
-            Write-Host ('  {0}{1,3}) {2}  {3}' -f $mark, ($i + 1), $Items[$i], $Detail[$i])
+            $mark  = if ($state[$i]) { '*' } else { ' ' }
+            $first = $true
+            foreach ($l in (Get-MenuRow -Item $Items[$i] -Detail $Detail[$i] -Marker '   [x]' `
+                                        -ItemWidth $ITEMW -Width 100)) {
+                if ($first) { Write-Host ('  {0}{1,2}) {2}' -f $mark, ($i + 1), $l.Substring(7)) }
+                else        { Write-Host ('       {0}' -f $l.Substring(7)) }
+                $first = $false
+            }
         }
         if ($Help) { Write-Host ''; Write-Host $Help }
         $pre = @()
@@ -728,20 +805,24 @@ function Select-Many {
     while ($true) {
         $lines = @()
         for ($i = 0; $i -lt $Items.Count; $i++) {
-            $lines += '{0} {1} {2}  {3}' -f $(if ($i -eq $cursor) { '  >' } else { '   ' }),
-                                            $(if ($state[$i]) { '[x]' } else { '[ ]' }),
-                                            $Items[$i], $Detail[$i]
+            $marker = '{0} {1}' -f $(if ($i -eq $cursor) { '  >' } else { '   ' }),
+                                   $(if ($state[$i]) { '[x]' } else { '[ ]' })
+            $lines += Get-MenuRow -Item $Items[$i] -Detail $Detail[$i] -Marker $marker `
+                                  -ItemWidth $ITEMW -Width $width
         }
         # A plain row, aligned with the item text, and the live count sitting in the
         # detail column where every other menu puts a value. It was a bracketed
         # button for a while, to stop it reading as a fourth thing to check -- but
         # the blank line above it and the missing checkbox already say that, and
         # every other menu in this program ends with a bare Done.
+        #
+        # A marker as wide as "  > [x]" and no wider, so Done lines up with the item
+        # text rather than with the checkboxes.
         $n = @($state | Where-Object { $_ }).Count
         $lines += ''
-        $lines += '{0}     {1}  {2}' -f $(if ($cursor -eq $done) { '  >' } else { '   ' }),
-                                       $DoneLabel.PadRight(25),
-                                       $(if ($n -gt 0) { "$n selected" } else { 'nothing selected' })
+        $lines += Get-MenuRow -Item $DoneLabel -Marker ('{0}    ' -f $(if ($cursor -eq $done) { '  >' } else { '   ' })) `
+                              -Detail $(if ($n -gt 0) { "$n selected" } else { 'nothing selected' }) `
+                              -ItemWidth $ITEMW -Width $width
         $lines += $helpBody
         $lines += ''
         $lines += $(if ($Escapable) { '  up/down move   enter toggles the highlighted row   esc back' }

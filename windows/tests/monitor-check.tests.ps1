@@ -7,7 +7,8 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'lib.ps1')
 
 Import-Subject -Script 'install.ps1' -Variables @('DIALECTS','MCCS_INPUTS') -Functions @(
-    'Read-Default','Read-YesNo','Get-MenuWidth','Write-MenuFrame','Split-Detail',
+    'Read-Default','Read-YesNo','Get-MenuWidth','Write-MenuFrame','Clear-ToLineEnd',
+    'Split-Detail','Get-ItemWidth','Get-MenuRow',
     'Select-One','Select-Many','Join-Names','Get-InputName','Get-InputTable',
     'Read-InputValue','Get-DisplayMap','Invoke-BlindWalk','Test-OneValue',
     'Invoke-DisplayTest','Invoke-TestRound','Invoke-TestRoundBody','Test-OneComputer',
@@ -27,10 +28,11 @@ function Test-DisplayInput {
     return $o
 }
 
-$script:said = @()
-function Write-Host { param([Parameter(ValueFromPipeline=$true)]$Object) $script:said += "$Object" }
-function Get-Said { return ($script:said -join "`n") }
-function Reset-Said { $script:said = @() }
+function Write-Host { param([Parameter(ValueFromPipeline=$true)]$Object, [switch]$NoNewline)
+    Add-Printed -Object $Object -NoNewline:$NoNewline
+}
+function Get-Said { return (Get-Printed) }
+function Reset-Said { Reset-Printed }
 
 function New-Panel {
     param([string]$Label, $Map)

@@ -552,6 +552,7 @@ checks themselves**, and until they exist its `HANDOFF.md` must carry what the
 machinery would otherwise say -- and say that it is doing so. Windows was in that
 state -- revision 0 against a changelog at 3, with nothing on its side to report
 either -- and its handoff carried a paragraph saying so until the checks landed.
+Both platforms have them now, and both are level with the changelog.
 
 A handoff entry points AT a mechanism rather than pasting its output. A pasted
 list is a snapshot of something that changes and goes stale silently; the one in

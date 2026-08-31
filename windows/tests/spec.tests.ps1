@@ -63,12 +63,15 @@ Assert-Match $r.Text 'this exact sentence appears in no source file'
 $short = Join-Path $tmp 'short-spec.md'
 @'
 ```normative
-{a} ok {b}
+{a} zqxjv {b}
 ```
 '@ | Set-Content -LiteralPath $short -Encoding ASCII
 
+# The fragment has to be one that is genuinely ABSENT, or the case proves nothing:
+# with "ok" here, dropping the floor altogether still passed, because "ok" turns up
+# in the sources anyway. Found by a mutation that survived.
 $r = Invoke-Checker $short
-Assert-Equal 0 $r.Code 'a two-character fragment must not be treated as normative'
+Assert-Equal 0 $r.Code 'a fragment left between two placeholders, under the floor, is not normative'
 
 # ---- a whole line is pinned at any length, a split piece is not -------------
 
@@ -78,13 +81,16 @@ Assert-Equal 0 $r.Code 'a two-character fragment must not be treated as normativ
 $header = Join-Path $tmp 'header-spec.md'
 @'
 ```normative
---- nowhere at all ---
+--- nowhere ---
 ```
 '@ | Set-Content -LiteralPath $header -Encoding ASCII
 
+# 15 characters: BELOW the 18-character floor a split piece carries, and above the
+# 6 a whole line carries. A fixture on the wrong side of that proves nothing --
+# with a 22-character one here, collapsing the two floors into one still passed.
 $r = Invoke-Checker $header
 Assert-Equal 1 $r.Code 'a whole line under 18 characters must still be checked'
-Assert-Match $r.Text 'nowhere at all'
+Assert-Match $r.Text 'nowhere'
 
 # ---- placeholders are split on, not matched literally -----------------------
 

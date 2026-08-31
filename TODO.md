@@ -13,14 +13,14 @@
   part of that note with no home yet. Trigger: when someone reports a monitor that answers
   neither standard DDC nor a known manufacturer dialect.
 
-- **Windows owes three spec conformance fixes and a duplicate-definition cleanup.**
-  Written up in `macos/HANDOFF.md`, with the failing conformance output. The
-  sharpest of them: `install.ps1` defines `Test-DisplayInput` twice and the live
-  one is the older single-question version, so the monitor check does not behave
-  the way `specs/configure.md` §10.4 says. Trigger: next time the Windows side is
-  worked on.
+- **Rename `$IsMachine` to `$IsComputer` in `install.ps1`.** `specs/configure.md`
+  §2's reason for "computer, never machine" is that the term must not change
+  between the config key, the prompt and the code; the user-visible half is done,
+  the parameter name is the seed of the next slip. It is a contract change across
+  `Test-DisplayInput`, `Test-OneComputer` and three test stubs, so it needs a
+  reference sweep rather than a find-and-replace. Trigger: next time
+  `Test-DisplayInput` or the monitor check is touched.
 
-- **The Windows suite has no conformance check.** `specs/check-conformance.sh` is
-  the macOS implementation; the marker format is the contract and Windows needs
-  its own in PowerShell, run by `run.ps1`. Until it exists, a spec edit fails only
-  the macOS suite. Trigger: with the handoff above.
+- **`event-watch.ps1`'s `-Arg` comment still talks about "a scene".** Scenes were
+  deleted (`AGENTS.md` hard rule 1a); the comment on the `$Arg` parameter is the
+  last mention. Harmless and wrong. Trigger: next edit to that param block.

@@ -12,7 +12,8 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'lib.ps1')
 
 Import-Subject -Script 'install.ps1' -Variables @('DIALECTS','MCCS_INPUTS','COMPUTER_NAME_RULE') -Functions @(
-    'Read-Default','Read-YesNo','Get-MenuWidth','Write-MenuFrame','Split-Detail',
+    'Read-Default','Read-YesNo','Get-MenuWidth','Write-MenuFrame','Clear-ToLineEnd',
+    'Split-Detail','Get-ItemWidth','Get-MenuRow',
     'Select-One','Select-Many','Join-Names','Get-InputName',
     'Get-DefaultComputerName','Get-KnownComputers','Read-Computers',
     'Format-ComputerName','Read-ComputerName',
@@ -302,10 +303,11 @@ Assert-Match ((Get-Asked) -join '|') 'short name for it' '-Fresh must ask again'
 # specs/configure.md 6.2. Offered, never probed -- nothing is sent to find out.
 # Before the input questions, because the values on offer depend on the answer.
 
-$script:said = @()
-function Write-Host { param([Parameter(ValueFromPipeline=$true)]$Object) $script:said += "$Object" }
-function Get-Said { return ($script:said -join "`n") }
-function Reset-Said { $script:said = @() }
+function Write-Host { param([Parameter(ValueFromPipeline=$true)]$Object, [switch]$NoNewline)
+    Add-Printed -Object $Object -NoNewline:$NoNewline
+}
+function Get-Said { return (Get-Printed) }
+function Reset-Said { Reset-Printed }
 
 # A vendor with nothing documented is not asked at all. The question would have one
 # real answer, and a menu with one answer is a question that should not be asked.
