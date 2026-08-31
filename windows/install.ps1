@@ -94,7 +94,7 @@ param(
     # answers from the current setup. For when the desk changed enough that the old
     # answers are the wrong starting point -- a new monitor, a rebuilt hub -- and
     # enter-through would carry a stale value forward without you reading it.
-    # Hand-written config (scenes especially) is still preserved.
+    # Everything you hand-wrote is still preserved.
     [switch]$Fresh,
 
     # Never show a UAC prompt; print what to run instead and exit non-zero. For
@@ -326,7 +326,7 @@ function New-DefaultConfig {
         '# will NOT overwrite this file.'
         '#'
         '# Everything here is read at the point it is used, so there is no separate'
-        '# apply step: display and scene edits take effect on the next switch, and'
+        '# apply step: display edits take effect on the next switch, and'
         '# trigger edits when the watcher next starts --  trigger-kvm restart'
         '#'
         '# Displays are identified by the EDID the GPU reads off the output, never by'
@@ -339,32 +339,42 @@ function New-DefaultConfig {
         ''
         'install.start = login'
         ''
+        '# --- machines ---------------------------------------------------------'
+        '# What this computer is called below. `pull` points every display here;'
+        '# `to mac` points them at whatever the map calls "mac".'
+        ''
+        'machine.this = pc'
+        ''
         '# --- displays ---------------------------------------------------------'
         '# method: standard (I2C src 0x51, VCP 0x60) | lg-alt (src 0x50, VCP 0xF4)'
-        '# self:   the input value where THIS machine is. Required.'
+        '# input.<value> = <machine>: which computer is on which input. This is the'
+        '#         whole map -- pull and to are the same lookup against it.'
         ''
         'display.lg.vendor  = 0x1E6D'
         'display.lg.product = 0x9E9D'
         'display.lg.name    = LG 45GX950A'
         'display.lg.method  = lg-alt'
-        'display.lg.self    = 0xD0'
+        'display.lg.input.0xd0 = pc'
+        'display.lg.input.0xd1 = mac'
         ''
         'display.asus.vendor  = 0x06B3'
         'display.asus.product = 0x42E0'
         'display.asus.name    = ASUS PG42UQ'
         'display.asus.method  = standard'
-        'display.asus.self    = 0x11'
+        'display.asus.input.0x11 = pc'
+        'display.asus.input.0x0f = mac'
         ''
         '# --- triggers ---------------------------------------------------------'
         '#'
         '# A trigger is anything that runs:  trigger-kvm.ps1 pull'
-        '# The one shipped here watches USB device presence. A hotkey, a Stream Deck'
+        '# The one shipped here watches device presence. A hotkey, a Stream Deck'
         '# button or a scheduled task needs no support from this tool -- it just runs'
         '# that command.'
         '#'
-        '# Triggers run `pull` and nothing else. Never wire one to a scene: a scene'
-        '# names inputs on hardware this machine cannot see, and a stale one would'
-        '# then be able to cause an AUTOMATIC switch to a dead input.'
+        '# Triggers run `pull` and nothing else. Never wire one to another machine:'
+        '# a name like `mac` describes inputs on hardware this machine cannot'
+        '# observe, and a stale one would then be able to cause an AUTOMATIC switch'
+        '# to a dead input. Getting there by hand, watching, is a different risk.'
         '#'
         '# device:   comma-separated. Each entry is one of:'
         '#             usb:VVVV:PPPP    a USB vendor+product pair'
@@ -373,9 +383,10 @@ function New-DefaultConfig {
         '#           Match the FULL USB vendor+product -- a vendor-only match fires'
         '#           constantly, because the keyboard and mouse share a vendor id'
         '#           with the webcam and never move.'
-        '#           Bluetooth matches on CONNECTED, not paired: a paired device'
-        '#           keeps its PnP node for years, so paired-ness never has an edge.'
-        '#           Find both with:  .\install.ps1 -Discover'
+        '#           Bluetooth FIRES on connected, and every PAIRED device is'
+        '#           offered: a device that is not connected right now is exactly'
+        '#           the one that will produce an arrival.'
+        '#           Find both with:  trigger-kvm discover'
         '# debounce: applies to every trigger. One window has to cover all of them,'
         '#           since two could not dedupe against each other.'
         ''
@@ -383,17 +394,6 @@ function New-DefaultConfig {
         "trigger.debounce = $SEED_DEBOUNCE"
         "trigger.settle   = $SEED_SETTLE"
         ''
-        '# --- scenes -----------------------------------------------------------'
-        '# Saved arrangements for MANUAL use:  trigger-kvm.ps1 to mac'
-        '#'
-        '# The trigger never reads these, by any path. That is deliberate: a scene'
-        '# names inputs on ANOTHER machine, which this machine cannot observe and'
-        '# which go stale the moment someone moves a cable over there. Keeping them'
-        '# out of the trigger means a stale scene can only ever spoil a command you'
-        '# typed and are watching -- never an automatic switch.'
-        ''
-        'scene.mac.lg   = 0xD1'
-        'scene.mac.asus = 0x0F'
     ) | Set-Content -LiteralPath $Path -Encoding ASCII
     Write-Log "wrote starter config: $Path"
 }
@@ -718,40 +718,65 @@ function Read-YesNo {
 # guess costs a few seconds of black rather than a stranded session. Confirming
 # visually is the only verification this hardware permits -- reads lie on both
 # panels here (AGENTS.md hard rule 2).
+#
+# Returns 0 correct, 1 changed to the WRONG thing, 2 changed and did not come back,
+# 3 nothing happened. Four, because with machines the test asserts something real --
+# "did the LG show the Mac?" -- and being shown the wrong machine is a wrong MAPPING,
+# which has nothing to do with a wrong channel or a wrong value for this PC. Testing
+# a bare input value cannot tell 0 from 1, so it does not offer the distinction.
 function Test-DisplayInput {
     param([string]$Label, [string]$Name, [string]$Candidate, [string]$CandidateName,
-          [string]$Current, [int]$Hold = 8, [string]$Config = $CONFIG)
+          [string]$Current, [switch]$IsMachine, [int]$Hold = 8, [string]$Config = $CONFIG)
 
     $sw = Join-Path $PSScriptRoot 'trigger-kvm.ps1'
     if (-not (Test-Path $sw)) { $sw = $SWITCH }
 
     Write-Host ''
     Write-Host ("  Switching $Name to $CandidateName for ${Hold}s, then back automatically.")
-    Write-Host '  Watch that monitor. It only has to CHANGE -- if nothing is plugged into'
-    Write-Host '  that input it will say No Signal, and that still proves the switch worked.'
+    if ($IsMachine) {
+        Write-Host ("  Watch that monitor -- you should see $CandidateName on it.")
+        Write-Host '  If that machine is asleep or off it will say No Signal, which still'
+        Write-Host '  proves the switch worked.'
+    } else {
+        Write-Host '  Watch that monitor. It only has to CHANGE -- if nothing is plugged into'
+        Write-Host '  that input it will say No Signal, and that still proves the switch worked.'
+    }
     & $sw set -Only $Label -Value $Candidate -Config $Config | Out-Null
     Start-Sleep -Seconds $Hold
     if ($Current) { & $sw set -Only $Label -Value $Current -Config $Config | Out-Null; Start-Sleep -Seconds 2 }
 
-    # Three outcomes, three different faults, and the old yes/no could tell only two
-    # of them apart: "it did not come back" means the value for THIS PC is wrong,
-    # while "nothing happened" means the panel does not answer on this channel at
-    # all. Those have nothing to do with each other and were reported identically.
     Write-Host ''
     Write-Host ("  What did the {0} do?" -f $Name)
-    return Select-One -Default 0 -Items @(
+    if ($IsMachine) {
+        $pick = Select-One -Default 0 -Items @(
+            ("It showed $CandidateName, then came back"),
+            ("It changed, but that was not $CandidateName"),
+            'It changed, and did not come back',
+            'Nothing happened at all'
+        ) -Detail @(
+            'everything works',
+            'that input is something else',
+            'the input for THIS computer is wrong',
+            'this panel does not answer on this channel'
+        )
+        return $pick
+    }
+    $pick = Select-One -Default 0 -Items @(
         'It changed, then came back',
-        'It changed, but did not come back',
+        'It changed, and did not come back',
         'Nothing happened at all'
     ) -Detail @(
         'everything works',
-        'the input you gave for THIS PC is wrong',
+        'the input for THIS computer is wrong',
         'this panel does not answer on this channel'
     )
+    # Fold onto the same scale, so callers have one set of outcomes to handle.
+    return $(if ($pick -eq 0) { 0 } else { $pick + 1 })
 }
 
-# Send one value and ask whether the panel came back to this PC. The building block
-# of blind walking, and the only place a value is sent without knowing what it means.
+# Send one value and ask whether the panel came back to this computer. The building
+# block of blind walking, and the only place a value is sent without knowing what it
+# means.
 function Test-OneValue {
     param([string]$Label, [string]$Name, [string]$Value, [string]$Config, [int]$Hold = 6)
 
@@ -762,16 +787,16 @@ function Test-OneValue {
     Write-Host ('  Trying {0} ...' -f $Value)
     & $sw set -Only $Label -Value $Value -Config $Config | Out-Null
     Start-Sleep -Seconds $Hold
-    return (Read-YesNo ("  Is the {0} showing THIS PC now?" -f $Name) $false)
+    return (Read-YesNo ("  Is the {0} showing THIS computer now?" -f $Name) $false)
 }
 
 # Last resort: send each standard input value in turn until the panel comes back to
-# this PC. Constraint 11 permits exactly this and no more -- standard DDC/CI only,
-# MCCS values only, one at a time, and never on a manufacturer sidechannel, where a
-# value we have not been told is a value nobody should send.
+# this computer. Constraint 11 permits exactly this and no more -- standard DDC/CI
+# only, MCCS values only, one at a time, and never on a manufacturer sidechannel,
+# where a value we have not been told is a value nobody should send.
 #
-# It is offered, never automatic, and the cost is stated first: every wrong guess
-# takes the panel somewhere else, and if none of them is right it stays there.
+# Offered, never automatic, and the cost is stated first: every wrong guess takes the
+# panel somewhere else, and if none of them is right it stays there.
 function Invoke-BlindWalk {
     param($Answer, [string]$Config, [int]$OtherPanels)
 
@@ -783,17 +808,18 @@ function Invoke-BlindWalk {
         return $null
     }
     if ($OtherPanels -lt 1) {
-        # Hard rule 4. With nothing else on this PC, a wrong guess blacks out the
-        # screen this question is printed on.
-        Write-Host ('  Not offered: the {0} is the only monitor on this PC, so a wrong' -f $Answer.Name)
-        Write-Host '  guess would black out the screen you are reading. Use the monitor''s own'
-        Write-Host '  buttons to see which input this PC is on, then enter that value.'
+        # Hard rule 4. With nothing else on this computer, a wrong guess blacks out
+        # the screen this question is printed on.
+        Write-Host ('  Not offered: the {0} is the only monitor on this computer, so a' -f $Answer.Name)
+        Write-Host '  wrong guess would black out the screen you are reading. Use the'
+        Write-Host '  monitor''s own buttons to see which input this computer is on, then'
+        Write-Host '  enter that value.'
         return $null
     }
 
     Write-Host ('  I will send each standard input value to the {0} in turn and ask' -f $Answer.Name)
-    Write-Host '  whether it came back. Your other monitor stays on this PC throughout,'
-    Write-Host '  so you can keep reading this.'
+    Write-Host '  whether it came back. Your other monitor stays on this computer'
+    Write-Host '  throughout, so you can keep reading this.'
     Write-Host ''
     Write-Host '  COST: every wrong value moves that panel to another input. If none of'
     Write-Host '  them is right it will stay on the last one, and you will need the'
@@ -810,62 +836,98 @@ function Invoke-BlindWalk {
 
     Write-Host ''
     Write-Host '  None of the standard values brought it back. Use the monitor''s buttons'
-    Write-Host '  to return it to this PC.'
+    Write-Host '  to return it to this computer.'
     return $null
 }
 
-# Names the user gave inputs on this panel, from a previous run. Stored value-first
-# (`display.lg.input.0xd1 = Mac`) so the name survives verbatim -- Read-Config
-# lower-cases keys, and "Mac" typed by a person should not come back as "mac".
-function Get-NamedInputs {
-    param([hashtable]$Existing, [string]$Label)
+# A sensible name for this computer, before anyone has said one. The hostname is
+# what people already call it, and it is never typed in anger -- `pull` is the verb.
+function Get-DefaultMachineName {
+    param([hashtable]$Seed)
+    if ($Seed.ContainsKey('machine.this') -and $Seed['machine.this']) { return "$($Seed['machine.this'])".Trim().ToLower() }
+    $n = "$env:COMPUTERNAME".ToLower() -replace '[^a-z0-9_-]', ''
+    if ($n) { return $n }
+    return 'pc'
+}
 
-    $out = [ordered]@{}
-    if (-not $Label) { return $out }
-    foreach ($k in ($Existing.Keys | Sort-Object)) {
-        if ($k -match ('^display\.' + [regex]::Escape($Label) + '\.input\.(0x[0-9a-f]{1,2})$')) {
-            $out[$Existing[$k]] = $Matches[1]
+# Every machine the config already names, in the order it first appears.
+function Get-KnownMachines {
+    param([hashtable]$Cfg)
+    $out = @()
+    foreach ($k in ($Cfg.Keys | Sort-Object)) {
+        if ($k -match '^display\.[^.]+\.input\.') {
+            $n = "$($Cfg[$k])".Trim().ToLower()
+            if ($n -and -not ($out -contains $n)) { $out += $n }
         }
     }
     return $out
 }
 
-# The inputs to offer for a panel: the channel's own value set, with anything the
-# user has named on this desk in front of it. Their "Mac" is a better label than our
-# "HDMI 2", and it is the only one that is true about their room.
-function Get-InputTable {
-    param([string]$Method, $Named)
+# The machines plugged into these monitors, this one included.
+#
+# Asked BEFORE the monitors, so a machine is described once and is then an option on
+# every panel. Asking per-monitor meant typing "mac" once per screen, and gave the
+# tool no way to know the two answers were about the same computer.
+function Read-Machines {
+    param([string]$This, [string[]]$Others)
 
-    $base = $MCCS_INPUTS
-    foreach ($d in $DIALECTS.Values) { if ($d.Method -eq $Method) { $base = $d.Inputs } }
+    Write-Host ''
+    Write-Host '--- machines ---'
+    Write-Host 'Which computers are plugged into those monitors?'
+    Write-Host ''
 
-    $out = [ordered]@{}
-    if ($Named) { foreach ($n in $Named.Keys) { $out[$n] = $Named[$n] } }
-    foreach ($n in $base.Keys) {
-        # Do not list a value twice under two names; the user's wins.
-        if (@($out.Values) -contains $base[$n]) { continue }
-        $out[$n] = $base[$n]
+    $me = ''
+    while (-not $me) {
+        $me = (Read-Default '  A short name for THIS computer' $This).Trim().ToLower()
+        $me = ($me -replace '[^a-z0-9_-]', '')
+        if (-not $me) { Write-Host '  Letters, digits, - and _ please.' }
     }
-    return $out
+
+    Write-Host ''
+    Write-Host '  And the others, one per line. Blank line when there are no more.'
+    Write-Host '  These become the names you switch to:  trigger-kvm to mac'
+    $out  = @()
+    $seed = @($Others | Where-Object { $_ -and $_ -ne $me })
+    while ($true) {
+        $d = if ($seed.Count -gt $out.Count) { $seed[$out.Count] } else { '' }
+        $n = (Read-Default '  Name' $d).Trim().ToLower()
+        $n = ($n -replace '[^a-z0-9_-]', '')
+        if (-not $n) { break }
+        if ($n -eq $me -or ($out -contains $n)) { Write-Host '  Already have that one.'; continue }
+        $out += $n
+    }
+
+    return [PSCustomObject]@{ This = $me; All = @(@($me) + $out) }
 }
 
-# Ask which input a value corresponds to, one panel, one value. Returns a table.
+# Ask which input something is on, for one panel. Returns a value, or $null when
+# -AllowNone is given and that machine is not on this panel at all.
 function Read-InputValue {
-    param($Table, [string]$Prompt, [string]$Sub, [string]$Default = '')
+    param($Table, [string]$Prompt, [string]$Sub, [string]$Default = '',
+          [hashtable]$Taken = @{}, [switch]$AllowNone)
 
     $names = @($Table.Keys)
-    $rows  = @($names) + @('Type a value...')
-    $vals  = @($names | ForEach-Object { $Table[$_] }) + @('')
+    $rows  = @($names)
+    # Say who already has an input, so the same one is not handed to two machines by
+    # accident -- which would make `to` ambiguous, and it refuses rather than guess.
+    $vals  = @($names | ForEach-Object {
+        $v = $Table[$_]
+        if ($Taken.ContainsKey($v)) { '{0}   (already {1})' -f $v, $Taken[$v] } else { $v }
+    })
+    $rows += 'Type a value...'; $vals += ''
+    if ($AllowNone) { $rows += 'Not on this monitor'; $vals += '' }
 
     # Start on the configured value's row, so a re-run is a review rather than a
     # re-entry. An unlisted value starts on "type a value", which is where it came
-    # from.
+    # from; a machine with no answer yet starts on "not on this monitor".
     $row = 0
     $now = -1
     if ($Default) {
-        $row = $rows.Count - 1
+        $row = $names.Count
         for ($i = 0; $i -lt $names.Count; $i++) { if ($Table[$names[$i]] -ieq $Default) { $row = $i } }
         $now = $row
+    } elseif ($AllowNone) {
+        $row = $rows.Count - 1
     }
 
     Write-Host ''
@@ -873,25 +935,70 @@ function Read-InputValue {
     if ($Sub) { Write-Host ('  ' + $Sub) }
 
     while ($true) {
+        $v = $null
         $pick = Select-One -Items $rows -Detail $vals -Default $row -Current $now
-        if ($pick -lt $names.Count) { return $Table[$names[$pick]] }
-        $typed = Read-Default '  Value (e.g. 0x11)' $Default
-        if ($typed -match '^(0[xX])?[0-9A-Fa-f]{1,2}$') { return $typed }
-        Write-Host '  Not a byte.'
+        if ($pick -lt $names.Count) {
+            $v = $Table[$names[$pick]]
+        } elseif ($AllowNone -and $pick -eq ($rows.Count - 1)) {
+            return $null
+        } else {
+            $typed = Read-Default '  Value (e.g. 0x11)' $Default
+            if ($typed -notmatch '^(0[xX])?[0-9A-Fa-f]{1,2}$') { Write-Host '  Not a byte.'; continue }
+            $v = $typed
+        }
+        # Two machines on one input makes `to` ambiguous, and it refuses rather than
+        # guess -- so refuse here instead, where the person can still say which one
+        # they meant. Marking it in the list was not enough: it can still be picked.
+        if ($Taken.ContainsKey($v)) {
+            Write-Host ('  {0} is already {1} on this monitor. Two computers cannot share one input.' -f $v, $Taken[$v])
+            continue
+        }
+        return $v
     }
 }
 
+# The inputs to offer for a panel: the channel's own value set, with anything already
+# mapped to a machine in front of it. "mac" is a better label than "HDMI 2", and it
+# is the only one that is true about this desk.
+function Get-InputTable {
+    param([string]$Method, $Map)
+
+    $base = $MCCS_INPUTS
+    foreach ($d in $DIALECTS.Values) { if ($d.Method -eq $Method) { $base = $d.Inputs } }
+
+    $out = [ordered]@{}
+    if ($Map) { foreach ($m in $Map.Keys) { $out[$m] = $Map[$m] } }
+    foreach ($n in $base.Keys) {
+        if (@($out.Values) -contains $base[$n]) { continue }
+        $out[$n] = $base[$n]
+    }
+    return $out
+}
+
+# What the config already says about which machine is on which input of one panel.
+function Get-DisplayMap {
+    param([hashtable]$Existing, [string]$Label)
+
+    $out = [ordered]@{}
+    if (-not $Label) { return $out }
+    foreach ($k in ($Existing.Keys | Sort-Object)) {
+        if ($k -match ('^display\.' + [regex]::Escape($Label) + '\.input\.(0x[0-9a-f]{1,2})$')) {
+            $out["$($Existing[$k])".Trim().ToLower()] = $Matches[1]
+        }
+    }
+    return $out
+}
+
 # One display: identity is already known from NVAPI; what we need from the human is
-# whether to manage it, what to call it, and which input THIS machine is on.
+# whether to manage it, what to call it, and which input each machine is on.
 #
 # Standard DDC/CI is the answer for everyone here, whatever the make. A manufacturer
-# dialect is only reached for later, if the monitor test shows standard does not
-# work -- see Invoke-DisplayTest.
+# dialect is only reached for later, if the test shows standard does not work.
 function Get-DisplayAnswers {
     # $Existing is a PSCustomObject or $null -- deliberately untyped, because a
     # [hashtable] annotation here silently accepted the call at parse time and threw
     # a transformation error at RUN time, i.e. mid-walkthrough.
-    param($Found, $Existing)
+    param($Found, $Existing, [string[]]$Machines, [string]$This)
 
     $key  = '{0:X4}:{1:X4}' -f $Found.EdidVendor, $Found.EdidProduct
     # The panel's own name, out of its EDID. No table to be absent from.
@@ -910,18 +1017,24 @@ function Get-DisplayAnswers {
     # An existing method is a settled answer -- it was proven by someone watching the
     # screen. Do not quietly walk it back to standard on a re-run.
     $method = if ($Existing -and $Existing.Method) { $Existing.Method } else { 'standard' }
-    $named  = if ($Existing) { $Existing.Named } else { [ordered]@{} }
-    $table  = Get-InputTable -Method $method -Named $named
+    $prior  = if ($Existing -and $Existing.Map) { $Existing.Map } else { [ordered]@{} }
 
-    $self = Read-InputValue -Table $table -Default $(if ($Existing) { $Existing.Self } else { '' }) `
-        -Prompt ('On the {0} itself, which input shows THIS PC?' -f $desc) `
-        -Sub    '(the input you would pick on the monitor to see this computer)'
+    $map   = [ordered]@{}
+    $taken = @{}
+    foreach ($m in $Machines) {
+        $table = Get-InputTable -Method $method -Map $map
+        $was   = if ($prior.Contains($m)) { $prior[$m] } else { '' }
+        $sub   = if ($m -eq $This) { '(this computer -- the input you would pick to see this screen)' } else { '' }
+        $v = Read-InputValue -Table $table -Default $was -Taken $taken -AllowNone:($m -ne $This) `
+                             -Prompt ("On the {0}, which input is '{1}' on?" -f $desc, $m) -Sub $sub
+        if ($null -ne $v) { $map[$m] = $v; $taken[$v] = $m }
+    }
 
     return [PSCustomObject]@{
         Label = $label; Name = $desc; Method = $method
         Vendor = ('0x{0:X4}' -f $Found.EdidVendor); Product = ('0x{0:X4}' -f $Found.EdidProduct)
         EdidVendor = $Found.EdidVendor; Mfg = $Found.Mfg; Key = $key
-        Self = $self; Table = $table; Named = $named
+        Map = $map
     }
 }
 
@@ -970,16 +1083,44 @@ function Read-Tier {
     return $(if ($pick -eq 1) { 'user' } else { 's4u' })
 }
 
-# Ask about every attached display, pre-filled from whatever the config already
-# says about that EDID. A function rather than an inline loop because the review
-# menu re-enters it: "the monitors" has to be revisitable as one unit.
+# Rebuild the answer objects straight from the config, asking nothing. What a
+# re-run opens the review menu with.
+function Get-ConfiguredAnswers {
+    param($Found, [hashtable]$Existing)
+
+    $out = @()
+    foreach ($f in $Found) {
+        $key = '{0:X4}:{1:X4}' -f $f.EdidVendor, $f.EdidProduct
+        foreach ($k in ($Existing.Keys | Sort-Object)) {
+            if ($k -notmatch '^display\.([^.]+)\.vendor$') { continue }
+            $l = $Matches[1]
+            if (($Existing["display.$l.vendor"] -replace '^0[xX]','').ToUpper().PadLeft(4,'0') -ne $key.Split(':')[0]) { continue }
+            if (($Existing["display.$l.product"] -replace '^0[xX]','').ToUpper().PadLeft(4,'0') -ne $key.Split(':')[1]) { continue }
+            $out += [PSCustomObject]@{
+                Label  = $l
+                Name   = $(if ($Existing.ContainsKey("display.$l.name")) { $Existing["display.$l.name"] } else { $l })
+                Method = $(if ($Existing.ContainsKey("display.$l.method")) { $Existing["display.$l.method"] } else { 'standard' })
+                Vendor = ('0x{0:X4}' -f $f.EdidVendor); Product = ('0x{0:X4}' -f $f.EdidProduct)
+                EdidVendor = $f.EdidVendor; Mfg = $f.Mfg; Key = $key
+                Map    = (Get-DisplayMap -Existing $Existing -Label $l)
+            }
+            break
+        }
+    }
+    return $out
+}
+
+# Ask about every attached display, pre-filled from whatever the config already says
+# about that EDID. A function rather than an inline loop because the review menu
+# re-enters it: "the monitors" has to be revisitable as one unit.
 function Get-AllDisplayAnswers {
-    # $Carry is names given during THIS walkthrough, keyed by EDID. They are not in
+    # $Carry is answers given during THIS walkthrough, keyed by EDID. They are not in
     # the config yet -- nothing is written until you save -- so without this,
     # re-entering the monitors section to change one value would silently throw away
-    # everything the user just told us about their own inputs. Keyed by EDID rather
-    # than by label because the label is one of the things they might be changing.
-    param($Found, [hashtable]$Existing, [hashtable]$Carry = @{})
+    # what the user already told us. Keyed by EDID rather than by label because the
+    # label is one of the things they might be changing.
+    param($Found, [hashtable]$Existing, [string[]]$Machines, [string]$This,
+          [hashtable]$Carry = @{})
 
     $out = @()
     foreach ($f in $Found) {
@@ -992,18 +1133,14 @@ function Get-AllDisplayAnswers {
                     ($Existing["display.$l.product"] -replace '^0[xX]','').ToUpper().PadLeft(4,'0') -eq $key.Split(':')[1]) {
                     $prior = [PSCustomObject]@{
                         Label  = $l
-                        Self   = $(if ($Existing.ContainsKey("display.$l.self"))   { $Existing["display.$l.self"] }   else { '' })
                         Method = $(if ($Existing.ContainsKey("display.$l.method")) { $Existing["display.$l.method"] } else { '' })
-                        Named  = (Get-NamedInputs -Existing $Existing -Label $l)
+                        Map    = (Get-DisplayMap -Existing $Existing -Label $l)
                     }
                 }
             }
         }
-        if ($Carry.ContainsKey($key)) {
-            if (-not $prior) { $prior = [PSCustomObject]@{ Label = ''; Self = ''; Method = ''; Named = [ordered]@{} } }
-            $prior.Named = $Carry[$key]
-        }
-        $a = Get-DisplayAnswers -Found $f -Existing $prior
+        if ($Carry.ContainsKey($key)) { $prior = $Carry[$key] }
+        $a = Get-DisplayAnswers -Found $f -Existing $prior -Machines $Machines -This $This
         if ($a) { $out += $a }
     }
     return $out
@@ -1014,7 +1151,7 @@ function Get-AllDisplayAnswers {
 #
 # Two distinct roles for the old config, and -Fresh separates them: $seed supplies
 # DEFAULTS, $existing is what must SURVIVE. Dropping both would silently discard
-# hand-written scenes, so -Fresh clears the first and never touches the second.
+# anything hand-written, so -Fresh clears the first and never touches the second.
 #
 # Nothing is written until every answer is in: an interrupted run must leave a
 # working setup untouched, not a half-written config plus a task pointing at it.
@@ -1040,12 +1177,11 @@ function Invoke-Configure {
     Write-Host '=============================================================='
     if ($Fresh -and -not $isFirst) {
         Write-Host ' Starting fresh -- nothing is pre-filled from the current setup.'
-        Write-Host ' Scenes and anything else you hand-wrote are still kept.'
     } elseif (-not $isFirst) {
         Write-Host ' Current settings are the defaults -- press enter to keep one.'
     }
 
-    # ---- displays ----------------------------------------------------------
+    # ---- what is attached ---------------------------------------------------
     $sw = Join-Path $PSScriptRoot 'trigger-kvm.ps1'
     if (-not (Test-Path $sw)) { $sw = $SWITCH }
 
@@ -1072,17 +1208,55 @@ function Invoke-Configure {
     }
 
     Write-Host ''
-    Write-Host ('--- displays ({0} connected) ---' -f $found.Count)
+    Write-Host ('--- monitors found ({0}) ---' -f $found.Count)
+    foreach ($f in $found) {
+        Write-Host ('  {0,-24} {1}' -f `
+                    $(if ($f.Name) { $f.Name } else { '{0} panel' -f $f.Mfg }), $f.Connector)
+    }
 
-    # Names collected during this run, surviving a trip back into the monitors
-    # section. Merged into the config on save.
+    # A configured system already has every answer, so replaying the questions to
+    # change one of them is exactly the complaint the review menu exists to answer.
+    # Straight there instead; the linear pass is for a system with nothing yet.
+    $ask = $isFirst -or $Fresh
+
     $carry = @{}
-    $answers = @(Get-AllDisplayAnswers -Found $found -Existing $seed -Carry $carry)
+    $ranDisplays = $null
+    $ranTriggers = $null
 
-    if ($answers.Count -eq 0) {
-        Write-Log 'no monitors selected -- nothing to do.'
-        $global:LASTEXITCODE = 2
-        return
+    if ($ask) {
+        # ---- machines, BEFORE the monitors ----------------------------------
+        # Every panel then offers the same names, and a computer is described once
+        # rather than once per screen.
+        $m = Read-Machines -This (Get-DefaultMachineName -Seed $seed) -Others (Get-KnownMachines -Cfg $seed)
+        $this = $m.This
+        $machines = $m.All
+
+        # ---- monitors --------------------------------------------------------
+        $answers = @(Get-AllDisplayAnswers -Found $found -Existing $seed -Machines $machines -This $this -Carry $carry)
+        if ($answers.Count -eq 0) {
+            Write-Log 'no monitors selected -- nothing to do.'
+            $global:LASTEXITCODE = 2
+            return
+        }
+
+        # Check each panel while it is fresh in mind, rather than only at the end.
+        # The review menu still offers it, for when something changes later.
+        Write-Host ''
+        if (Read-YesNo '  Check the monitors now? (each one leaves and comes straight back)' $true) {
+            $ranDisplays = Invoke-DisplayTest -Answers $answers -This $this
+            foreach ($a in $answers) { $carry[$a.Key] = $a }
+        }
+    } else {
+        $this     = Get-DefaultMachineName -Seed $seed
+        $machines = @(@($this) + @(Get-KnownMachines -Cfg $seed | Where-Object { $_ -ne $this }))
+        $answers  = @(Get-ConfiguredAnswers -Found $found -Existing $seed)
+        if ($answers.Count -eq 0) {
+            Write-Log 'the config names no display that is attached -- starting setup.'
+            $m = Read-Machines -This $this -Others @($machines | Where-Object { $_ -ne $this })
+            $this = $m.This; $machines = $m.All
+            $answers = @(Get-AllDisplayAnswers -Found $found -Existing $seed -Machines $machines -This $this)
+            if ($answers.Count -eq 0) { $global:LASTEXITCODE = 2; return }
+        }
     }
 
     # ---- triggers ----------------------------------------------------------
@@ -1092,50 +1266,51 @@ function Invoke-Configure {
         $cur = @(($seed['trigger.device'] -replace '\s','') -split ',' | Where-Object { $_ } | ForEach-Object {
             if ($_ -match '^(usb:|bt:)') { $_.ToLower() } else { 'usb:' + $_.ToLower() } })
     }
-    $devices = @(Read-Triggers -Cands $cands -Current $cur)
-
-    # ---- tier --------------------------------------------------------------
     # Empty, not 'user', when nothing is configured: Read-Tier reads that as "no
     # existing choice" and offers from-boot as the default. Passing 'user' here would
     # have quietly made the old default win under a menu that says otherwise.
-    $newTier = Read-Tier $(if ($seed.ContainsKey('install.start')) {
-                               $(if ($seed['install.start'] -eq 'boot') { 's4u' } else { 'user' })
-                           } else { '' })
-
-    # ---- PATH --------------------------------------------------------------
+    $wasTier = $(if ($seed.ContainsKey('install.start')) {
+                     $(if ($seed['install.start'] -eq 'boot') { 's4u' } else { 'user' })
+                 } else { '' })
     $onPath = @((Get-UserPath -split ';')) -contains $BINDIR
     $wantPath = $false
-    if (-not $onPath) {
-        Write-Host ''
-        Write-Host '--- PATH ---'
-        # Single quotes: in a DOUBLE-quoted PowerShell string a backtick is the escape
-        # character, so "`trigger-kvm`" renders as TAB + "rigger-kvm".
-        Write-Host ('  Add {0} to your PATH, so `trigger-kvm` works from anywhere?' -f $BINDIR)
-        Write-Host '  Only that directory is added, and it holds only the launcher.'
-        $wantPath = Read-YesNo '  Add it?' $true
+
+    if ($ask) {
+        $devices = @(Read-Triggers -Cands $cands -Current $cur)
+        $newTier = Read-Tier $wasTier
+
+        # ---- PATH ------------------------------------------------------------
+        if (-not $onPath) {
+            Write-Host ''
+            Write-Host '--- PATH ---'
+            # Single quotes: in a DOUBLE-quoted PowerShell string a backtick is the
+            # escape character, so "`trigger-kvm`" renders as TAB + "rigger-kvm".
+            Write-Host ('  Add {0} to your PATH, so `trigger-kvm` works from anywhere?' -f $BINDIR)
+            Write-Host '  Only that directory is added, and it holds only the launcher.'
+            $wantPath = Read-YesNo '  Add it?' $true
+        }
+    } else {
+        $devices = @($cur)
+        $newTier = $(if ($wasTier) { $wasTier } else { 'user' })
     }
 
     # ---- review, then write ------------------------------------------------
     # The same menu as everywhere else, so the review is not a new thing to learn:
-    # the settings ARE the rows, and choosing one re-enters that section. Above the
-    # save row so they read as "what you have already done"; cancel below it.
+    # the settings ARE the rows, and choosing one re-enters that section. A menu
+    # rather than a linear "go back one step" because the answer you got wrong is
+    # rarely the last one you gave.
     #
-    # A menu rather than a linear "go back one step" because the answer you got
-    # wrong is rarely the last one you gave, and unwinding three sections to fix
-    # the first is worse than re-entering the one that is wrong.
-    # Three groups, separated by blank rows: what you set, what you can check, and
-    # what ends the walkthrough. Seven flat rows read as seven equal choices; the
-    # groups say which are edits, which are checks, and which are the way out.
-    $ranDisplays = $null
-    $ranTriggers = $null
+    # Three groups, separated by blank rows the cursor skips: what you set, what you
+    # can check, and what ends the walkthrough. Flat, they read as equal choices.
     while ($true) {
         Write-Host ''
         Write-Host '--- review configuration ---'
         Write-Host ''
 
-        $items  = @('Monitors', 'Trigger devices', 'When it starts')
+        $items  = @('Machines', 'Monitors', 'Trigger devices', 'When it starts')
         $detail = @(
-            (($answers | ForEach-Object { '{0} on {1}' -f $_.Label, $_.Self }) -join ', ')
+            (($machines | ForEach-Object { if ($_ -eq $this) { "$_ (here)" } else { $_ } }) -join ', ')
+            (($answers | ForEach-Object { '{0}: {1}' -f $_.Label, (@($_.Map.Keys) -join '/') }) -join '   ')
             ($devices -join ', ')
             $(if ($newTier -eq 's4u') { 'from boot' } else { 'after you log in' })
         )
@@ -1155,15 +1330,15 @@ function Invoke-Configure {
         $items += 'Save configuration and run'; $detail += ''
         $items += 'Cancel (discard changes)';   $detail += ''
 
-        # Where the cursor lands is the recommendation, and it walks you through the
-        # checks in order: trigger, then monitors, then save. A failure sends you to
-        # the setting that failed rather than onward.
+        # Where the cursor lands is the recommendation, and it walks the checks in
+        # order: trigger, then monitors, then save. A failure sends the cursor to the
+        # setting that failed rather than onward.
         $land =
-            if     (-not $ranTriggers)  { $save - 3 }
-            elseif (-not $ranTriggers.Ok) { 1 }
-            elseif (-not $ranDisplays)  { $save - 2 }
-            elseif (-not $ranDisplays.Ok) { 0 }
-            else                        { $save }
+            if     (-not $ranTriggers)    { $save - 3 }
+            elseif (-not $ranTriggers.Ok) { 2 }
+            elseif (-not $ranDisplays)    { $save - 2 }
+            elseif (-not $ranDisplays.Ok) { 1 }
+            else                          { $save }
 
         $pick = Select-One -Items $items -Detail $detail -Default $land
         if ($pick -eq $save) { break }
@@ -1173,12 +1348,23 @@ function Invoke-Configure {
             return
         }
         switch ($items[$pick]) {
+            'Machines' {
+                # Renaming or adding a computer invalidates every panel's map, so the
+                # monitors are asked again rather than left holding names that no
+                # longer exist.
+                $m = Read-Machines -This $this -Others @($machines | Where-Object { $_ -ne $this })
+                $this = $m.This
+                $machines = $m.All
+                $carry = @{}
+                $answers = @(Get-AllDisplayAnswers -Found $found -Existing $seed -Machines $machines -This $this)
+                $ranDisplays = $null
+            }
             'Monitors' {
-                $again = @(Get-AllDisplayAnswers -Found $found -Existing $seed -Carry $carry)
+                $again = @(Get-AllDisplayAnswers -Found $found -Existing $seed -Machines $machines -This $this -Carry $carry)
                 if ($again.Count -gt 0) { $answers = $again }
                 else { Write-Host '  No monitors selected -- keeping the previous answers.' }
                 # A pass belongs to the values that passed. Carrying it across an edit
-                # would show "every monitor responded" beside numbers nothing tried.
+                # would show "all responded" beside numbers nothing tried.
                 $ranDisplays = $null
             }
             'Trigger devices' {
@@ -1187,18 +1373,19 @@ function Invoke-Configure {
             }
             'When it starts'  { $newTier = Read-Tier $newTier }
             # Binary, so the row is the control: selecting it flips it. A yes/no
-            # prompt for something already shown as "add it"/"leave it alone"
-            # would just be a second way to say the same thing.
+            # prompt for something already shown as "add it"/"leave it alone" would
+            # just be a second way to say the same thing.
             'PATH'            { $wantPath = -not $wantPath }
             'Test the trigger'  { $ranTriggers = Invoke-TriggerTest -Devices $devices }
             'Test the monitors' {
-                $ranDisplays = Invoke-DisplayTest -Answers $answers
-                foreach ($a in $answers) { $carry[$a.Key] = $a.Named }
+                $ranDisplays = Invoke-DisplayTest -Answers $answers -This $this
+                foreach ($a in $answers) { $carry[$a.Key] = $a }
             }
         }
     }
 
-    Write-ConfigFile -Path $CONFIG -Displays $answers -Devices $devices -Tier $newTier -Existing $existing
+    Write-ConfigFile -Path $CONFIG -Displays $answers -Devices $devices -Tier $newTier `
+                     -This $this -Existing $existing
     Write-Log "wrote $CONFIG"
 
     if ($wantPath) { Add-ToUserPath -Dir $BINDIR }
@@ -1241,89 +1428,91 @@ function Invoke-TriggerTest {
 
 # Prove the display answers BEFORE anything is written, against a throwaway config.
 #
-# The switcher takes its method and identity from a config file rather than from the
-# command line -- deliberately, so there is one description of a panel and not two --
-# so testing early means writing a temp one, not weakening the rule that nothing is
-# written until you save. Returns what the review row should say.
-#
-# This is also where an unfamiliar panel gets sorted out, because it is the only
-# place anyone is actually looking at the screen. Standard DDC/CI is what every
-# panel was set up with; if it does nothing, the manufacturer's documented dialect
-# is OFFERED here, and only here.
+# The switcher takes its map from a config file rather than from the command line --
+# deliberately, so a panel has one description and not two -- so testing early means
+# writing a temp one, not weakening the rule that nothing is written until you save.
 function Invoke-DisplayTest {
-    param($Answers)
+    param($Answers, [string]$This)
 
     $tmp = Join-Path ([IO.Path]::GetTempPath()) ('trigger-kvm-test-{0}.cfg' -f $PID)
     $bad = @()
     try {
         foreach ($a in $Answers) {
-            # Re-written per panel: escalating to a dialect changes the method, and
-            # the switcher reads the method from the file.
-            Write-ConfigFile -Path $tmp -Displays $Answers -Devices @() -Tier 'user' -Existing @{}
-
-            $verdict = Test-OnePanel -Answer $a -All $Answers -Config $tmp
-            if (-not $verdict) { $bad += $a.Name }
+            if (-not (Test-OnePanel -Answer $a -All $Answers -This $This -Config $tmp)) { $bad += $a.Name }
         }
     } finally {
         Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
     }
 
-    if ($bad.Count -gt 0) { return [PSCustomObject]@{ Ok = $false; Text = ('no response from ' + ($bad -join ', ')) } }
+    if ($bad.Count -gt 0) { return [PSCustomObject]@{ Ok = $false; Text = ('trouble with ' + ($bad -join ', ')) } }
     return [PSCustomObject]@{ Ok = $true; Text = 'all responded' }
 }
 
-# One panel: switch it away and back, then act on what the human saw. Retries after
-# a fix, because bouncing out to the review menu to change one value and come back
-# is a worse way to say "try that again".
-function Test-OnePanel {
-    param($Answer, $All, [string]$Config, [int]$Attempt = 1)
+# One panel, one machine: send it there, bring it back, act on what the human saw.
+# Fixes retry in place, because bouncing out to the review menu to change one value
+# and come back is a worse way to say "try that again".
+function Test-OneMachine {
+    param($Answer, $All, [string]$This, [string]$Target, [string]$Config, [int]$Attempt = 1)
 
-    # Any input but this machine's will do -- the test is only that the panel
-    # CHANGES, so there is nothing to pick cleverly. Named, so the prompt can say
-    # where it is going instead of showing a bare hex value.
-    $otherName = $null; $other = $null
-    foreach ($n in @($Answer.Table.Keys)) {
-        if ($Answer.Table[$n] -ine $Answer.Self) { $otherName = $n; $other = $Answer.Table[$n]; break }
-    }
-    if (-not $other) { return $true }
+    # Write before every attempt: escalating to a dialect changes the method, and the
+    # switcher reads the method from the file.
+    Write-ConfigFile -Path $Config -Displays $All -Devices @() -Tier 'user' -This $This -Existing @{}
 
-    $outcome = Test-DisplayInput -Label $Answer.Label -Name $Answer.Name -Candidate $other `
-                                 -CandidateName $otherName -Current $Answer.Self -Config $Config
-
-    # 0: it worked. Offer to name what was on the other input while they are still
-    # looking at it -- a name from their own desk beats anything we could ship, and
-    # this is the one moment they know the answer.
-    if ($outcome -eq 0) {
-        $named = Read-Default ("  What is on the {0} input? (enter to skip)" -f $otherName) ''
-        if ($named) {
-            $Answer.Named[$named] = $other
-            $Answer.Table = Get-InputTable -Method $Answer.Method -Named $Answer.Named
-        }
-        return $true
+    $here = $Answer.Map[$This]
+    if ($Target) {
+        $outcome = Test-DisplayInput -Label $Answer.Label -Name $Answer.Name -IsMachine `
+                                     -Candidate $Answer.Map[$Target] -CandidateName $Target `
+                                     -Current $here -Config $Config
+    } else {
+        # Nothing else is on this panel, so there is no claim to check beyond "the
+        # transport reaches it". Any other input value will do.
+        $table = Get-InputTable -Method $Answer.Method -Map $Answer.Map
+        $n = @($table.Keys | Where-Object { $table[$_] -ine $here } | Select-Object -First 1)
+        if (-not $n) { return $true }
+        $outcome = Test-DisplayInput -Label $Answer.Label -Name $Answer.Name `
+                                     -Candidate $table[$n[0]] -CandidateName $n[0] `
+                                     -Current $here -Config $Config
     }
 
-    # 1: the panel obeys, so the channel is right; the value for THIS PC is not.
-    if ($outcome -eq 1) {
+    if ($outcome -eq 0) { return $true }
+    if ($Attempt -ge 2) { return $false }   # bounded: one retry per fix
+
+    # 1: the panel obeys and the value for this computer is right -- that input is
+    # just not the machine we thought.
+    if ($outcome -eq 1 -and $Target) {
         Write-Host ''
-        Write-Host ('  So {0} responds -- the channel is right. The value for THIS PC is' -f $Answer.Name)
-        Write-Host '  not. Use that monitor''s own buttons to bring it back to this PC, then'
-        Write-Host '  tell me which input that is.'
+        Write-Host ('  So that input is not {0}. Which one is?' -f $Target)
+        $taken = @{}
+        foreach ($m in $Answer.Map.Keys) { if ($m -ne $Target) { $taken[$Answer.Map[$m]] = $m } }
+        $v = Read-InputValue -Table (Get-InputTable -Method $Answer.Method -Map $Answer.Map) `
+                             -Default $Answer.Map[$Target] -Taken $taken -AllowNone `
+                             -Prompt ("On the {0}, which input is '{1}' on?" -f $Answer.Name, $Target)
+        if ($null -eq $v) { $Answer.Map.Remove($Target); return $true }
+        $Answer.Map[$Target] = $v
+        return (Test-OneMachine -Answer $Answer -All $All -This $This -Target $Target -Config $Config -Attempt ($Attempt + 1))
+    }
+
+    # 2: the panel obeys, so the channel is right; the value for THIS computer is not.
+    if ($outcome -eq 2) {
+        Write-Host ''
+        Write-Host ('  So {0} responds -- the channel is right. The input for this' -f $Answer.Name)
+        Write-Host '  computer is not. Use that monitor''s own buttons to bring it back,'
+        Write-Host '  then tell me which input that is.'
         Write-Host ''
         if (Read-YesNo '  Do you know which input it is?' $true) {
-            $Answer.Self = Read-InputValue -Table $Answer.Table -Default $Answer.Self `
-                -Prompt ('Which input on the {0} shows THIS PC?' -f $Answer.Name)
+            $Answer.Map[$This] = Read-InputValue -Table (Get-InputTable -Method $Answer.Method -Map $Answer.Map) `
+                -Default $Answer.Map[$This] `
+                -Prompt ("On the {0}, which input is '{1}' on?" -f $Answer.Name, $This)
         } else {
             $found = Invoke-BlindWalk -Answer $Answer -Config $Config -OtherPanels (@($All).Count - 1)
             if (-not $found) { return $false }
-            $Answer.Self = $found
+            $Answer.Map[$This] = $found
         }
-        if ($Attempt -ge 2) { return $true }   # bounded: one retry, then take the answer
-        Write-ConfigFile -Path $Config -Displays $All -Devices @() -Tier 'user' -Existing @{}
-        return (Test-OnePanel -Answer $Answer -All $All -Config $Config -Attempt ($Attempt + 1))
+        return (Test-OneMachine -Answer $Answer -All $All -This $This -Target $Target -Config $Config -Attempt ($Attempt + 1))
     }
 
-    # 2: nothing at all. The channel is wrong. This is where a manufacturer dialect
-    # is offered -- offered, from documented values, never probed.
+    # 3: nothing at all. The channel is wrong. This is where a manufacturer dialect is
+    # offered -- offered, from documented values, never probed.
     $d = $DIALECTS['{0:X4}' -f $Answer.EdidVendor]
     if ($d -and $Answer.Method -ne $d.Method) {
         Write-Host ''
@@ -1334,13 +1523,19 @@ function Test-OnePanel {
         foreach ($n in $d.Inputs.Keys) { Write-Host ('    {0,-14} {1}' -f $n, $d.Inputs[$n]) }
         Write-Host ''
         if (Read-YesNo '  Try that channel instead?' $true) {
+            # Every value in the old map was for a channel that does not work, so the
+            # map starts again rather than carrying meaningless numbers across.
             $Answer.Method = $d.Method
-            $Answer.Table  = Get-InputTable -Method $d.Method -Named $Answer.Named
-            $Answer.Self   = Read-InputValue -Table $Answer.Table -Default '' `
-                -Prompt ('Which input on the {0} shows THIS PC?' -f $Answer.Name)
-            if ($Attempt -ge 2) { return $true }
-            Write-ConfigFile -Path $Config -Displays $All -Devices @() -Tier 'user' -Existing @{}
-            return (Test-OnePanel -Answer $Answer -All $All -Config $Config -Attempt ($Attempt + 1))
+            $keep = @($Answer.Map.Keys)
+            $Answer.Map = [ordered]@{}
+            $taken = @{}
+            foreach ($m in $keep) {
+                $v = Read-InputValue -Table (Get-InputTable -Method $d.Method -Map $Answer.Map) `
+                                     -Taken $taken -AllowNone:($m -ne $This) `
+                                     -Prompt ("On the {0}, which input is '{1}' on?" -f $Answer.Name, $m)
+                if ($null -ne $v) { $Answer.Map[$m] = $v; $taken[$v] = $m }
+            }
+            return (Test-OneMachine -Answer $Answer -All $All -This $This -Target $Target -Config $Config -Attempt ($Attempt + 1))
         }
         return $false
     }
@@ -1355,10 +1550,30 @@ function Test-OnePanel {
     return $false
 }
 
-# Rewrite the config, preserving every comment block and any key the walkthrough
-# does not own (scenes, in particular, which are hand-made and must survive).
+# Check every claim made about one panel: send it to each other machine in turn and
+# bring it back. With three computers that is two round trips, which is what actually
+# proves the map rather than proving the transport twice.
+function Test-OnePanel {
+    param($Answer, $All, [string]$This, [string]$Config)
+
+    if (-not $Answer.Map.Contains($This)) { return $false }
+    $targets = @($Answer.Map.Keys | Where-Object { $_ -ne $This })
+
+    if ($targets.Count -eq 0) {
+        return (Test-OneMachine -Answer $Answer -All $All -This $This -Target '' -Config $Config)
+    }
+    $ok = $true
+    foreach ($t in $targets) {
+        if (-not (Test-OneMachine -Answer $Answer -All $All -This $This -Target $t -Config $Config)) { $ok = $false }
+    }
+    return $ok
+}
+
+# Rewrite the config from the answers. There is nothing left to preserve: scenes are
+# gone, and every fact the file holds is something the walkthrough asked about.
 function Write-ConfigFile {
-    param([string]$Path, $Displays, [string[]]$Devices, [string]$Tier, [hashtable]$Existing)
+    param([string]$Path, $Displays, [string[]]$Devices, [string]$Tier,
+          [string]$This, [hashtable]$Existing)
 
     $lines = @(
         '# trigger-kvm configuration'
@@ -1366,8 +1581,8 @@ function Write-ConfigFile {
         '# Written by `trigger-kvm configure`. Safe to edit by hand.'
         '#'
         '# Everything here is read at the point it is used, so there is no separate'
-        '# apply step: display and scene edits take effect on the next switch, and'
-        '# trigger edits when the watcher next starts --  trigger-kvm restart'
+        '# apply step: display edits take effect on the next switch, and trigger edits'
+        '# when the watcher next starts --  trigger-kvm restart'
         '#'
         '# Displays are identified by the EDID the GPU reads off the output, never by'
         '# index -- \\.\DISPLAYn numbers are not stable and have swapped on this'
@@ -1376,12 +1591,19 @@ function Write-ConfigFile {
         '# --- install ----------------------------------------------------------'
         ("install.start = {0}" -f $(if ($Tier -eq 's4u') { 'boot' } else { 'login' }))
         ''
+        '# --- machines ---------------------------------------------------------'
+        '# What this computer is called below. `trigger-kvm pull` means "point every'
+        '# display at this one"; `trigger-kvm to mac` names any other.'
+        ''
+        ("machine.this = {0}" -f $This)
+        ''
         '# --- displays ---------------------------------------------------------'
         '# method: standard (I2C src 0x51, VCP 0x60) -- what nearly every panel takes'
         '#         lg-alt   (src 0x50, VCP 0xF4) -- LG panels whose 0x60 is stubbed'
-        '# self:   the input value where THIS machine is. Required.'
-        '# input.<value>: your name for that input on that panel. Optional, and'
-        '#         yours -- the walkthrough offers these before the standard names.'
+        '# input.<value> = <machine>: which computer is on which input of that panel.'
+        '#         This is the whole map. pull and to are the same lookup against it,'
+        '#         differing only in which name they look up, so the two can never'
+        '#         disagree about where a machine is.'
         ''
     )
     foreach ($d in $Displays) {
@@ -1390,14 +1612,9 @@ function Write-ConfigFile {
             ("display.{0}.product = {1}" -f $d.Label, $d.Product)
             ("display.{0}.name    = {1}" -f $d.Label, $d.Name)
             ("display.{0}.method  = {1}" -f $d.Label, $d.Method)
-            ("display.{0}.self    = {1}" -f $d.Label, $d.Self)
         )
-        # Value-first, so a name the user typed comes back exactly as they typed it:
-        # Read-Config lower-cases keys and returns values verbatim.
-        if ($d.PSObject.Properties['Named'] -and $d.Named) {
-            foreach ($n in $d.Named.Keys) {
-                $lines += ("display.{0}.input.{1} = {2}" -f $d.Label, ([string]$d.Named[$n]).ToLower(), $n)
-            }
+        foreach ($m in $d.Map.Keys) {
+            $lines += ("display.{0}.input.{1} = {2}" -f $d.Label, ([string]$d.Map[$m]).ToLower(), $m)
         }
         $lines += ''
     }
@@ -1408,30 +1625,19 @@ function Write-ConfigFile {
         '# The one shipped here watches device presence. A hotkey or a Stream Deck'
         '# button needs no support from this tool -- it just runs that command.'
         '#'
-        '# Triggers run `pull` and nothing else. Never wire one to a scene: a scene'
-        '# names inputs on hardware this machine cannot see, and a stale one would'
-        '# then be able to cause an AUTOMATIC switch to a dead input.'
+        '# Triggers run `pull` and nothing else. Never wire one to another machine: a'
+        '# name like `mac` describes inputs on hardware this machine cannot observe,'
+        '# and a stale one would then be able to cause an AUTOMATIC switch to a dead'
+        '# input. Getting there by hand, watching, is a different risk entirely.'
         '#'
         '# device: usb:VVVV:PPPP (bare VVVV:PPPP means usb) or bt:AAAAAAAAAAAA.'
-        '#         Bluetooth matches on CONNECTED, not paired.'
+        '#         Bluetooth fires on CONNECTED, and every PAIRED device is offered.'
         ''
         ("trigger.device   = {0}" -f ($Devices -join ', '))
         ("trigger.debounce = {0}" -f $(if ($Existing.ContainsKey('trigger.debounce')) { $Existing['trigger.debounce'] } else { $SEED_DEBOUNCE }))
         ("trigger.settle   = {0}" -f $(if ($Existing.ContainsKey('trigger.settle'))   { $Existing['trigger.settle'] }   else { $SEED_SETTLE }))
         ''
-        '# --- scenes -----------------------------------------------------------'
-        '# Saved arrangements for MANUAL use:  trigger-kvm to mac'
-        '#'
-        '# The trigger never reads these. A scene names inputs on ANOTHER machine,'
-        '# which this machine cannot observe and which go stale the moment someone'
-        '# moves a cable over there. Keeping them out of the trigger means a stale'
-        '# scene can only spoil a command you typed and are watching.'
-        ''
     )
-    # Scenes are hand-made and the walkthrough does not ask about them, so carry
-    # them across verbatim rather than silently dropping someone's work.
-    $sceneKeys = @($Existing.Keys | Where-Object { $_ -match '^scene\.' } | Sort-Object)
-    foreach ($k in $sceneKeys) { $lines += ("{0} = {1}" -f $k, $Existing[$k]) }
 
     $lines | Set-Content -LiteralPath $Path -Encoding ASCII
 }
@@ -1696,9 +1902,13 @@ if ($Command -eq 'status') {
 
     $c = Read-Config -Path $CONFIG
     $labels = @($c.Keys | Where-Object { $_ -match '^display\.([^.]+)\.vendor$' } | ForEach-Object { $Matches[1] } | Sort-Object -Unique)
-    $scenes = @($c.Keys | Where-Object { $_ -match '^scene\.([^.]+)\.' }          | ForEach-Object { $Matches[1] } | Sort-Object -Unique)
+    $this = $(if ($c.ContainsKey('machine.this')) { "$($c['machine.this'])".Trim().ToLower() } else { '' })
+    $machines = @(Get-KnownMachines -Cfg $c)
     Write-Host ("displays : {0}" -f $(if ($labels) { $labels -join ', ' } else { 'none configured' }))
-    Write-Host ("scenes   : {0}" -f $(if ($scenes) { ($scenes -join ', ') + '   (manual only; the trigger never uses these)' } else { 'none' }))
+    Write-Host ("machines : {0}" -f $(if ($machines) {
+        (@($machines | ForEach-Object { if ($_ -eq $this) { "$_ (this one)" } else { $_ } }) -join ', ') +
+        '   (trigger-kvm to <name>; only pull is automatic)'
+    } else { 'none' }))
     exit 0
 }
 

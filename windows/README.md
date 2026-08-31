@@ -45,14 +45,14 @@ from anywhere:
 ```
 trigger-kvm configure          interactive; current settings pre-fill the defaults,
                                and it applies whatever you changed
-trigger-kvm configure -Fresh   ...but pre-fill nothing; scenes are still kept
+trigger-kvm configure -Fresh   ...but pre-fill nothing, and ask everything again
 trigger-kvm status             when it starts, what that covers, version
 trigger-kvm discover           what is attached, in the form the config wants
 trigger-kvm restart            make a hand-edited config take effect now
 trigger-kvm logs               tail the log
 trigger-kvm pause              stand the watcher down to test one by hand
 trigger-kvm uninstall
-trigger-kvm pull | to <scene> | list
+trigger-kvm pull | to <machine> | list
 ```
 
 ### The walkthrough
@@ -191,7 +191,7 @@ tier, because it cannot ask: nothing elevates without someone choosing it.
 `configure -Fresh` asks everything again with **nothing pre-filled**, for when the
 desk changed enough that the old answers are the wrong starting point and
 enter-through would carry a stale value forward unread. It clears the *defaults*,
-not the file: scenes and anything else you hand-wrote are still preserved.
+not the answers you already gave, which still pre-fill nothing but themselves.
 
 **There is no `install` verb on the CLI**, deliberately: installing is what got you
 the CLI. Upgrading and repairing both mean "fetch the source and run its installer",
@@ -374,12 +374,11 @@ could not dedupe against each other — the same failure that forced the
 single-instance mutex to become machine-wide. At this level that holds by
 construction, with no level at which a second one could be written.
 
-**A trigger runs `pull`, and only `pull`.** Never wire one to a scene. A scene names
-inputs on hardware this machine cannot observe, which go stale the moment a cable
-moves over there; keeping scenes out of the trigger path means a stale scene can
-only ever spoil a command you typed and are watching, never an automatic switch to
-a dead input. That rule is easier to hold because there is no framework inviting you
-to parameterise it.
+**A trigger runs `pull`, and only `pull`.** Never wire one to another machine's
+name. A name like `mac` describes inputs on hardware this machine cannot observe,
+which go stale the moment someone moves a cable over there; keeping those names out
+of the trigger path means a stale one can only ever spoil a command you typed and
+are watching.
 
 ## Discovery
 
@@ -423,20 +422,21 @@ display.lg.vendor  = 0x1E6D     # EDID manufacturer id
 display.lg.product = 0x9E9D     # EDID product id
 display.lg.name    = LG 45GX950A
 display.lg.method  = lg-alt     # standard | lg-alt
-display.lg.self    = 0xD0       # the input where THIS machine is. Required.
+
+machine.this          = pc      # what this computer is called below
+display.lg.input.0xD0 = pc      # the WHOLE map: which machine is on which input
+display.lg.input.0xD1 = mac
 
 trigger.device   = usb:046d:0843, usb:1235:820a, bt:0011223344ff
 trigger.debounce = 3.0          # applies to every trigger, not per transport
 trigger.settle   = 0.75
-
-scene.mac.lg   = 0xD1           # manual only -- the trigger never reads scenes
 ```
 
 Flat `key = value` with `#` comments, deliberately not TOML or JSON: this is read on
 every device arrival and must not depend on a parser being present. The whole reader
 is a dozen lines, and the macOS side can do the same job with one `sed`.
 
-**Which edits take effect when.** Display and scene changes apply at the next
+**Which edits take effect when.** Display changes apply at the next
 switch, because the switcher reads the file each time. Trigger changes need
 `install.ps1` re-run — those are baked into the scheduled task at registration, and
 the installer reads them back out of the config rather than from its own defaults.
@@ -447,7 +447,7 @@ the installer reads them back out of the config rather than from its own default
   PowerShell, so a typo'd vendor would otherwise become a silent match against
   `0x0000` — a write aimed at the wrong panel is the failure this project spends
   most of its effort avoiding.
-- A scene naming three displays but carrying values for two moves **none** of them.
+- A machine that two displays know about and a third does not moves **none** of them.
   Every value is resolved before anything is sent. A half-applied arrangement is
   worse than none: it leaves the desk in a state nobody configured, and you have to
   work out which half landed.
@@ -459,7 +459,7 @@ the installer reads them back out of the config rather than from its own default
 
 ```powershell
 .\trigger-kvm.ps1 pull               # pull every configured monitor here
-.\trigger-kvm.ps1 to mac             # apply the saved scene "mac"
+.\trigger-kvm.ps1 to mac             # point them at the machine called "mac"
 .\trigger-kvm.ps1 pull -Only asus    # one monitor only
 .\trigger-kvm.ps1 pull -WhatIf       # resolve and print packets, send nothing
 ```
@@ -467,13 +467,21 @@ the installer reads them back out of the config rather than from its own default
 `-Only <label>` takes a label from your config and exists because moving every
 monitor at once can take away the display your terminal is on. Use it when testing.
 
-`pull` and `to` are separate verbs on purpose, and the separation is a safety
-property rather than a style choice. `pull` uses only `self` values -- the inputs
-where *this* machine is -- so it holds no belief about any other machine and nothing
-another machine does can invalidate it. `to` applies a scene, which names inputs on
-hardware this machine cannot observe. **The trigger can only ever run `pull`**, so a
-scene that has gone stale can spoil a command you typed and are watching, never an
-automatic switch.
+`pull` and `to` are the **same lookup** against the same map, differing only in
+which name they look up: `pull` asks for `machine.this`, `to mac` asks for `mac`.
+There is no second table, so the two can never disagree about where a machine is.
+
+They stay separate *verbs* on purpose, and that separation is a safety property
+rather than a style choice. `machine.this` describes inputs on hardware this
+computer is plugged into and can therefore be sure of. Any other name describes
+inputs on hardware it cannot observe, which go stale the moment someone moves a
+cable over there. **The trigger can only ever run `pull`**, so a name that has gone
+stale can spoil a command you typed and are watching, never an automatic switch.
+
+That is also why `display.<label>.self` and `scene.*` are both gone. They were two
+different shapes for one fact — "machine M is on input V of display D" — and two
+representations of the same fact can disagree. A mixed arrangement is a
+composition, not a stored object: `trigger-kvm to mac -Only lg`.
 
 ## Verified behaviour
 

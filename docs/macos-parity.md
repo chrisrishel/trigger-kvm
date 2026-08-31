@@ -52,7 +52,10 @@ trigger.settle   = 0.75
 
 install.start    = login        # boot | login -- a configured value like any other
 
-scene.windows.lg = 0xD0         # manual only -- the trigger never reads scenes
+machine.this            = mac   # what this computer is called below
+display.lg.input.0xD0   = windows
+display.lg.input.0xD1   = mac   # the WHOLE map: pull looks up machine.this,
+                                # `to windows` looks up windows
 ```
 
 Flat `key = value`, `#` comments, deliberately not TOML/JSON — it is read on every
@@ -102,9 +105,9 @@ are the cross-platform surface:
 
 ```
 trigger-kvm pull                 pull every configured monitor to THIS machine
-trigger-kvm to windows           apply a saved scene
+trigger-kvm to windows           point them at the machine called "windows"
 trigger-kvm list                 connected displays, with their identifiers
-trigger-kvm status               tier, coverage, version, config
+trigger-kvm status               when it starts, what that covers, version
 trigger-kvm discover             what is attached, in the form the config wants
 trigger-kvm logs
 trigger-kvm pause                stand the watcher down to test one by hand
@@ -156,13 +159,18 @@ rather than letting it throw.
 
 ## 4. The invariants — do not break these
 
-- **Each machine knows only its own inputs.** `pull` reads only `self`. A scene is
-  the one place a machine records another machine's inputs; scenes are local,
-  optional, and **unreachable from the trigger path**. If the LaunchAgent can ever
-  invoke a scene, a stale scene becomes able to cause an automatic switch to a dead
-  input. Keep the verbs separate.
+- **One map, two verbs.** A monitor's inputs are named after the machines on them,
+  and `pull` is `to <machine.this>` -- the same lookup with a different name. Do not
+  add a second table (the Windows side had `self` values and `scene.*` blocks, and
+  deleted both: two representations of "machine M is on input V of display D" can
+  disagree, and one cannot).
+- **`to` is unreachable from the trigger path.** A name other than `machine.this`
+  describes inputs on hardware this machine cannot observe, which go stale the
+  moment someone moves a cable over there. If the LaunchAgent can ever invoke one, a
+  stale name becomes able to cause an automatic switch to a dead input. Keep the
+  verbs separate.
 - **Fail closed on partial data.** Resolve every value before sending anything. A
-  scene naming three displays with values for two moves none of them.
+  machine that two displays know about and a third does not moves none of them.
 - **Never treat an unparsed value as zero.** In shell an empty `cfg` result is an
   empty string, and `$((0x))` or an unquoted expansion can quietly become `0` — a
   write aimed at the wrong input, or a match against vendor `0x0000`. Refuse.
@@ -255,7 +263,7 @@ before-first-login and after-logout, and may not be worth the identity problem.
 
 Windows is heading toward an interactive installer: display discovery by
 enumeration, trigger discovery from a filtered list of currently-present removable
-devices, guided input discovery, tier choice, and a re-runnable scene manager. Build
+devices, guided input discovery, when-it-starts, and a re-runnable review. Build
 the macOS equivalent **after** the Windows one settles, and mirror its flow rather
 than inventing a second one.
 

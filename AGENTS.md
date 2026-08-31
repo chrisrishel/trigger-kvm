@@ -21,6 +21,14 @@ That is a service/factory channel. Sweeping it has bricked LG monitors — the
 already documented in `displays.toml`. If you need a value that isn't there, ask;
 do not go looking for it experimentally.
 
+**1a. A monitor's inputs are named after the MACHINES on them, and that one map
+answers both verbs.** `display.lg.input.0xD1 = mac`, `machine.this = pc`. `pull` is
+`to <machine.this>`; same lookup, same code path. There is no `scene.*` and no
+`display.<label>.self` -- both were deleted, because two representations of "machine
+M is on input V of display D" can disagree and one cannot. `to` is still MANUAL
+ONLY: a trigger may never reach a name other than `machine.this`, because a name
+describes hardware this machine cannot observe.
+
 **1b. A manufacturer dialect is OFFERED, never probed, and only after standard
 DDC/CI has been shown not to work.** `$DIALECTS` in `install.ps1` is keyed by EDID
 **vendor** -- never vendor:product, which was one row per monitor someone here
@@ -157,9 +165,9 @@ settle, because a spurious arrival would yank the displays. A hotkey is delibera
 and discrete and needs neither. What sources share is the process lifetime, the
 single-instance lock, and the fire.
 
-**Whatever the source, it runs `pull` -- never a scene.** A scene names inputs on
-hardware this machine cannot observe, so a stale one must never be reachable from
-anything automatic.
+**Whatever the source, it runs `pull` -- never another machine's name.** A name
+other than `machine.this` describes inputs on hardware this machine cannot observe,
+so a stale one must never be reachable from anything automatic.
 
 **Bluetooth is BUILT, and matches on CONNECTED, never on paired.** `event-watch.ps1`
 takes `bt:AAAAAAAAAAAA` entries alongside `usb:VVVV:PPPP` (and bare `VVVV:PPPP`,
@@ -420,7 +428,7 @@ cd windows
 trigger-kvm configure / status / discover / restart / logs / pause / uninstall
 trigger-kvm configure -Fresh               # ask everything again, pre-fill nothing
 .\trigger-kvm.ps1 pull                 # pull configured monitors to this machine
-.\trigger-kvm.ps1 to mac               # apply a saved scene (manual only)
+.\trigger-kvm.ps1 to mac               # point them at the machine "mac" (manual)
 .\trigger-kvm.ps1 pull -Only asus      # one monitor only -- use when testing
 .\trigger-kvm.ps1 pull -WhatIf         # resolve + print packets, send nothing
 ```
@@ -481,15 +489,15 @@ re-enables and restarts.
   cross-machine* knowledge — which methods and VCP codes a given monitor model
   needs, and which values are safe to send it. Do not push discovered, per-desk
   facts back into either the scripts or `displays.toml`.
-- **`pull` and `to` are separate verbs for a safety reason.** `pull` uses only
-  `self` values, so it holds no belief about any other machine and cannot be
-  invalidated by a change over there. `to <scene>` names inputs on hardware this
-  machine cannot observe. The trigger may only ever run `pull` — never wire a scene
-  into the trigger path, or a stale scene becomes able to cause an automatic switch
-  to a dead input.
-- **The install tier is a property of the HOST, not the switcher.** All tier logic
+- **`pull` and `to` are one lookup but two verbs, for a safety reason.** Both read
+  the same input map; `pull` asks for `machine.this`, which describes hardware this
+  computer is plugged into and can be sure of. Any other name describes inputs on
+  hardware it cannot observe. The trigger may only ever run `pull` — never wire
+  another machine's name into the trigger path, or a stale one becomes able to cause
+  an automatic switch to a dead input.
+- **When it starts is a property of the HOST, not the switcher.** All of that logic
   lives in `windows/install.ps1`. Nothing in `trigger-kvm.ps1` or
-  `event-watch.ps1` knows or asks which tier it runs under, and if either ever needs
+  `event-watch.ps1` knows or asks when it was started, and if either ever needs
   to, the abstraction is wrong — stop and rethink rather than adding the branch.
   Tiers are mutually exclusive by construction: they share one task name, so
   installing either replaces the other. Two live watchers in different sessions

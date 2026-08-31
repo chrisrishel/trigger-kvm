@@ -17,11 +17,11 @@
 #   display.<label>.product  EDID product id
 #   display.<label>.name     human name, for logs
 #   display.<label>.method   standard | lg-alt
-#   display.<label>.self     input value where THIS machine is
-#   display.<label>.input.<value>  your name for that input, e.g.
-#                            display.lg.input.0xd1 = Mac. Value-first so the name
-#                            survives verbatim: keys are lower-cased, values are not
-#   scene.<name>.<label>     input value for that display in that scene
+#   display.<label>.input.<value>  which machine is on that input, e.g.
+#                            display.lg.input.0xd1 = mac. This is the WHOLE map:
+#                            `pull` looks up machine.this in it, `to mac` looks up
+#                            mac, and there is no second table to disagree with it
+#   machine.this             what this computer is called in those input maps
 #   trigger.device           usb:VVVV:PPPP / VVVV:PPPP / bt:AAAAAAAAAAAA, comma-sep
 #   trigger.debounce         seconds
 #   trigger.settle           seconds
