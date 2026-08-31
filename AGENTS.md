@@ -169,15 +169,32 @@ single-instance lock, and the fire.
 other than `computer.this` describes inputs on hardware this machine cannot observe,
 so a stale one must never be reachable from anything automatic.
 
-**On macOS, IOBluetooth is unusable from a command-line binary.**
-`[IOBluetoothDevice pairedDevices]` NEVER RETURNS -- measured 2026-08-31, twice,
-with and without a `CFRunLoopRun` pumping and an 8s watchdog. Do not reach for
-it again, and do not read its absence as "Bluetooth is not available on macOS".
-`event-watch.c` gets both paired and connected state from
-`system_profiler SPBluetoothDataType -xml`, which answers in about 60ms and is a
-property list, so CoreFoundation parses it with no JSON dependency. There is no
-notification to subscribe to on that route, so Bluetooth is POLLED -- and only
-when a `bt:` device is configured, so a USB-only setup pays nothing for it.
+**On macOS, IOBluetooth cannot be used from a LAUNCHAGENT, and the reason is
+TCC rather than the API.** IOBluetooth needs per-caller Bluetooth permission.
+From a terminal macOS prompts for it, and once granted the API is perfectly
+fine -- a bare `[IOBluetoothDevice pairedDevices]` returns every paired device
+with its connected state, no run loop required. **A LaunchAgent cannot raise
+that prompt, so the call blocks forever.** Measured 2026-08-31 by running one
+probe binary both ways: from a terminal it printed 10 devices; from a
+LaunchAgent, no output, no error, still running.
+
+That is the worst failure shape available here -- the watcher would hang at
+startup with the process still ALIVE, so `KeepAlive` would not restart it and
+the trigger would silently never fire.
+
+So `event-watch.c` gets both paired and connected state from
+`system_profiler SPBluetoothDataType -xml`, which is Apple-signed and carries
+its own entitlement: it answered from a terminal before that prompt had ever
+been accepted, and answers from a LaunchAgent (17 rows, exited cleanly). It
+costs about 60ms and is a property list, so CoreFoundation parses it with no
+JSON dependency. There is no notification to subscribe to on that route, so
+Bluetooth is POLLED -- and only when a `bt:` device is configured, so a USB-only
+setup pays nothing for it.
+
+**Do not "modernise" this onto IOBluetooth.** It will work in every test you run
+by hand and hang the moment it is installed. This entry previously claimed the
+API simply never returns; that was measured with an unanswered permission prompt
+sitting behind it, and was wrong.
 
 **Bluetooth is BUILT, and matches on CONNECTED, never on paired.** `event-watch.ps1`
 takes `bt:AAAAAAAAAAAA` entries alongside `usb:VVVV:PPPP` (and bare `VVVV:PPPP`,

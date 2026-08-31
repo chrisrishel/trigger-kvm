@@ -204,11 +204,27 @@ static bool usb_present(uint32_t vendor, uint32_t product) {
 
 // --------------------------------------------------------- BT, via plist ----
 //
-// system_profiler, not IOBluetooth. [IOBluetoothDevice pairedDevices] from a
-// command-line binary NEVER RETURNS -- measured 2026-08-31, twice, with and
-// without a run loop pumping and an 8s watchdog. system_profiler answers in
-// about 60ms, and -xml is a property list, so CoreFoundation parses it for us
+// system_profiler, not IOBluetooth -- and the reason is TCC, not the API.
+//
+// IOBluetooth needs per-caller Bluetooth permission. From a terminal macOS
+// PROMPTS for it, and once granted the API is fine: a bare
+// [IOBluetoothDevice pairedDevices] returns every paired device with its
+// connected state, no run loop needed. A LAUNCHAGENT CANNOT RAISE THAT PROMPT,
+// so the call blocks forever -- measured 2026-08-31 by running the same probe
+// binary from a LaunchAgent: no output, no error, still running.
+//
+// That is the worst failure shape available here. The watcher would hang at
+// startup with the process still ALIVE, so KeepAlive would not restart it, and
+// the trigger would silently never fire.
+//
+// system_profiler is Apple-signed and carries its own entitlement: it answered
+// from a terminal before that prompt had ever been accepted, and it answers
+// from a LaunchAgent -- measured the same way, 17 rows, exited cleanly. It also
+// costs about 60ms, and -xml is a property list, so CoreFoundation parses it
 // with no JSON dependency.
+//
+// Do not "modernise" this onto IOBluetooth. It will work perfectly in every
+// test you run by hand and hang the moment it is installed.
 //
 // It answers both questions this project needs and keeps them distinct:
 // firing is on CONNECTED, offering is on PAIRED. Conflating them cost the

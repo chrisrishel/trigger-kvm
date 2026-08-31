@@ -187,12 +187,25 @@ this program rather than keeping a second copy of the enumeration: a second
 implementation would be free to disagree with the one that actually fires.
 
 USB is `IOServiceAddMatchingNotification` on `IOUSBHostDevice`, filtered by
-`idVendor`/`idProduct`. Bluetooth is **polled**, and only when a `bt:` device is
-configured — `[IOBluetoothDevice pairedDevices]` from a command-line binary
-never returns (measured 2026-08-31, twice, with and without a run loop pumping
-and an 8s watchdog), so presence comes from `system_profiler
-SPBluetoothDataType -xml`, which answers in about 60ms and is a property list
-CoreFoundation parses natively.
+`idVendor`/`idProduct`. Bluetooth is **polled** via `system_profiler
+SPBluetoothDataType -xml`, and only when a `bt:` device is configured.
+
+**Not IOBluetooth, and the reason is TCC rather than the API.** IOBluetooth
+needs per-caller Bluetooth permission; from a terminal macOS prompts for it, and
+once granted a bare `[IOBluetoothDevice pairedDevices]` works fine with no run
+loop. **A LaunchAgent cannot raise that prompt, so the call blocks forever** —
+measured 2026-08-31 by running the same probe binary from a LaunchAgent: no
+output, no error, still running. That is the worst failure shape here, because
+the watcher would hang at startup with the process *alive*, so `KeepAlive` would
+not restart it and the trigger would silently never fire.
+
+`system_profiler` is Apple-signed and carries its own entitlement: it answered
+from a terminal before that prompt had ever been accepted, and answers from a
+LaunchAgent (measured the same way — 17 rows, exited cleanly). It costs about
+60ms, and `-xml` is a property list, so CoreFoundation parses it natively.
+
+Do not "modernise" this onto IOBluetooth. It will work perfectly in every test
+run by hand and hang the moment it is installed.
 
 Bluetooth fires on **connected**; the candidate list offers every **paired**
 device with its state shown but not filtered on. Two different questions: a
