@@ -72,6 +72,32 @@ idiomatic per platform — `-Tier` here, `--tier` there — because forcing `--t
 into PowerShell means hand-parsing `$args` and losing parameter binding, validation
 and completion, which is a real cost for a cosmetic gain.
 
+**Only `bin\` goes on PATH, and it holds exactly one file.** Putting the whole
+install directory there would publish every file in it as a global command, because
+`PATHEXT` includes `.VBS` — measured, `launcher.vbs` resolves as a bare `launcher`,
+a generic name that starts the watcher. The `.ps1` files are safe only by *default*;
+anyone who has added `.PS1` to `PATHEXT` would also get `install` and `config` as
+global commands. A `bin` directory with one file in it cannot do any of that.
+
+What ends up on your machine:
+
+```
+%LOCALAPPDATA%\Programs	rigger-kvm\        the program
+    bin	rigger-kvm.cmd                     <- the only thing on PATH
+    trigger-kvm.ps1                         the switcher
+    event-watch.ps1                         the watcher
+    config.ps1                              shared config reader
+    install.ps1                             itself, so uninstall works without the repo
+    launcher.vbs                            console-free shim for the scheduled task
+    version.txt
+
+%LOCALAPPDATA%	rigger-kvm\                 your data -- survives uninstall
+    config
+    trigger-kvm.log
+```
+
+Plus one scheduled task named `trigger-kvm`. That is everything.
+
 **`trigger-kvm` is a `.cmd`**, so it runs from cmd, PowerShell and the Run dialog
 alike with no execution-policy friction. It routes `pull`/`to`/`list` to the
 switcher and everything else to the installer: two scripts behind one command,

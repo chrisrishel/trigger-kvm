@@ -133,6 +133,13 @@ arguments should carry no configuration either.
 what makes the installer's guided discovery safe, and it caught real mistakes on the
 Windows side before anything reached a monitor.
 
+**Put only a `bin` directory on PATH, holding only the launcher.** On Windows,
+putting the whole install directory there published `launcher.vbs` as a global
+`launcher` command, because `PATHEXT` includes `.VBS`. macOS has no PATHEXT, but the
+same principle applies for a different reason: everything in a PATH directory is a
+candidate command, so a directory of implementation files is a directory of
+accidental commands. `~/.local/bin/trigger-kvm` with the rest elsewhere.
+
 **Install self-contained.** The Windows installer copies itself into the install
 directory, so `status` and `uninstall` keep working after the source tree is gone —
 the difference between something you clone and something you install. Do the same.
