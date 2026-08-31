@@ -55,7 +55,12 @@ mutate() {
   if cmp -s "$target" "$target.mutbak"; then
     echo "  ERROR  mutation did not apply: $name"
     checked=$(( checked + 1 )); survived=$(( survived + 1 ))
-  elif case $file in *.c) ! make -B -C "$MAC_DIR" -s >/dev/null 2>&1 ;; *) false ;; esac; then
+  elif case $file in
+         *.c) ! make -B -C "$MAC_DIR" -s >/dev/null 2>&1 ;;
+         *)   ! bash -n "$target" 2>/dev/null ;;
+       esac; then
+    # A mutant that does not build or does not parse tests nothing: the suite
+    # goes red for the wrong reason and the mutation reads as caught.
     echo "  ERROR  mutated source does not build: $name"
     checked=$(( checked + 1 )); survived=$(( survived + 1 ))
   else
@@ -136,6 +141,34 @@ mutate 'watch: candidate list keeps hubs' event-watch.c watcher.tests.sh \
   's@            if (strcasestr(name, "hub")@            if (false@'
 mutate 'watch: rotates by RENAME, breaking launchd open descriptor' event-watch.c watcher.tests.sh \
   's@    int live = open(g_log, O_WRONLY);@    rename(g_log, old); int live = open(g_log, O_WRONLY | O_CREAT, 0644);@'
+
+# --- the menus ---------------------------------------------------------------
+
+mutate 'menu: cursor does not skip separators and disabled rows' lib/menu.sh menu.tests.sh \
+  's@    if \[ -n "${MENU_ITEMS\[$_i\]}" \] && ! menu_is_disabled "$_i"; then _sel+=("$_i"); fi@    _sel+=("$_i")@'
+mutate 'menu: (current) is never drawn' lib/menu.sh menu.tests.sh \
+  's@  if \[ "$_i" = "$_current" \]; then@  if false; then@'
+mutate 'menu: esc is honoured even when the menu is not escapable' lib/menu.sh menu.tests.sh \
+  's@      Escape) if \[ "$_escapable" = "1" \]; then printf .\\n. >&2; MENU_PICK=-1; return 0; fi ;;@      Escape) printf "\\n" >\&2; MENU_PICK=-1; return 0 ;;@'
+mutate 'menu: detail is truncated instead of wrapped' lib/menu.sh menu.tests.sh \
+  's@          sub(/\[ .t\]+\$/, "", line); print line; line = ""@          sub(/[ \t]+$/, "", line); print substr(line, 1, w - 3) "..."; line = ""; break@'
+mutate 'menu: item column fixed at 28, never widened' lib/menu.sh menu.tests.sh \
+  's@    \[ "$_l" -gt "$_iw" \] && _iw=$_l@    :@'
+mutate 'menu: enter on a row ACCEPTS instead of toggling' lib/menu.sh menu.tests.sh \
+  '/^      Enter)$/{n;n;n;s%.*%          :%;}'
+mutate 'menu: Done accepts an empty selection' lib/menu.sh menu.tests.sh \
+  's@        if \[ -n "$_out" \]; then@        if true; then@'
+mutate 'menu: typed fallback accepts a disabled row' lib/menu.sh menu.tests.sh \
+  '/for _s in "${_sel\[@\]}"; do$/s%.*%        for _s in $(seq 0 $(( ${#MENU_ITEMS[@]} - 1 ))); do%'
+
+# --- the real key reader (pty-driven) ----------------------------------------
+
+mutate 'keys: Enter matches only newline, not a terminal carriage return' lib/menu.sh keys.tests.sh \
+  's%13|10)%10)%'
+mutate 'keys: any escape byte is Esc, with no continuation read' lib/menu.sh keys.tests.sh \
+  's%  if \[ "$_b" = "27" \]; then%  if false; then%'
+mutate 'keys: terminal state is never restored' lib/menu.sh keys.tests.sh \
+  's%\[ -n "$_saved" \] && stty "$_saved" </dev/tty 2>/dev/null%:%g'
 
 echo
 if [ "$survived" = "0" ]; then

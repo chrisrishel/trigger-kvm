@@ -76,7 +76,12 @@ fi
 n=0
 for f in $files; do
   n=$(( n + 1 ))
-  if out=$(bash "$f" 2>&1); then
+  # macOS has no timeout(1). A test that wedges -- a menu spinning on a key it
+  # does not recognise, a watcher that never exits -- must fail loudly rather
+  # than hang the run.
+  if out=$(bash "$f" 2>&1 & p=$!
+           ( sleep "${TK_TEST_TIMEOUT:-240}"; kill -9 $p 2>/dev/null ) >/dev/null 2>&1 &
+           w=$!; wait $p; rc=$?; kill $w 2>/dev/null; exit $rc); then
     echo "  PASS  $(basename "$f")"
     [ -n "${TK_TEST_VERBOSE:-}" ] && printf '%s\n' "$out"
   else

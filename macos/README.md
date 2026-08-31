@@ -1,12 +1,12 @@
 # macOS side
 
-> **Being brought to parity with Windows.** Phases 1-3 of
+> **Being brought to parity with Windows.** Phases 1-4 of
 > [`../docs/macos-parity.md`](../docs/macos-parity.md) have landed: the switcher
 > reads the same config file the Windows side writes, the `pull` / `to` / `list`
 > / `discover` / `status` / `restart` / `pause` / `logs` verbs work, and the
-> watcher is config-driven across USB and Bluetooth. The menus, the walkthrough
-> and the checks are still to come. Read that document before changing anything
-> here.
+> watcher is config-driven across USB and Bluetooth, and the menu primitives are
+> built and tested. The walkthrough and the checks are still to come. Read that
+> document before changing anything here.
 
 A LaunchAgent runs `trigger-kvm watch`, which reads the config and execs the
 watcher; the watcher fires `trigger-kvm pull` when a watched device arrives.
@@ -174,6 +174,32 @@ handed in as a source byte, so no caller can aim it at another vendor's panel.
 Setting `method = lg-alt` on a non-LG panel makes the write **refuse**. It does
 not make the write happen. There is a test for that, and a test that the string
 `input-alt` appears in exactly one place in the sources.
+
+## The menus
+
+Every list question in the walkthrough is one of two menus, and in both, **enter
+does what the highlighted row says**. That single rule is the whole design: with
+"space toggles, enter accepts" the first thing people did was accept an empty
+list, because enter is what you press. So a multi-select has no accept key — it
+has a `Done` row you move to.
+
+Both fall back to a typed number when the host cannot read individual keys. That
+is not a nicety: it is what makes the whole flow testable end to end, and `q` is
+the fallback's `esc`.
+
+Nothing in a menu is ever truncated. A long detail wraps at the `", "` between
+items onto continuation lines aligned under the column; an unbreakable single
+item overruns rather than being cut. The review screen exists to let someone
+confirm what is about to be written, and an ellipsis there hides exactly the
+thing they came to check.
+
+**The key reader is driven through a real pty in the tests**, not only stubbed.
+That is not thoroughness for its own sake — it caught a bug that made the
+interactive menu unusable on the first arrow key, while every stubbed test
+passed. `read -rsn1` left the terminal in raw mode, so saving and restoring
+around the escape-sequence read wrote that raw state back permanently, `VMIN`
+stuck at 0, and the next read returned nothing. The reader now reads its own
+byte and manages the terminal itself.
 
 ## Testing
 
