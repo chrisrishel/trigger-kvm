@@ -76,8 +76,10 @@ The watcher assumes a node exists only while the device is attached, so presence
 connected. That holds for USB and fails for Bluetooth: on Windows a *paired* device
 keeps its node forever — AirPods last connected ten months ago and an iPhone three
 years ago both still report `Present=True`. The edge would never fire and the
-trigger would silently never work. Adding Bluetooth needs a different watcher using
-connection-aware APIs, not a wider match pattern. Expect IOKit to have the same
+trigger would silently never work. Adding Bluetooth needs connection-aware APIs, not a wider
+match pattern -- and it belongs as another presence source INSIDE the existing
+watcher, never as a second watcher process, because the debounce is per-process
+and two of them would both fire when a USB and a Bluetooth device arrive together. Expect IOKit to have the same
 distinction between paired and connected, and check it before assuming otherwise.
 
 **The Mac's `self` values are different from the PC's, and that is the whole point.**

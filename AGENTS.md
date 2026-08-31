@@ -112,11 +112,28 @@ audio endpoints read `Present=False` while the parent reads `True`), but they ar
 opaque GUIDs, differ by device class, and appeared twice on this machine under two
 different service-id forms. Matching them is guesswork.
 
-Bluetooth needs a SECOND WATCHER using connection-aware APIs -- WinRT
-`Windows.Devices.Enumeration.DeviceWatcher` with `System.Devices.Aep.IsConnected`,
-or `BluetoothDevice.ConnectionStatusChanged`. That costs nothing architecturally: it
-runs `trigger-kvm.ps1 pull` like any other trigger and touches neither the switcher
-nor the config schema.
+**A second transport belongs in the SAME watcher process, as another presence
+source -- never as a second watcher.** The debounce is in-memory and per-process, so
+two watcher processes would each hold their own window and both fire when a USB
+device and a Bluetooth device arrive together. That is the exact double-fire the
+`Global\` mutex exists to prevent, and the mutex would in fact stop the second
+watcher starting at all. Only "is this device present right now" and "tell me when
+that changes" are transport-specific; the edge, debounce, settle and fire logic is
+shared and must stay shared.
+
+The line that decides process-vs-in-process: the watcher and the switcher are
+separate processes because they share no mutable state. Two presence sources DO
+share state -- the debounce clock and the presence map -- so they belong together.
+
+**Measured obstacle, Windows-specific:** the connection-aware APIs
+(`Windows.Devices.Enumeration.DeviceWatcher` with `System.Devices.Aep.IsConnected`)
+load fine in Windows PowerShell 5.1, but `Register-ObjectEvent` on the watcher fails
+outright with *"Windows PowerShell cannot subscribe to Windows RT events"*, and
+`FindAllAsync` timed out through the `AsTask` bridge. A Bluetooth source therefore
+needs a small inline C# shim to subscribe to the WinRT event and re-raise it as an
+ordinary .NET event that PowerShell can bind. That is the same `Add-Type` idiom the
+NVAPI transport already uses, so it is in-keeping rather than a new dependency --
+but it is real work, not a match-pattern change.
 
 **WMI device notifications DO reach session 0.** Measured 2026-08-30 from an
 unelevated S4U task: 45 indications in 90s, and `Win32_PnPEntity` presence queries
