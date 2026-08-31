@@ -1,14 +1,15 @@
 # macOS side
 
-> **Being brought to parity with Windows.** Phase 1 of
-> [`../docs/macos-parity.md`](../docs/macos-parity.md) has landed: the switcher
-> now reads the same config file the Windows side writes, and the `pull` / `to`
-> / `list` verbs work. `discover`, the config-driven watcher, the menus, the
-> walkthrough and the checks are still to come. Read that document before
-> changing anything here.
+> **Being brought to parity with Windows.** Phases 1-3 of
+> [`../docs/macos-parity.md`](../docs/macos-parity.md) have landed: the switcher
+> reads the same config file the Windows side writes, the `pull` / `to` / `list`
+> / `discover` / `status` / `restart` / `pause` / `logs` verbs work, and the
+> watcher is config-driven across USB and Bluetooth. The menus, the walkthrough
+> and the checks are still to come. Read that document before changing anything
+> here.
 
-A LaunchAgent runs the watcher, which fires `trigger-kvm pull` when a watched
-USB device arrives.
+A LaunchAgent runs `trigger-kvm watch`, which reads the config and execs the
+watcher; the watcher fires `trigger-kvm pull` when a watched device arrives.
 
 ## Requirements
 
@@ -39,9 +40,27 @@ command.
 trigger-kvm pull                 point every configured monitor at THIS computer
 trigger-kvm to pc                point them at another, by name -- MANUAL ONLY
 trigger-kvm list                 what is attached, with EDID ids and names
+trigger-kvm discover             what is attached, in the form the config wants
+trigger-kvm status               is it running, what that covers, version, config
+trigger-kvm restart              make a hand-edited config take effect now
+trigger-kvm logs                 tail the log
+trigger-kvm pause                stand the watcher down to test by hand
 trigger-kvm pull --only asus     one monitor only -- use when testing
 trigger-kvm pull --dry-run       resolve and print the packets, send nothing
 ```
+
+There is no `install` verb, deliberately: installing is what produced the
+command. There is no `apply` step either — everything is read at the point it is
+used, so display edits take effect on the next switch and trigger edits when the
+watcher next starts, which is what `restart` does.
+
+**Autostart is login-only on macOS, and `status` says so rather than pretending
+the tiers match.** The Windows "from boot" tier runs *as the user, unelevated*,
+in session 0 — admin is needed once to register it and nothing elevated runs on
+the switch path. There is no macOS equivalent: a LaunchDaemon starts before
+login but runs as **root**, and the switcher must not run as root to obtain a
+tier. There would be nothing for it to do anyway, since both `display-probe` and
+`m1ddc` use CoreGraphics, which needs a logged-in session.
 
 `pull` and `to` are one lookup but two verbs, and the split is a safety
 property, not style. `computer.this` describes inputs on hardware this Mac is
@@ -85,9 +104,26 @@ exactly the EDID manufacturer and product code; IOKit supplies the panel's own
 name from EDID descriptor tag `0xFC`, which CoreGraphics has no API for. The two
 are joined on vendor+product+serial.
 
-**`usb-watch.c`** — `IOServiceAddMatchingNotification` on `IOUSBHostDevice`,
-filtered by `idVendor`/`idProduct`. Two safety behaviours, both because a
-spurious arrival would yank both displays out from under whatever you're doing:
+**`event-watch.c`** — one process, both transports, and the **one owner of "is
+that device here?"**. `--list` exists so `discover` and the walkthrough can ask
+this program rather than keeping a second copy of the enumeration: a second
+implementation would be free to disagree with the one that actually fires.
+
+USB is `IOServiceAddMatchingNotification` on `IOUSBHostDevice`, filtered by
+`idVendor`/`idProduct`. Bluetooth is **polled**, and only when a `bt:` device is
+configured — `[IOBluetoothDevice pairedDevices]` from a command-line binary
+never returns (measured 2026-08-31, twice, with and without a run loop pumping
+and an 8s watchdog), so presence comes from `system_profiler
+SPBluetoothDataType -xml`, which answers in about 60ms and is a property list
+CoreFoundation parses natively.
+
+Bluetooth fires on **connected**; the candidate list offers every **paired**
+device with its state shown but not filtered on. Two different questions: a
+trigger fires on arrival, so the device that is disconnected right now is
+exactly the one that will produce one.
+
+Two safety behaviours, both because a spurious arrival would yank both displays
+out from under whatever you're doing:
 
 - **debounce** (default 3.0s) — ignore arrivals within N seconds of the last
   fire. Stops two watched devices arriving together from firing twice, and stops
@@ -99,9 +135,33 @@ Devices already present at startup do not fire; the first callback per watch onl
 drains and arms the notification.
 
 ```
-usb-watch --exec PATH [--arg pull] --device VVVV:PPPP [--device ...] \
-          [--debounce SECONDS] [--settle SECONDS] [--verbose]
+event-watch --exec PATH [--arg pull] --device usb:VVVV:PPPP|bt:AAAAAAAAAAAA ... \
+            [--debounce S] [--settle S] [--log PATH] [--max-log-bytes N] [--verbose]
+event-watch --list           what could be a trigger, and exit
+event-watch --test-trigger   report ONE arrival and exit, running nothing
 ```
+
+**Single instance** is a `flock` on
+`~/Library/Application Support/trigger-kvm/watcher.lock`. Note what that means
+here: the kernel releases a `flock` when the holding process dies, however it
+dies, so the **abandoned-lock condition the Windows side has to catch and take
+over does not exist on macOS** — a force-killed watcher leaves no lock behind,
+and there is deliberately no takeover code to go looking for.
+
+**Log rotation** happens at startup and only at startup, after the lock — so a
+redundant start never rotates a live watcher's log, and doing it once per start
+rather than per write means the switcher, appending to the same file, can never
+race it. It rotates by **copy-then-truncate, never rename**: launchd opens
+`StandardErrorPath` once when it starts the job, and the watcher's stderr *is*
+that descriptor, so a rename would leave every later line landing in
+`trigger-kvm.log.1` while the live log stayed empty. Measured 2026-08-31 that
+truncating a file launchd holds open leaves no NUL hole — its writes land at
+offset 0 — which is what makes copy-truncate correct rather than merely
+convenient.
+
+The watcher writes to **stderr only**; `--log` names the file stderr is already
+pointed at, so it knows what to rotate. Writing to both put every line in the
+log twice, which the first real install showed immediately.
 
 ## The service channel
 
@@ -156,8 +216,9 @@ ioreg -p IOUSB -l | grep -E 'idVendor|idProduct'
 `RunAtLoad` starts the watcher at login; `KeepAlive` restarts it if it dies. Both
 verified 2026-08-30 rather than assumed:
 
-- **Respawn after `kill -9`: 0.01s.** launchd replaced the process essentially
-  instantly and incremented its run count.
+- **Respawn after `kill -9`: 0.21s** (re-measured 2026-08-31 against the current
+  agent; an earlier measurement said 0.01s). Well inside the one-minute bound
+  the Windows self-heal trigger provides, and with no code of our own to do it.
 - **Full `make uninstall` → `make install` round trip**: uninstall unloaded the
   agent and removed the plist and the binaries; install rebuilt, reloaded, and
   the watcher logged a fresh start.

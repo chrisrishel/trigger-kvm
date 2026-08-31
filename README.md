@@ -39,9 +39,10 @@ USB switch ──> peripherals ──> whichever machine gets them pulls both di
 | [`docs/macos-parity.md`](docs/macos-parity.md) | The specification for the macOS side: what to build, what it must match, and what it must never do |
 | [`TODO.md`](TODO.md) | Deferred work, each with the trigger that should resurface it |
 | `ideas/` | Exploratory design notes, including `ideas/rejected/` for options deliberately declined |
-| `macos/` | **Behind.** `usb-watch` (IOKit) + `trigger-kvm.sh` (m1ddc), still hardcoded to one desk and unable to read a config this repo writes — see `docs/macos-parity.md` |
+| `macos/` | **Catching up.** `trigger-kvm` (m1ddc) + `event-watch` (IOKit, USB and Bluetooth) + `display-probe` (CoreGraphics/IOKit). Reads the same config the Windows side writes; the walkthrough and the checks are still to come — see `docs/macos-parity.md` |
 | `windows/` | The reference implementation: `event-watch.ps1` (WMI + Bluetooth) + `trigger-kvm.ps1` (aimed NVAPI I2C) + `install.ps1` (the walkthrough) + Scheduled Task |
-| `windows/tests/` | The test suite. `.un.ps1` — no framework, no dependencies |
+| `windows/tests/` | The test suite. `.
+un.ps1` — no framework, no dependencies |
 
 Code is not shared between platforms — macOS goes through `IOAVService`, Windows
 through NVAPI, with no common runtime.
@@ -166,7 +167,7 @@ the first time a machine sleeps.
 
 ### 4. Install on each machine
 
-macOS: [`macos/README.md`](macos/README.md) — `make install`
+macOS: [`macos/README.md`](macos/README.md) — `cd macos && make install`
 
 Windows: [`windows/README.md`](windows/README.md) — `.\install.ps1`
 

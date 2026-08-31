@@ -28,6 +28,18 @@ done
 
 failed=0
 
+# A .mutbak means an interrupted mutation run left a source file MUTATED. Testing
+# that tree would measure the mutant and report whatever it happened to do, so
+# stop loudly instead -- the failure mode this replaces is a green suite, or a
+# baffling red one, against code nobody wrote.
+strays=$(ls "$MAC_DIR"/*.mutbak "$MAC_DIR"/lib/*.mutbak 2>/dev/null || true)
+if [ -n "$strays" ]; then
+  echo "  FAIL  the source tree is MUTATED -- an interrupted mutation run left:"
+  printf '%s\n' "$strays" | while IFS= read -r stray; do printf '        %s\n' "$stray"; done
+  echo "        restore it with: bash tests/mutate.sh --restore-only"
+  exit 1
+fi
+
 # Linting is the shell's answer to Set-StrictMode. The things shellcheck catches
 # -- an unquoted expansion that word-splits, a variable that is never read, a
 # `[ x && y ]` that is not what it looks like -- are exactly the ones that are

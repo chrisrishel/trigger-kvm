@@ -169,6 +169,16 @@ single-instance lock, and the fire.
 other than `computer.this` describes inputs on hardware this machine cannot observe,
 so a stale one must never be reachable from anything automatic.
 
+**On macOS, IOBluetooth is unusable from a command-line binary.**
+`[IOBluetoothDevice pairedDevices]` NEVER RETURNS -- measured 2026-08-31, twice,
+with and without a `CFRunLoopRun` pumping and an 8s watchdog. Do not reach for
+it again, and do not read its absence as "Bluetooth is not available on macOS".
+`event-watch.c` gets both paired and connected state from
+`system_profiler SPBluetoothDataType -xml`, which answers in about 60ms and is a
+property list, so CoreFoundation parses it with no JSON dependency. There is no
+notification to subscribe to on that route, so Bluetooth is POLLED -- and only
+when a `bt:` device is configured, so a USB-only setup pays nothing for it.
+
 **Bluetooth is BUILT, and matches on CONNECTED, never on paired.** `event-watch.ps1`
 takes `bt:AAAAAAAAAAAA` entries alongside `usb:VVVV:PPPP` (and bare `VVVV:PPPP`,
 which still means usb). Connection state comes from the classic Win32
@@ -333,17 +343,42 @@ rather than by execution context, and what it actually tracks is not established
 here. `isConnected` (bit 6) was stable across every run and every context. Use that.
 See `ideas/nvapi-transport.md`.
 
-**Windows rotates its log; macOS still does not.**
-`%LOCALAPPDATA%\trigger-kvm\trigger-kvm.log` is rotated by `event-watch.ps1` at
+**Both platforms rotate their log, and macOS must do it by TRUNCATING, not by
+renaming.** Windows rotates `%LOCALAPPDATA%\trigger-kvm\trigger-kvm.log` at
 startup once it passes `-MaxLogBytes` (default 1MB), keeping one generation as
-`.1`. `~/Library/Logs/trigger-kvm.log` on macOS is still appended to forever.
-Output is a few lines per switch so the macOS growth is slow, but it is unbounded.
+`.1`, by renaming. macOS keeps the same shape but cannot use a rename: launchd
+opens `StandardErrorPath` ONCE, when it starts the job, and the watcher's stderr
+IS that descriptor. Renaming would leave it pointing at the renamed inode, so
+every line after the first rotation would land in `trigger-kvm.log.1` while the
+live log stayed empty -- a rotation that silently swaps which file is the log.
+`event-watch.c` copies then `ftruncate`s, which keeps the inode.
+
+Measured 2026-08-31 rather than assumed, because copy-truncate is only correct
+if the holder reopens or appends: truncating a file launchd holds open through
+`StandardErrorPath` leaves NO NUL hole -- a throwaway agent writing a line a
+second, truncated mid-flight, resumed at offset 0 with zero NUL bytes in the
+file.
 
 Rotation happens at watcher startup and nowhere else, for two reasons worth not
-undoing: it sits *after* the single-instance mutex, so the installer's 1-minute
-self-heal tick never rotates while a watcher is alive; and doing it once per start
-rather than per write means the switcher -- a separate process appending to the
-same file -- can never race a rename mid-switch.
+undoing: it sits *after* the single-instance lock, so a redundant start never
+rotates while a watcher is alive; and doing it once per start rather than per
+write means the switcher -- a separate process writing to the same file -- can
+never race it mid-switch.
+
+**The macOS watcher writes to STDERR ONLY, and `--log` names the file stderr is
+already pointed at.** It exists so the watcher knows what to rotate, not as a
+second place to write. Writing to both put every line in the log twice, which
+the first real install showed immediately. It also matters for ordering: the
+switcher the watcher spawns inherits stderr, so one stream keeps an arrival and
+the switch it caused in the order they happened.
+
+**An abandoned lock is a WINDOWS condition and has no macOS equivalent. Do not
+port the takeover code.** Windows uses a named mutex, which outlives its owner
+and throws `AbandonedMutexException` at the next acquirer. macOS uses `flock`,
+which the kernel releases when the holding process dies however it dies -- so a
+force-killed watcher leaves no lock behind and there is nothing to take over.
+There is deliberately no takeover code in `event-watch.c`; adding some would be
+solving a problem this platform does not have.
 
 **Both switchers now address exactly one display.** `m1ddc display <uuid> set ...`
 always did; the Windows LG path does since 2026-08-30, by aiming the NVAPI I2C
@@ -399,25 +434,64 @@ contract. If the map outgrows a single readable file, graduate it to `specs/`.
 
 ```sh
 cd macos
-make                                      # build usb-watch
+make                                      # build event-watch and display-probe
+make test                                 # shellcheck + the suite; no hardware needed
+make mutate                               # reintroduce each bug the suite should catch
 make plist PLIST=/tmp/t.plist             # generate + lint the LaunchAgent, loads nothing
-make install                              # build, install to ~/.local/bin, load the agent
+make install                              # build, install, load the agent
 make status / make logs / make uninstall
-./trigger-kvm.sh mac | windows        # manual switch
+
+trigger-kvm pull                          # pull configured monitors here
+trigger-kvm to pc                         # point them at the computer "pc" (manual)
+trigger-kvm pull --only asus              # one monitor only — use when testing
+trigger-kvm pull --dry-run                # resolve + print packets, send nothing
+trigger-kvm discover / status / restart / logs / pause
 ```
 
-`usb-watch` must compile clean under `-Wall -Wextra`. Verify the plist with
+Both C programs must compile clean under `-Wall -Wextra`. Verify the plist with
 `plutil -lint` before claiming an install path works — a malformed plist fails
 silently at load.
+
+There is a test suite, and it runs without hardware:
+
+```sh
+cd macos && bash tests/run.sh
+```
+
+It **cannot move a monitor**: `M1DDC` points at a recorder and `display-probe` at
+a fixture, so even a test that drives the whole program through a path nobody
+anticipated writes a line to a file instead of a packet to a panel. That is
+deliberately stronger than stubbing one function, which is what the Windows suite
+does.
+
+The harness runs `set -euo pipefail` and `shellcheck`, because the scripts do —
+the same reasoning as `Set-StrictMode -Version Latest` on the other side.
+
+Add to it when you change anything, and then MUTATE the thing you changed and
+confirm the new test fails. `tests/mutate.sh` does that mechanically for every
+bug the suite is supposed to catch; all of them must be caught.
+
+**An interrupted `mutate.sh` leaves the source MUTATED.** A run killed outright
+cannot run its trap, and the next `make` then builds the mutant — which cost an
+hour here chasing a single-instance lock bug that did not exist. `tests/run.sh`
+refuses to run while a `.mutbak` is present, and `mutate.sh` restores strays on
+startup. Do not remove either guard.
 
 To exercise the watcher without installing:
 
 ```sh
-./usb-watch --exec /bin/echo --arg TEST --device 046d:0843 --verbose
+trigger-kvm pause                         # stand the installed watcher down
+./event-watch --exec /bin/echo --arg TEST --device usb:046d:c547 --verbose
+trigger-kvm restart                       # restore it afterwards
 ```
 
-It should log `armed ... (N already present, not firing)` and **not** fire for
-devices that were already plugged in.
+`046d:c547` is the keyboard receiver, which is always present, so this is the
+direct check that already-present devices do not fire: it should log
+`armed (N already present, not firing)` and **not** fire.
+
+`pause` rather than `kill`, and the difference matters here too: `KeepAlive`
+restarts a killed watcher in about a fifth of a second, so killing it is not
+standing it down. `pause` unloads the agent; `restart` bootstraps it again.
 
 ### Windows
 
@@ -538,7 +612,12 @@ re-enables and restarts.
   before-first-login and
   after-logoff at the cost of admin *to register* (it still runs unelevated). Do not
   change which is the default without asking — no-admin is a deliberate posture.
-  macOS remains post-login only.
+  macOS remains post-login only, and `trigger-kvm status` SAYS SO rather than
+  implying the tiers match: a LaunchDaemon starts before login but runs as ROOT,
+  which is not the Windows property (unelevated, as the user, in session 0), and
+  the switcher must never run as root to obtain a tier. There would be nothing
+  for it to do anyway -- `display-probe` and `m1ddc` both use CoreGraphics,
+  which needs a logged-in session.
 
   The old reasoning against pre-login (session 0 has no `HMONITOR`) was true of the
   `dxva2` path, which no longer exists. Measured 2026-08-30: NVAPI both enumerates

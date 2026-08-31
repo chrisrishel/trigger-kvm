@@ -7,29 +7,25 @@ PLIST   := $(LADIR)/$(LABEL).plist
 LOGDIR  := $(HOME)/Library/Logs
 UID     := $(shell id -u)
 
-# Watched USB devices -- the peripherals that actually move through the USB
-# switch. Only used by the plist target below, and only until the walkthrough
-# writes them into the config; the watcher reads them from there.
-DEVICES  := --device 046d:0843 --device 1235:820a
-DEBOUNCE := 3.0
-SETTLE   := 0.75
-
 CFLAGS  := -O2 -Wall -Wextra
 
 .PHONY: all clean test lint install uninstall status logs plist
 
-all: usb-watch display-probe
+all: event-watch display-probe
 
 # Identity and the m1ddc handle in one place. See the header comment for why it
 # uses CoreGraphics and IOKit together rather than either alone.
 display-probe: display-probe.c
 	clang $(CFLAGS) -o $@ $< -framework CoreFoundation -framework IOKit -framework ApplicationServices
 
-usb-watch: usb-watch.c
+# USB via IOKit notifications, Bluetooth by polling system_profiler. One owner
+# of "is that device here?", so the list the walkthrough offers and the presence
+# that actually fires can never disagree.
+event-watch: event-watch.c
 	clang $(CFLAGS) -o $@ $< -framework IOKit -framework CoreFoundation
 
 clean:
-	rm -f usb-watch display-probe
+	rm -f event-watch display-probe
 
 # The suite runs without hardware and cannot move a monitor: it points M1DDC at
 # a recorder and display-probe at a fixture.
@@ -49,6 +45,11 @@ mutate:
 # validated without loading anything:
 #     make plist PLIST=/tmp/t.plist && plutil -lint /tmp/t.plist
 #
+# The agent runs `trigger-kvm watch`, which reads the config and execs the
+# watcher. So NO configuration is baked into the plist: which devices to watch,
+# the debounce and the settle all live in the config, and an edit takes effect
+# on the next `trigger-kvm restart`. That is why there is no apply step.
+#
 # The watcher runs `trigger-kvm pull` and nothing else. Never another computer's
 # name: a name other than computer.this describes inputs on hardware this
 # machine cannot observe, and a stale one would then be able to cause an
@@ -61,12 +62,8 @@ plist:
 	  '<plist version="1.0"><dict>' \
 	  '  <key>Label</key><string>$(LABEL)</string>' \
 	  '  <key>ProgramArguments</key><array>' \
-	  '    <string>$(LIBDIR)/usb-watch</string>' \
-	  '    <string>--exec</string><string>$(LIBDIR)/trigger-kvm</string>' \
-	  '    <string>--arg</string><string>pull</string>' \
-	  '    <string>--debounce</string><string>$(DEBOUNCE)</string>' \
-	  '    <string>--settle</string><string>$(SETTLE)</string>' \
-	  $(foreach d,$(DEVICES),'    <string>$(d)</string>') \
+	  '    <string>$(LIBDIR)/trigger-kvm</string>' \
+	  '    <string>watch</string>' \
 	  '  </array>' \
 	  '  <key>RunAtLoad</key><true/>' \
 	  '  <key>KeepAlive</key><true/>' \
@@ -81,7 +78,7 @@ plist:
 install: all plist
 	@mkdir -p $(LIBDIR)/lib $(BINDIR) $(LOGDIR)
 	install -m 755 trigger-kvm    $(LIBDIR)/trigger-kvm
-	install -m 755 usb-watch      $(LIBDIR)/usb-watch
+	install -m 755 event-watch    $(LIBDIR)/event-watch
 	install -m 755 display-probe  $(LIBDIR)/display-probe
 	install -m 644 lib/*.sh       $(LIBDIR)/lib/
 	ln -sf $(LIBDIR)/trigger-kvm  $(BINDIR)/trigger-kvm

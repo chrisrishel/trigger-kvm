@@ -49,17 +49,18 @@ set -euo pipefail
 # Resolved through symlinks, because the thing on PATH is a symlink to the
 # installed copy and $0 would otherwise point at the link's directory, where
 # lib/ is not.
-tk_self() {
+tk_resolve_self() {
   _p=$0
   while [ -L "$_p" ]; do
     _d=$(cd -P "$(dirname "$_p")" && pwd)
     _p=$(readlink "$_p")
     case $_p in /*) ;; *) _p="$_d/$_p" ;; esac
   done
-  printf '%s\n' "$(cd -P "$(dirname "$_p")" && pwd)"
+  printf '%s/%s\n' "$(cd -P "$(dirname "$_p")" && pwd)" "$(basename "$_p")"
 }
 
-TK_ROOT=$(tk_self)
+TK_SELF=$(tk_resolve_self)
+TK_ROOT=$(dirname "$TK_SELF")
 # Overridable so the test suite can point the helpers at recorders. That is the
 # same reason M1DDC is overridable, and it is what lets the tests drive the real
 # program end to end while being physically unable to reach a monitor.
@@ -72,6 +73,8 @@ TK_WATCHER=${TK_WATCHER:-$TK_ROOT/event-watch}
 . "$TK_ROOT/lib/config.sh"
 # shellcheck source=lib/display.sh
 . "$TK_ROOT/lib/display.sh"
+# shellcheck source=lib/manage.sh
+. "$TK_ROOT/lib/manage.sh"
 
 # --- arguments ---------------------------------------------------------------
 
@@ -82,11 +85,24 @@ usage: trigger-kvm <verb> [options]
   pull                  point every configured monitor at THIS computer
   to <computer>         point them at another, by name (manual only)
   list                  connected displays, with their identifiers
+  discover              what is attached, in the form the config wants
+  status                is it running, what that covers, version, config
+  restart               make a hand-edited config take effect now
+  logs                  tail the log
+  pause                 stand the watcher down to test by hand
 
 options:
   --only <label>        one configured display only
   --dry-run             resolve and print the packets, send nothing
   --config <path>       use this config instead of the default
+
+There is no `install` verb, deliberately: installing is what produced this
+command. Upgrading and repairing both mean "fetch the source and run its
+installer".
+
+There is no `apply` step either. Everything is read at the point it is used:
+display edits take effect on the next switch, trigger edits when the watcher
+next starts -- and `restart` does that.
 EOF
   exit 2
 }
@@ -128,16 +144,13 @@ config_load "$CONFIG"
 # you can see what is actually attached in the exact form the config wants, and
 # so the walkthrough has one place to get that from rather than a second copy of
 # the enumeration.
-cmd_list() {
-  _found=$(display_enumerate) || exit 2
+# The table of what is attached. Split out from cmd_list so `discover` can show
+# the same thing without a second copy of the formatting.
+cmd_list_table() {
+  _found=$(display_enumerate) || return 1
   if [ -z "$_found" ]; then
     tk_log 'no external displays found'
-    exit 2
-  fi
-
-  if [ "$RAW" = "1" ]; then
-    printf '%s\n' "$_found"
-    exit 0
+    return 1
   fi
 
   # What the config already claims, so a row can say which label it is.
@@ -160,10 +173,27 @@ cmd_list() {
     [ -n "$_name" ] || _name="($_mfg, unnamed)"
     printf '  0x%s   0x%s    %-11s %-22s %s\n' "$_v" "$_p" "${_conn:--}" "$_name" "$_as"
   done
+  return 0
+}
+
+# Reads nothing from the config and writes nothing to any monitor. It exists so
+# you can see what is actually attached in the exact form the config wants, and
+# so the walkthrough has one place to get that from rather than a second copy of
+# the enumeration.
+cmd_list() {
+  if [ "$RAW" = "1" ]; then
+    _found=$(display_enumerate) || exit 2
+    [ -n "$_found" ] || exit 2
+    printf '%s\n' "$_found"
+    exit 0
+  fi
+
+  cmd_list_table || exit 2
+
   printf '\n'
   echo 'To add one, put this in the config and name the input each computer is on:'
   printf '\n'
-  _ex=$(printf '%s\n' "$_found" | head -1)
+  _ex=$(display_enumerate | head -1)
   printf '    display.<label>.vendor  = 0x%s\n' "$(display_field "$_ex" 1)"
   printf '    display.<label>.product = 0x%s\n' "$(display_field "$_ex" 2)"
   echo  '    display.<label>.name    = <a name for logs>'
@@ -261,5 +291,11 @@ EOF
 case $VERB in
   list)          cmd_list ;;
   pull|to|set)   cmd_switch ;;
+  discover)      cmd_discover ;;
+  status)        cmd_status ;;
+  restart)       cmd_restart ;;
+  pause)         cmd_pause ;;
+  logs)          cmd_logs ;;
+  watch)         cmd_watch ;;
   *) printf 'trigger-kvm: unknown verb %s\n' "$VERB" >&2; usage ;;
 esac

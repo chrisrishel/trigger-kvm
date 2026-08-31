@@ -20,11 +20,28 @@ set -uo pipefail
 HERE=$(cd -P "$(dirname "$0")" && pwd)
 MAC_DIR=$(dirname "$HERE")
 FILTER=${1:-}
+[ "$FILTER" = "--restore-only" ] && FILTER="__none__"
 
 survived=0
 checked=0
 
+# A run that is killed outright (SIGKILL, a watchdog, a closed terminal) cannot
+# run its trap, and would leave a MUTATED source and a mutated binary behind --
+# which then silently becomes what the next test run measures. That happened
+# once and cost an hour chasing a lock bug that did not exist. So: restore
+# anything left over before doing anything else, and say so.
+for bak in "$MAC_DIR"/*.mutbak "$MAC_DIR"/lib/*.mutbak "$MAC_DIR"/tests/*.mutbak; do
+  [ -f "$bak" ] || continue
+  echo "  restoring ${bak%.mutbak} left mutated by an interrupted run"
+  mv -f "$bak" "${bak%.mutbak}"
+done
+make -B -C "$MAC_DIR" -s >/dev/null 2>&1 || true
+
 # mutate <name> <file> <suite> <sed-expression>
+#
+# A .c target is rebuilt after the edit and rebuilt again from the restored
+# source afterwards, so a mutation run never leaves a mutated binary behind for
+# the next test -- or for the developer.
 mutate() {
   name=$1; file=$2; suite=$3; expr=$4
   case $name in *"$FILTER"*) ;; *) return 0 ;; esac
@@ -32,12 +49,15 @@ mutate() {
   target="$MAC_DIR/$file"
   cp "$target" "$target.mutbak"
   # shellcheck disable=SC2064
-  trap "mv -f '$target.mutbak' '$target' 2>/dev/null" EXIT
+  trap "mv -f '$target.mutbak' '$target' 2>/dev/null; make -B -C '$MAC_DIR' -s >/dev/null 2>&1" EXIT INT TERM HUP
 
   sed -i '' "$expr" "$target"
   if cmp -s "$target" "$target.mutbak"; then
     echo "  ERROR  mutation did not apply: $name"
-    survived=$(( survived + 1 ))
+    checked=$(( checked + 1 )); survived=$(( survived + 1 ))
+  elif case $file in *.c) ! make -B -C "$MAC_DIR" -s >/dev/null 2>&1 ;; *) false ;; esac; then
+    echo "  ERROR  mutated source does not build: $name"
+    checked=$(( checked + 1 )); survived=$(( survived + 1 ))
   else
     checked=$(( checked + 1 ))
     if bash "$HERE/$suite" >/tmp/tk-mutate.out 2>&1; then
@@ -49,7 +69,8 @@ mutate() {
   fi
 
   mv -f "$target.mutbak" "$target"
-  trap - EXIT
+  case $file in *.c) make -B -C "$MAC_DIR" -s >/dev/null 2>&1 || true ;; esac
+  trap - EXIT INT TERM HUP
 }
 
 # --- the config reader -------------------------------------------------------
@@ -96,6 +117,25 @@ mutate 'switch: writes sent once, not twice' lib/display.sh switch.tests.sh \
 
 mutate 'switch: unresolvable value moves the panels it CAN resolve' trigger-kvm switch.tests.sh \
   's|        tk_log "REFUSING: .\$_l. has no input named|        continue \# |'
+
+# --- the watcher -------------------------------------------------------------
+
+mutate 'watch: no single-instance lock' event-watch.c watcher.tests.sh \
+  's@} else if (flock(lockfd, LOCK_EX | LOCK_NB) != 0) {@} else if (false) {@'
+mutate 'watch: rotates the log BEFORE taking the lock' event-watch.c watcher.tests.sh \
+  '/another watcher is already running/{n;s@return 0;@@;}'
+mutate 'watch: fires for a device already present at startup' event-watch.c watcher.tests.sh \
+  's|    if (!w->primed) {|    if (false) {|'
+mutate 'watch: one-shot runs the exec' event-watch.c watcher.tests.sh \
+  's@    if (g_testmode) {@    if (g_testmode) { run_exec();@'
+mutate 'watch: one-shot rotates the log' event-watch.c watcher.tests.sh \
+  's@    if (g_testmode) {@    if (g_testmode) { if (g_log[0]) rotate_log();@'
+mutate 'watch: candidate list filters Bluetooth to connected only' event-watch.c watcher.tests.sh \
+  's|        bt_each(items, CFSTR("device_not_connected"), false, bt_row, NULL);||'
+mutate 'watch: candidate list keeps hubs' event-watch.c watcher.tests.sh \
+  's@            if (strcasestr(name, "hub")@            if (false@'
+mutate 'watch: rotates by RENAME, breaking launchd open descriptor' event-watch.c watcher.tests.sh \
+  's@    int live = open(g_log, O_WRONLY);@    rename(g_log, old); int live = open(g_log, O_WRONLY | O_CREAT, 0644);@'
 
 echo
 if [ "$survived" = "0" ]; then

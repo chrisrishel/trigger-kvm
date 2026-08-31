@@ -164,6 +164,10 @@ display.asus.name    = PG42UQ
 display.asus.method  = standard
 display.asus.input.0x0F = mac
 display.asus.input.0x11 = pc
+
+trigger.device   = usb:046d:0843, usb:1235:820a
+trigger.debounce = 3.0
+trigger.settle   = 0.75
 '
 
 # Run trigger-kvm, capturing stdout+stderr, never failing the harness on a

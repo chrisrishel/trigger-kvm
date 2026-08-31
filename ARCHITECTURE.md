@@ -82,8 +82,10 @@ reaches the joystick.
 ```
 displays.toml          researched model knowledge — shared by both platforms
 ├── macos/
-│   ├── usb-watch.c       watches for events →  execs the switcher
-│   └── trigger-kvm.sh    drives m1ddc       →  sends the DDC writes
+│   ├── event-watch.c     watches for events →  execs the switcher
+│   ├── display-probe.c   EDID + m1ddc handle → identity, never an index
+│   ├── trigger-kvm       the one command    →  every verb
+│   └── lib/*.sh          config, display, manage
 └── windows/
     ├── event-watch.ps1   watches for events →  execs the switcher
     ├── trigger-kvm.ps1   aimed NVAPI I2C, both panels → sends the DDC writes
@@ -141,7 +143,7 @@ stale one must never be reachable from anything automatic. Nothing in the trigge
 path takes a name at all — `pull` looks up `computer.this` — which is why that holds
 by construction rather than by discipline.
 
-macOS is already built this way and its name undersells it: `usb-watch.c` runs a
+macOS is already built this way: `event-watch.c` runs a
 `CFRunLoop` with an `IONotificationPort` source and a settle timer source already
 multiplexed. Adding an `IOBluetooth` connect notification or a hotkey is another
 `CFRunLoopAddSource`, in the same process, by design.
