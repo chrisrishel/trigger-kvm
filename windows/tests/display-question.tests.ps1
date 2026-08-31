@@ -26,7 +26,7 @@ function Ask {
     Reset-Said; Reset-Sent
     Set-Answers $Answers
     return (Test-DisplayInput -Label 'lg' -Name 'LG ULTRAGEAR+' -Candidate '0xD1' `
-                              -CandidateName 'mac' -Current '0xD0' -ThisName 'pc' -IsMachine)
+                              -CandidateName 'mac' -Current '0xD0' -ThisName 'pc' -IsComputer)
 }
 
 # ---- it asks what was watched, in the order it happened ----------------------

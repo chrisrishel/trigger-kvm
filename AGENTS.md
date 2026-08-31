@@ -565,6 +565,27 @@ dead in the same file. Pair it with a structural check for duplicate
 definitions: `windows/tests/conventions.tests.ps1` is that half, walking the AST
 for two top-level definitions of one name.
 
+**A SIMPLE PowerShell function SWALLOWS an undeclared named argument into
+`$args` without a word. Measured 2026-08-31.** `Test-Simple -A hello -ThisName
+world` binds `$A`, leaves `-ThisName world` in `$args`, and does not throw; an
+`[CmdletBinding()]` function throws `A parameter cannot be found that matches
+parameter name 'ThisName'`. So a caller left on an old parameter name goes on
+working and quietly loses whatever that parameter carried.
+
+This has bitten twice. It is why `Test-OneComputer`'s `-ThisName` went nowhere
+while a shadowed `Test-DisplayInput` was live. And renaming `-IsMachine` to
+`-IsComputer` reproduced it exactly: one caller left on the old name, the whole
+suite still green, and the walkthrough asking the human the wrong question about
+their own monitors.
+
+**A rename's only protection is the reference sweep, and a sweep is a thing you
+did once.** `Test-DisplayInput` therefore carries `[CmdletBinding()]`, and so do
+its test stubs -- a simple stub swallows it in exactly the same way, so making
+only the real one strict catches nothing. This is targeted, not a policy: that
+switch decides which question a human is asked, and loud is the only safe
+direction for it. Do not remove it, and prefer it on any future parameter with
+the same property.
+
 **A test harness can hide a shadow rather than reveal it.** `Import-Subject` in
 `windows/tests/lib.ps1` pulls a function out of a script by regex, non-greedily,
 so it takes the FIRST definition -- and PowerShell runs the LAST. While

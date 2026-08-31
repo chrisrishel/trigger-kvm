@@ -897,18 +897,33 @@ function Send-Input {
 # panels here (AGENTS.md hard rule 2).
 #
 # Returns 0 correct, 1 changed to the WRONG thing, 2 changed and did not come back,
-# 3 nothing happened. Four, because with machines the test asserts something real --
-# "did the LG show the Mac?" -- and being shown the wrong machine is a wrong MAPPING,
-# which has nothing to do with a wrong channel or a wrong value for this PC. Testing
-# a bare input value cannot tell 0 from 1, so it does not offer the distinction.
+# 3 nothing happened. Four, because with a computer named the test asserts something
+# real -- "did the LG show the Mac?" -- and being shown the wrong computer is a wrong
+# MAPPING, which has nothing to do with a wrong channel or a wrong value for this
+# one. Testing a bare input value cannot tell 0 from 1, so -IsComputer is what says
+# which question is being asked, and it does not offer the distinction without it.
+#
+# [CmdletBinding()] IS LOAD-BEARING HERE, and it is the one function that has it.
+# A SIMPLE function swallows an undeclared named argument into $args without a
+# word -- measured -- so a caller left on an old parameter name goes on working
+# and quietly loses the switch. That is not hypothetical twice over: it is how
+# Test-OneComputer's -ThisName went nowhere while a shadowed definition was live,
+# and renaming -IsMachine to -IsComputer reproduced it exactly, with the whole
+# suite still green and the walkthrough asking the wrong question.
+#
+# An advanced function throws "A parameter cannot be found that matches parameter
+# name ...". For a switch that decides which question a human is asked about their
+# own monitors, loud is the only safe direction. The test stubs of this function
+# carry it for the same reason.
 function Test-DisplayInput {
+    [CmdletBinding()]
     param([string]$Label, [string]$Name, [string]$Candidate, [string]$CandidateName,
-          [string]$Current, [string]$ThisName, [switch]$IsMachine,
+          [string]$Current, [string]$ThisName, [switch]$IsComputer,
           [int]$Hold = 8, [string]$Config = $CONFIG)
 
     Write-Host ''
     Write-Host ("  Switching $Name to $CandidateName for ${Hold}s, then back automatically.")
-    if ($IsMachine) {
+    if ($IsComputer) {
         Write-Host ("  Watch that monitor -- you should see $CandidateName on it.")
         Write-Host '  If that computer is asleep or off it will say No Signal, which still'
         Write-Host '  proves the switch worked.'
@@ -946,7 +961,7 @@ function Test-DisplayInput {
     # Only a "no" needs taking apart, and only when there was a computer to expect:
     # testing a bare input value, any change at all proves the transport, so there is
     # nothing left to ask.
-    if (-not $IsMachine) { return 3 }
+    if (-not $IsComputer) { return 3 }
 
     Write-Host ''
     Write-Host ("  Did the {0} change at all?" -f $Name)
@@ -2137,7 +2152,7 @@ function Test-OneComputer {
 
     $here = $Answer.Map[$This]
     if ($Target) {
-        $outcome = Test-DisplayInput -Label $Answer.Label -Name $Answer.Name -IsMachine `
+        $outcome = Test-DisplayInput -Label $Answer.Label -Name $Answer.Name -IsComputer `
                                      -Candidate $Answer.Map[$Target] -CandidateName $Target `
                                      -Current $here -ThisName $This -Config $Config
     } else {

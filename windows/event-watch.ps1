@@ -64,7 +64,8 @@ param(
 
     # What to run the switcher with. Always `pull`: a trigger may never name
     # another computer, because a name other than `computer.this` describes inputs
-    # on hardware this machine cannot observe.
+    # on hardware this computer cannot observe, and a stale one would then be able
+    # to cause an AUTOMATIC switch to a dead input.
     [Parameter(ParameterSetName = 'Watch')]
     [string]$Arg = 'pull',
 

@@ -19,9 +19,14 @@ $global:DEFAULT_SETTLE   = '0.75'
 
 $script:outcomes = @()
 function Set-Outcomes { param([int[]]$O) $script:outcomes = @($O) }
+# [CmdletBinding()], like the real one: a SIMPLE stub swallows an undeclared
+# named argument into $args, so a caller left on an old parameter name keeps
+# passing here while losing the switch. Verified by mutation -- without this the
+# -IsMachine -> -IsComputer rename went green with the wrong question being asked.
 function Test-DisplayInput {
+    [CmdletBinding()]
     param([string]$Label,[string]$Name,[string]$Candidate,[string]$CandidateName,
-          [string]$Current,[string]$ThisName,[switch]$IsMachine,[int]$Hold = 8,[string]$Config)
+          [string]$Current,[string]$ThisName,[switch]$IsComputer,[int]$Hold = 8,[string]$Config)
     if ($script:outcomes.Count -eq 0) { return 0 }
     $o = $script:outcomes[0]
     $script:outcomes = @($script:outcomes | Select-Object -Skip 1)
