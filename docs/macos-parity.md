@@ -50,11 +50,11 @@ trigger.device   = usb:046d:0843, bt:0011223344ff
 trigger.debounce = 3.0
 trigger.settle   = 0.75
 
-install.start    = login        # boot | login -- a configured value like any other
+install.autostart    = login        # boot | login -- a configured value like any other
 
-machine.this            = mac   # what this computer is called below
+computer.this            = mac   # what this computer is called below
 display.lg.input.0xD0   = windows
-display.lg.input.0xD1   = mac   # the WHOLE map: pull looks up machine.this,
+display.lg.input.0xD1   = mac   # the WHOLE map: pull looks up computer.this,
                                 # `to windows` looks up windows
 ```
 
@@ -159,12 +159,12 @@ rather than letting it throw.
 
 ## 4. The invariants — do not break these
 
-- **One map, two verbs.** A monitor's inputs are named after the machines on them,
-  and `pull` is `to <machine.this>` -- the same lookup with a different name. Do not
+- **One map, two verbs.** A monitor's inputs are named after the computers on them,
+  and `pull` is `to <computer.this>` -- the same lookup with a different name. Do not
   add a second table (the Windows side had `self` values and `scene.*` blocks, and
-  deleted both: two representations of "machine M is on input V of display D" can
+  deleted both: two representations of "computer C is on input V of display D" can
   disagree, and one cannot).
-- **`to` is unreachable from the trigger path.** A name other than `machine.this`
+- **`to` is unreachable from the trigger path.** A name other than `computer.this`
   describes inputs on hardware this machine cannot observe, which go stale the
   moment someone moves a cable over there. If the LaunchAgent can ever invoke one, a
   stale name becomes able to cause an automatic switch to a dead input. Keep the

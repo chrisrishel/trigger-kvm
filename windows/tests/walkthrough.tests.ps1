@@ -6,18 +6,19 @@
 #
 # Row numbers in the review menu count the separators, which are drawn blank and are
 # unpickable:
-#   1 Machines  2 Monitors  3 Trigger devices  4 When it starts  5 PATH  (6 blank)
+#   1 Computers  2 Monitors  3 Trigger devices  4 Autostart?  5 Add to PATH?  (6 blank)
 #   7 Test the trigger  8 Test the monitors  (9 blank)  10 Save  11 Cancel
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'lib.ps1')
 
-Import-Subject -Script 'install.ps1' -Variables @('DIALECTS','MCCS_INPUTS') -Functions @(
+Import-Subject -Script 'install.ps1' -Variables @('DIALECTS','MCCS_INPUTS','COMPUTER_NAME_RULE') -Functions @(
     'Read-Default','Read-YesNo','Get-MenuWidth','Write-MenuFrame','Split-Detail',
     'Select-One','Select-Many','Join-Names','Get-InputName',
-    'Get-DefaultMachineName','Get-KnownMachines','Read-Machines',
+    'Get-DefaultComputerName','Get-KnownComputers','Read-Computers',
+    'Format-ComputerName','Read-ComputerName',
     'Read-InputValue','Get-InputTable','Get-DisplayMap',
     'Get-DisplayAnswers','Get-ConfiguredAnswers','Get-AllDisplayAnswers',
-    'Invoke-DisplayTest','Invoke-TestRound','Invoke-TestRoundBody','Test-OneMachine',
+    'Invoke-DisplayTest','Invoke-TestRound','Invoke-TestRoundBody','Test-OneComputer',
     'Test-DisplayInput','Test-OneValue','Invoke-BlindWalk',
     'Read-Triggers','Read-Tier','Get-CandidateLabel',
     'Invoke-Configure','Write-ConfigFile')
@@ -87,7 +88,7 @@ function Get-Written {
 }
 
 $CONFIGURED = @(
- 'machine.this = pc'
+ 'computer.this = pc'
  'display.lg.vendor = 0x1E6D','display.lg.product = 0x9E9D','display.lg.name = LG ULTRAGEAR+'
  'display.lg.method = lg-alt'
  'display.lg.input.0xd0 = pc','display.lg.input.0xd1 = mac'
@@ -95,16 +96,18 @@ $CONFIGURED = @(
  'display.asus.method = standard'
  'display.asus.input.0x11 = pc','display.asus.input.0x0f = mac'
  'trigger.device = 046d:0843,1235:820a','trigger.debounce = 3.0','trigger.settle = 0.75'
- 'install.start = login'
+ 'install.autostart = login'
 )
 
-# ---- a first run asks everything, machines first -----------------------------
+# ---- a first run asks everything, computers first ----------------------------
 
 Set-Config $null
 Set-Outcomes @()
 Set-Answers @(
     'pc',           # what this computer is called
-    'mac','',       # the others, blank line to finish
+    '1',            # how many others
+    'mac',          #   and its name
+    '5',            # the list (1 pc, 2 mac, 3 blank, 4 Add, 5 Done)
     'y','',         # PG42UQ: manage? / label
     '3',            #   pc  is on HDMI 1
     '2',            #   mac is on DisplayPort 1 (row 1 is now pc)
@@ -123,8 +126,8 @@ Set-Answers @(
 Invoke-Configure
 Assert-Equal 0 $LASTEXITCODE 'a first run must complete'
 $c = Get-Written
-Assert-Equal 'pc'   $c['machine.this']
-Assert-Equal 'boot' $c['install.start'] 'with nothing configured, the default is from boot'
+Assert-Equal 'pc'   $c['computer.this']
+Assert-Equal 'boot' $c['install.autostart'] 'with nothing configured, the default is from boot'
 Assert-Equal 'pc'   $c['display.pg42uq.input.0x11']
 Assert-Equal 'mac'  $c['display.pg42uq.input.0x0f']
 Assert-Equal 'pc'   $c['display.lg.input.0xd0']
@@ -155,7 +158,7 @@ Assert-Equal 'lg-alt' (Get-Written)['display.lg.method'] 'and must keep what was
 Set-Config $CONFIGURED
 Set-Outcomes @()
 Set-Answers @(
-    'pc','mac','',
+    'pc','1','mac','5',
     'y','','3','2',
     'y','','9','0xD0','10','0xD1',
     'n',            # skip the check
@@ -206,7 +209,7 @@ Assert-Equal 'pc' (Get-Written)['display.asus.input.0x12'] 'the walk must correc
 Set-Config $null
 Set-Outcomes @()
 Set-Answers @(
-    'pc','mac','',
+    'pc','1','mac','5',
     'y','',
     '3',            # pc on HDMI 1
     '1',            # mac on ... pc's own row: refused
@@ -219,6 +222,89 @@ Assert-Equal 0 $LASTEXITCODE
 $c = Get-Written
 Assert-Equal 'pc'  $c['display.pg42uq.input.0x11']
 Assert-Equal 'mac' $c['display.pg42uq.input.0x0f'] 'the second machine had to move to a free input'
+
+# ---- autostart can be answered "no" ------------------------------------------
+
+# Registered but not scheduled: running now, not coming back on its own. The task
+# still exists, so `trigger-kvm restart` is what starts it again.
+Set-Config $CONFIGURED
+Set-Outcomes @()
+Set-Answers @(
+    '4',            # review -> Autostart?
+    '3',            #   no -- I will start it myself
+    '10'            # review -> Save
+)
+Invoke-Configure
+Assert-Equal 0 $LASTEXITCODE
+Assert-Equal 'no' (Get-Written)['install.autostart'] 'the third answer has to survive the write'
+
+# ---- what a computer may be called -------------------------------------------
+
+# One name, not a slug plus a display name: it is a config value, a thing you type
+# at a prompt, and a label in every message. The rule exists so it survives all three.
+Assert-Equal 'mac'         (Format-ComputerName 'Mac')
+Assert-Equal 'my-mac'      (Format-ComputerName 'My Mac')        'spaces read as separators'
+Assert-Equal 'my-mac'      (Format-ComputerName 'my.mac')        'so do dots'
+Assert-Equal 'work-laptop' (Format-ComputerName 'work_laptop')
+Assert-Equal 'mac'         (Format-ComputerName '  Mac!  ')      'unusable characters go'
+Assert-Equal 'a-b'         (Format-ComputerName 'a---b')         'runs collapse'
+Assert-Equal 'mac'         (Format-ComputerName '-mac-')         'and it never starts or ends with a dash'
+Assert-Equal ''            (Format-ComputerName '!!!')           'nothing usable is nothing, not a guess'
+
+# It SUGGESTS rather than silently mangling: the old version stripped what it did not
+# like, so "My Mac" quietly became "mymac" and left someone hunting for their space.
+Set-Answers @('My Mac', 'y')
+$n = Read-ComputerName -Prompt 'name?' -Default ''
+Assert-Equal 'my-mac' $n
+Assert-Match ((Get-Asked) -join '|') "Use 'my-mac'" 'the change has to be offered, not applied behind their back'
+
+Set-Answers @('My Mac', 'n', 'mac')     # decline the suggestion, type another
+Assert-Equal 'mac' (Read-ComputerName -Prompt 'name?' -Default '')
+
+Set-Answers @('mac', 'pc')
+Assert-Equal 'pc' (Read-ComputerName -Prompt 'name?' -Default '' -Taken @('mac')) 'a name in use is refused'
+
+Set-Answers @('')
+Assert-Equal '' (Read-ComputerName -Prompt 'name?' -Default '' -AllowBlank) 'blank removes, where blank is allowed'
+
+# ---- the list corrects names without replaying the questions ------------------
+
+Set-Answers @('2', 'macbook', '5')          # rename row 2 (no default now), then Done
+$r = Read-Computers -This 'pc' -Others @('mac') -Existing
+Assert-Equal 'pc'         $r.This
+Assert-Equal 'pc,macbook' ($r.All -join ',') 'a rename must not disturb the rest'
+Assert-NoMatch ((Get-Asked) -join '|') 'How many OTHER' 'and must not re-ask the count'
+
+Set-Answers @('4', 'linux', '6')            # Add another; Done is row 6 once the list grows
+$r = Read-Computers -This 'pc' -Others @('mac') -Existing
+Assert-Equal 'pc,mac,linux' ($r.All -join ',')
+
+Set-Answers @('2', '', '4')                 # nothing typed removes it; then 1 pc, (2), 3 Add, 4 Done
+$r = Read-Computers -This 'pc' -Others @('mac') -Existing
+Assert-Equal 'pc' ($r.All -join ',') 'entering nothing removes that computer'
+
+# ---- the review rows read as one column --------------------------------------
+
+# ", " between items, ": " after a label, "/" for things sharing one label. The
+# monitors row used spaces, which meant Split-Detail could not wrap it -- so a desk
+# with several panels overran the line rather than wrapping like every other row.
+$script:rows = @()
+function Select-One {
+    param([string[]]$Items, [string[]]$Detail = @(), [int]$Default = 0, [string]$Help, [int]$Current = -1)
+    for ($i = 0; $i -lt $Items.Count; $i++) {
+        if ($Items[$i]) { $script:rows += ('{0}|{1}' -f $Items[$i], $(if ($i -lt $Detail.Count) { $Detail[$i] } else { '' })) }
+    }
+    # Save, so the walkthrough ends.
+    for ($i = 0; $i -lt $Items.Count; $i++) { if ($Items[$i] -eq 'Save configuration and run') { return $i } }
+    return 0
+}
+Set-Config $CONFIGURED
+Set-Answers @()
+Invoke-Configure
+$review = @($script:rows | Where-Object { $_ -like 'Computers|*' -or $_ -like 'Monitors|*' -or $_ -like 'Trigger devices|*' })
+Assert-Match ($review -join "`n") 'Computers\|pc \(this\), mac'
+Assert-Match ($review -join "`n") 'Monitors\|asus: pc/mac, lg: pc/mac' `
+    'items separated by ", ", label by ": ", computers on one panel by "/" -- and pc first, as listed'
 
 Remove-Item -LiteralPath $script:CONFIG -Force -ErrorAction SilentlyContinue
 exit 0

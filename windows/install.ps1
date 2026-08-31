@@ -182,15 +182,21 @@ function Write-Log { param([string]$m) Write-Host "install: $m" }
 # Task API calls these principals; nothing a user reads says either word.
 function Get-EffectiveTier {
     $c = Read-Config -Path (Get-ConfigPath)
-    if ($c.ContainsKey('install.start')) {
-        if ($c['install.start'] -eq 'boot')  { return 's4u' }
-        if ($c['install.start'] -eq 'login') { return 'user' }
+    if ($c.ContainsKey('install.autostart')) {
+        switch ($c['install.autostart']) {
+            'boot'  { return 's4u' }
+            'login' { return 'user' }
+            'no'    { return 'manual' }
+        }
     }
     # The old spelling still counts. Unlike the other renamed keys, ignoring this one
     # would not fall back to a harmless default -- it would silently DOWNGRADE a
     # working boot-start install to login-only on the next install, with the loss
     # showing up months later as "switching does nothing at the login screen". The
     # rename warning still fires, and `configure` rewrites the file without it.
+    if ($c.ContainsKey('install.start')) {
+        switch ($c['install.start']) { 'boot' { return 's4u' } 'login' { return 'user' } }
+    }
     if ($c.ContainsKey('install.tier') -and $c['install.tier'] -in @('user', 's4u')) {
         return $c['install.tier']
     }
@@ -334,16 +340,17 @@ function New-DefaultConfig {
         '# machine. Find yours with:  .\nvapi-probe.ps1'
         ''
         '# --- install ----------------------------------------------------------'
-        '# start: boot (watches before anyone logs in; set up once with admin)'
-        '#       s4u  (admin ONCE to register; adds before-first-login and logoff)'
+        '# autostart: boot  (before anyone logs in; needs admin ONCE to register)'
+        '#            login (from your logon onward, including while locked)'
+        '#            no    (installed but not scheduled; trigger-kvm restart starts it)'
         ''
-        'install.start = login'
+        'install.autostart = login'
         ''
         '# --- machines ---------------------------------------------------------'
         '# What this computer is called below. `pull` points every display here;'
         '# `to mac` points them at whatever the map calls "mac".'
         ''
-        'machine.this = pc'
+        'computer.this = pc'
         ''
         '# --- displays ---------------------------------------------------------'
         '# method: standard (I2C src 0x51, VCP 0x60) | lg-alt (src 0x50, VCP 0xF4)'
@@ -909,16 +916,16 @@ function Invoke-BlindWalk {
 
 # A sensible name for this computer, before anyone has said one. The hostname is
 # what people already call it, and it is never typed in anger -- `pull` is the verb.
-function Get-DefaultMachineName {
+function Get-DefaultComputerName {
     param([hashtable]$Seed)
-    if ($Seed.ContainsKey('machine.this') -and $Seed['machine.this']) { return "$($Seed['machine.this'])".Trim().ToLower() }
+    if ($Seed.ContainsKey('computer.this') -and $Seed['computer.this']) { return "$($Seed['computer.this'])".Trim().ToLower() }
     $n = "$env:COMPUTERNAME".ToLower() -replace '[^a-z0-9_-]', ''
     if ($n) { return $n }
     return 'pc'
 }
 
 # Every machine the config already names, in the order it first appears.
-function Get-KnownMachines {
+function Get-KnownComputers {
     param([hashtable]$Cfg)
     $out = @()
     foreach ($k in ($Cfg.Keys | Sort-Object)) {
@@ -930,41 +937,137 @@ function Get-KnownMachines {
     return $out
 }
 
-# The machines plugged into these monitors, this one included.
+# What a computer may be called.
 #
-# Asked BEFORE the monitors, so a machine is described once and is then an option on
+# ONE name, not a slug plus a friendly name. This name is a value in the config, an
+# argument you type (`trigger-kvm to mac`), and a label in every prompt -- a second
+# "display name" field would be a second thing to keep in step for the sake of
+# capital letters. So the one name has to be typeable without quoting, which is what
+# the character rule is for.
+#
+# Suggests rather than silently mangles. The old version stripped what it did not
+# like, so "My Mac" quietly became "mymac" and the person was left wondering where
+# their space went.
+function Format-ComputerName {
+    param([string]$Raw)
+    $n = "$Raw".Trim().ToLower()
+    $n = $n -replace '[\s._]+', '-'          # spaces and dots read as separators
+    $n = $n -replace '[^a-z0-9-]', ''        # anything else is simply not usable
+    $n = $n -replace '-{2,}', '-'
+    return $n.Trim('-')
+}
+
+$COMPUTER_NAME_RULE = 'Lowercase letters, digits and dashes.'
+
+function Read-ComputerName {
+    param([string]$Prompt, [string]$Default, [string[]]$Taken = @(), [switch]$AllowBlank)
+
+    while ($true) {
+        $raw = Read-Default ('  ' + $Prompt) $Default
+        if (-not $raw.Trim()) {
+            if ($AllowBlank) { return '' }
+            Write-Host '  A name is needed here.'
+            continue
+        }
+        $n = Format-ComputerName $raw
+        if (-not $n) {
+            Write-Host ('  Nothing usable in that. {0}' -f $COMPUTER_NAME_RULE)
+            continue
+        }
+        if ($n -ne $raw.Trim().ToLower()) {
+            # Say what changed and let them accept or retype, rather than quietly
+            # substituting a name they never chose.
+            Write-Host ('  Names are what you type at a prompt, so: {0}' -f $COMPUTER_NAME_RULE)
+            if (-not (Read-YesNo ("  Use '{0}'?" -f $n) $true)) { $Default = $n; continue }
+        }
+        if ($Taken -contains $n) {
+            Write-Host ('  There is already a computer called {0}.' -f $n)
+            continue
+        }
+        return $n
+    }
+}
+
+# The computers plugged into these monitors, this one included.
+#
+# Asked BEFORE the monitors, so a computer is described once and is then an option on
 # every panel. Asking per-monitor meant typing "mac" once per screen, and gave the
 # tool no way to know the two answers were about the same computer.
-function Read-Machines {
-    param([string]$This, [string[]]$Others)
+function Read-Computers {
+    param([string]$This, [string[]]$Others, [switch]$Existing)
 
     Write-Host ''
-    Write-Host '--- machines ---'
-    Write-Host 'Which computers are plugged into those monitors?'
+    Write-Host '--- computers ---'
+    Write-Host 'These monitors are shared between this computer and some others.'
+    Write-Host 'Each one gets a name, and the name is how you switch to it:'
+    Write-Host '    trigger-kvm to mac'
     Write-Host ''
 
-    $me = ''
-    while (-not $me) {
-        $me = (Read-Default '  A short name for THIS computer' $This).Trim().ToLower()
-        $me = ($me -replace '[^a-z0-9_-]', '')
-        if (-not $me) { Write-Host '  Letters, digits, - and _ please.' }
+    $me   = $This
+    $rest = @($Others | Where-Object { $_ -and $_ -ne $This })
+
+    # Nothing configured yet: ask for a count and then that many names. "One per
+    # line, blank line when there are no more" made people guess at both how to
+    # finish and whether a blank meant cancel.
+    if (-not $Existing) {
+        $me = Read-ComputerName -Prompt 'What should I call THIS computer?' -Default $This
+
+        $n = -1
+        while ($n -lt 0) {
+            $a = Read-Default '  How many OTHER computers are plugged into these monitors?' `
+                              ([string]([Math]::Max($rest.Count, 1)))
+            if ($a -match '^\d+$' -and [int]$a -le 16) { $n = [int]$a }
+            else { Write-Host '  A number, please (16 at most).' }
+        }
+
+        $rest = @()
+        for ($i = 1; $i -le $n; $i++) {
+            $d = ''      # only suggest a leftover name when it is still free
+            $rest += Read-ComputerName -Taken (@($me) + $rest) -Default $d `
+                        -Prompt $(if ($n -eq 1) { 'What is the other one called?' }
+                                  else { "Name for computer $i of ${n}:" })
+        }
     }
 
-    Write-Host ''
-    Write-Host '  And the others, one per line. Blank line when there are no more.'
-    Write-Host '  These become the names you switch to:  trigger-kvm to mac'
-    $out  = @()
-    $seed = @($Others | Where-Object { $_ -and $_ -ne $me })
+    # Then, always, a list to correct. Renaming is the common edit -- a name is typed
+    # once and lived with -- so it is what selecting a row does.
     while ($true) {
-        $d = if ($seed.Count -gt $out.Count) { $seed[$out.Count] } else { '' }
-        $n = (Read-Default '  Name' $d).Trim().ToLower()
-        $n = ($n -replace '[^a-z0-9_-]', '')
-        if (-not $n) { break }
-        if ($n -eq $me -or ($out -contains $n)) { Write-Host '  Already have that one.'; continue }
-        $out += $n
+        $rows = @(@($me) + $rest)
+        $det  = @(@('this computer') + @($rest | ForEach-Object { '' }))
+        $rows += ''; $det += ''
+        $add  = $rows.Count
+        $rows += 'Add another computer'; $det += ''
+        $rows += 'Done';                 $det += ''
+
+        Write-Host ''
+        $pick = Select-One -Items $rows -Detail $det -Default ($add + 1) `
+                           -Help '  Pick a name to change it, or Done.'
+        if ($pick -eq $add + 1) { break }
+
+        if ($pick -eq $add) {
+            $rest += Read-ComputerName -Prompt 'Name for the new computer' -Default '' `
+                                       -Taken (@($me) + $rest)
+            continue
+        }
+
+        if ($pick -eq 0) {
+            $me = Read-ComputerName -Prompt 'What should I call THIS computer?' `
+                                    -Default $me -Taken $rest
+        } else {
+            $i = $pick - 1
+            # No default, deliberately. Read-Default substitutes the default when the
+            # answer is empty, so with one supplied "enter nothing to remove it"
+            # could never happen -- pressing enter just re-entered the same name.
+            $victim = $rest[$i]
+            $new = Read-ComputerName -AllowBlank -Default '' `
+                       -Prompt ("New name for '{0}', or enter nothing to remove it" -f $victim) `
+                       -Taken (@($me) + @($rest | Where-Object { $_ -ne $victim }))
+            if ($new) { $rest[$i] = $new }
+            else      { $rest = @($rest | Where-Object { $_ -ne $victim }) }
+        }
     }
 
-    return [PSCustomObject]@{ This = $me; All = @(@($me) + $out) }
+    return [PSCustomObject]@{ This = $me; All = @(@($me) + $rest) }
 }
 
 # Ask which input something is on, for one panel. Returns a value, or $null when
@@ -1042,17 +1145,30 @@ function Get-InputTable {
     return $out
 }
 
-# What the config already says about which machine is on which input of one panel.
+# What the config already says about which computer is on which input of one panel.
+#
+# Ordered by the CONFIGURED ORDER OF COMPUTERS, not by input value. Reading the file
+# sorts by key, which is the hex -- so the same two computers came out "mac, pc" on
+# one panel and "pc, mac" on the next, purely because of which socket they happened
+# to be plugged into. The order someone listed their computers in is the one they
+# will look for.
 function Get-DisplayMap {
-    param([hashtable]$Existing, [string]$Label)
+    param([hashtable]$Existing, [string]$Label, [string[]]$Computers = @())
 
-    $out = [ordered]@{}
-    if (-not $Label) { return $out }
-    foreach ($k in ($Existing.Keys | Sort-Object)) {
-        if ($k -match ('^display\.' + [regex]::Escape($Label) + '\.input\.(0x[0-9a-f]{1,2})$')) {
-            $out["$($Existing[$k])".Trim().ToLower()] = $Matches[1]
+    $found = @{}
+    if ($Label) {
+        foreach ($k in ($Existing.Keys | Sort-Object)) {
+            if ($k -match ('^display\.' + [regex]::Escape($Label) + '\.input\.(0x[0-9a-f]{1,2})$')) {
+                $found["$($Existing[$k])".Trim().ToLower()] = $Matches[1]
+            }
         }
     }
+
+    $out = [ordered]@{}
+    foreach ($c in $Computers) { if ($found.ContainsKey($c)) { $out[$c] = $found[$c]; $found.Remove($c) } }
+    # Anything the config names that the walkthrough does not know about goes last
+    # rather than being dropped -- it is somebody's hand edit.
+    foreach ($c in ($found.Keys | Sort-Object)) { $out[$c] = $found[$c] }
     return $out
 }
 
@@ -1065,7 +1181,7 @@ function Get-DisplayAnswers {
     # $Existing is a PSCustomObject or $null -- deliberately untyped, because a
     # [hashtable] annotation here silently accepted the call at parse time and threw
     # a transformation error at RUN time, i.e. mid-walkthrough.
-    param($Found, $Existing, [string[]]$Machines, [string]$This)
+    param($Found, $Existing, [string[]]$Computers, [string]$This)
 
     $key  = '{0:X4}:{1:X4}' -f $Found.EdidVendor, $Found.EdidProduct
     # The panel's own name, out of its EDID. No table to be absent from.
@@ -1088,7 +1204,7 @@ function Get-DisplayAnswers {
 
     $map   = [ordered]@{}
     $taken = @{}
-    foreach ($m in $Machines) {
+    foreach ($m in $Computers) {
         $table = Get-InputTable -Method $method -Map $map
         $was   = if ($prior.Contains($m)) { $prior[$m] } else { '' }
         $sub   = if ($m -eq $This) { '(this computer -- the input you would pick to see this screen)' } else { '' }
@@ -1139,21 +1255,26 @@ function Read-Tier {
     param([string]$Current)
 
     Write-Host ''
-    Write-Host '--- when should it start watching? ---'
+    Write-Host '--- should it start on its own? ---'
     Write-Host '  It can start as soon as the computer starts, or after you log in for'
     Write-Host '  the first time. Starting before you log in needs administrator'
     Write-Host '  permission to set up -- once, now. Nothing runs elevated afterwards.'
     Write-Host ''
-    $now = $(if ($Current -eq 'user') { 1 } elseif ($Current -eq 's4u') { 0 } else { -1 })
-    $pick = Select-One -Default ([Math]::Max(0, $now)) -Current $now `
-                       -Items @('From boot (requires admin)', 'After you log in')
-    return $(if ($pick -eq 1) { 'user' } else { 's4u' })
+    Write-Host '  Answering no still installs and starts it now; it just will not come'
+    Write-Host '  back after a restart until you run:  trigger-kvm restart'
+    Write-Host ''
+    $now = $(switch ($Current) { 's4u' { 0 } 'user' { 1 } 'manual' { 2 } default { -1 } })
+    $pick = Select-One -Default ([Math]::Max(0, $now)) -Current $now -Items @(
+        'From boot (requires admin)',
+        'From login',
+        'No -- I will start it myself')
+    return $(switch ($pick) { 1 { 'user' } 2 { 'manual' } default { 's4u' } })
 }
 
 # Rebuild the answer objects straight from the config, asking nothing. What a
 # re-run opens the review menu with.
 function Get-ConfiguredAnswers {
-    param($Found, [hashtable]$Existing)
+    param($Found, [hashtable]$Existing, [string[]]$Computers = @())
 
     $out = @()
     foreach ($f in $Found) {
@@ -1169,7 +1290,7 @@ function Get-ConfiguredAnswers {
                 Method = $(if ($Existing.ContainsKey("display.$l.method")) { $Existing["display.$l.method"] } else { 'standard' })
                 Vendor = ('0x{0:X4}' -f $f.EdidVendor); Product = ('0x{0:X4}' -f $f.EdidProduct)
                 EdidVendor = $f.EdidVendor; Mfg = $f.Mfg; Key = $key
-                Map    = (Get-DisplayMap -Existing $Existing -Label $l)
+                Map    = (Get-DisplayMap -Existing $Existing -Label $l -Computers $Computers)
             }
             break
         }
@@ -1186,7 +1307,7 @@ function Get-AllDisplayAnswers {
     # re-entering the monitors section to change one value would silently throw away
     # what the user already told us. Keyed by EDID rather than by label because the
     # label is one of the things they might be changing.
-    param($Found, [hashtable]$Existing, [string[]]$Machines, [string]$This,
+    param($Found, [hashtable]$Existing, [string[]]$Computers, [string]$This,
           [hashtable]$Carry = @{})
 
     $out = @()
@@ -1201,13 +1322,13 @@ function Get-AllDisplayAnswers {
                     $prior = [PSCustomObject]@{
                         Label  = $l
                         Method = $(if ($Existing.ContainsKey("display.$l.method")) { $Existing["display.$l.method"] } else { '' })
-                        Map    = (Get-DisplayMap -Existing $Existing -Label $l)
+                        Map    = (Get-DisplayMap -Existing $Existing -Label $l -Computers $Computers)
                     }
                 }
             }
         }
         if ($Carry.ContainsKey($key)) { $prior = $Carry[$key] }
-        $a = Get-DisplayAnswers -Found $f -Existing $prior -Machines $Machines -This $This
+        $a = Get-DisplayAnswers -Found $f -Existing $prior -Computers $Computers -This $This
         if ($a) { $out += $a }
     }
     return $out
@@ -1294,12 +1415,14 @@ function Invoke-Configure {
         # ---- machines, BEFORE the monitors ----------------------------------
         # Every panel then offers the same names, and a computer is described once
         # rather than once per screen.
-        $m = Read-Machines -This (Get-DefaultMachineName -Seed $seed) -Others (Get-KnownMachines -Cfg $seed)
+        $m = Read-Computers -This (Get-DefaultComputerName -Seed $seed) `
+                            -Others (Get-KnownComputers -Cfg $seed) `
+                            -Existing:([bool](Get-KnownComputers -Cfg $seed))
         $this = $m.This
-        $machines = $m.All
+        $computers = $m.All
 
         # ---- monitors --------------------------------------------------------
-        $answers = @(Get-AllDisplayAnswers -Found $found -Existing $seed -Machines $machines -This $this -Carry $carry)
+        $answers = @(Get-AllDisplayAnswers -Found $found -Existing $seed -Computers $computers -This $this -Carry $carry)
         if ($answers.Count -eq 0) {
             Write-Log 'no monitors selected -- nothing to do.'
             $global:LASTEXITCODE = 2
@@ -1314,14 +1437,14 @@ function Invoke-Configure {
             foreach ($a in $answers) { $carry[$a.Key] = $a }
         }
     } else {
-        $this     = Get-DefaultMachineName -Seed $seed
-        $machines = @(@($this) + @(Get-KnownMachines -Cfg $seed | Where-Object { $_ -ne $this }))
-        $answers  = @(Get-ConfiguredAnswers -Found $found -Existing $seed)
+        $this     = Get-DefaultComputerName -Seed $seed
+        $computers = @(@($this) + @(Get-KnownComputers -Cfg $seed | Where-Object { $_ -ne $this }))
+        $answers  = @(Get-ConfiguredAnswers -Found $found -Existing $seed -Computers $computers)
         if ($answers.Count -eq 0) {
             Write-Log 'the config names no display that is attached -- starting setup.'
-            $m = Read-Machines -This $this -Others @($machines | Where-Object { $_ -ne $this })
-            $this = $m.This; $machines = $m.All
-            $answers = @(Get-AllDisplayAnswers -Found $found -Existing $seed -Machines $machines -This $this)
+            $m = Read-Computers -This $this -Others @($computers | Where-Object { $_ -ne $this })
+            $this = $m.This; $computers = $m.All
+            $answers = @(Get-AllDisplayAnswers -Found $found -Existing $seed -Computers $computers -This $this)
             if ($answers.Count -eq 0) { $global:LASTEXITCODE = 2; return }
         }
     }
@@ -1336,8 +1459,9 @@ function Invoke-Configure {
     # Empty, not 'user', when nothing is configured: Read-Tier reads that as "no
     # existing choice" and offers from-boot as the default. Passing 'user' here would
     # have quietly made the old default win under a menu that says otherwise.
-    $wasTier = $(if ($seed.ContainsKey('install.start')) {
-                     $(if ($seed['install.start'] -eq 'boot') { 's4u' } else { 'user' })
+    $wasTier = $(if ($seed.ContainsKey('install.autostart')) {
+                     $(switch ($seed['install.autostart']) {
+                         'boot' { 's4u' } 'no' { 'manual' } default { 'user' } })
                  } else { '' })
     $onPath = @((Get-UserPath -split ';')) -contains $BINDIR
     $wantPath = $false
@@ -1374,16 +1498,21 @@ function Invoke-Configure {
         Write-Host '--- review configuration ---'
         Write-Host ''
 
-        $items  = @('Machines', 'Monitors', 'Trigger devices', 'When it starts')
+        # One punctuation rule across every row, because they are read as a column:
+        #   ", " separates items      ": " separates a label from its value
+        #   "/"  joins things sharing one label
+        # Not only tidiness -- Split-Detail wraps at ", ", so the monitors row could
+        # not wrap at all while it used spaces, and a busy desk overran the line.
+        $items  = @('Computers', 'Monitors', 'Trigger devices', 'Autostart?')
         $detail = @(
-            (($machines | ForEach-Object { if ($_ -eq $this) { "$_ (here)" } else { $_ } }) -join ', ')
-            (($answers | ForEach-Object { '{0}: {1}' -f $_.Label, (@($_.Map.Keys) -join '/') }) -join '   ')
+            (($computers | ForEach-Object { if ($_ -eq $this) { "$_ (this)" } else { $_ } }) -join ', ')
+            (($answers | ForEach-Object { '{0}: {1}' -f $_.Label, (@($_.Map.Keys) -join '/') }) -join ', ')
             ($devices -join ', ')
-            $(if ($newTier -eq 's4u') { 'from boot' } else { 'after you log in' })
+            $(switch ($newTier) { 's4u' { 'from boot' } 'manual' { 'no' } default { 'from login' } })
         )
         if (-not $onPath) {
-            $items  += 'PATH'
-            $detail += $(if ($wantPath) { "add $BINDIR" } else { 'leave it alone' })
+            $items  += 'Add to PATH?'
+            $detail += $(if ($wantPath) { 'yes' } else { 'no' })
         }
 
         $items  += ''; $detail += ''
@@ -1415,19 +1544,19 @@ function Invoke-Configure {
             return
         }
         switch ($items[$pick]) {
-            'Machines' {
+            'Computers' {
                 # Renaming or adding a computer invalidates every panel's map, so the
                 # monitors are asked again rather than left holding names that no
                 # longer exist.
-                $m = Read-Machines -This $this -Others @($machines | Where-Object { $_ -ne $this })
+                $m = Read-Computers -This $this -Others @($computers | Where-Object { $_ -ne $this }) -Existing
                 $this = $m.This
-                $machines = $m.All
+                $computers = $m.All
                 $carry = @{}
-                $answers = @(Get-AllDisplayAnswers -Found $found -Existing $seed -Machines $machines -This $this)
+                $answers = @(Get-AllDisplayAnswers -Found $found -Existing $seed -Computers $computers -This $this)
                 $ranDisplays = $null
             }
             'Monitors' {
-                $again = @(Get-AllDisplayAnswers -Found $found -Existing $seed -Machines $machines -This $this -Carry $carry)
+                $again = @(Get-AllDisplayAnswers -Found $found -Existing $seed -Computers $computers -This $this -Carry $carry)
                 if ($again.Count -gt 0) { $answers = $again }
                 else { Write-Host '  No monitors selected -- keeping the previous answers.' }
                 # A pass belongs to the values that passed. Carrying it across an edit
@@ -1438,11 +1567,11 @@ function Invoke-Configure {
                 $devices = @(Read-Triggers -Cands $cands -Current $devices)
                 $ranTriggers = $null
             }
-            'When it starts'  { $newTier = Read-Tier $newTier }
+            'Autostart?'      { $newTier = Read-Tier $newTier }
             # Binary, so the row is the control: selecting it flips it. A yes/no
             # prompt for something already shown as "add it"/"leave it alone" would
             # just be a second way to say the same thing.
-            'PATH'            { $wantPath = -not $wantPath }
+            'Add to PATH?'    { $wantPath = -not $wantPath }
             'Test the trigger'  { $ranTriggers = Invoke-TriggerTest -Devices $devices }
             { $_ -like 'Test the monitor*' } {
                 $ranDisplays = Invoke-DisplayTest -Answers $answers -This $this
@@ -1541,7 +1670,7 @@ function Invoke-DisplayTest {
             # Nothing else is on this desk, so there is no claim to check beyond "the
             # transport reaches each panel".
             foreach ($a in $Answers) {
-                if (-not (Test-OneMachine -Answer $a -All $Answers -This $This -Target '' -Config $tmp)) { $bad += $a.Name }
+                if (-not (Test-OneComputer -Answer $a -All $Answers -This $This -Target '' -Config $tmp)) { $bad += $a.Name }
             }
         }
 
@@ -1696,7 +1825,7 @@ function Invoke-TestRoundBody {
 
     $bad = @()
     foreach ($a in $wrong) {
-        if (-not (Test-OneMachine -Answer $a -All $All -This $This -Target $Target -Config $Config)) { $bad += $a.Name }
+        if (-not (Test-OneComputer -Answer $a -All $All -This $This -Target $Target -Config $Config)) { $bad += $a.Name }
     }
     return $bad
 }
@@ -1705,7 +1834,7 @@ function Invoke-TestRoundBody {
 # One panel, one machine: send it there, bring it back, act on what the human saw.
 # Fixes retry in place, because bouncing out to the review menu to change one value
 # and come back is a worse way to say "try that again".
-function Test-OneMachine {
+function Test-OneComputer {
     param($Answer, $All, [string]$This, [string]$Target, [string]$Config, [int]$Attempt = 1)
 
     # Write before every attempt: escalating to a dialect changes the method, and the
@@ -1743,7 +1872,7 @@ function Test-OneMachine {
                              -Prompt ("On the {0}, which input is '{1}' on?" -f $Answer.Name, $Target)
         if ($null -eq $v) { $Answer.Map.Remove($Target); return $true }
         $Answer.Map[$Target] = $v
-        return (Test-OneMachine -Answer $Answer -All $All -This $This -Target $Target -Config $Config -Attempt ($Attempt + 1))
+        return (Test-OneComputer -Answer $Answer -All $All -This $This -Target $Target -Config $Config -Attempt ($Attempt + 1))
     }
 
     # 2: the panel obeys, so the channel is right; the value for THIS computer is not.
@@ -1762,7 +1891,7 @@ function Test-OneMachine {
             if (-not $found) { return $false }
             $Answer.Map[$This] = $found
         }
-        return (Test-OneMachine -Answer $Answer -All $All -This $This -Target $Target -Config $Config -Attempt ($Attempt + 1))
+        return (Test-OneComputer -Answer $Answer -All $All -This $This -Target $Target -Config $Config -Attempt ($Attempt + 1))
     }
 
     # 3: nothing at all. The channel is wrong. This is where a manufacturer dialect is
@@ -1789,7 +1918,7 @@ function Test-OneMachine {
                                      -Prompt ("On the {0}, which input is '{1}' on?" -f $Answer.Name, $m)
                 if ($null -ne $v) { $Answer.Map[$m] = $v; $taken[$v] = $m }
             }
-            return (Test-OneMachine -Answer $Answer -All $All -This $This -Target $Target -Config $Config -Attempt ($Attempt + 1))
+            return (Test-OneComputer -Answer $Answer -All $All -This $This -Target $Target -Config $Config -Attempt ($Attempt + 1))
         }
         return $false
     }
@@ -1824,13 +1953,13 @@ function Write-ConfigFile {
         '# machine. See what is attached with:  trigger-kvm list'
         ''
         '# --- install ----------------------------------------------------------'
-        ("install.start = {0}" -f $(if ($Tier -eq 's4u') { 'boot' } else { 'login' }))
+        ("install.autostart = {0}" -f $(switch ($Tier) { 's4u' { 'boot' } 'manual' { 'no' } default { 'login' } }))
         ''
         '# --- machines ---------------------------------------------------------'
         '# What this computer is called below. `trigger-kvm pull` means "point every'
         '# display at this one"; `trigger-kvm to mac` names any other.'
         ''
-        ("machine.this = {0}" -f $This)
+        ("computer.this = {0}" -f $This)
         ''
         '# --- displays ---------------------------------------------------------'
         '# method: standard (I2C src 0x51, VCP 0x60) -- what nearly every panel takes'
@@ -2088,13 +2217,20 @@ if ($Command -eq 'status') {
     # could act on; what they want to know is whether a locked or logged-out PC still
     # follows the switch. The raw principal stays on the same line for diagnosis.
     $logon = $t.Principal.LogonType
-    Write-Host ("starts   : {0}  (principal={1} logon={2} runlevel={3})" -f `
-                $(switch ($logon) {
+    # A task with no triggers is the "no autostart" answer; the principal alone
+    # cannot tell you that, because it is Interactive either way.
+    $auto = @($t.Triggers).Count -gt 0
+    Write-Host ("autostart: {0}  (principal={1} logon={2} runlevel={3})" -f `
+                $(if (-not $auto) { 'no -- start it with: trigger-kvm restart' }
+                  else { switch ($logon) {
                     'S4U'         { 'at boot' }
                     'Interactive' { 'when you log in' }
-                    default       { "unknown ($logon)" }
-                  }), $t.Principal.UserId, $logon, $t.Principal.RunLevel)
+                    default       { "unknown ($logon)" } } }),
+                $t.Principal.UserId, $logon, $t.Principal.RunLevel)
 
+    if (-not $auto) {
+        Write-Host '           covers: this session only, until something stops it'
+    } else {
     switch ($logon) {
         'Interactive' {
             Write-Host '           covers: from logon onward, including while LOCKED'
@@ -2106,6 +2242,7 @@ if ($Command -eq 'status') {
         default {
             Write-Host '           <- unrecognised principal; capability unknown'
         }
+    }
     }
     Write-Host ("task     : {0}" -f $t.State)
 
@@ -2139,11 +2276,11 @@ if ($Command -eq 'status') {
 
     $c = Read-Config -Path $CONFIG
     $labels = @($c.Keys | Where-Object { $_ -match '^display\.([^.]+)\.vendor$' } | ForEach-Object { $Matches[1] } | Sort-Object -Unique)
-    $this = $(if ($c.ContainsKey('machine.this')) { "$($c['machine.this'])".Trim().ToLower() } else { '' })
-    $machines = @(Get-KnownMachines -Cfg $c)
+    $this = $(if ($c.ContainsKey('computer.this')) { "$($c['computer.this'])".Trim().ToLower() } else { '' })
+    $computers = @(Get-KnownComputers -Cfg $c)
     Write-Host ("displays : {0}" -f $(if ($labels) { $labels -join ', ' } else { 'none configured' }))
-    Write-Host ("machines : {0}" -f $(if ($machines) {
-        (@($machines | ForEach-Object { if ($_ -eq $this) { "$_ (this one)" } else { $_ } }) -join ', ') +
+    Write-Host ("machines : {0}" -f $(if ($computers) {
+        (@($computers | ForEach-Object { if ($_ -eq $this) { "$_ (this one)" } else { $_ } }) -join ', ') +
         '   (trigger-kvm to <name>; only pull is automatic)'
     } else { 'none' }))
     exit 0
@@ -2278,7 +2415,8 @@ $renamed = @{
     'trigger.device.usb'      = 'trigger.device'
     'trigger.device.debounce' = 'trigger.debounce'
     'trigger.device.settle'   = 'trigger.settle'
-    'install.tier'            = 'install.start'
+    'install.tier'            = 'install.autostart'
+    'install.start'           = 'install.autostart'
 }
 foreach ($old in $renamed.Keys) {
     if ($cfg.ContainsKey($old)) {
@@ -2287,6 +2425,8 @@ foreach ($old in $renamed.Keys) {
             Write-Log "         The values changed too: 's4u' is now 'boot', 'user' is now 'login'."
             Write-Log '         This one is still honoured meanwhile, and `trigger-kvm configure`'
             Write-Log '         rewrites the file without it.'
+        } elseif ($old -eq 'install.start') {
+            Write-Log '         Still honoured meanwhile; `trigger-kvm configure` rewrites it.'
         } else {
             Write-Log '         Until you do, the seed defaults are used instead of your value.'
         }
@@ -2426,7 +2566,14 @@ $action = New-ScheduledTaskAction -Execute 'wscript.exe' -Argument "`"$VBS`""
 # The tier differs in exactly two things: when it starts, and as whom. Everything
 # below this point -- the self-heal trigger, the settings, the action -- is shared,
 # because the tier is not supposed to change what the watcher does.
-if ($EffectiveTier -eq 's4u') {
+if ($EffectiveTier -eq 'manual') {
+    # No triggers at all. A task with none is perfectly legal and can still be
+    # started on demand, which is what `trigger-kvm restart` does -- so "no" means
+    # "nothing starts it but you", including the self-heal below.
+    $triggers = @()
+    $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" `
+        -LogonType Interactive -RunLevel Limited
+} elseif ($EffectiveTier -eq 's4u') {
     # At startup, so it is running before anyone logs in. S4U means "run as this
     # user without their password": no stored credential (which is rejected
     # outright), and RunLevel Limited means ordinary user rights at run time even
@@ -2458,7 +2605,9 @@ $heal = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) `
     -RepetitionInterval (New-TimeSpan -Minutes 1)
 # No Duration means repeat indefinitely; be explicit that it must not stop.
 $heal.Repetition.StopAtDurationEnd = $false
-$triggers += $heal
+# Not when nothing is meant to start it: a self-heal trigger would quietly make "no"
+# mean "yes, every minute".
+if ($EffectiveTier -ne 'manual') { $triggers += $heal }
 
 $settings = New-ScheduledTaskSettingsSet `
     -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
@@ -2513,20 +2662,26 @@ if (Get-ScheduledTask -TaskName $TASK -ErrorAction SilentlyContinue) {
     }
 }
 
-Register-ScheduledTask -TaskName $TASK -Action $action -Trigger $triggers `
-    -Principal $principal -Settings $settings `
-    -Description "trigger-kvm ($EffectiveTier tier): pull both monitors to this PC when the shared USB peripherals arrive." | Out-Null
+# -Trigger will not take an empty array, so the manual task is registered without it.
+$register = @{ TaskName = $TASK; Action = $action; Principal = $principal; Settings = $settings }
+if ($triggers.Count -gt 0) { $register['Trigger'] = $triggers }
+Register-ScheduledTask @register `
+    -Description "trigger-kvm: pull the configured monitors to this computer when the shared peripherals arrive." | Out-Null
 
 # -Pause disables the task; installing again must undo that or the watcher would
 # be registered, reported healthy, and never actually start.
 Enable-ScheduledTask -TaskName $TASK -ErrorAction SilentlyContinue | Out-Null
 # Persist the tier that was actually installed, so a later bare `install` -- or the
 # elevated relaunch -- keeps it instead of silently reverting to the default.
-Set-ConfigValue -Path $CONFIG -Key 'install.start' -Value $(if ($EffectiveTier -eq 's4u') { 'boot' } else { 'login' })
+Set-ConfigValue -Path $CONFIG -Key 'install.autostart' `
+                -Value $(switch ($EffectiveTier) { 's4u' { 'boot' } 'manual' { 'no' } default { 'login' } })
 
 Start-ScheduledTask -TaskName $TASK
-Write-Log ("registered and started task '{0}' (starts {1})" -f $TASK, `
-           $(if ($EffectiveTier -eq 's4u') { 'at boot' } else { 'when you log in' }))
+Write-Log ("registered and started task '{0}' ({1})" -f $TASK, `
+           $(switch ($EffectiveTier) {
+               's4u'    { 'starts at boot' }
+               'manual' { 'no autostart' }
+               default  { 'starts when you log in' } }))
 
 if ($AddToPath) { Add-ToUserPath -Dir $BINDIR }
 
@@ -2536,11 +2691,15 @@ if ($AddToPath) { Add-ToUserPath -Dir $BINDIR }
 # day they do not.
 $onPath = @((Get-UserPath -split ';')) -contains $BINDIR
 $cmd    = if ($onPath) { 'trigger-kvm' } else { $SHIM }
-$when   = if ($EffectiveTier -eq 's4u') { 'each time the computer reboots' }
-          else                          { 'each time you log in' }
-
 Write-Host ''
-Write-Host ('  Done. trigger-kvm is running, and will start automatically {0}.' -f $when)
+if ($EffectiveTier -eq 'manual') {
+    Write-Host '  Done. trigger-kvm is running, but will NOT come back after a restart --'
+    Write-Host '  start it yourself with:  trigger-kvm restart'
+} else {
+    Write-Host ('  Done. trigger-kvm is running, and will start automatically {0}.' -f `
+                $(if ($EffectiveTier -eq 's4u') { 'each time the computer reboots' }
+                  else { 'each time you log in' }))
+}
 Write-Host ''
 Write-Host '  Flip your switch to this PC -- the monitors should follow.'
 Write-Host ''

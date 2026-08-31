@@ -10,7 +10,7 @@ Import-Subject -Script 'install.ps1' -Variables @('DIALECTS','MCCS_INPUTS') -Fun
     'Read-Default','Read-YesNo','Get-MenuWidth','Write-MenuFrame','Split-Detail',
     'Select-One','Select-Many','Join-Names','Get-InputName','Get-InputTable',
     'Read-InputValue','Get-DisplayMap','Invoke-BlindWalk','Test-OneValue',
-    'Invoke-DisplayTest','Invoke-TestRound','Invoke-TestRoundBody','Test-OneMachine',
+    'Invoke-DisplayTest','Invoke-TestRound','Invoke-TestRoundBody','Test-OneComputer',
     'Test-DisplayInput','Write-ConfigFile')
 
 $global:SEED_DEBOUNCE = '3.0'

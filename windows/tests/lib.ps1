@@ -33,7 +33,9 @@ function Import-Subject {
         Invoke-Expression ($def -replace [regex]::Escape('$PSScriptRoot'), $script:WinDir)
     }
     foreach ($v in $Variables) {
+        # Either a block that ends in a brace at column 0, or a one-line assignment.
         $m = [regex]::Match($src, "(?ms)^\`$$v = .*?^\}")
+        if (-not $m.Success) { $m = [regex]::Match($src, "(?m)^\`$$v = .*$") }
         if (-not $m.Success) { throw "$Script has no variable $v" }
         Invoke-Expression ($m.Value -replace ('^\$' + $v), ('$global:' + $v))
     }

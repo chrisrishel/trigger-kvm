@@ -13,9 +13,9 @@ answers both verbs:
 
     display.lg.input.0xD0 = pc
     display.lg.input.0xD1 = mac
-    machine.this          = pc
+    computer.this          = pc
 
-`pull` points every configured monitor at `machine.this`. `to mac` points them at
+`pull` points every configured monitor at `computer.this`. `to mac` points them at
 `mac`. Same lookup, same code path, different name -- there is no second table, so
 the two can never disagree about where a machine is.
 
@@ -78,7 +78,7 @@ param(
 
     # Which machine, for `to`. A name from the config's input map -- `mac`, say.
     [Parameter(Position = 1)]
-    [string]$Machine,
+    [string]$Computer,
 
     # `set` only: the input value to send to the single display named by -Only.
     #
@@ -799,7 +799,7 @@ if ($Command -eq 'list') {
     Write-Host  '    display.<label>.name    = <a name for logs>'
     Write-Host  '    display.<label>.method  = standard        # or lg-alt, for an LG whose 0x60 is stubbed'
     Write-Host  '    display.<label>.input.0x11 = pc           # name each input after what is plugged in'
-    Write-Host  '    display.<label>.input.0x0f = mac          # `pull` uses machine.this; `to mac` uses this'
+    Write-Host  '    display.<label>.input.0x0f = mac          # `pull` uses computer.this; `to mac` uses this'
     Write-Host ''
     Write-Host 'NOTE: some panels report a DIFFERENT product id per input -- the LG 45GX950A does.'
     Write-Host 'Use the value shown HERE, measured on this machine. Never copy one from another host.'
@@ -809,8 +809,8 @@ if ($Command -eq 'list') {
 if (-not $Config) { $Config = Get-ConfigPath }
 $cfg      = Read-Config -Path $Config
 $displays = @(Get-ConfiguredDisplays -Cfg $cfg)
-# What this config calls the machine it is running on. `pull` is `to $ThisMachine`.
-$ThisMachine = $(if ($cfg.ContainsKey('machine.this')) { "$($cfg['machine.this'])".Trim().ToLower() } else { '' })
+# What this config calls the machine it is running on. `pull` is `to $ThisComputer`.
+$ThisComputer = $(if ($cfg.ContainsKey('computer.this')) { "$($cfg['computer.this'])".Trim().ToLower() } else { '' })
 
 if ($displays.Count -eq 0) {
     Write-Log ("no displays configured. Expected a config at {0}; run install.ps1 to generate one." -f $Config)
@@ -847,10 +847,10 @@ foreach ($d in $displays) {
         # pull and to are the same operation: point every display at a named machine.
         # pull looks up the one this config calls itself, to looks up the one you
         # asked for. There is no second table and no second code path.
-        $who = if ($Command -eq 'pull') { $ThisMachine } else { "$Machine".ToLower() }
+        $who = if ($Command -eq 'pull') { $ThisComputer } else { "$Computer".ToLower() }
         if (-not $who) {
             if ($Command -eq 'pull') {
-                Write-Log ("REFUSING: machine.this is missing from {0}. Run: trigger-kvm configure" -f $Config)
+                Write-Log ("REFUSING: computer.this is missing from {0}. Run: trigger-kvm configure" -f $Config)
             } else {
                 Write-Log 'usage: trigger-kvm.ps1 to <machine>'
             }

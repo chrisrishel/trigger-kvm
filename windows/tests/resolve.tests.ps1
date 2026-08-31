@@ -17,7 +17,7 @@ $cfg = Join-Path $env:TEMP 'trigger-kvm-resolve.cfg'
 # are the ones whose packets are documented in displays.toml and can be asserted
 # byte for byte.
 @(
- 'machine.this = pc'
+ 'computer.this = pc'
  'display.lg.vendor  = 0x1E6D'
  'display.lg.product = 0x9E9D'
  'display.lg.name    = LG'
@@ -52,7 +52,7 @@ if (-not $attached) {
     exit 0
 }
 
-# ---- pull is `to machine.this` ----------------------------------------------
+# ---- pull is `to computer.this` ----------------------------------------------
 
 $r = Invoke-Switcher @('pull', '-WhatIf', '-Config', $cfg)
 Assert-Match $r.Text '51 84 03 60 00 11 C9' 'the ASUS packet, exactly as documented'
@@ -83,7 +83,7 @@ Assert-NoMatch $r.Text 'WHATIF: would send' 'and must not resolve the half it co
 # ---- two inputs naming one machine is a refusal, not a coin toss -------------
 
 @(
- 'machine.this = pc'
+ 'computer.this = pc'
  'display.lg.vendor  = 0x1E6D'
  'display.lg.product = 0x9E9D'
  'display.lg.method  = lg-alt'

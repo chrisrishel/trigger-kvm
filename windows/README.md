@@ -52,16 +52,19 @@ trigger-kvm restart            make a hand-edited config take effect now
 trigger-kvm logs               tail the log
 trigger-kvm pause              stand the watcher down to test one by hand
 trigger-kvm uninstall
-trigger-kvm pull | to <machine> | list
+trigger-kvm pull | to <computer> | list
 ```
 
 ### Tests
 
 ```powershell
 cd windows	ests
-.un.ps1                 # all of them
-.un.ps1 menus           # just one file
-.un.ps1 -Verbose        # every prompt and answer
+.
+un.ps1                 # all of them
+.
+un.ps1 menus           # just one file
+.
+un.ps1 -Verbose        # every prompt and answer
 ```
 
 No framework. The Pester that ships with Windows PowerShell 5.1 is 3.4, and requiring
@@ -120,10 +123,11 @@ that is the same kind of menu, with the settings themselves as the rows:
 ```
 --- review configuration ---
 
-    Monitors                     asus on 0x11, lg on 0xD0
+    Computers                    pc (this), mac
+    Monitors                     asus: pc/mac, lg: pc/mac
     Trigger devices              usb:046d:0843, bt:0011223344ff
-    When it starts               from boot
-    PATH                         add ...	rigger-kvmin
+    Autostart?                   from boot
+    Add to PATH?                 yes
 
   > Test the trigger             untested
     Test the monitors            untested
@@ -131,6 +135,12 @@ that is the same kind of menu, with the settings themselves as the rows:
     Save configuration and run
     Cancel (discard changes)
 ```
+
+**One punctuation rule down the value column**, because it is read as a column:
+`, ` separates items, `: ` separates a label from its value, `/` joins things
+sharing one label. Not only tidiness — `Split-Detail` wraps at `, `, so while the
+monitors row used spaces it could not wrap at all, and a desk with several panels
+overran the line while every other row behaved.
 
 Three groups: what you set, what you can check, and what ends the walkthrough.
 Seven flat rows read as seven equal choices, so the separators do the work that
@@ -205,7 +215,7 @@ one that is true about your room.
 **Checking the monitors batches across panels, never across machines.** Monitors sit
 side by side, so several can be confirmed in one glance; a *sequence* of switches
 over half a minute has to be held in memory and reported afterwards, and memory is
-the weak link. So each round sends every panel that claims a machine to that machine
+the weak link. So each round sends every panel that claims a computer to that machine
 at once and asks straight away:
 
 ```
@@ -283,7 +293,7 @@ name for the boot-vs-login distinction and it leaked into the CLI, the status
 output and the config. A name like `s4u` tells a reader nothing they can act on;
 what they want to know is whether a locked or logged-out PC still follows the
 switch. The walkthrough asks in those words, the config records
-`install.start = boot|login`, and the installer applies what it finds — so the flag
+`install.autostart = boot|login`, and the installer applies what it finds — so the flag
 was redundant with a config the installer already had to read. Old configs saying
 `install.tier = s4u|user` are still honoured, with a warning, and `configure`
 rewrites the file without them.
@@ -490,8 +500,8 @@ display.lg.product = 0x9E9D     # EDID product id
 display.lg.name    = LG 45GX950A
 display.lg.method  = lg-alt     # standard | lg-alt
 
-machine.this          = pc      # what this computer is called below
-display.lg.input.0xD0 = pc      # the WHOLE map: which machine is on which input
+computer.this          = pc      # what this computer is called below
+display.lg.input.0xD0 = pc      # the WHOLE map: which computer is on which input
 display.lg.input.0xD1 = mac
 
 trigger.device   = usb:046d:0843, usb:1235:820a, bt:0011223344ff
@@ -514,7 +524,7 @@ the installer reads them back out of the config rather than from its own default
   PowerShell, so a typo'd vendor would otherwise become a silent match against
   `0x0000` — a write aimed at the wrong panel is the failure this project spends
   most of its effort avoiding.
-- A machine that two displays know about and a third does not moves **none** of them.
+- A computer that two displays know about and a third does not moves **none** of them.
   Every value is resolved before anything is sent. A half-applied arrangement is
   worse than none: it leaves the desk in a state nobody configured, and you have to
   work out which half landed.
@@ -535,18 +545,18 @@ the installer reads them back out of the config rather than from its own default
 monitor at once can take away the display your terminal is on. Use it when testing.
 
 `pull` and `to` are the **same lookup** against the same map, differing only in
-which name they look up: `pull` asks for `machine.this`, `to mac` asks for `mac`.
-There is no second table, so the two can never disagree about where a machine is.
+which name they look up: `pull` asks for `computer.this`, `to mac` asks for `mac`.
+There is no second table, so the two can never disagree about where a computer is.
 
 They stay separate *verbs* on purpose, and that separation is a safety property
-rather than a style choice. `machine.this` describes inputs on hardware this
+rather than a style choice. `computer.this` describes inputs on hardware this
 computer is plugged into and can therefore be sure of. Any other name describes
 inputs on hardware it cannot observe, which go stale the moment someone moves a
 cable over there. **The trigger can only ever run `pull`**, so a name that has gone
 stale can spoil a command you typed and are watching, never an automatic switch.
 
 That is also why `display.<label>.self` and `scene.*` are both gone. They were two
-different shapes for one fact — "machine M is on input V of display D" — and two
+different shapes for one fact — "computer C is on input V of display D" — and two
 representations of the same fact can disagree. A mixed arrangement is a
 composition, not a stored object: `trigger-kvm to mac -Only lg`.
 

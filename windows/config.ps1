@@ -19,9 +19,9 @@
 #   display.<label>.method   standard | lg-alt
 #   display.<label>.input.<value>  which machine is on that input, e.g.
 #                            display.lg.input.0xd1 = mac. This is the WHOLE map:
-#                            `pull` looks up machine.this in it, `to mac` looks up
+#                            `pull` looks up computer.this in it, `to mac` looks up
 #                            mac, and there is no second table to disagree with it
-#   machine.this             what this computer is called in those input maps
+#   computer.this             what this computer is called in those input maps
 #   trigger.device           usb:VVVV:PPPP / VVVV:PPPP / bt:AAAAAAAAAAAA, comma-sep
 #   trigger.debounce         seconds
 #   trigger.settle           seconds

@@ -27,7 +27,7 @@
 # Writes are fire-and-forget. Trust the screen, not the tool.
 # ---------------------------------------------------------------------------
 
-[machines]
+[computers]
 mac     = "Mac Studio M4 Max"
 windows = "Windows PC (RTX 4090)"
 

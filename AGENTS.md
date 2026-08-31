@@ -21,12 +21,12 @@ That is a service/factory channel. Sweeping it has bricked LG monitors — the
 already documented in `displays.toml`. If you need a value that isn't there, ask;
 do not go looking for it experimentally.
 
-**1a. A monitor's inputs are named after the MACHINES on them, and that one map
-answers both verbs.** `display.lg.input.0xD1 = mac`, `machine.this = pc`. `pull` is
-`to <machine.this>`; same lookup, same code path. There is no `scene.*` and no
+**1a. A monitor's inputs are named after the COMPUTERS on them, and that one map
+answers both verbs.** `display.lg.input.0xD1 = mac`, `computer.this = pc`. `pull` is
+`to <computer.this>`; same lookup, same code path. There is no `scene.*` and no
 `display.<label>.self` -- both were deleted, because two representations of "machine
 M is on input V of display D" can disagree and one cannot. `to` is still MANUAL
-ONLY: a trigger may never reach a name other than `machine.this`, because a name
+ONLY: a trigger may never reach a name other than `computer.this`, because a name
 describes hardware this machine cannot observe.
 
 **1b. A manufacturer dialect is OFFERED, never probed, and only after standard
@@ -165,8 +165,8 @@ settle, because a spurious arrival would yank the displays. A hotkey is delibera
 and discrete and needs neither. What sources share is the process lifetime, the
 single-instance lock, and the fire.
 
-**Whatever the source, it runs `pull` -- never another machine's name.** A name
-other than `machine.this` describes inputs on hardware this machine cannot observe,
+**Whatever the source, it runs `pull` -- never another computer's name.** A name
+other than `computer.this` describes inputs on hardware this machine cannot observe,
 so a stale one must never be reachable from anything automatic.
 
 **Bluetooth is BUILT, and matches on CONNECTED, never on paired.** `event-watch.ps1`
@@ -437,7 +437,8 @@ There is a test suite, and it runs without hardware:
 
 ```powershell
 cd windows	ests
-.un.ps1
+.
+un.ps1
 ```
 
 Add to it when you change the walkthrough or the menus -- and then MUTATE the thing
@@ -501,10 +502,10 @@ re-enables and restarts.
   needs, and which values are safe to send it. Do not push discovered, per-desk
   facts back into either the scripts or `displays.toml`.
 - **`pull` and `to` are one lookup but two verbs, for a safety reason.** Both read
-  the same input map; `pull` asks for `machine.this`, which describes hardware this
+  the same input map; `pull` asks for `computer.this`, which describes hardware this
   computer is plugged into and can be sure of. Any other name describes inputs on
   hardware it cannot observe. The trigger may only ever run `pull` — never wire
-  another machine's name into the trigger path, or a stale one becomes able to cause
+  another computer's name into the trigger path, or a stale one becomes able to cause
   an automatic switch to a dead input.
 - **When it starts is a property of the HOST, not the switcher.** All of that logic
   lives in `windows/install.ps1`. Nothing in `trigger-kvm.ps1` or
