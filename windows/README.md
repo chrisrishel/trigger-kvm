@@ -88,11 +88,41 @@ is what `install.ps1` registers. There is deliberately no plugin system or trigg
 registry — the process boundary already is one, and a second abstraction on top
 would earn nothing.
 
-**Its mechanism is not USB-specific, though the schema doesn't pretend otherwise.**
-`Win32_PnPEntity` enumerates Bluetooth, PCI and Thunderbolt too — measured here, USB
-is only 44 of ~300 PnP entities, and the same query returns `BTHENUM`, `BTHLE`,
-`PCI` and `SWD`. USB is the *ID pattern* matched, not the mechanism, so a second
-transport would be a match-pattern change rather than a new watcher.
+**Its mechanism is not USB-specific, but that does not mean every transport fits
+it.** `Win32_PnPEntity` enumerates Bluetooth, PCI and Thunderbolt too — measured
+here, USB is only 44 of ~300 PnP entities. So the *query* is generic and USB is only
+the ID pattern matched.
+
+**Bluetooth, however, would not work by changing that pattern**, and it is worth
+recording why, because the reasoning looks sound right up until you check it. The
+watcher's model is "a PnP node exists only while the device is attached", so
+presence == connected and an absent→present edge means arrival. For USB that holds.
+For Bluetooth it does not: a *paired* device keeps its node whether or not it is
+connected. Measured on this machine —
+
+```
+BTHENUM\DEV_0011223344FF   Present=True   DEVPKEY_Bluetooth_LastConnectedTime = 2025-11-07
+BTHENUM\DEV_<iphone>       Present=True   DEVPKEY_Bluetooth_LastConnectedTime = 2023-07-07
+```
+
+— a pair of AirPods last connected ten months ago and an iPhone last connected three
+years ago both still report `Present=True`. There is even a
+`DEVPKEY_DeviceContainer_AlwaysShowDeviceAsConnected = True` on them. The presence
+map would never change, so no edge would ever fire and the trigger would silently
+never work.
+
+What *does* track connection is the downstream function nodes — the AirPods'
+`SWD\MMDEVAPI\...` audio endpoints are `Present=False` right now while the parent is
+`True`. But those are opaque GUIDs, differ by device class, and on this machine the
+same service GUIDs exist twice (a stale `LOCALMFG&0002` set alongside a live
+`VID&0001004C_PID&2027` set), so matching them is guesswork.
+
+The correct route is a **second watcher process**, using WinRT
+`Windows.Devices.Enumeration.DeviceWatcher` with `System.Devices.Aep.IsConnected`,
+or `BluetoothDevice.ConnectionStatusChanged` — APIs that report connection rather
+than pairing, and push rather than poll. That costs nothing architecturally: it runs
+`trigger-kvm.ps1 pull` like anything else, and touches neither the switcher nor the
+existing config.
 
 The config keys stay flat anyway — `trigger.device`, `trigger.debounce`,
 `trigger.settle`. Nesting them under a transport was tried and reverted: it

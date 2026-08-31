@@ -68,9 +68,17 @@ triggers**, never per-transport, because two independent debounce windows could 
 dedupe against each other. Keep them at `trigger.*`.
 
 Worth knowing before assuming the Mac watcher is inherently USB-bound: on Windows
-the detection mechanism turned out not to be — `Win32_PnPEntity` reaches Bluetooth,
-PCI and Thunderbolt, and USB is only the ID pattern matched. Check whether IOKit
-gives macOS the same latitude.
+the detection *query* turned out not to be — `Win32_PnPEntity` reaches Bluetooth,
+PCI and Thunderbolt, and USB is only the ID pattern matched.
+
+**But a generic query is not the same as a generic model,** and this is the trap.
+The watcher assumes a node exists only while the device is attached, so presence ==
+connected. That holds for USB and fails for Bluetooth: on Windows a *paired* device
+keeps its node forever — AirPods last connected ten months ago and an iPhone three
+years ago both still report `Present=True`. The edge would never fire and the
+trigger would silently never work. Adding Bluetooth needs a different watcher using
+connection-aware APIs, not a wider match pattern. Expect IOKit to have the same
+distinction between paired and connected, and check it before assuming otherwise.
 
 **The Mac's `self` values are different from the PC's, and that is the whole point.**
 Each machine configures only its own inputs. On this desk the Mac sits on the LG's

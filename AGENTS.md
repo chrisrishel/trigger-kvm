@@ -97,6 +97,27 @@ switcher dozens of times. And the no-edge branch is the common case by a wide
 margin, which is why its log line is `Write-Verbose` and not `Write-Log`; promoting
 it would bury the log in noise on every plug.
 
+**PnP presence means "attached" for USB and "PAIRED" for Bluetooth. Do not extend
+the watcher to Bluetooth by widening its match pattern.** `usb-watch.ps1` assumes a
+node exists only while the device is attached, so an absent -> present edge means
+arrival. Measured 2026-08-30: a pair of AirPods whose
+`DEVPKEY_Bluetooth_LastConnectedTime` reads **2025-11-07**, and an iPhone reading
+**2023-07-07**, both still report `Present=True`, and both carry
+`DEVPKEY_DeviceContainer_AlwaysShowDeviceAsConnected = True`. The presence map would
+never change, no edge would ever fire, and the trigger would silently never work --
+the worst failure shape available here.
+
+The downstream function nodes do track connection (those AirPods' `SWD\MMDEVAPI\`
+audio endpoints read `Present=False` while the parent reads `True`), but they are
+opaque GUIDs, differ by device class, and appeared twice on this machine under two
+different service-id forms. Matching them is guesswork.
+
+Bluetooth needs a SECOND WATCHER using connection-aware APIs -- WinRT
+`Windows.Devices.Enumeration.DeviceWatcher` with `System.Devices.Aep.IsConnected`,
+or `BluetoothDevice.ConnectionStatusChanged`. That costs nothing architecturally: it
+runs `trigger-kvm.ps1 pull` like any other trigger and touches neither the switcher
+nor the config schema.
+
 **WMI device notifications DO reach session 0.** Measured 2026-08-30 from an
 unelevated S4U task: 45 indications in 90s, and `Win32_PnPEntity` presence queries
 work there too. This is what makes the pre-login tier viable rather than a silent
