@@ -13,17 +13,22 @@ duplicated here as literals rather than parsed, because this script runs from a
 Scheduled Task on every device arrival and should not depend on a TOML parser.
 If you change displays.toml, change these to match.
 
-The two monitors do not speak the same dialect:
+The two monitors do not speak the same dialect, but they now share one transport:
 
-  ASUS PG42UQ    standard DDC/CI, VCP 0x60, via dxva2.dll SetVCPFeature
+  ASUS PG42UQ    standard DDC/CI  -- I2C source 0x51, VCP 0x60
   LG 45GX950A    standard input control is STUBBED; input lives on LG's
-                 manufacturer sidechannel (I2C src 0x50, VCP 0xF4), reachable
-                 only by injecting raw I2C through NVAPI.
+                 manufacturer sidechannel -- I2C source 0x50, VCP 0xF4
 
-The LG path injects that I2C directly through NVAPI, AIMED at the single output
-whose EDID identifies it as the LG. It is not a spray: no other panel on the GPU
-receives the packet. See ..\ideas\nvapi-transport.md for the function ids, the
-struct traps and the provenance.
+Both are sent as raw I2C through NVAPI, each AIMED at the single GPU output whose
+EDID identifies that panel. Neither is a spray: no other monitor sees either
+packet. See ..\ideas\nvapi-transport.md for the function ids, struct traps and
+provenance.
+
+Identity comes from NVAPI alone -- enumerate the GPU's connected outputs, read each
+EDID, match on manufacturer and product. The Windows display list is deliberately
+never consulted: in session 0 it reports a phantom monitor rather than none, so
+matching against it silently resolves to a fiction. That is also why there is no
+dxva2 or user32 code left here, and why this script has no desktop dependency.
 
 NEVER verify a switch by reading a VCP value back -- see ..\displays.toml for why.
 Both monitors switched correctly during macOS testing while reads said they had
@@ -31,8 +36,8 @@ not. Writes are fire-and-forget; there are deliberately no reads in this script.
 
 SAFETY: the I2C source address 0x50 is LG's service channel. It appears in exactly
 one function, NvDdc.WriteLgInput, which refuses to run unless the target's EDID
-manufacturer is GSM (0x1E6D). There is no generic "write to source N" entry point,
-so the sidechannel cannot be aimed at another vendor's panel by any caller.
+manufacturer is GSM (0x1E6D). The source byte is not a parameter of any public
+method, so the sidechannel cannot be aimed at another vendor's panel by any caller.
 #>
 
 [CmdletBinding(SupportsShouldProcess = $true)]
@@ -60,26 +65,24 @@ $ErrorActionPreference = 'Stop'
 
 # --- the contract, from ..\displays.toml -----------------------------------
 
-# Matched against the monitor's PnP interface path. This is the EDID vendor+product
-# id as Windows spells it. Deliberately not an index: \\.\DISPLAY1 is the ASUS on
-# this machine, and an index silently becoming the other monitor would send LG
-# service-channel writes to the ASUS.
-$ASUS_MATCH = 'AUS42E0'          # ASUS PG42UQ, EDID 0x06b3:0x42e0
+# Each panel is identified by the EDID vendor and product that NVAPI reads off the
+# GPU output. Deliberately not an index and not a PnP path: \\.\DISPLAYn indices
+# swapped on this machine on 2026-08-30, and an index silently becoming the other
+# monitor would send LG service-channel writes to the ASUS.
+$ASUS_EDID_VENDOR  = 0x06B3      # AUS / ASUSTek
+$ASUS_EDID_PRODUCT = 0x42E0      # PG42UQ -- reads the same on every host and input
 
 $ASUS_VCP_INPUT = 0x60
 $ASUS_WIN       = 0x11           # 17 -- HDMI 1
 $ASUS_MAC       = 0x0F           # 15 -- DisplayPort
 
-# The LG is identified from the EDID that NVAPI reads off the GPU output, never
-# from the Windows display list. In session 0 that list reports a phantom monitor
-# rather than nothing, so correlating against it silently mis-resolves -- see
-# ..\AGENTS.md. NVAPI is the sole identity source here.
+# For the LG the vendor id is also the safety gate on the 0x50 sidechannel.
 #
-# The vendor id is the safety gate; the product id says which panel. Both are
-# checked. NOTE: the product id is PER-INPUT on this panel (0x9e9d DP, 0x9e9f
-# USB-C, 0x9ea0 through the old KVM). 0x9E9D is what this host sees on its own
-# DisplayPort connection and is stable there -- but it is a local key, never a
-# value to copy to another host. See ..\displays.toml.
+# NOTE: the LG's product id is PER-INPUT (0x9e9d DP, 0x9e9f USB-C, 0x9ea0 through
+# the old KVM). 0x9E9D is what this host sees on its own DisplayPort connection and
+# is stable there -- but it is a local key, never a value to copy to another host.
+# The ASUS shows no such behaviour, which makes the trap easy to walk into. See
+# ..\displays.toml.
 $LG_EDID_VENDOR  = 0x1E6D        # GSM / LG Electronics
 $LG_EDID_PRODUCT = 0x9E9D        # this host's DP input on the 45GX950A
 
@@ -101,109 +104,6 @@ function Write-Log {
     }
 }
 
-# --- ASUS: standard DDC/CI via the Monitor Configuration API ---------------
-
-Add-Type -ErrorAction Stop @'
-using System;
-using System.Collections.Generic;
-using System.Runtime.InteropServices;
-
-public static class Ddc {
-    [StructLayout(LayoutKind.Sequential)]
-    public struct RECT { public int left, top, right, bottom; }
-
-    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
-    public struct MONITORINFOEX {
-        public int cbSize;
-        public RECT rcMonitor;
-        public RECT rcWork;
-        public uint dwFlags;
-        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string szDevice;
-    }
-
-    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
-    public struct DISPLAY_DEVICE {
-        public int cb;
-        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)]  public string DeviceName;
-        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string DeviceString;
-        public uint StateFlags;
-        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string DeviceID;
-        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string DeviceKey;
-    }
-
-    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
-    public struct PHYSICAL_MONITOR {
-        public IntPtr hPhysicalMonitor;
-        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string szDescription;
-    }
-
-    public delegate bool MonEnumProc(IntPtr hMon, IntPtr hdc, ref RECT rc, IntPtr data);
-
-    [DllImport("user32.dll")]
-    public static extern bool EnumDisplayMonitors(IntPtr hdc, IntPtr clip, MonEnumProc proc, IntPtr data);
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-    public static extern bool GetMonitorInfo(IntPtr hMon, ref MONITORINFOEX mi);
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-    public static extern bool EnumDisplayDevices(string dev, uint devNum, ref DISPLAY_DEVICE dd, uint flags);
-
-    [DllImport("dxva2.dll", SetLastError = true)]
-    public static extern bool GetNumberOfPhysicalMonitorsFromHMONITOR(IntPtr hMon, ref uint n);
-    [DllImport("dxva2.dll", SetLastError = true)]
-    public static extern bool GetPhysicalMonitorsFromHMONITOR(IntPtr hMon, uint n, [Out] PHYSICAL_MONITOR[] arr);
-    [DllImport("dxva2.dll", SetLastError = true)]
-    public static extern bool DestroyPhysicalMonitors(uint n, PHYSICAL_MONITOR[] arr);
-    [DllImport("dxva2.dll", SetLastError = true)]
-    public static extern bool SetVCPFeature(IntPtr hMonitor, byte code, uint value);
-
-    const uint EDD_GET_DEVICE_INTERFACE_NAME = 1;
-
-    // The monitor's PnP interface path, e.g.
-    //   \\?\DISPLAY#AUS42E0#5&aaaaaaaa&0&UID4352#{e6f07b5f-...}
-    // This carries the EDID vendor+product id, which is what we match on. The
-    // dxva2 description is not usable as a key: the LG reports the generic
-    // "Generic PnP Monitor" string.
-    public static string InterfacePath(string deviceName) {
-        var dd = new DISPLAY_DEVICE();
-        dd.cb = Marshal.SizeOf(typeof(DISPLAY_DEVICE));
-        if (!EnumDisplayDevices(deviceName, 0, ref dd, EDD_GET_DEVICE_INTERFACE_NAME)) return "";
-        return dd.DeviceID ?? "";
-    }
-
-    public static List<IntPtr> Handles() {
-        var list = new List<IntPtr>();
-        EnumDisplayMonitors(IntPtr.Zero, IntPtr.Zero,
-            delegate(IntPtr h, IntPtr hdc, ref RECT rc, IntPtr d) { list.Add(h); return true; },
-            IntPtr.Zero);
-        return list;
-    }
-
-    public static string DeviceOf(IntPtr hMon) {
-        var mi = new MONITORINFOEX();
-        mi.cbSize = Marshal.SizeOf(typeof(MONITORINFOEX));
-        if (!GetMonitorInfo(hMon, ref mi)) return "";
-        return mi.szDevice ?? "";
-    }
-
-    // Write only. There is deliberately no GetVCPFeature wrapper here: reads on
-    // this hardware produce false negatives and must never gate a switch.
-    public static int SetVcp(IntPtr hMon, byte code, uint value) {
-        uint n = 0;
-        if (!GetNumberOfPhysicalMonitorsFromHMONITOR(hMon, ref n) || n == 0) return -1;
-        var arr = new PHYSICAL_MONITOR[n];
-        if (!GetPhysicalMonitorsFromHMONITOR(hMon, n, arr)) return -2;
-        try {
-            int ok = 0;
-            foreach (var pm in arr) {
-                if (SetVCPFeature(pm.hPhysicalMonitor, code, value)) ok++;
-            }
-            return ok;
-        } finally {
-            DestroyPhysicalMonitors(n, arr);
-        }
-    }
-}
-'@
-
 # --- LG: aimed raw I2C through NVAPI ---------------------------------------
 #
 # Function ids and struct layouts from fiddyschmitt/SimpleKVM (MIT), with
@@ -213,7 +113,7 @@ public static class Ddc {
 # an at-startup task after a cold boot. The aimed write itself was confirmed
 # visually, both directions, from an inactive link. See ..\ideas\nvapi-transport.md.
 
-Add-Type -ErrorAction Stop @'
+$NvDdcSource = @'
 using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
@@ -256,6 +156,10 @@ public static class NvDdc {
 
     // DDC/CI slave address 0x37, shifted left one bit for a write: 0x6E.
     const byte DDC_I2C_ADDRESS = 0x6E;
+
+    // The normal DDC/CI host source address. Everything except the LG's input uses
+    // this; it is what dxva2's SetVCPFeature puts on the wire too.
+    const byte STD_I2C_SOURCE = 0x51;
 
     // LG's manufacturer sidechannel. Standard DDC/CI is source 0x51 / VCP 0x60;
     // on this panel VCP 0x60 is stubbed and input lives here instead.
@@ -479,8 +383,13 @@ public static class NvDdc {
         return p;
     }
 
+    // Used by -WhatIf to show the exact bytes without sending them.
     public static string PacketForLgInput(byte value) {
         return BitConverter.ToString(BuildSetVcp(LG_I2C_SOURCE, LG_VCP_INPUT, value)).Replace("-", " ");
+    }
+
+    public static string PacketForStandardVcp(byte vcp, byte value) {
+        return BitConverter.ToString(BuildSetVcp(STD_I2C_SOURCE, vcp, value)).Replace("-", " ");
     }
 
     // Send an LG input-select packet to ONE output.
@@ -500,15 +409,27 @@ public static class NvDdc {
                 "Only GSM (0x{4:X4}) may receive it.",
                 LG_I2C_SOURCE, DecodeMfg(target.EdidVendor), target.EdidVendor, target, EDID_VENDOR_GSM));
 
-        byte[] packet = BuildSetVcp(LG_I2C_SOURCE, LG_VCP_INPUT, value);
+        return Send(target, BuildSetVcp(LG_I2C_SOURCE, LG_VCP_INPUT, value));
+    }
 
-        // Framing follows lg-input-switch: the whole packet goes in pbData with no
-        // separate register address. SimpleKVM instead puts the source byte in
-        // pbI2cRegAddress with regAddrSize = 1 and the rest in pbData. Both projects
-        // report their own shape working; lg-input-switch is the one demonstrably
-        // driving THIS panel today, so it wins the tie. If this ever stops working,
-        // the alternative is documented in ..\ideas\nvapi-transport.md -- change it
-        // here, do not add a switch.
+    // Send a standard DDC/CI SetVCP to ONE output, on the normal host source 0x51.
+    //
+    // No vendor gate, and none is needed: 0x51 is the ordinary DDC/CI channel that
+    // every monitor and every OS-level tool already uses. It is 0x50 that is a
+    // service channel, and WriteLgInput above is the only way to reach it.
+    public static int WriteStandardVcp(NvDisplay target, byte vcp, byte value) {
+        if (target == null) throw new ArgumentNullException("target");
+        return Send(target, BuildSetVcp(STD_I2C_SOURCE, vcp, value));
+    }
+
+    // Framing follows lg-input-switch: the whole packet goes in pbData with no
+    // separate register address. SimpleKVM instead puts the source byte in
+    // pbI2cRegAddress with regAddrSize = 1 and the rest in pbData. Both projects
+    // report their own shape working; lg-input-switch is the one demonstrably
+    // driving THIS panel, so it won the tie -- and the LG switch confirmed it on
+    // hardware. If it ever stops working, the alternative is documented in
+    // ..\ideas\nvapi-transport.md -- change it here, do not add a switch.
+    static int Send(NvDisplay target, byte[] packet) {
         IntPtr pData = Marshal.AllocHGlobal(packet.Length);
         try {
             Marshal.Copy(packet, 0, pData, packet.Length);
@@ -535,113 +456,138 @@ public static class NvDdc {
 }
 '@
 
-# Resolve a monitor's HMONITOR by the EDID id in its PnP interface path.
-function Resolve-Monitor {
-    param([string]$Match)
-    foreach ($h in [Ddc]::Handles()) {
-        $dev = [Ddc]::DeviceOf($h)
-        if (-not $dev) { continue }
-        $path = [Ddc]::InterfacePath($dev)
-        if ($path -and $path -match [regex]::Escape($Match)) {
-            return [PSCustomObject]@{ Handle = $h; Device = $dev; Path = $path }
-        }
+# Load the transport, once per PowerShell process.
+#
+# .NET cannot replace a type once it is loaded into an AppDomain. That matters here
+# because of how this script gets verified: you edit it and re-run it in the same
+# shell. A bare Add-Type throws "type name 'NvDisplay' already exists" on the second
+# run, and the tempting fix -- skip Add-Type when the type is already present -- is
+# WORSE than the error. It would silently run the previously loaded transport, so a
+# hand-verified switch would be confirming code that is not the code on disk. Given
+# that hand-verification is the only verification this hardware permits (hard rule
+# 3), a false pass is the most expensive failure available here.
+#
+# So: stamp the loaded types with a hash of the source they came from, and refuse
+# loudly if this session already holds a different version. Re-running the SAME
+# version in one session is fine and reuses what is loaded. The installed path never
+# reaches any of this -- the task starts a fresh powershell.exe per switch.
+$stampKey = 'display-switch:NvDdcSourceStamp'
+$stamp    = $NvDdcSource.GetHashCode()
+
+if ('NvDdc' -as [type]) {
+    if ([AppDomain]::CurrentDomain.GetData($stampKey) -ne $stamp) {
+        throw ("This PowerShell session already loaded display-switch's types from a " +
+               "DIFFERENT version of this script, and .NET cannot replace a loaded type. " +
+               "Open a new PowerShell window and re-run: continuing here would test the " +
+               "old code while appearing to test the new.")
+    }
+} else {
+    Add-Type -ErrorAction Stop -TypeDefinition $NvDdcSource
+    [AppDomain]::CurrentDomain.SetData($stampKey, $stamp)
+}
+
+# --- resolving a panel ------------------------------------------------------
+
+# Find the one connected output whose EDID matches, or $null with the reason logged.
+#
+# Fails closed on both sides of "exactly one". Zero is a refusal for the obvious
+# reason. More than one is also a refusal: an ambiguous target cannot be aimed at,
+# and picking the first would reintroduce exactly the order-dependence that this
+# repo's conventions forbid.
+#
+# This replaces the old Test-LgBlastRadius, which existed only to compensate for
+# lg-input-switch spraying VCP 0xF4 at every connected output. An aimed write has no
+# blast radius, so the check is no longer "is anything unrecognised attached" -- it
+# is the narrower and stronger "is the intended panel positively identified". A
+# third monitor being attached is now simply irrelevant.
+function Resolve-Panel {
+    param([int]$Vendor, [int]$Product, [string]$Name)
+
+    $status = [NvDdc]::Init()
+    if ($status -ne 'OK') {
+        Write-Log "REFUSING $Name switch: NVAPI unavailable -- $status"
+        return $null
+    }
+
+    $all   = @([NvDdc]::Enumerate())
+    $match = @($all | Where-Object {
+        $_.EdidVendor -eq $Vendor -and $_.EdidProduct -eq $Product
+    })
+
+    if ($match.Count -eq 1) { return $match[0] }
+
+    if ($match.Count -eq 0) {
+        $seen = if ($all.Count) { ($all | ForEach-Object { $_.ToString() }) -join '; ' } else { 'nothing' }
+        Write-Log ("REFUSING {0} switch: no output identifies as it (EDID 0x{1:X4}:0x{2:X4}). NVAPI enumerated: {3}" -f `
+                   $Name, $Vendor, $Product, $seen)
+    } else {
+        Write-Log ("REFUSING {0} switch: {1} outputs identify as it, so the target is ambiguous: {2}" -f `
+                   $Name, $match.Count, (($match | ForEach-Object { $_.ToString() }) -join '; '))
     }
     return $null
 }
 
-function Switch-Asus {
-    param([int]$Value, [string]$Label)
+# Send one panel's input-select packet, twice. DDC is lossy and the writes are
+# idempotent, so a repeat is free and covers a dropped byte.
+function Invoke-Switch {
+    param(
+        [NvDisplay]$Target,
+        [string]$What,
+        [scriptblock]$Write
+    )
 
-    $mon = Resolve-Monitor -Match $ASUS_MATCH
-    if (-not $mon) {
-        Write-Log "WARN: ASUS ($ASUS_MATCH) not found in display enumeration; skipped"
-        return $false
-    }
-
-    $what = 'ASUS -> {0} (VCP 0x{1:X2} = 0x{2:X2}) on {3}' -f $Label, $ASUS_VCP_INPUT, $Value, $mon.Device
-    if (-not $PSCmdlet.ShouldProcess($mon.Device, $what)) {
-        Write-Log "WHATIF: would send $what"
-        return $true
-    }
-
-    $ok = 0
-    for ($i = 0; $i -lt $Tries; $i++) {
-        $r = [Ddc]::SetVcp($mon.Handle, [byte]$ASUS_VCP_INPUT, [uint32]$Value)
-        if ($r -gt 0) { $ok++ }
-    }
-
-    if ($ok -eq 0) {
-        Write-Log ("ERROR: {0} -- no write succeeded" -f $what)
-        return $false
-    }
-    Write-Log $what
-    return $true
-}
-
-# --- LG: aimed at the one output whose EDID says it is the LG ---------------
-
-# Replaces the old Test-LgBlastRadius, which existed only to compensate for
-# lg-input-switch spraying VCP 0xF4 at every connected output. An aimed write needs
-# no blast-radius check: nothing else receives the packet. What remains is a
-# stronger and simpler rule -- refuse unless the LG is positively identified.
-#
-# Note the behaviour change this buys: attaching a third monitor no longer blocks
-# LG switching, because the third monitor is no longer in the blast radius.
-function Switch-Lg {
-    param([int]$Value, [string]$Label)
-
-    $status = [NvDdc]::Init()
-    if ($status -ne 'OK') {
-        Write-Log "REFUSING LG switch: NVAPI unavailable -- $status"
-        return $false
-    }
-
-    $all = @([NvDdc]::Enumerate())
-    $lg  = @($all | Where-Object {
-        $_.EdidVendor -eq $LG_EDID_VENDOR -and $_.EdidProduct -eq $LG_EDID_PRODUCT
-    })
-
-    if ($lg.Count -eq 0) {
-        $seen = if ($all.Count) { ($all | ForEach-Object { $_.ToString() }) -join '; ' } else { 'nothing' }
-        Write-Log ("REFUSING LG switch: no output identifies as the LG (EDID 0x{0:X4}:0x{1:X4}). NVAPI enumerated: {2}" -f `
-                   $LG_EDID_VENDOR, $LG_EDID_PRODUCT, $seen)
-        return $false
-    }
-
-    if ($lg.Count -gt 1) {
-        Write-Log ("REFUSING LG switch: {0} outputs identify as the LG, so the target is ambiguous: {1}" -f `
-                   $lg.Count, (($lg | ForEach-Object { $_.ToString() }) -join '; '))
-        return $false
-    }
-
-    $target = $lg[0]
-    $packet = [NvDdc]::PacketForLgInput([byte]$Value)
-    $what   = 'LG -> {0} (src 0x50, VCP 0xF4 = 0x{1:X2}) on outputId 0x{2:X8} [{3}]' -f `
-              $Label, $Value, $target.OutputId, $packet
-
-    if (-not $PSCmdlet.ShouldProcess($target.ToString(), $what)) {
-        Write-Log "WHATIF: would send $what"
+    if (-not $PSCmdlet.ShouldProcess($Target.ToString(), $What)) {
+        Write-Log "WHATIF: would send $What"
         return $true
     }
 
     $ok = 0
     for ($i = 0; $i -lt $Tries; $i++) {
         try {
-            if ([NvDdc]::WriteLgInput($target, [byte]$Value) -eq 0) { $ok++ }
+            if ((& $Write) -eq 0) { $ok++ }
         } catch {
             # The vendor gate throwing is a bug in the caller, not a transient
             # failure. Surface it rather than retrying into it.
-            Write-Log ("ERROR: LG write refused: {0}" -f $_.Exception.Message)
+            Write-Log ("ERROR: write refused: {0}" -f $_.Exception.Message)
             return $false
         }
     }
 
     if ($ok -eq 0) {
-        Write-Log ("ERROR: {0} -- NvAPI_I2CWrite reported failure on every attempt" -f $what)
+        Write-Log ("ERROR: {0} -- NvAPI_I2CWrite reported failure on every attempt" -f $What)
         return $false
     }
-    Write-Log $what
+    Write-Log $What
     return $true
+}
+
+function Switch-Asus {
+    param([int]$Value, [string]$Label)
+
+    $target = Resolve-Panel -Vendor $ASUS_EDID_VENDOR -Product $ASUS_EDID_PRODUCT -Name 'ASUS'
+    if (-not $target) { return $false }
+
+    $what = 'ASUS -> {0} (src 0x51, VCP 0x{1:X2} = 0x{2:X2}) on outputId 0x{3:X8} [{4}]' -f `
+            $Label, $ASUS_VCP_INPUT, $Value, $target.OutputId,
+            [NvDdc]::PacketForStandardVcp([byte]$ASUS_VCP_INPUT, [byte]$Value)
+
+    return Invoke-Switch -Target $target -What $what -Write {
+        [NvDdc]::WriteStandardVcp($target, [byte]$ASUS_VCP_INPUT, [byte]$Value)
+    }
+}
+
+function Switch-Lg {
+    param([int]$Value, [string]$Label)
+
+    $target = Resolve-Panel -Vendor $LG_EDID_VENDOR -Product $LG_EDID_PRODUCT -Name 'LG'
+    if (-not $target) { return $false }
+
+    $what = 'LG -> {0} (src 0x50, VCP 0xF4 = 0x{1:X2}) on outputId 0x{2:X8} [{3}]' -f `
+            $Label, $Value, $target.OutputId, [NvDdc]::PacketForLgInput([byte]$Value)
+
+    return Invoke-Switch -Target $target -What $what -Write {
+        [NvDdc]::WriteLgInput($target, [byte]$Value)
+    }
 }
 
 # --- main -------------------------------------------------------------------

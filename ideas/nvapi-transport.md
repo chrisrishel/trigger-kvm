@@ -185,6 +185,14 @@ whole design depends on, and one that had only ever been established for
 lg-input-switch's framing is therefore the correct one for this panel, and
 SimpleKVM's alternative below is recorded for the next hardware, not for this one.
 
+**The ASUS answers on the same transport at standard source `0x51`, VCP `0x60`** --
+verified visually the same day, both directions, including its pull-back from an
+inactive link over HDMI. That collapsed the dual code path: the `dxva2`/`user32`
+bindings and the PnP-interface-path matcher are deleted, both panels resolve by EDID
+through NVAPI, and `windows/switch-displays.ps1` now touches no desktop API at all.
+Why no vendor-neutral fallback was kept:
+`../docs/decisions/001-nvapi-as-the-only-windows-transport.md`.
+
 ## Still unproven
 
 - Whether the write works from session 0. Enumeration does there; writing has only
@@ -192,8 +200,6 @@ SimpleKVM's alternative below is recorded for the next hardware, not for this on
   tier -- and the one thing phase 1 could not answer, because phase 1 sent no writes.
 - Whether this holds at the actual logon screen, before any user has logged in. See
   the caveat on the boot row above.
-- Whether the ASUS can be driven over the same transport at source `0x51`
-  (would collapse the dual code path and remove the last `dxva2` dependency).
 
 ## Licence
 

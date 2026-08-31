@@ -26,11 +26,13 @@ USB switch ──> peripherals ──> whichever machine gets them pulls both di
 | `displays.toml` | **The contract.** Monitor identities, DDC method, input values, trigger devices. Both platforms read from this. |
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | The design and its rationale — why pull-to-self, why two DDC dialects, why post-login |
 | [`AGENTS.md`](AGENTS.md) | Instructions for anyone (human or agent) changing this repo, including the hard safety rules |
+| `docs/decisions/` | Architectural trade-offs and why they went the way they did, so they don't get relitigated |
+| `ideas/` | Exploratory design notes, including `ideas/rejected/` for options deliberately declined |
 | `macos/` | Working implementation: `usb-watch` (IOKit) + `switch-displays.sh` (m1ddc) + LaunchAgent |
-| `windows/` | Working implementation: `usb-watch.ps1` (WMI) + `switch-displays.ps1` (dxva2 for the ASUS, aimed NVAPI I2C for the LG) + Scheduled Task |
+| `windows/` | Working implementation: `usb-watch.ps1` (WMI) + `switch-displays.ps1` (aimed NVAPI I2C, both panels) + Scheduled Task |
 
 Code is not shared between platforms — macOS goes through `IOAVService`, Windows
-through NVAPI and the Monitor Configuration API, with no common runtime.
+through NVAPI, with no common runtime.
 `displays.toml` exists so the *values* can't silently drift apart between two
 independent implementations.
 
@@ -61,14 +63,15 @@ plus the end-to-end USB trigger driven by the real switch on the Windows side:
 
 | Case | From the Mac | From Windows |
 |---|---|---|
-| ASUS → DisplayPort (show the Mac) | `input 15` ✅ | `SetVCPFeature 0x60=0x0F` ✅ |
-| ASUS → HDMI 1 (show Windows) | `input 17` ✅ | `SetVCPFeature 0x60=0x11` ✅ |
+| ASUS → DisplayPort (show the Mac) | `input 15` ✅ | NVAPI I2C `0x51`/`0x60=0x0F`, aimed ✅ |
+| ASUS → HDMI 1 (show Windows) | `input 17` ✅ | NVAPI I2C `0x51`/`0x60=0x11`, aimed ✅ |
 | LG → USB-C (show the Mac) | `input-alt 209` ✅ | NVAPI I2C `0x50`/`0xF4=0xD1`, aimed ✅ |
 | LG → DisplayPort (show Windows) | `input-alt 208` ✅ | NVAPI I2C `0x50`/`0xF4=0xD0`, aimed ✅ |
 
-The Windows LG rows were re-verified on the aimed NVAPI transport, both directions,
-confirmed visually. They previously read `lg-input-switch usbc` / `dp`; the bytes on
-the wire are unchanged, but they now reach one output instead of every output.
+All four Windows rows were re-verified on the aimed NVAPI transport, both monitors,
+both directions, confirmed visually. They previously read `SetVCPFeature` (via
+`dxva2`) and `lg-input-switch`; the bytes on the wire are unchanged, but each now
+reaches one output instead of a desktop-bound handle or every output at once.
 
 Each machine's *pull-to-self* direction was exercised with the monitor actually
 displaying the other machine — the case that matters, since the machine issuing the

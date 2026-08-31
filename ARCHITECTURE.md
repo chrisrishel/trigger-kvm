@@ -86,7 +86,7 @@ displays.toml          the contract — shared by both platforms
 │   └── switch-displays.sh   drives m1ddc     →  sends the DDC writes
 └── windows/
     ├── usb-watch.ps1        detects arrival  →  execs the switcher
-    ├── switch-displays.ps1  dxva2 (ASUS) + NVAPI I2C (LG) → sends the DDC writes
+    ├── switch-displays.ps1  aimed NVAPI I2C, both panels → sends the DDC writes
     ├── nvapi-probe.ps1      read-only display enumeration probe (diagnostic)
     └── install.ps1          Scheduled Task at logon (generates launcher.vbs)
 ```
@@ -105,8 +105,8 @@ stays usable by hand and testable in isolation.
 ## Why `displays.toml` exists
 
 There is no shared code between platforms. macOS reaches DDC through
-`IOAVService`; Windows reaches it through NVAPI and the Monitor Configuration API.
-No runtime, no language, no library in common.
+`IOAVService`; Windows reaches it through NVAPI. No runtime, no language, no
+library in common.
 
 What *is* common is the **map**: which monitor, addressed how, with what value for
 which machine. That is the part that silently rots when duplicated — a value fixed
@@ -119,19 +119,24 @@ duplicates the values as literals deliberately: it runs from a LaunchAgent on ev
 device arrival and should not depend on a TOML parser being present. Changing
 `displays.toml` means changing the implementations to match, in the same commit.
 
-## Why two different DDC methods
+## Why two different DDC dialects
 
 The two monitors do not speak the same dialect:
 
-| Monitor | Method | Why |
+| Monitor | Dialect | Why |
 |---|---|---|
-| ASUS PG42UQ | Standard DDC/CI, VCP `0x60` | Works normally |
+| ASUS PG42UQ | Standard DDC/CI, I2C source `0x51`, VCP `0x60` | Works normally |
 | LG 45GX950A | I2C source `0x50`, VCP `0xF4` | Standard input control is **stubbed** on this panel |
 
-This split is why neither platform has a single code path. macOS reaches both
-through `m1ddc` (`set input` vs `set input-alt`); Windows reaches the ASUS through
-`dxva2.dll` and the LG by injecting raw I2C through NVAPI, because the Windows
-DDC/CI stack hardcodes I2C source `0x51` and cannot express `0x50` at all.
+Two dialects, but no longer two code paths. macOS reaches both through `m1ddc`
+(`set input` vs `set input-alt`). Windows sends both as raw I2C through NVAPI,
+differing only in the source byte and VCP code — because the Windows DDC/CI stack
+hardcodes I2C source `0x51` and cannot express `0x50` at all, so the LG forces a
+raw-I2C transport, and once that exists the ASUS has no reason to use a second one.
+
+That the ASUS *could* be driven by the vendor-neutral `dxva2` and deliberately is
+not is a trade-off with consequences for anyone without an NVIDIA GPU; see
+`docs/decisions/001-nvapi-as-the-only-windows-transport.md`.
 
 The LG accepts `VCP 0x60` writes, returns success, and discards them; reads always
 return `0x0F` regardless of what is displayed. Recent LG monitors moved input
@@ -146,7 +151,8 @@ safe; sweeping VCP codes there has bricked LG monitors.
 `m1ddc display <uuid> set ...` addresses one display by UUID. The Windows switcher
 addresses one display by **EDID identity**: it enumerates the GPU's connected
 outputs through NVAPI, reads each one's EDID, and writes only to the single output
-whose manufacturer and product id identify it as the LG.
+whose manufacturer and product id identify the intended panel. Both monitors are
+resolved that way, and each write reaches one output.
 
 The safety rule that matters — a `0x50` service-channel write must never reach a
 non-LG panel — is enforced at the transport rather than by the caller.
@@ -203,25 +209,32 @@ an oversight.
 which requires a window server connection. A LaunchDaemon in session 0 has none and
 would enumerate zero displays. macOS remains blocked for this reason.
 
-**On Windows the technical barrier is gone; what remains is that nobody has built
-the tier.** This section used to argue that session 0 blocked Windows too, because
-it has no desktop and therefore no `HMONITOR` — true of the `dxva2` path, and still
-true of the ASUS half. It also predicted NVAPI would fail "for the same reason".
-That prediction was wrong: measured 2026-08-30, NVAPI enumerates and identifies both
-panels from session 0, as SYSTEM and as an unelevated S4U task, and again from an
-at-startup task after a cold boot. Since the LG now writes over NVAPI too, the LG
-half has no desktop dependency left at all.
+**On Windows the desktop dependency is gone.** This section used to argue that
+session 0 blocked Windows too, because it has no desktop and therefore no
+`HMONITOR` — true of the `dxva2` path, which is why that path no longer exists. It
+also predicted NVAPI would fail "for the same reason". That prediction was wrong:
+measured 2026-08-30, NVAPI enumerates and identifies both panels from session 0, as
+SYSTEM and as an unelevated S4U task, and again from an at-startup task after a cold
+boot. Both monitors are now driven over NVAPI, so `windows/switch-displays.ps1`
+touches no desktop API at all.
 
 The trap that finding exposed: in session 0 `user32` reports **one phantom monitor,
 not zero**. "No desktop" presents as *wrong* monitors rather than none, so any
 identity check that trusts the Windows display list in a non-interactive context
-matches against a fiction. NVAPI must be the sole identity source there — which is
-how the LG path is written. See `AGENTS.md`.
+matches against a fiction. NVAPI is therefore the sole identity source. See
+`AGENTS.md`.
 
-The Windows side is still a Scheduled Task at logon in the interactive session. Its
-remaining blockers are scope, not capability: the ASUS is still on `dxva2`, and a
-pre-login tier needs admin to register (measured — S4U registration is denied to a
-standard user). See `ideas/nvapi-transport.md`.
+The Windows side is still a Scheduled Task at logon in the interactive session, and
+what remains between here and a pre-login tier is no longer about desktops:
+
+- **Writing from session 0 is untested.** Enumeration works there; every write so far
+  has come from an interactive session. Phase 1 could not answer this because it
+  deliberately sent nothing.
+- **Registering the task needs admin** — measured: S4U registration is denied to a
+  standard user, and storing a password is rejected. So no-admin means post-login
+  only, which is a genuine capability ladder rather than an oversight.
+
+See `ideas/nvapi-transport.md`.
 
 Pre-login on macOS has a known clean path if it ever becomes worth building:
 enumerate `DCPAVServiceProxy` entries where `Location = External` directly from

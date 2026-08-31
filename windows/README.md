@@ -2,20 +2,32 @@
 
 A Scheduled Task runs `usb-watch.ps1`, which fires `switch-displays.ps1 windows`
 when a watched USB device arrives. No compiled code and no third-party binary:
-PowerShell throughout, with the NVAPI and dxva2 bindings inline.
+PowerShell throughout, with the NVAPI bindings inline.
 
-| Monitor | Target input | Method |
-|---|---|---|
-| LG 45GX950A | DisplayPort, `0xD0` | LG sidechannel -- I2C src `0x50`, VCP `0xF4`, injected through NVAPI and **aimed at that output alone** |
-| ASUS PG42UQ | HDMI 1, `0x11` | Standard DDC/CI, VCP `0x60`, via `dxva2.dll` |
+Both panels use one transport -- raw I2C through NVAPI, each **aimed at the single
+GPU output whose EDID identifies that panel**. Neither write is a spray; no monitor
+receives the other's packet.
+
+| Monitor | Target input | I2C source | VCP | Packet |
+|---|---|---|---|---|
+| LG 45GX950A | DisplayPort, `0xD0` | `0x50` (LG sidechannel) | `0xF4` | `50 84 03 F4 00 D0 9D` |
+| ASUS PG42UQ | HDMI 1, `0x11` | `0x51` (standard) | `0x60` | `51 84 03 60 00 11 C9` |
 
 Values are in [`../displays.toml`](../displays.toml). Keep them in sync -- that file
 exists precisely so these two implementations can't drift.
 
 ## Requirements
 
-- NVIDIA GPU. The LG path injects raw I2C through NVAPI; there is no vendor-neutral
-  route to the sidechannel. Verified on an RTX 4090, driver 32.0.16.1062.
+- NVIDIA GPU. Both panels are driven by raw I2C through NVAPI. This is not a
+  preference: the LG's input lives on I2C source `0x50`, and the Windows DDC/CI
+  stack hardcodes source `0x51` and cannot express `0x50` at all, so no
+  vendor-neutral API can reach it. Verified on an RTX 4090, driver 32.0.16.1062.
+
+  The requirement predates the NVAPI transport -- the LG has always needed it, and
+  the tool used before, `lg-input-switch.exe`, was itself an NVAPI program. A
+  standard-DDC panel *could* be driven on any GPU through `dxva2`; supporting that
+  is a generalisation question, taken up in
+  [`../docs/decisions/001-nvapi-as-the-only-windows-transport.md`](../docs/decisions/001-nvapi-as-the-only-windows-transport.md).
 - Windows PowerShell 5.1 (stock). No admin rights needed, at install or at run time.
 
 ## Install
@@ -51,8 +63,8 @@ end-to-end USB trigger:
 
 | Case | Method | From an inactive link |
 |---|---|---|
-| ASUS -> HDMI 1 (pull here) | `SetVCPFeature 0x60 = 0x11` | yes |
-| ASUS -> DisplayPort (push to Mac) | `SetVCPFeature 0x60 = 0x0F` | n/a (was active) |
+| ASUS -> HDMI 1 (pull here) | NVAPI I2C, src `0x51` VCP `0x60 = 0x11`, aimed | yes |
+| ASUS -> DisplayPort (push to Mac) | NVAPI I2C, src `0x51` VCP `0x60 = 0x0F`, aimed | n/a (was active) |
 | LG -> DisplayPort (pull here) | NVAPI I2C, src `0x50` VCP `0xF4 = 0xD0`, aimed | yes |
 | LG -> USB-C (push to Mac) | NVAPI I2C, src `0x50` VCP `0xF4 = 0xD1`, aimed | n/a (was active) |
 
@@ -61,9 +73,10 @@ is the case the whole design depends on: the machine issuing the command is by
 definition not the one being shown. Windows keeps its link enumerated while the
 panel shows the other machine, exactly as macOS does.
 
-The LG rows were re-verified on the aimed NVAPI transport on 2026-08-30, both
-directions, confirmed visually -- including the pull-back from an inactive link,
-which is the case that had only ever been established for `lg-input-switch`.
+All four rows were re-verified on the aimed NVAPI transport on 2026-08-30, both
+monitors, both directions, confirmed visually -- including both pull-backs from an
+inactive link. The ASUS pull-back is the one that had never been done this way:
+HDMI DDC over NVAPI rather than `dxva2`.
 
 **Answering the open question this file used to carry:** yes, the ASUS answers DDC
 over this PC's HDMI cable, including while it is displaying its DisplayPort input.
@@ -81,19 +94,31 @@ all: it is aimed at the LG's output alone.
 
 ## Components
 
-**`switch-displays.ps1`** -- sends both writes. The ASUS goes through the Monitor
-Configuration API (`GetPhysicalMonitorsFromHMONITOR` -> `SetVCPFeature`); the LG
-goes through NVAPI as a raw I2C write. Each write is sent twice: DDC is lossy and
-the writes are idempotent. There are deliberately no reads anywhere in it.
+**`switch-displays.ps1`** -- sends both writes, through one transport. Each write is
+sent twice: DDC is lossy and the writes are idempotent. There are deliberately no
+reads anywhere in it.
 
-The LG path resolves its target from NVAPI alone -- enumerate the GPU's connected
-outputs, read each EDID, keep the one whose vendor and product identify it as the
-LG -- and writes to that single output. It refuses on zero matches and on more than
-one, because an ambiguous target cannot be aimed at.
+`Resolve-Panel` enumerates the GPU's connected outputs, reads each EDID, and keeps
+the one whose vendor and product identify the wanted panel. It refuses on zero
+matches and on more than one, because an ambiguous target cannot be aimed at, and
+picking the first would reintroduce the order-dependence this repo's conventions
+forbid. `Switch-Asus` and `Switch-Lg` are four lines each: resolve, describe, hand a
+write to the shared `Invoke-Switch`.
 
 The Windows display list is deliberately not consulted for that identity. In session
 0 `user32` reports a *phantom* monitor rather than none, so correlating against it
 matches a fiction; NVAPI is the sole source. See [`../AGENTS.md`](../AGENTS.md).
+That is also why there is no `dxva2` or `user32` code here any more, and why this
+script has **no desktop dependency** -- the precondition for a pre-login tier.
+
+The `Add-Type` block is loaded once per process and stamped with a hash of its own
+source. Re-running the same version in one PowerShell session reuses what is loaded;
+running a *different* version refuses with an instruction to open a new shell. .NET
+cannot replace a loaded type, and silently reusing the old one would mean
+hand-verifying code that is not the code on disk -- the worst outcome available when
+hand-verification is the only verification this hardware permits (hard rule 3). The
+installed path never reaches this: the task starts a fresh `powershell.exe` per
+switch.
 
 `Test-LgBlastRadius` is gone, along with the `$LG_KNOWN_OUTPUTS` list it enforced.
 It existed only because `lg-input-switch` sprayed VCP `0xF4` at every connected
@@ -223,23 +248,23 @@ They were `\\.\DISPLAY1` = ASUS and `\\.\DISPLAY2` = LG for all of this project'
 early testing, and then on 2026-08-30 they **swapped**: the same
 `switch-displays.ps1 windows` that had been logging `on \\.\DISPLAY1` for the ASUS
 began logging `on \\.\DISPLAY2`, across a hard reboot and a hibernate cycle.
-Nothing broke, because the script never uses the index. dxva2 is no help either --
-it reports the LG's description as the useless generic string `Generic PnP
-Monitor`. Getting this wrong sends LG service-channel writes to the ASUS.
-`switch-displays.ps1` resolves by the EDID id embedded in the PnP interface path
-instead:
+Nothing broke, because the script never uses the index. Getting this wrong would
+send LG service-channel writes to the ASUS.
 
-```
-\\?\DISPLAY#AUS42E0#5&aaaaaaaa&0&UID4352#{e6f07b5f-...}
-             ^^^^^^^ matched on this
-```
+**Both panels are resolved by the EDID that NVAPI reads off the GPU output** --
+manufacturer and product, compared against the values in `../displays.toml`. That is
+aimable, stable, and works with no desktop.
 
-**The LG is resolved by EDID through NVAPI, not by the PnP path.** The ASUS still
-matches on `AUS42E0` in its interface path because it goes through `dxva2`, which is
-desktop-bound anyway. The LG reads its vendor and product straight off the GPU
-output, which is both aimable and usable with no desktop. The two panels therefore
-use different identity mechanisms today; collapsing the ASUS onto the NVAPI path
-would unify them.
+Two identity mechanisms that were tried and are *not* used, each for a specific
+reason worth not rediscovering:
+
+- **`\\.\DISPLAYn` indices** -- not stable, as above.
+- **The dxva2 description string** -- useless as a key: it reports the LG as the
+  generic `Generic PnP Monitor`.
+
+The PnP interface path (`\\?\DISPLAY#AUS42E0#...`) *does* carry the EDID id and was
+what the ASUS matched on until 2026-08-30. It works, but only with a desktop, so it
+went when the ASUS moved onto NVAPI.
 
 **Historical:** `lg-input-switch` was not addressable to one monitor -- it injected
 on every connected output, so the ASUS also received the LG's VCP `0xF4` write. That
@@ -292,12 +317,18 @@ corroborated by `lg-input-switch`.
   away, and what the LG path now uses. Re-confirmed at boot from an at-startup task.
   In session 0, `user32` meanwhile reported one *phantom* monitor -- see
   [`../AGENTS.md`](../AGENTS.md).
-- **Does the ASUS answer on the same NVAPI transport (src `0x51`, VCP `0x60`)?**
-  Untested. It would collapse the two identity mechanisms into one and remove the
-  last `dxva2` dependency, which is what makes a pre-login tier cheap.
-- **Does a pre-login tier get built?** The capability is proven; the cost is admin
-  rights to register the task (measured: S4U registration is denied to a standard
-  user). Nothing is built yet. See [`../ideas/nvapi-transport.md`](../ideas/nvapi-transport.md).
+- **Does the ASUS answer on the same NVAPI transport (src `0x51`, VCP `0x60`)? YES.**
+  Verified visually 2026-08-30, both directions, including the pull-back from an
+  inactive link. That collapsed the two identity mechanisms into one and removed the
+  last `dxva2` dependency, so the switcher no longer needs a desktop at all.
+- **Does either write work from session 0?** Unknown. Enumeration does, in every
+  context tested; writing has only ever been done from an interactive session. This
+  is the remaining gate on a pre-login tier, and phase 1 could not answer it because
+  phase 1 deliberately sent no writes.
+- **Does a pre-login tier get built?** The capability is all but proven; the cost is
+  admin rights to register the task (measured: S4U registration is denied to a
+  standard user). Nothing is built yet. See
+  [`../ideas/nvapi-transport.md`](../ideas/nvapi-transport.md).
 - Could NVAPI carry both monitors and remove the dual-code-path? Now looks likely
   rather than merely possible: the enumeration and identity halves are proven, and
   the write half would use the already-corroborated `NvAPI_I2CWrite`.

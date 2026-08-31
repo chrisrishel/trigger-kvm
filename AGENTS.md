@@ -309,21 +309,28 @@ once with `another usb-watch is already running`.
   theoretical: on 2026-08-30 the two indices **swapped on this machine**, from
   `DISPLAY1`=ASUS / `DISPLAY2`=LG to `DISPLAY1`=LG / `DISPLAY2`=ASUS, across a hard
   reboot and a hibernate cycle — either could be responsible, they were not
-  observed separately. Nothing broke, because the switcher matches the EDID id in
-  the PnP interface path. **Do not write a mapping down anywhere and treat it as
-  stable**, including in scratch notes; a stale one is worse than none. dxva2 is no
-  help either: it reports the LG's description as the generic `Generic PnP
-  Monitor`, so neither index nor description is a usable key.
+  observed separately. Nothing broke, because the switcher resolves by EDID.
+  **Do not write a mapping down anywhere and treat it as stable**, including in
+  scratch notes; a stale one is worse than none. The dxva2 description string is no
+  help either: it reports the LG as the generic `Generic PnP Monitor`, so neither
+  index nor description is a usable key. The switcher matches the EDID manufacturer
+  and product that NVAPI reads off the GPU output — the one identity that is stable,
+  aimable, and available with no desktop.
 - Keep `.ps1` files ASCII-only. Windows PowerShell 5.1 reads a `.ps1` with no BOM
   as ANSI, so a UTF-8 em dash in a comment surfaces as a parse error at an
   unrelated line. Prose files are unaffected; use ASCII punctuation in scripts.
 - Send DDC writes more than once. They are idempotent and the bus is lossy.
 - Post-login only, both platforms, as shipped. Do not add pre-login support without
-  asking. Note that `ARCHITECTURE.md`'s reasoning is now partly superseded on the
-  Windows side: it argued pre-login was blocked because session 0 has no `HMONITOR`,
-  which is true of the `dxva2` path but **not** of NVAPI -- measured 2026-08-30,
-  NVAPI enumerates and identifies both panels from session 0. Writing over NVAPI from
-  there is still untested. macOS is unchanged and still blocked.
+  asking. The old reasoning — session 0 has no `HMONITOR` — was true of the `dxva2`
+  path, which no longer exists. Measured 2026-08-30: NVAPI enumerates and identifies
+  both panels from session 0, and the Windows switcher now has no desktop dependency
+  at all. **Writing from session 0 is still untested**, and registering a pre-login
+  task needs admin. macOS is unchanged and still blocked.
+- **Never let the switcher trust the Windows display list for identity.** In session
+  0 `user32` reports one *phantom* monitor rather than none, so it fails by
+  mis-resolving instead of erroring. NVAPI is the sole identity source. This is why
+  `dxva2`/`user32` were removed rather than kept as a fallback; see
+  `docs/decisions/001-nvapi-as-the-only-windows-transport.md`.
 - **Never hand-write NVAPI bindings from memory.** Its dispatch uses magic function
   IDs and size-encoded struct versions; both must come from a real source, and the
   ids in use here are recorded with their provenance in `ideas/nvapi-transport.md`.
