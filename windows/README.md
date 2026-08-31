@@ -161,9 +161,16 @@ renaming the rows to imply grouping would have done badly.
   > Computers                    not set
     Monitors                     not set
     Triggers                     not set
-    Autostart?                   from boot
-    Add to PATH?                 yes
+    Autostart?                   not set
+    Add to PATH?                 not set
 ```
+
+**Nothing is preset.** Autostart and PATH both have an obvious answer — from boot,
+and yes — but the suggestion belongs on the highlighted row *inside* their menu, not
+in the value column of a menu nobody has opened. Showing `from boot` for a choice
+nobody made is the tool answering on someone's behalf, and that particular one
+raises a UAC prompt; the other edits your PATH. So both are `not set` until chosen,
+the cursor walks to them in turn, and save waits for them.
 
 Choosing a setting enters that section and returns here — a menu rather than a
 linear pass, because the answer you got wrong is rarely the last one you gave.

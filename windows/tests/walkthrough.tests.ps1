@@ -20,7 +20,7 @@ Import-Subject -Script 'install.ps1' -Variables @('DIALECTS','MCCS_INPUTS','COMP
     'Get-DisplayAnswers','Get-ConfiguredAnswers','Get-PriorDisplay','Read-Monitors',
     'Invoke-DisplayTest','Invoke-TestRound','Invoke-TestRoundBody','Test-OneComputer',
     'Test-DisplayInput','Test-OneValue','Invoke-BlindWalk',
-    'Read-Triggers','Read-Tier','Get-CandidateLabel',
+    'Read-Triggers','Read-Tier','Read-PathChoice','Get-CandidateLabel',
     'Invoke-Configure','Write-ConfigFile')
 . (Join-Path (Split-Path -Parent $PSScriptRoot) 'config.ps1')
 
@@ -136,7 +136,9 @@ Set-Answers @(
     '4',            #   the list: Done
     '3',            # menu -> Triggers
     '1,3',
-    '7',            # menu -> Test the monitors
+    '4','1',        # menu -> Autostart? -- not preset, so it must be answered
+    '5','1',        # menu -> Add to PATH? -- likewise
+    '7',            # menu -> Test the monitor inputs
     '3','y','y',    #   window: not sure; two rounds
     '8',            # menu -> Test the triggers, which may now pull for real
     '10'            # menu -> Save
@@ -184,9 +186,10 @@ Assert-Match ((Get-Asked) -join '|') 'Choice' 'it stayed on the menu rather than
 Set-Config $CONFIGURED
 Set-Outcomes @()
 Set-Answers @(
-    '7',            # menu -> Test the monitors
+    '7',            # menu -> Test the monitor inputs
     '3',            #   window: not sure
     'y','y',        #   two rounds
+    '5','1',        # menu -> Add to PATH? (never preset)
     '10'            # menu -> Save
 )
 Invoke-Configure
@@ -206,6 +209,7 @@ Set-Answers @(
     '2',            #   rename row 2 (mac)
     'macbook',
     '5',            #   Done
+    '5','1',        # menu -> Add to PATH?
     '10'            # straight back to the menu, and Save -- no monitor questions
 )
 Invoke-Configure
@@ -219,7 +223,7 @@ Assert-Equal 'pc'      $c['display.lg.input.0xd0']   'without disturbing the res
 # Removing a computer takes it out of the maps rather than leaving a dangling name.
 Set-Config $CONFIGURED
 Set-Outcomes @()
-Set-Answers @('1', '2', '', '4', '10')      # Computers -> row 2 -> remove -> Done -> Save
+Set-Answers @('1', '2', '', '4', '5','1', '10')   # Computers -> remove -> Done -> PATH -> Save
 Invoke-Configure
 Assert-Equal 0 $LASTEXITCODE
 $c = Get-Written
@@ -234,6 +238,7 @@ Set-Answers @(
     '1','pc','1','mac','5',
     '2','1','y','','3','1','2','y','','9','0xD0','10','0xD1','4',
     '3','1,3',
+    '4','1', '5','1',           # autostart and PATH must be answered
     '10'                        # Save (the checks are optional)
 )
 Invoke-Configure -Fresh
@@ -248,9 +253,10 @@ Set-Answers @(
     '7','3',
     'y',            #   round 1: asus fine
     'n',            #   round 2: the LG did nothing
-    'y',            #   try the LG channel? yes
+    '1',            #   try the LG channel? yes (a menu now, not a y/n)
     '1',            #   pc  is on DisplayPort (0xD0)
     '2',            #   mac is on USB-C (0xD1)
+    '5','1',
     '10'
 )
 Invoke-Configure
@@ -267,6 +273,7 @@ Set-Answers @(
     'n',            #   do you know which input it is? no
     'y',            #   walk the standard values (the stub answers each)
     'y',            #   round 2: the LG is fine
+    '5','1',
     '10'
 )
 Invoke-Configure
@@ -285,6 +292,7 @@ Set-Answers @(
     '1',            # HDMI 1 is disabled now, so this lands on DisplayPort 1
     '2','y','','9','0xD0','10','0xD1','4',
     '3','1,3',
+    '4','1', '5','1',
     '10'
 )
 Invoke-Configure
@@ -299,7 +307,7 @@ Assert-Equal 'mac' $c['display.pg42uq.input.0x0f'] 'the second computer had to m
 # still exists, so `trigger-kvm restart` is what starts it again.
 Set-Config $CONFIGURED
 Set-Outcomes @()
-Set-Answers @('4', '3', '10')       # Autostart? -> no -- I will start it myself -> Save
+Set-Answers @('4', '3', '5','1', '10')   # Autostart? -> no -> PATH -> Save
 Invoke-Configure
 Assert-Equal 0 $LASTEXITCODE
 Assert-Equal 'no' (Get-Written)['install.autostart'] 'the third answer has to survive the write'
@@ -311,13 +319,13 @@ Assert-Equal 'no' (Get-Written)['install.autostart'] 'the third answer has to su
 # the arrival and stops there.
 Set-Config $CONFIGURED
 Set-Outcomes @()
-Set-Answers @('8', '10')                    # Test the triggers, then Save
+Set-Answers @('8', '5','1', '10')           # Test the triggers, PATH, then Save
 Invoke-Configure
 Assert-Equal $false $script:triggerPulled 'unchecked monitors must not be pulled at'
 
 Set-Config $CONFIGURED
 Set-Outcomes @()
-Set-Answers @('7','3','y','y', '8', '10')   # check the monitors first, then the triggers
+Set-Answers @('7','3','y','y', '8', '5','1', '10')   # monitors first, then the triggers
 Invoke-Configure
 Assert-Equal $true $script:triggerPulled 'once they are proven, the flip back is the real thing'
 
@@ -368,6 +376,28 @@ $r = Read-Computers -This 'pc' -Others @('mac') -Existing
 Assert-Equal 'pc'  ($r.All -join ',')
 Assert-Equal 'mac' ($r.Removed -join ',') 'a removal has to be reported too'
 
+# ---- autostart and PATH are suggested, never assumed --------------------------
+
+# Both have an obvious answer, and neither is applied without being chosen: one
+# decides whether a UAC prompt happens, the other edits your PATH. Showing "from
+# boot" for a choice nobody made is the tool answering on someone's behalf.
+$script:rows = @()
+function Select-One {
+    param([string[]]$Items, [string[]]$Detail = @(), [int]$Default = 0, [string]$Help,
+          [int]$Current = -1, [int[]]$Disabled = @())
+    for ($i = 0; $i -lt $Items.Count; $i++) {
+        if ($Items[$i]) { $script:rows += ('{0}|{1}' -f $Items[$i], $(if ($i -lt $Detail.Count) { $Detail[$i] } else { '' })) }
+    }
+    for ($i = 0; $i -lt $Items.Count; $i++) { if ($Items[$i] -eq 'Cancel (discard changes)') { return $i } }
+    return 0
+}
+Set-Config $null
+Set-Answers @()
+Invoke-Configure
+$seen = ($script:rows -join "`n")
+Assert-Match $seen 'Autostart\?\|not set'    'a fresh install has not answered this'
+Assert-Match $seen 'Add to PATH\?\|not set'  'nor this'
+
 # ---- the review rows read as one column --------------------------------------
 
 # ", " between items, ": " after a label, "/" for things sharing one label. The
@@ -379,8 +409,9 @@ function Select-One {
     for ($i = 0; $i -lt $Items.Count; $i++) {
         if ($Items[$i]) { $script:rows += ('{0}|{1}' -f $Items[$i], $(if ($i -lt $Detail.Count) { $Detail[$i] } else { '' })) }
     }
-    # Save, so the walkthrough ends.
-    for ($i = 0; $i -lt $Items.Count; $i++) { if ($Items[$i] -eq 'Save configuration and run') { return $i } }
+    # Cancel, so the walkthrough ends whatever state it is in. Save would be refused
+    # while a row is unanswered, and this stub would then pick it again forever.
+    for ($i = 0; $i -lt $Items.Count; $i++) { if ($Items[$i] -eq 'Cancel (discard changes)') { return $i } }
     return 0
 }
 Set-Config $CONFIGURED

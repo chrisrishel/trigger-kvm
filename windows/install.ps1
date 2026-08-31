@@ -1381,6 +1381,29 @@ function Read-Triggers {
     return @($picked | ForEach-Object { $Cands[$_].Key })
 }
 
+# Whether to put bin\ on the user PATH. Returns $true or $false.
+#
+# A menu rather than a row that flips when you select it. The toggle was fine while
+# the row always carried a value, but it cannot express "not answered yet" -- and a
+# suggestion belongs on a highlighted row, not in the value column of a menu nobody
+# has opened.
+function Read-PathChoice {
+    param($Current)
+
+    Write-Host ''
+    Write-Host '--- PATH ---'
+    # Single quotes: in a DOUBLE-quoted PowerShell string a backtick is the escape
+    # character, so "`trigger-kvm`" renders as TAB + "rigger-kvm".
+    Write-Host ('  Add {0} to your PATH, so `trigger-kvm` works from anywhere?' -f $BINDIR)
+    Write-Host '  Only that directory is added, and it holds only the launcher.'
+    Write-Host ''
+    $now = $(if ($null -eq $Current) { -1 } elseif ($Current) { 0 } else { 1 })
+    $pick = Select-One -Default ([Math]::Max(0, $now)) -Current $now `
+                       -Items @('Yes', 'No') `
+                       -Detail @('trigger-kvm works from anywhere', 'call it by its full path')
+    return ($pick -eq 0)
+}
+
 # When the watcher should start running. Returns 's4u' or 'user'.
 #
 # From boot is offered FIRST and is the default, because it is the answer that
@@ -1587,16 +1610,18 @@ function Invoke-Configure {
     }
     $cands = @(Get-TriggerCandidates)
 
-    # Empty, not 'user', when nothing is configured: Read-Tier reads that as "no
-    # existing choice" and offers from-boot as the default. Passing 'user' here would
-    # have quietly made the old default win under a menu that says otherwise.
+    # Empty means UNANSWERED, and the row says so. Both of these have a suggestion --
+    # from boot, and yes -- but a suggestion belongs on the highlighted row inside the
+    # menu, not in the value column of a menu nobody has opened. Showing "from boot"
+    # for a choice never made is the tool answering on someone's behalf, and this one
+    # raises a UAC prompt.
     $newTier = $(if ($seed.ContainsKey('install.autostart')) {
                      $(switch ($seed['install.autostart']) {
                          'boot' { 's4u' } 'no' { 'manual' } default { 'user' } })
-                 } else { 's4u' })
+                 } else { '' })
 
     $onPath   = @((Get-UserPath -split ';')) -contains $BINDIR
-    $wantPath = -not $onPath
+    $wantPath = $null
 
     # ---- the menu ------------------------------------------------------------
     # The settings ARE the rows, and choosing one enters that section and comes
@@ -1619,11 +1644,12 @@ function Invoke-Configure {
             $(if ($answers.Count -eq 0) { 'not set' } else {
                 ($answers | ForEach-Object { '{0}: {1}' -f $_.Label, (@($_.Map.Keys) -join '/') }) -join ', ' })
             $(if ($devices.Count -eq 0) { 'not set' } else { $devices -join ', ' })
-            $(switch ($newTier) { 's4u' { 'from boot' } 'manual' { 'no' } default { 'from login' } })
+            $(switch ($newTier) { 's4u' { 'from boot' } 'manual' { 'no' }
+                                  'user' { 'from login' } default { 'not set' } })
         )
         if (-not $onPath) {
             $items  += 'Add to PATH?'
-            $detail += $(if ($wantPath) { 'yes' } else { 'no' })
+            $detail += $(if ($null -eq $wantPath) { 'not set' } elseif ($wantPath) { 'yes' } else { 'no' })
         }
 
         # Monitors first, then the trigger. The trigger check asks someone to flip
@@ -1655,6 +1681,8 @@ function Invoke-Configure {
             if     ($computers.Count -eq 0) { 0 }
             elseif ($answers.Count   -eq 0) { 1 }
             elseif ($devices.Count   -eq 0) { 2 }
+            elseif (-not $newTier)          { 3 }
+            elseif (-not $onPath -and $null -eq $wantPath) { 4 }
             elseif (-not $ranDisplays)      { $save - 3 }
             elseif (-not $ranDisplays.Ok)   { 1 }
             elseif (-not $ranTriggers)      { $save - 2 }
@@ -1679,6 +1707,10 @@ function Invoke-Configure {
             if ($computers.Count -eq 0) { $missing += 'Computers' }
             if ($answers.Count   -eq 0) { $missing += 'Monitors' }
             if ($devices.Count   -eq 0) { $missing += 'Triggers' }
+            # Both have a suggestion, and neither is applied without being chosen:
+            # one decides whether a UAC prompt happens, the other edits your PATH.
+            if (-not $newTier)          { $missing += 'Autostart?' }
+            if (-not $onPath -and $null -eq $wantPath) { $missing += 'Add to PATH?' }
             if ($missing.Count -eq 0) { break }
             Write-Host ''
             Write-Host ('  Still needed: {0}.' -f (Join-Names $missing))
@@ -1722,10 +1754,7 @@ function Invoke-Configure {
                 $ranTriggers = $null
             }
             'Autostart?'      { $newTier = Read-Tier $newTier }
-            # Binary, so the row is the control: selecting it flips it. A yes/no
-            # prompt for something already shown as yes/no would just be a second way
-            # to say the same thing.
-            'Add to PATH?'    { $wantPath = -not $wantPath }
+            'Add to PATH?'    { $wantPath = Read-PathChoice -Current $wantPath }
             { $_ -like 'Test the trigger*' } {
                 # Only pull for real once the monitor values have been confirmed by
                 # someone looking at them. Before that, a pull would aim unverified
@@ -2104,11 +2133,19 @@ function Test-OneComputer {
         Write-Host ''
         Write-Host ('  {0} did not answer the standard channel. It is {1}, and some {1}' -f $Answer.Name, $d.What)
         Write-Host '  panels put input switching on a manufacturer channel instead. These'
-        Write-Host ('  values are documented for {0}:' -f $d.What)
+        Write-Host ('  values are documented for {0}, and are the only ones that will be' -f $d.What)
+        Write-Host '  sent -- nothing is guessed at on a manufacturer channel:'
         Write-Host ''
         foreach ($n in $d.Inputs.Keys) { Write-Host ('    {0,-14} {1}' -f $n, $d.Inputs[$n]) }
         Write-Host ''
-        if (Read-YesNo '  Try that channel instead?' $true) {
+        # A menu, like every other decision in the walkthrough. This one used to be
+        # the last y/n confirm left, which made the most consequential question in the
+        # program look like the least considered.
+        $go = Select-One -Default 0 `
+                  -Items @(("Yes, try the {0} channel" -f $d.What), 'No, leave this monitor out') `
+                  -Detail @('and say which input each computer is on',
+                            'everything else stays configured')
+        if ($go -eq 0) {
             # Every value in the old map was for a channel that does not work, so the
             # map starts again rather than carrying meaningless numbers across.
             $Answer.Method = $d.Method
