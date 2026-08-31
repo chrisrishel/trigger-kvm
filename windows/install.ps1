@@ -575,7 +575,14 @@ function Select-One {
           # entered from somewhere. It is deliberately NOT offered on the main menu
           # (which has Cancel, and should not discard a setup on a stray keypress) or
           # on a question that must be answered before the code can continue.
-          [switch]$Escapable)
+          [switch]$Escapable,
+          # Esc MOVES THE CURSOR to this row, and does not activate it. For the top
+          # menu, where the way out is a row rather than a return: esc there used to
+          # do nothing at all, which reads as a dead key on the one menu people press
+          # it on hardest. Moving keeps the property that matters -- a setup still
+          # cannot be discarded by a stray keypress, because you have to press enter
+          # on a row that says Cancel (discard changes).
+          [int]$EscapeTo = -1)
 
     # An empty item is a SEPARATOR: drawn as a blank line, skipped by the cursor and
     # unpickable. Grouping a long menu beats renaming its rows to imply grouping.
@@ -666,7 +673,12 @@ function Select-One {
             'UpArrow'   { $at = ($at - 1 + $sel.Count) % $sel.Count }
             'DownArrow' { $at = ($at + 1) % $sel.Count }
             'Enter'     { Write-Host ''; return $sel[$at] }
-            'Escape'    { if ($Escapable) { Write-Host ''; return -1 } }
+            'Escape'    {
+                if ($Escapable) { Write-Host ''; return -1 }
+                # Move only. Never activate: that is the whole distinction.
+                $to = $sel.IndexOf($EscapeTo)
+                if ($to -ge 0) { $at = $to }
+            }
         }
     }
 }
@@ -1220,6 +1232,49 @@ function Get-DisplayMap {
 #
 # Standard DDC/CI is the answer for everyone here, whatever the make. A manufacturer
 # dialect is only reached for later, if the test shows standard does not work.
+# Which channel to talk to one panel on. Returns the method name.
+#
+# SHOWN ONLY when this panel's EDID VENDOR has a documented alternative, and keyed
+# by vendor alone -- never by model, which would be one row per monitor whoever
+# wrote the table happened to own.
+#
+# OFFERED, NEVER PROBED. Nothing is sent to find out; the choice comes from the
+# documented table or not at all, and the transport still refuses a manufacturer
+# channel to a panel whose EDID vendor does not match. See AGENTS.md hard rule 1b.
+#
+# Up front rather than only after a failure, since 2026-08-31. Someone who already
+# knows their model needs the alternative should not have to run a check that moves
+# a panel and sends packets purely in order to fail -- and someone who watches the
+# standard method fail without ever being told the alternative exists may
+# reasonably decide the tool does not know about it. Offering here sends fewer
+# packets, not more. The check still offers it again, in either direction.
+function Read-Method {
+    param([int]$Vendor, [string]$Current)
+
+    $d = $DIALECTS['{0:X4}' -f $Vendor]
+    if (-not $d) { return $Current }
+
+    Write-Host ''
+    Write-Host '--- how to talk to this monitor ---'
+    Write-Host ('  Nearly every monitor takes the standard method, including most {0} ones.' -f $d.What)
+    Write-Host ('  A few {0} models ignore it and need {0}''s own method instead.' -f $d.What)
+    Write-Host ''
+    Write-Host '  If you are not sure, take the standard one. If it turns out not to'
+    Write-Host '  work, the check further down will offer you this again.'
+    Write-Host ''
+
+    # Standard is the default and where the cursor starts on a fresh panel; an
+    # existing choice keeps the cursor, and is marked (current) so an unchanged
+    # default is distinguishable from a deliberate one.
+    $now  = $(if ($Current -eq $d.Method) { 1 } else { 0 })
+    $pick = Select-One -Default $now -Current $now -Escapable `
+                -Items  @('Standard', ("{0}'s own method" -f $d.What)) `
+                -Detail @('what nearly every monitor takes',
+                          ('for {0} models that ignore the standard one' -f $d.What))
+    if ($pick -lt 0) { return $Current }
+    return $(if ($pick -eq 1) { $d.Method } else { 'standard' })
+}
+
 function Get-DisplayAnswers {
     # $Existing is a PSCustomObject or $null -- deliberately untyped, because a
     # [hashtable] annotation here silently accepted the call at parse time and threw
@@ -1242,8 +1297,18 @@ function Get-DisplayAnswers {
 
     # An existing method is a settled answer -- it was proven by someone watching the
     # screen. Do not quietly walk it back to standard on a re-run.
-    $method = if ($Existing -and $Existing.Method) { $Existing.Method } else { 'standard' }
+    $was    = if ($Existing -and $Existing.Method) { $Existing.Method } else { 'standard' }
     $prior  = if ($Existing -and $Existing.Map) { $Existing.Map } else { [ordered]@{} }
+
+    # Asked here, BEFORE any input question, because the values on offer depend on
+    # the answer. Shown only for a vendor with a documented alternative.
+    $method = Read-Method -Vendor $Found.EdidVendor -Current $was
+
+    # A changed method makes every prior value meaningless -- they were addresses on
+    # the other channel -- so they stop being defaults rather than being carried
+    # across as numbers nobody would recognise. Same reasoning as the escalation in
+    # specs/configure.md 10.5, which clears the map for the same reason.
+    if ($method -ne $was) { $prior = [ordered]@{} }
 
     $map   = [ordered]@{}
     $taken = @{}
@@ -1615,7 +1680,8 @@ function Invoke-Configure {
         Write-Host $(if ($answers.Count -and $devices.Count) { '--- review configuration ---' }
                      else { '--- configuration ---' })
         Write-Host ''
-        $pick = Select-One -Items $items -Detail $detail -Default $land
+        # Esc moves to Cancel rather than doing nothing, and cannot press it.
+        $pick = Select-One -Items $items -Detail $detail -Default $land -EscapeTo ($save + 1)
 
         if ($pick -eq $save + 1) {
             Write-Log 'cancelled; nothing was changed.'
@@ -2041,43 +2107,68 @@ function Test-OneComputer {
         return (Test-OneComputer -Answer $Answer -All $All -This $This -Target $Target -Config $Config -Attempt ($Attempt + 1))
     }
 
-    # 3: nothing at all. The channel is wrong. This is where a manufacturer dialect is
-    # offered -- offered, from documented values, never probed.
-    $d = $DIALECTS['{0:X4}' -f $Answer.EdidVendor]
+    # 3: nothing at all. The channel is wrong, so the other channel is the thing to
+    # try -- OFFERED, from documented values, never probed.
+    #
+    # SYMMETRIC, since 2026-08-31. A panel on the manufacturer method that answers
+    # nothing has to be offered STANDARD, because specs/configure.md 6.2 now lets
+    # someone choose the manufacturer method up front, so a panel can arrive here
+    # already on it. Telling that person "no manufacturer values are known here"
+    # would be false and a dead end.
+    $d   = $DIALECTS['{0:X4}' -f $Answer.EdidVendor]
+    $alt = $null
+
     if ($d -and $Answer.Method -ne $d.Method) {
+        # On standard, and this vendor documents an alternative.
         Write-Host ''
         Write-Host ('  {0} did not answer the standard channel. It is {1}, and some {1}' -f $Answer.Name, $d.What)
         Write-Host '  panels put input switching on a manufacturer channel instead. These'
         Write-Host ('  values are documented for {0}, and are the only ones that will be' -f $d.What)
         Write-Host '  sent -- nothing is guessed at on a manufacturer channel:'
+        $alt = @{ Method = $d.Method; Yes = ("Yes, try the {0} channel" -f $d.What); Values = $d.Inputs }
+    }
+    elseif ($Answer.Method -ne 'standard') {
+        # On a manufacturer channel, so standard is what is left. Reached from 6.2's
+        # up-front choice, and from a hand-edited config naming a method no table
+        # knows -- both land here, and both have the same one thing left to try.
+        $what = $(if ($d) { $d.What } else { $Answer.Mfg })
         Write-Host ''
-        foreach ($n in $d.Inputs.Keys) { Write-Host ('    {0,-14} {1}' -f $n, $d.Inputs[$n]) }
+        Write-Host ('  {0} is on {1}''s own method and did not answer it. The standard method' -f $Answer.Name, $what)
+        Write-Host '  is the other thing to try. It is what nearly every monitor takes,'
+        Write-Host '  and these are its values:'
+        $alt = @{ Method = 'standard'; Yes = 'Yes, try the standard method'; Values = $MCCS_INPUTS }
+    }
+
+    if ($alt) {
+        # The values are shown BEFORE the question is asked, in both directions.
+        Write-Host ''
+        foreach ($n in $alt.Values.Keys) { Write-Host ('    {0,-14} {1}' -f $n, $alt.Values[$n]) }
         Write-Host ''
         # A menu, like every other decision in the walkthrough. This one used to be
         # the last y/n confirm left, which made the most consequential question in the
         # program look like the least considered.
         $go = Select-One -Default 0 -Escapable `
-                  -Items @(("Yes, try the {0} channel" -f $d.What), 'No, leave this monitor out') `
+                  -Items @($alt.Yes, 'No, leave this monitor out') `
                   -Detail @('and say which input each computer is on',
                             'everything else stays configured')
-        if ($go -eq 0) {
-            # Every value in the old map was for a channel that does not work, so the
-            # map starts again rather than carrying meaningless numbers across.
-            $Answer.Method = $d.Method
-            $keep = @($Answer.Map.Keys)
-            $Answer.Map = [ordered]@{}
-            $taken = @{}
-            foreach ($m in $keep) {
-                $v = Read-InputValue -Table (Get-InputTable -Method $d.Method -Map $Answer.Map) `
-                                     -Taken $taken -AllowNone:($m -ne $This) `
-                                     -Prompt ("On the {0}, which input is '{1}' on?" -f $Answer.Name, $m)
-                if ($null -ne $v) { $Answer.Map[$m] = $v; $taken[$v] = $m }
-            }
-            return (Test-OneComputer -Answer $Answer -All $All -This $This -Target $Target -Config $Config -Attempt ($Attempt + 1))
+        if ($go -ne 0) { return $false }
+
+        # Every value in the old map was for a channel that does not work, so the
+        # map starts again rather than carrying meaningless numbers across.
+        $Answer.Method = $alt.Method
+        $keep = @($Answer.Map.Keys)
+        $Answer.Map = [ordered]@{}
+        $taken = @{}
+        foreach ($m in $keep) {
+            $v = Read-InputValue -Table (Get-InputTable -Method $alt.Method -Map $Answer.Map) `
+                                 -Taken $taken -AllowNone:($m -ne $This) `
+                                 -Prompt ("On the {0}, which input is '{1}' on?" -f $Answer.Name, $m)
+            if ($null -ne $v) { $Answer.Map[$m] = $v; $taken[$v] = $m }
         }
-        return $false
+        return (Test-OneComputer -Answer $Answer -All $All -This $This -Target $Target -Config $Config -Attempt ($Attempt + 1))
     }
 
+    # On standard, and nothing else is documented for this vendor.
     Write-Host ''
     Write-Host ('  {0} did not answer the standard channel, and no manufacturer values' -f $Answer.Name)
     Write-Host ('  are known here for {0}. That panel may not support DDC/CI input' -f $Answer.Mfg)

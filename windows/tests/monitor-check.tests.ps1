@@ -123,6 +123,68 @@ Assert-Match $said 'choose HDMI 1, value 0x11' `
     'the way back must be in the MONITOR''s words -- its menu has never heard of "pc"'
 Assert-NoMatch $said 'choose pc' 'a machine name here would send someone hunting a menu entry that does not exist'
 
+# ---- outcome 3: the other channel is offered, in BOTH directions -------------
+#
+# specs/configure.md 10.5. Offered, never probed: the values come from the
+# documented table and are shown before the question is asked. Since 6.2 lets
+# someone choose the manufacturer method UP FRONT, a panel can arrive here already
+# on it -- so the offer has to run the other way too, or that person is told "no
+# manufacturer values are known here", which is both false and a dead end.
+
+function New-LgPanel {
+    param([string]$Method = 'standard')
+    [PSCustomObject]@{
+        Label = 'lg'; Name = 'LG ULTRAGEAR+'; Method = $Method
+        Vendor = '0x1E6D'; Product = '0x9E9D'; EdidVendor = 0x1E6D; Mfg = 'GSM'
+        Key = '1E6D:9E9D'; Map = [ordered]@{ pc = '0x11'; mac = '0x12' }
+    }
+}
+
+# On standard, and this vendor documents an alternative.
+Reset-Said; Reset-Sent; Set-Outcomes @(3, 0)
+Set-Answers @('','n', '1', '1', '2')     # ready / nothing happened / yes, try LG / two inputs
+$panel = New-LgPanel
+$r = Invoke-DisplayTest -Answers @($panel) -This 'pc'
+$said = Get-Said
+Assert-Match $said 'did not answer the standard channel\. It is LG'
+Assert-Match $said 'nothing is guessed at on a manufacturer channel'
+# ORDER, not mere presence: the values are shown before the question is asked. On
+# presence alone this passes with the listing deleted, because the same values
+# reappear in the input menus afterwards -- found by a mutation that survived.
+Assert-Match $said '(?s)nothing is guessed at.*0xD0.*Yes, try the LG channel' `
+    'the documented values are shown BEFORE the question'
+Assert-Equal 'lg-alt' $panel.Method 'accepting it switches the method'
+
+# ALREADY on the manufacturer method, and it answers nothing. Standard is what is
+# left to try, and this is the direction that did not exist.
+Reset-Said; Reset-Sent; Set-Outcomes @(3, 0)
+Set-Answers @('','n', '1', '1', '2')
+$panel = New-LgPanel -Method 'lg-alt'
+$r = Invoke-DisplayTest -Answers @($panel) -This 'pc'
+$said = Get-Said
+Assert-Match $said "is on LG's own method and did not answer it\. The standard method"
+Assert-Match $said 'is the other thing to try'
+Assert-Match $said '(?s)these are its values.*0x0F.*Yes, try the standard method' `
+    'and the standard values are shown first here too, as the other direction shows its own'
+Assert-NoMatch $said 'no manufacturer values' `
+    'the dead end must not be reachable from a panel that has somewhere to go'
+Assert-Equal 'standard' $panel.Method 'accepting it switches back'
+
+# Declining leaves the panel alone and the rest of the setup standing.
+Reset-Said; Reset-Sent; Set-Outcomes @(3)
+Set-Answers @('','n', '2')               # no, leave this monitor out
+$panel = New-LgPanel -Method 'lg-alt'
+$r = Invoke-DisplayTest -Answers @($panel) -This 'pc'
+Assert-True (-not $r.Ok) 'a declined escalation is a failed check'
+Assert-Equal 'lg-alt' $panel.Method 'and changes nothing'
+
+# On standard with no documented alternative: the dead end, which is still correct.
+Reset-Said; Reset-Sent; Set-Outcomes @(3)
+Set-Answers @('','n')
+$r = Invoke-DisplayTest -Answers (New-Solo) -This 'pc'
+Assert-Match (Get-Said) 'did not answer the standard channel, and no manufacturer values'
+Assert-True (-not $r.Ok)
+
 # ---- declining is not a pass -------------------------------------------------
 
 Reset-Said; Reset-Sent; Set-Outcomes @()

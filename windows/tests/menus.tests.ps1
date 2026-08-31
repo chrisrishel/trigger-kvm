@@ -66,6 +66,39 @@ Assert-Equal 1 (Select-One -Items @('a','b','','Save','Cancel') -Default 3) 'up 
 Set-Keys @('Enter')
 Assert-Equal 0 (Select-One -Items @('a','','Save') -Default 1) 'a Default on a separator falls to a real row'
 
+# ---- esc: back where it means something, the way out where it does not -------
+
+# specs/configure.md 3.3. Esc always means "take me to the way out" -- but what the
+# way out IS depends on the menu, and it is never "discard everything on one
+# keypress".
+
+Set-Keys @('Escape')
+Assert-Equal -1 (Select-One -Items @('a','b') -Default 0 -Escapable) `
+    'in a submenu, esc returns -1: back, changing nothing'
+
+# The top menu has no -1 to return to. Its way out is a ROW, so esc moves the
+# cursor onto it -- and stops there. It used to do nothing at all, which reads as a
+# dead key on the one menu people press esc on hardest.
+Set-Keys @('Escape','Enter')
+Assert-Equal 3 (Select-One -Items @('Computers','Monitors','Save','Cancel') -Default 0 -EscapeTo 3) `
+    'esc moves the cursor to Cancel'
+
+# THE MOVE MUST NOT BE A PRESS. This is the whole property: a setup still cannot be
+# discarded by a stray keypress, because you have to press enter on the row.
+Set-Keys @('Escape','UpArrow','Enter')
+Assert-Equal 2 (Select-One -Items @('Computers','Monitors','Save','Cancel') -Default 0 -EscapeTo 3) `
+    'esc must not activate the row it moves to -- it can still be moved off'
+
+# Without -EscapeTo, and not escapable, esc is inert rather than an exit.
+Set-Keys @('Escape','Enter')
+Assert-Equal 0 (Select-One -Items @('a','b') -Default 0) `
+    'esc on a question that must be answered does nothing'
+
+# A row the cursor cannot land on is not somewhere to send it.
+Set-Keys @('Escape','Enter')
+Assert-Equal 0 (Select-One -Items @('a','b','c') -Default 0 -EscapeTo 1 -Disabled @(1)) `
+    'esc cannot move the cursor onto a disabled row'
+
 # ---- (current) marks what is configured, wherever the cursor is --------------
 
 Reset-Drawn; Set-Keys @('DownArrow','Enter')

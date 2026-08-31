@@ -16,7 +16,7 @@ Import-Subject -Script 'install.ps1' -Variables @('DIALECTS','MCCS_INPUTS','COMP
     'Select-One','Select-Many','Join-Names','Get-InputName',
     'Get-DefaultComputerName','Get-KnownComputers','Read-Computers',
     'Format-ComputerName','Read-ComputerName',
-    'Read-InputValue','Get-InputTable','Get-DisplayMap',
+    'Read-InputValue','Get-InputTable','Get-DisplayMap','Read-Method',
     'Get-DisplayAnswers','Get-ConfiguredAnswers','Get-PriorDisplay','Read-Monitors',
     'Invoke-DisplayTest','Invoke-TestRound','Invoke-TestRoundBody','Test-OneComputer',
     'Test-DisplayInput','Test-OneValue','Invoke-BlindWalk',
@@ -130,6 +130,8 @@ Set-Answers @(
     '1',            #     mac on HDMI 1 is now DISABLED, so this picks DisplayPort 1
     '2',            #   the list: LG ULTRAGEAR+
     'y','',         #     manage? / label
+    '1',            #     how to talk to it: Standard. Asked because LG has a
+                    #     documented alternative; the ASUS above was not asked.
     '9','0xD0',     #     pc  -- not an MCCS value, so "Type a value..." (row 9)
     '10','0xD1',    #     mac -- 0xD0 is now a row of its own, marked assigned
     '4',            #   the list: Done
@@ -286,7 +288,7 @@ Set-Config $CONFIGURED
 Set-Outcomes @()
 Set-Answers @(
     '1','pc','1','mac','5',
-    '2','1','y','','3','1','2','y','','9','0xD0','10','0xD1','4',
+    '2','1','y','','3','1','2','y','','1','9','0xD0','10','0xD1','4',
     '3','1,3',
     '4','1', '5','1',           # autostart and PATH must be answered
     '10'                        # Save (the checks are optional)
@@ -294,6 +296,63 @@ Set-Answers @(
 Invoke-Configure -Fresh
 Assert-Equal 0 $LASTEXITCODE
 Assert-Match ((Get-Asked) -join '|') 'short name for it' '-Fresh must ask again'
+
+# ---- the method is offered UP FRONT, for a vendor that has one ---------------
+#
+# specs/configure.md 6.2. Offered, never probed -- nothing is sent to find out.
+# Before the input questions, because the values on offer depend on the answer.
+
+$script:said = @()
+function Write-Host { param([Parameter(ValueFromPipeline=$true)]$Object) $script:said += "$Object" }
+function Get-Said { return ($script:said -join "`n") }
+function Reset-Said { $script:said = @() }
+
+# A vendor with nothing documented is not asked at all. The question would have one
+# real answer, and a menu with one answer is a question that should not be asked.
+Reset-Said; Set-Answers @()
+Assert-Equal 'standard' (Read-Method -Vendor 0x06B3 -Current 'standard')
+Assert-NoMatch (Get-Said) 'how to talk to this monitor' 'no alternative, no question'
+
+Reset-Said; Set-Answers @('1')
+Assert-Equal 'standard' (Read-Method -Vendor 0x1E6D -Current 'standard') 'standard is row 1'
+$said = Get-Said
+Assert-Match $said '--- how to talk to this monitor ---'
+Assert-Match $said 'including most LG ones' 'the vendor comes from the table, not from a model'
+Assert-Match $said 'the check further down will offer you this again' `
+    'and it says the check will ask again, because it will'
+Assert-Match $said 'what nearly every monitor takes'
+Assert-Match $said "LG's own method"
+Assert-Match $said 'Standard\s+what nearly every monitor takes\s+\(current\)' `
+    'standard is marked as the current answer, not merely pre-selected'
+Assert-Match ((Get-Asked) -join '|') 'Choice \[1\]' `
+    'and standard is the default, so the cursor starts there'
+
+Reset-Said; Set-Answers @('2')
+Assert-Equal 'lg-alt' (Read-Method -Vendor 0x1E6D -Current 'standard') 'row 2 is the manufacturer one'
+
+# An existing method is a settled answer -- somebody proved it by watching a screen.
+Reset-Said; Set-Answers @('q')
+Assert-Equal 'lg-alt' (Read-Method -Vendor 0x1E6D -Current 'lg-alt') 'backing out changes nothing'
+Assert-Match ((Get-Asked) -join '|') 'Choice \[2\]' 'and a configured method keeps the cursor'
+
+# ---- and it lands between the short name and the inputs ----------------------
+
+# The ORDER is the point: after the name, before any input, because the values on
+# offer depend on which method is chosen. Asking it afterwards would mean offering
+# values from the wrong channel and then discarding the answers.
+Reset-Said
+Set-Answers @('y', 'lg', '2', '1', '2')   # manage / label / LG's method / two inputs
+$a = Get-DisplayAnswers -Found ([PSCustomObject]@{
+        EdidVendor = 0x1E6D; EdidProduct = 0x9E9D; Name = 'LG ULTRAGEAR+'
+        Mfg = 'GSM'; Connector = 'DisplayPort' }) `
+     -Existing $null -Computers @('pc','mac') -This 'pc'
+Assert-Equal 'lg-alt' $a.Method
+$asked = (Get-Asked) -join '|'
+Assert-Match $asked 'Short name for it.*Choice' 'the method question comes after the short name'
+$said = Get-Said
+Assert-Match $said '(?s)how to talk to this monitor.*which input is'
+Assert-Match $said '0xD0' 'and the inputs offered are the chosen channel''s'
+Assert-Equal '0xD0' $a.Map['pc'] 'so the values recorded are that channel''s too'
 
 # ---- a dialect is offered when standard does nothing -------------------------
 
@@ -340,7 +399,7 @@ Set-Answers @(
     'y','',
     '3',            # pc on HDMI 1
     '1',            # HDMI 1 is disabled now, so this lands on DisplayPort 1
-    '2','y','','9','0xD0','10','0xD1','4',
+    '2','y','','1','9','0xD0','10','0xD1','4',
     '3','1,3',
     '4','1', '5','1',
     '10'
