@@ -85,7 +85,9 @@ loads a stale copy of the switcher into its runspace.
 | `resolve.tests.ps1` | the real switcher under `-WhatIf`: the exact packets, and every refusal |
 | `types.tests.ps1` | the loaded-type guard still fires, and the installer cannot trip it |
 
-`Send-Input` is stubbed throughout, so the suite cannot move a monitor.
+`Send-Input` is stubbed throughout, so the suite cannot move a monitor. The harness
+runs `Set-StrictMode -Version Latest` because the scripts do — without it a whole
+class of failure is invisible in the tests and lands on the user instead.
 `resolve.tests.ps1` needs the reference panels attached and says so and skips when
 they are not.
 

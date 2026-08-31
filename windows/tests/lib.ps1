@@ -9,6 +9,13 @@
 # The unit tests pull functions OUT of install.ps1 by name rather than dot-sourcing
 # it, because dot-sourcing would run the installer.
 
+# As the scripts under test run. Without this a whole class of failure is invisible
+# here and hits the user instead: indexing [0] into an empty match, reading a
+# property that was never set, using an undeclared variable. All of those are quiet
+# under the default mode and terminating under Latest, which is the mode install.ps1
+# sets on its first line.
+Set-StrictMode -Version Latest
+
 $script:WinDir = Split-Path -Parent $PSScriptRoot
 
 function Import-Subject {
@@ -113,6 +120,6 @@ function Send-Input {
     $script:Sent += ('{0}={1}' -f $Label, $Value)
 }
 function Reset-Sent { $script:Sent = @() }
-function Get-Sent   { return @($script:Sent) }
+function Get-Sent   { return ,@($script:Sent) }   # comma: keep the array, so .Count survives
 
 function Write-Log { param([string]$m) if ($env:TK_TEST_VERBOSE) { Write-Host "install: $m" } }

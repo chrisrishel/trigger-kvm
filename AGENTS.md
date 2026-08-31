@@ -445,6 +445,14 @@ Add to it when you change the walkthrough or the menus -- and then MUTATE the th
 you changed and confirm the new test fails. Every regression listed in those files
 got there by being shipped once.
 
+**The harness runs `Set-StrictMode -Version Latest`, because the scripts do.** Do not
+take it out. Indexing `[0]` into an empty match, reading a property that was never
+set, using an undeclared variable -- all of them are quiet under the default mode and
+terminating under Latest. A suite that runs without it will pass on code that throws
+the moment a user runs it, which is exactly what happened: `@($x | Where-Object
+...)[0]` shipped green and died on the first Monitors selection of a fresh install.
+Use `| Select-Object -First 1` when a match may be empty.
+
 Both scripts must parse clean before they are run against hardware:
 
 ```powershell

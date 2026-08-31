@@ -1348,7 +1348,7 @@ function Read-Monitors {
         $detail = @()
         foreach ($f in $Found) {
             $key = '{0:X4}:{1:X4}' -f $f.EdidVendor, $f.EdidProduct
-            $a   = @($out | Where-Object { $_.Key -eq $key })[0]
+            $a   = @($out | Where-Object { $_.Key -eq $key }) | Select-Object -First 1
             $items  += $(if ($f.Name) { $f.Name } else { '{0} panel {1}' -f $f.Mfg, $key })
             $detail += $(if ($a) { '{0}: {1}' -f $a.Label, (@($a.Map.Keys) -join '/') } else { 'not managed' })
         }
@@ -1370,7 +1370,7 @@ function Read-Monitors {
 
         $f    = $Found[$pick]
         $key  = '{0:X4}:{1:X4}' -f $f.EdidVendor, $f.EdidProduct
-        $was  = @($out | Where-Object { $_.Key -eq $key })[0]
+        $was  = @($out | Where-Object { $_.Key -eq $key }) | Select-Object -First 1
         $prior = $was
         if (-not $prior) { $prior = Get-PriorDisplay -Existing $Existing -Key $key -Computers $Computers }
 
@@ -1868,8 +1868,8 @@ function Invoke-TestRound {
             Write-Host '  the switch worked.'
             Write-Host ''
             Write-Host ('  THIS WINDOW is on {0}, which is about to move. Drag it to {1} first.' -f `
-                        (@($Panels | Where-Object { $_.Label -eq $Terminal } | ForEach-Object { $_.Name })[0]),
-                        @($Stays | ForEach-Object { $_.Name })[0])
+                        (@($Panels | Where-Object { $_.Label -eq $Terminal } | ForEach-Object { $_.Name }) | Select-Object -First 1),
+                        (@($Stays | ForEach-Object { $_.Name }) | Select-Object -First 1))
             Write-Host '  If the switch back fails, the window goes dark with it and there is'
             Write-Host '  no way to answer from there.'
             # Last, and blocking: it is the thing to act on, so nothing may print
@@ -1882,8 +1882,9 @@ function Invoke-TestRound {
         # a question or undo anything. That is unavoidable -- but being stranded
         # WITHOUT having been told how to get back is not, and the telling has to
         # happen while there is still a screen to read it on.
-        $back  = $Panels[0].Map[$This]
-        $bname = Get-InputName -Answer $Panels[0] -Value $back
+        $solo  = @($Panels) | Select-Object -First 1
+        $back  = $solo.Map[$This]
+        $bname = Get-InputName -Answer $solo -Value $back
         Write-Host ''
         Write-Host '  READ THIS FIRST -- this is your only monitor.'
         Write-Host ('  It will show {0} for about {1} seconds, then come back on its own.' -f $Target, $Hold)
