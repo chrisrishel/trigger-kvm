@@ -23,6 +23,17 @@ function Import-Subject {
       .SYNOPSIS
       Define the named functions and variables from one of the scripts, without
       running it.
+
+      .NOTES
+      The regex is non-greedy, so a name defined twice in one file imports the
+      FIRST definition -- and PowerShell runs the LAST. That is the opposite end,
+      and it is not theoretical: install.ps1 shadowed seven functions, and this
+      importer quietly handed the tests the dead copy of Test-DisplayInput, which
+      passed while the live one went unexercised.
+
+      conventions.tests.ps1 forbids the duplicate outright, which is the fix.
+      Do not make this one pick the last definition instead -- that would make
+      the tests agree with PowerShell about which dead code they were running.
     #>
     param([string]$Script, [string[]]$Functions = @(), [string[]]$Variables = @())
 

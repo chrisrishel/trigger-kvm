@@ -561,7 +561,17 @@ Know what that check does not prove: it proves a string is PRESENT, not that it
 is REACHABLE. A shadowed function can still contain it -- which is exactly how
 `windows/install.ps1` ended up with the older wording live and the newer wording
 dead in the same file. Pair it with a structural check for duplicate
-definitions.
+definitions: `windows/tests/conventions.tests.ps1` is that half, walking the AST
+for two top-level definitions of one name.
+
+**A test harness can hide a shadow rather than reveal it.** `Import-Subject` in
+`windows/tests/lib.ps1` pulls a function out of a script by regex, non-greedily,
+so it takes the FIRST definition -- and PowerShell runs the LAST. While
+`install.ps1` carried both, `display-question.tests.ps1` was exercising the dead
+`Test-DisplayInput` and passing, and the live one was never run by anything. So
+"the conformance check is green and the unit tests are green" was true of a
+program nobody was testing. Do not make the importer take the last definition to
+match PowerShell; forbid the duplicate instead.
 
 **What does NOT go in a spec.** Each fact lives in exactly one file, because two
 representations of one fact can disagree and one cannot -- which is why `scene.*`
@@ -652,9 +662,8 @@ trigger-kvm configure -Fresh               # ask everything again, pre-fill noth
 There is a test suite, and it runs without hardware:
 
 ```powershell
-cd windows	ests
-.
-un.ps1
+cd windows\tests
+.\run.ps1
 ```
 
 Add to it when you change the walkthrough or the menus -- and then MUTATE the thing

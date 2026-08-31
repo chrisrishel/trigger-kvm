@@ -431,6 +431,14 @@ Assert-Equal 'mac' ($r.Removed -join ',') 'a removal has to be reported too'
 # Both have an obvious answer, and neither is applied without being chosen: one
 # decides whether a UAC prompt happens, the other edits your PATH. Showing "from
 # boot" for a choice nobody made is the tool answering on someone's behalf.
+# Records every row the top menu draws, and then leaves. Cancel, so the
+# walkthrough ends whatever state it is in: Save would be refused while a row is
+# unanswered, and this stub would then pick it again forever.
+#
+# ONE definition, reused by resetting $script:rows. It was two nearly identical
+# ones for a while, and the second declared a narrower param list -- so a
+# -Disabled argument would have been swallowed into $args and silently dropped,
+# which is the same class of bug conventions.tests.ps1 exists to catch.
 $script:rows = @()
 function Select-One {
     param([string[]]$Items, [string[]]$Detail = @(), [int]$Default = 0, [string]$Help,
@@ -454,16 +462,6 @@ Assert-Match $seen 'Add to PATH\?\|not set'  'nor this'
 # monitors row used spaces, which meant Split-Detail could not wrap it -- so a desk
 # with several panels overran the line rather than wrapping like every other row.
 $script:rows = @()
-function Select-One {
-    param([string[]]$Items, [string[]]$Detail = @(), [int]$Default = 0, [string]$Help, [int]$Current = -1)
-    for ($i = 0; $i -lt $Items.Count; $i++) {
-        if ($Items[$i]) { $script:rows += ('{0}|{1}' -f $Items[$i], $(if ($i -lt $Detail.Count) { $Detail[$i] } else { '' })) }
-    }
-    # Cancel, so the walkthrough ends whatever state it is in. Save would be refused
-    # while a row is unanswered, and this stub would then pick it again forever.
-    for ($i = 0; $i -lt $Items.Count; $i++) { if ($Items[$i] -eq 'Cancel (discard changes)') { return $i } }
-    return 0
-}
 Set-Config $CONFIGURED
 Set-Answers @()
 Invoke-Configure
