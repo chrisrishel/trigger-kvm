@@ -82,6 +82,7 @@ loads a stale copy of the switcher into its runspace.
 | `walkthrough.tests.ps1` | the whole flow with scripted answers — first run, re-run, `-Fresh`, dialect escalation, blind walking, duplicate inputs |
 | `monitor-check.tests.ps1` | batching on a four-panel desk, the window's panel being scheduled last, and the single-monitor pre-flight |
 | `trigger-check.tests.ps1` | that the result is one object whatever the child printed, and that it only pulls once the monitors are proven |
+| `display-question.tests.ps1` | the one place a human's answer becomes a diagnosis: every answer, to the right outcome |
 | `resolve.tests.ps1` | the real switcher under `-WhatIf`: the exact packets, and every refusal |
 | `types.tests.ps1` | the loaded-type guard still fires, and the installer cannot trip it |
 
@@ -251,15 +252,21 @@ happened to own, on a panel whose product id is per-*input*, so the key was near
 per-cable. The transport had this right all along: `WriteLgInput` gates on the
 vendor and does not care which LG it is.
 
-**The test asks what actually happened**, because three outcomes have three
-different fixes and a yes/no could only see two:
+**The test asks what was watched, in the order it happened**, because the outcomes
+have entirely different fixes and a yes/no could only see two of them:
 
 ```
-  What did the LG ULTRAGEAR+ do?
-  > It changed, then came back          everything works
-    It changed, but did not come back   the input you gave for THIS PC is wrong
-    Nothing happened at all             this panel does not answer on this channel
+  Did the LG ULTRAGEAR+ change to mac, and back to pc?
+  > Yes, and it changed back to pc         everything works
+    Yes, but it did not change back to pc  the input for pc is wrong
+    No
 ```
+
+Only a `No` is taken apart, with a second question — `Did the LG ULTRAGEAR+ change
+at all?` — separating "that input is not mac" (a wrong *mapping*) from "nothing
+happened" (a wrong *channel*). One question with four answers made the reader hold
+every failure in mind at once to find their own; this asks about the thing they just
+watched, and the common answer is the first one.
 
 "Did not come back" means the channel is right and `self` is wrong — so it asks
 again, or walks the values for you. "Nothing at all" means the channel is wrong —

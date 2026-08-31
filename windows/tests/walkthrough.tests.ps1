@@ -69,7 +69,7 @@ $script:outcomes = @()
 function Set-Outcomes { param([int[]]$O) $script:outcomes = @($O) }
 function Test-DisplayInput {
     param([string]$Label,[string]$Name,[string]$Candidate,[string]$CandidateName,
-          [string]$Current,[switch]$IsMachine,[int]$Hold = 8,[string]$Config)
+          [string]$Current,[string]$ThisName,[switch]$IsMachine,[int]$Hold = 8,[string]$Config)
     if ($script:outcomes.Count -eq 0) { return 0 }
     $o = $script:outcomes[0]
     $script:outcomes = @($script:outcomes | Select-Object -Skip 1)

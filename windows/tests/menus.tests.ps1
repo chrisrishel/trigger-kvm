@@ -116,6 +116,18 @@ Assert-Equal 2 $got 'and up from row 2 wraps PAST the disabled row, never onto i
 Assert-Match (Get-Drawn) 'HDMI 1' 'a disabled row is still drawn'
 Assert-Match (Get-Drawn) 'assigned to pc' 'and still says who has it'
 
+# ---- a long item still gets a gap before its detail --------------------------
+
+# Fixed at 28, "Yes, but it did not change back to pc" ran straight into its detail
+# and the row read as one sentence instead of a choice and its consequence.
+Reset-Drawn; Set-Keys @('Enter')
+$null = Select-One -Default 0 `
+    -Items  @('Yes, and it changed back to pc', 'Yes, but it did not change back to pc', 'No') `
+    -Detail @('everything works', 'the input for pc is wrong', '')
+Assert-Match (Get-Drawn) 'back to pc\s\s+everything works' 'the column widens to the longest item'
+Assert-Match (Get-Drawn) 'change back to pc\s\s+the input for pc is wrong' `
+    'even the longest item keeps two spaces -- one reads as a word break'
+
 # ---- Join-Names --------------------------------------------------------------
 
 Assert-Equal 'LG'                (Join-Names @('LG'))

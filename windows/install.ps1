@@ -618,8 +618,16 @@ function Select-One {
     if ($sel.Count -eq 0) { throw 'Select-One: nothing selectable' }
     if ($sel -notcontains $Default) { $Default = $sel[0] }
 
-    $ITEMW = 28                                     # the item column
+    # The item column is 28 unless something does not fit, and then as wide as the
+    # longest item. Fixed at 28, a long row ran its detail straight on with no gap --
+    # "Yes, and it changed back to pc everything works" -- which reads as one
+    # sentence rather than a choice and its consequence.
     $LEAD  = 4                                      # '  > ' before it
+    $ITEMW = 28
+    # +1 so the longest item still has two spaces before its detail; one reads as a
+    # word break rather than a column.
+    foreach ($it in $Items) { if ($it -and ($it.Length + 1) -gt $ITEMW) { $ITEMW = $it.Length + 1 } }
+    $ITEMW = [Math]::Min($ITEMW, 44)
 
     # One row of text, possibly several lines when the detail does not fit.
     function Build-Row {
@@ -632,9 +640,9 @@ function Select-One {
         # one-element array on return, and $chunks[0] on a bare string is its first
         # CHARACTER -- which renders as a menu of single letters.
         $chunks = @(Split-Detail -Text $d -Width ([Math]::Max(12, $Width - $LEAD - $ITEMW - 1)))
-        $out = @('{0} {1,-28} {2}' -f $Marker, $Items[$Index], $chunks[0])
+        $out = @('{0} {1} {2}' -f $Marker, $Items[$Index].PadRight($ITEMW), $chunks[0])
         foreach ($c in @($chunks | Select-Object -Skip 1)) {
-            $out += '{0} {1,-28} {2}' -f (' ' * $Marker.Length), '', $c
+            $out += '{0} {1} {2}' -f (' ' * $Marker.Length), (' ' * $ITEMW), $c
         }
         return @($out)
     }
@@ -793,6 +801,91 @@ function Read-YesNo {
 function Invoke-Sibling {
     param([string]$Script, [string[]]$Arguments)
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Script @Arguments
+}
+
+# The one place the installer actually moves a monitor. Everything that switches a
+# panel goes through here -- the probe, a batched round, a blind walk -- so there is
+# a single line to read when asking "what can send a packet?", and a single thing for
+# a test harness to stand in for.
+function Send-Input {
+    param([string]$Label, [string]$Value, [string]$Config)
+    $sw = Join-Path $PSScriptRoot 'trigger-kvm.ps1'
+    if (-not (Test-Path $sw)) { $sw = $SWITCH }
+    Invoke-Sibling -Script $sw -Arguments @('set', '-Only', $Label, '-Value', $Value, '-Config', $Config) | Out-Null
+}
+
+# Switch one display to a candidate input, hold, bring it BACK automatically, and
+# only then ask.
+#
+# The return is what makes this safe to run against the display you are reading:
+# the question always arrives on a panel that has already come back, so the
+# installer never needs to know which monitor its own window is on, and a wrong
+# guess costs a few seconds of black rather than a stranded session. Confirming
+# visually is the only verification this hardware permits -- reads lie on both
+# panels here (AGENTS.md hard rule 2).
+#
+# Returns 0 correct, 1 changed to the WRONG thing, 2 changed and did not come back,
+# 3 nothing happened. Four, because with machines the test asserts something real --
+# "did the LG show the Mac?" -- and being shown the wrong machine is a wrong MAPPING,
+# which has nothing to do with a wrong channel or a wrong value for this PC. Testing
+# a bare input value cannot tell 0 from 1, so it does not offer the distinction.
+function Test-DisplayInput {
+    param([string]$Label, [string]$Name, [string]$Candidate, [string]$CandidateName,
+          [string]$Current, [string]$ThisName, [switch]$IsMachine,
+          [int]$Hold = 8, [string]$Config = $CONFIG)
+
+    Write-Host ''
+    Write-Host ("  Switching $Name to $CandidateName for ${Hold}s, then back automatically.")
+    if ($IsMachine) {
+        Write-Host ("  Watch that monitor -- you should see $CandidateName on it.")
+        Write-Host '  If that computer is asleep or off it will say No Signal, which still'
+        Write-Host '  proves the switch worked.'
+    } else {
+        Write-Host '  Watch that monitor. It only has to CHANGE -- if nothing is plugged into'
+        Write-Host '  that input it will say No Signal, and that still proves the switch worked.'
+    }
+    Send-Input -Label $Label -Value $Candidate -Config $Config
+    Start-Sleep -Seconds $Hold
+    if ($Current) { Send-Input -Label $Label -Value $Current -Config $Config; Start-Sleep -Seconds 2 }
+
+    # Asked as it happened, in the order it happened: did it go, and did it come
+    # back. One question with four answers made the reader hold every failure in mind
+    # at once to find their own; this asks the thing they just watched, and only the
+    # "no" leads anywhere else.
+    #
+    # Returns 0 correct, 1 changed to the WRONG thing, 2 went and did not come back,
+    # 3 nothing happened -- unchanged, so callers keep one set of outcomes.
+    $back = if ($ThisName) { $ThisName } else { 'this computer' }
+
+    Write-Host ''
+    Write-Host ("  Did the {0} change to {1}, and back to {2}?" -f $Name, $CandidateName, $back)
+    $pick = Select-One -Default 0 -Items @(
+        ("Yes, and it changed back to $back"),
+        ("Yes, but it did not change back to $back"),
+        'No'
+    ) -Detail @(
+        'everything works',
+        "the input for $back is wrong",
+        ''
+    )
+    if ($pick -eq 0) { return 0 }
+    if ($pick -eq 1) { return 2 }
+
+    # Only a "no" needs taking apart, and only when there was a computer to expect:
+    # testing a bare input value, any change at all proves the transport, so there is
+    # nothing left to ask.
+    if (-not $IsMachine) { return 3 }
+
+    Write-Host ''
+    Write-Host ("  Did the {0} change at all?" -f $Name)
+    $pick = Select-One -Default 1 -Items @(
+        ("Yes, but it was not $CandidateName"),
+        'No, nothing happened'
+    ) -Detail @(
+        "that input is not $CandidateName",
+        'this panel does not answer on this channel'
+    )
+    return $(if ($pick -eq 0) { 1 } else { 3 })
 }
 
 # The one place the installer actually moves a monitor. Everything that switches a
@@ -1955,7 +2048,7 @@ function Test-OneComputer {
     if ($Target) {
         $outcome = Test-DisplayInput -Label $Answer.Label -Name $Answer.Name -IsMachine `
                                      -Candidate $Answer.Map[$Target] -CandidateName $Target `
-                                     -Current $here -Config $Config
+                                     -Current $here -ThisName $This -Config $Config
     } else {
         # Nothing else is on this panel, so there is no claim to check beyond "the
         # transport reaches it". Any other input value will do.
@@ -1964,7 +2057,7 @@ function Test-OneComputer {
         if (-not $n) { return $true }
         $outcome = Test-DisplayInput -Label $Answer.Label -Name $Answer.Name `
                                      -Candidate $table[$n[0]] -CandidateName $n[0] `
-                                     -Current $here -Config $Config
+                                     -Current $here -ThisName $This -Config $Config
     }
 
     if ($outcome -eq 0) { return $true }
