@@ -537,10 +537,40 @@ or install anything system-wide outside the documented install.
 Each phase in §11 is finished when its line here passes. These are the acceptance
 criteria; do not move on without them.
 
-1. **Config + verbs.** With a config this repo writes (copy one from the Windows
-   machine), `pull` and `to <computer>` build the exact packets in `displays.toml`,
-   and a dry run prints them without sending. `to nosuch`, a panel with no inputs, an
-   unparseable value and a missing `computer.this` each **refuse and send nothing**.
+1. **Config + verbs.** `pull` and `to <computer>` build the exact packets in
+   `displays.toml`, and a dry run prints them without sending. `to nosuch`, a panel
+   with no inputs, an unparseable value and a missing `computer.this` each **refuse
+   and send nothing**.
+
+   Write the config by hand from §2 to get started — do not try to copy one off the
+   Windows machine. A config is machine-local: `computer.this` differs, and the LG
+   reports a **different product id per input**, so the id this Mac sees on its own
+   cable is not the one the PC sees on its. This desk, from the Mac's side, is:
+
+   ```
+   computer.this = mac
+
+   display.lg.vendor  = 0x1E6D
+   display.lg.product = <read it -- `trigger-kvm list`, or 0x9E9F if USB-C>
+   display.lg.name    = LG ULTRAGEAR+
+   display.lg.method  = lg-alt
+   display.lg.input.0xD1 = mac        # USB-C
+   display.lg.input.0xD0 = pc         # DisplayPort
+
+   display.asus.vendor  = 0x06B3
+   display.asus.product = 0x42E0
+   display.asus.name    = PG42UQ
+   display.asus.method  = standard
+   display.asus.input.0x0F = mac      # DisplayPort
+   display.asus.input.0x11 = pc       # HDMI 1
+
+   trigger.device   = usb:046d:0843, usb:1235:820a
+   trigger.debounce = 3.0
+   trigger.settle   = 0.75
+   ```
+
+   Those input values are measured and are in `displays.toml`. The product id is the
+   one thing to read rather than copy.
 2. **`discover`.** Every attached display with EDID vendor, product and the panel's
    own name; USB devices attached now; **every paired** Bluetooth device with its
    connected state shown but not filtered on.
