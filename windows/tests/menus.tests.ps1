@@ -98,6 +98,23 @@ Reset-Drawn; Set-Keys @('Enter')
 $null = Select-One -Items @('PATH','Save') -Detail @($huge, '') -Default 0
 Assert-Match (Get-Drawn) ([regex]::Escape($huge)) 'an unbreakable item must overrun, never be cut'
 
+# ---- rows that are shown but cannot be chosen --------------------------------
+
+# An input already assigned to another computer. Hiding it would make the list change
+# shape as you answer; renaming it would lose the only label the monitor's own menu
+# agrees with. So it stays where it was, says who has it, and is skipped.
+Reset-Drawn; Set-Keys @('DownArrow','Enter')
+$got = Select-One -Items @('HDMI 1','HDMI 2','DisplayPort') `
+                  -Detail @('0x11   assigned to pc','0x12','0x0F') -Default 1 -Disabled @(0)
+Assert-Equal 2 $got 'the cursor moved from row 2 to row 3'
+
+Reset-Drawn; Set-Keys @('UpArrow','Enter')
+$got = Select-One -Items @('HDMI 1','HDMI 2','DisplayPort') `
+                  -Detail @('0x11   assigned to pc','0x12','0x0F') -Default 1 -Disabled @(0)
+Assert-Equal 2 $got 'and up from row 2 wraps PAST the disabled row, never onto it'
+Assert-Match (Get-Drawn) 'HDMI 1' 'a disabled row is still drawn'
+Assert-Match (Get-Drawn) 'assigned to pc' 'and still says who has it'
+
 # ---- Join-Names --------------------------------------------------------------
 
 Assert-Equal 'LG'                (Join-Names @('LG'))

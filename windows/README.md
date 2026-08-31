@@ -133,7 +133,7 @@ and there is one place a change has to be made rather than two.
     Autostart?                   from boot
     Add to PATH?                 yes
 
-  > Test the monitors            untested
+  > Test the monitor inputs      untested
     Test the triggers            untested
 
     Save configuration and run
@@ -178,7 +178,40 @@ failed rather than onward. Neither pass survives editing what it was a pass *for
 it belonged to those values, and showing "all responded" beside numbers nothing
 tried would be a claim the user has no way to catch.
 
-**The monitors are checked before the triggers, and that ordering is the point.**
+**Monitors are a list you pick from**, the same shape as the computers list and for
+the same reason: walking every panel in sequence to change one value meant answering
+for all of them, which is what a menu exists to avoid.
+
+```
+--- monitors ---
+
+  > PG42UQ                       asus: pc/mac
+    LG ULTRAGEAR+                not managed
+
+    Done
+```
+
+**An input already taken keeps its name, its place, and cannot be chosen.**
+
+```
+  On the PG42UQ, which input is 'mac' on?
+   1) DisplayPort 1                0x0F
+   2) DisplayPort 2                0x10
+   -- HDMI 1                       0x11   assigned to pc
+   4) HDMI 2                       0x12
+```
+
+Two computers cannot share a socket, so this is not merely discouraged — it is not
+an answer. The earlier version put assigned computers at the *front* of the list
+under their own names, so answering for the second computer showed `pc  0x11` where
+`HDMI 1  0x11` had been, and the rows moved as you went. `HDMI 1` is what the
+monitor's own menu says, and it is the only label worth showing.
+
+**"Test the monitor inputs", not "the monitors".** What is under test is the claim
+that input V of panel P is computer C — a panel that answers every command perfectly
+while its inputs are mapped to the wrong computers fails this, and is not broken.
+
+**The inputs are checked before the triggers, and that ordering is the point.**
 The trigger check asks you to flip the switch away and back — and once the monitor
 values have been confirmed by someone looking at them, the flip *back* pulls the
 monitors here for real, using those values. So it stops being "an event was

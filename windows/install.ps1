@@ -601,12 +601,20 @@ function Select-One {
           # The row that is configured RIGHT NOW, if any. Starting the cursor there
           # is not enough on its own -- the cursor also means "where you are", so a
           # re-run gave no way to tell an unchanged default from a deliberate one.
-          [int]$Current = -1)
+          [int]$Current = -1,
+          # Rows that are shown but cannot be chosen. An input already assigned to
+          # another computer is the case this exists for: hiding it would leave a
+          # list that changes shape as you answer, and renaming it would lose the
+          # only label the monitor's own menu agrees with. So it stays where it was,
+          # says who has it, and the cursor passes over it.
+          [int[]]$Disabled = @())
 
     # An empty item is a SEPARATOR: drawn as a blank line, skipped by the cursor and
     # unpickable. Grouping a long menu beats renaming its rows to imply grouping.
     $sel = @()
-    for ($i = 0; $i -lt $Items.Count; $i++) { if ($Items[$i]) { $sel += $i } }
+    for ($i = 0; $i -lt $Items.Count; $i++) {
+        if ($Items[$i] -and -not ($Disabled -contains $i)) { $sel += $i }
+    }
     if ($sel.Count -eq 0) { throw 'Select-One: nothing selectable' }
     if ($sel -notcontains $Default) { $Default = $sel[0] }
 
@@ -633,7 +641,13 @@ function Select-One {
 
     if (-not (Test-CanReadKeys)) {
         for ($i = 0; $i -lt $Items.Count; $i++) {
-            if (-not ($sel -contains $i)) { Write-Host ''; continue }
+            if (-not $Items[$i]) { Write-Host ''; continue }
+            if ($Disabled -contains $i) {
+                foreach ($l in (Build-Row -Index $i -Width 100 -Marker '   ')) {
+                    Write-Host ('   -- {0}' -f $l.Substring(4))
+                }
+                continue
+            }
             $first = $true
             foreach ($l in (Build-Row -Index $i -Width 100 -Marker '   ')) {
                 if ($first) { Write-Host ('  {0,2}) {1}' -f ($i + 1), $l.Substring(4)) }
@@ -660,7 +674,8 @@ function Select-One {
     while ($true) {
         $lines = @()
         for ($i = 0; $i -lt $Items.Count; $i++) {
-            if (-not ($sel -contains $i)) { $lines += ''; continue }
+            if (-not $Items[$i]) { $lines += ''; continue }
+            if ($Disabled -contains $i) { $lines += Build-Row -Index $i -Width $width -Marker '  -'; continue }
             $lines += Build-Row -Index $i -Width $width -Marker $(if ($i -eq $sel[$at]) { '  >' } else { '   ' })
         }
         $lines += $helpBody
@@ -1088,12 +1103,16 @@ function Read-InputValue {
 
     $names = @($Table.Keys)
     $rows  = @($names)
-    # Say who already has an input, so the same one is not handed to two machines by
-    # accident -- which would make `to` ambiguous, and it refuses rather than guess.
-    $vals  = @($names | ForEach-Object {
-        $v = $Table[$_]
-        if ($Taken.ContainsKey($v)) { '{0}   (already {1})' -f $v, $Taken[$v] } else { $v }
-    })
+    # Two computers cannot share a socket, so an assigned input is not merely
+    # discouraged -- it is not an answer. It stays in place, says who has it, and the
+    # cursor skips it.
+    $off   = @()
+    $vals  = @()
+    for ($i = 0; $i -lt $names.Count; $i++) {
+        $v = $Table[$names[$i]]
+        if ($Taken.ContainsKey($v)) { $vals += ('{0}   assigned to {1}' -f $v, $Taken[$v]); $off += $i }
+        else                        { $vals += $v }
+    }
     $rows += 'Type a value...'; $vals += ''
     if ($AllowNone) { $rows += 'Not on this monitor'; $vals += '' }
 
@@ -1109,6 +1128,8 @@ function Read-InputValue {
     } elseif ($AllowNone) {
         $row = $rows.Count - 1
     }
+    # The cursor cannot start on a row it is not allowed to choose.
+    if ($off -contains $row) { $row = $names.Count }
 
     Write-Host ''
     Write-Host ('  ' + $Prompt)
@@ -1116,7 +1137,7 @@ function Read-InputValue {
 
     while ($true) {
         $v = $null
-        $pick = Select-One -Items $rows -Detail $vals -Default $row -Current $now
+        $pick = Select-One -Items $rows -Detail $vals -Default $row -Current $now -Disabled $off
         if ($pick -lt $names.Count) {
             $v = $Table[$names[$pick]]
         } elseif ($AllowNone -and $pick -eq ($rows.Count - 1)) {
@@ -1140,17 +1161,28 @@ function Read-InputValue {
 # The inputs to offer for a panel: the channel's own value set, with anything already
 # mapped to a machine in front of it. "mac" is a better label than "HDMI 2", and it
 # is the only one that is true about this desk.
+# The inputs to offer for a panel: the channel's own value set, in the channel's own
+# order, plus any value already assigned that the channel does not list.
+#
+# It used to put assigned computers' names at the FRONT, replacing the input's name --
+# so answering for the second computer showed "pc  0x11" where "HDMI 1  0x11" had
+# been, and the rows moved under you. The monitor's own menu says HDMI 1; that is the
+# only label worth showing, and it should stay where it was.
 function Get-InputTable {
     param([string]$Method, $Map)
 
+    $out = [ordered]@{}
     $base = $MCCS_INPUTS
     foreach ($d in $DIALECTS.Values) { if ($d.Method -eq $Method) { $base = $d.Inputs } }
+    foreach ($n in $base.Keys) { $out[$n] = $base[$n] }
 
-    $out = [ordered]@{}
-    if ($Map) { foreach ($m in $Map.Keys) { $out[$m] = $Map[$m] } }
-    foreach ($n in $base.Keys) {
-        if (@($out.Values) -contains $base[$n]) { continue }
-        $out[$n] = $base[$n]
+    # A value someone typed by hand is not in the channel's list, and would otherwise
+    # be invisible -- including to the "already assigned" marking.
+    if ($Map) {
+        foreach ($m in $Map.Keys) {
+            if (@($out.Values) -contains $Map[$m]) { continue }
+            $out[$Map[$m]] = $Map[$m]
+        }
     }
     return $out
 }
@@ -1281,67 +1313,90 @@ function Read-Tier {
     return $(switch ($pick) { 1 { 'user' } 2 { 'manual' } default { 's4u' } })
 }
 
-# Rebuild the answer objects straight from the config, asking nothing. What a
-# re-run opens the review menu with.
+# Rebuild the answer objects straight from the config, asking nothing. What the menu
+# opens with.
 function Get-ConfiguredAnswers {
     param($Found, [hashtable]$Existing, [string[]]$Computers = @())
 
     $out = @()
     foreach ($f in $Found) {
-        $key = '{0:X4}:{1:X4}' -f $f.EdidVendor, $f.EdidProduct
-        foreach ($k in ($Existing.Keys | Sort-Object)) {
-            if ($k -notmatch '^display\.([^.]+)\.vendor$') { continue }
-            $l = $Matches[1]
-            if (($Existing["display.$l.vendor"] -replace '^0[xX]','').ToUpper().PadLeft(4,'0') -ne $key.Split(':')[0]) { continue }
-            if (($Existing["display.$l.product"] -replace '^0[xX]','').ToUpper().PadLeft(4,'0') -ne $key.Split(':')[1]) { continue }
-            $out += [PSCustomObject]@{
-                Label  = $l
-                Name   = $(if ($Existing.ContainsKey("display.$l.name")) { $Existing["display.$l.name"] } else { $l })
-                Method = $(if ($Existing.ContainsKey("display.$l.method")) { $Existing["display.$l.method"] } else { 'standard' })
-                Vendor = ('0x{0:X4}' -f $f.EdidVendor); Product = ('0x{0:X4}' -f $f.EdidProduct)
-                EdidVendor = $f.EdidVendor; Mfg = $f.Mfg; Key = $key
-                Map    = (Get-DisplayMap -Existing $Existing -Label $l -Computers $Computers)
-            }
-            break
+        $key   = '{0:X4}:{1:X4}' -f $f.EdidVendor, $f.EdidProduct
+        $prior = Get-PriorDisplay -Existing $Existing -Key $key -Computers $Computers
+        if (-not $prior) { continue }
+        $out += [PSCustomObject]@{
+            Label  = $prior.Label
+            Name   = $(if ($Existing.ContainsKey("display.$($prior.Label).name")) { $Existing["display.$($prior.Label).name"] } else { $prior.Label })
+            Method = $(if ($prior.Method) { $prior.Method } else { 'standard' })
+            Vendor = ('0x{0:X4}' -f $f.EdidVendor); Product = ('0x{0:X4}' -f $f.EdidProduct)
+            EdidVendor = $f.EdidVendor; Mfg = $f.Mfg; Key = $key
+            Map    = $prior.Map
         }
     }
     return $out
 }
 
-# Ask about every attached display, pre-filled from whatever the config already says
-# about that EDID. A function rather than an inline loop because the review menu
-# re-enters it: "the monitors" has to be revisitable as one unit.
-function Get-AllDisplayAnswers {
-    # $Carry is answers given during THIS walkthrough, keyed by EDID. They are not in
-    # the config yet -- nothing is written until you save -- so without this,
-    # re-entering the monitors section to change one value would silently throw away
-    # what the user already told us. Keyed by EDID rather than by label because the
-    # label is one of the things they might be changing.
-    param($Found, [hashtable]$Existing, [string[]]$Computers, [string]$This,
-          [hashtable]$Carry = @{})
+# The monitors, as a list you pick from -- the same shape as the computers list, and
+# for the same reason. Walking every panel in sequence to change one value meant
+# answering for all of them, which is what a menu exists to avoid.
+function Read-Monitors {
+    param($Found, $Answers, [string[]]$Computers, [string]$This, [hashtable]$Existing = @{})
 
-    $out = @()
-    foreach ($f in $Found) {
-        $key = '{0:X4}:{1:X4}' -f $f.EdidVendor, $f.EdidProduct
-        $prior = $null
-        foreach ($k in $Existing.Keys) {
-            if ($k -match '^display\.([^.]+)\.vendor$') {
-                $l = $Matches[1]
-                if (($Existing["display.$l.vendor"] -replace '^0[xX]','').ToUpper().PadLeft(4,'0') -eq $key.Split(':')[0] -and
-                    ($Existing["display.$l.product"] -replace '^0[xX]','').ToUpper().PadLeft(4,'0') -eq $key.Split(':')[1]) {
-                    $prior = [PSCustomObject]@{
-                        Label  = $l
-                        Method = $(if ($Existing.ContainsKey("display.$l.method")) { $Existing["display.$l.method"] } else { '' })
-                        Map    = (Get-DisplayMap -Existing $Existing -Label $l -Computers $Computers)
-                    }
-                }
-            }
+    $out = @($Answers)
+
+    while ($true) {
+        $items  = @()
+        $detail = @()
+        foreach ($f in $Found) {
+            $key = '{0:X4}:{1:X4}' -f $f.EdidVendor, $f.EdidProduct
+            $a   = @($out | Where-Object { $_.Key -eq $key })[0]
+            $items  += $(if ($f.Name) { $f.Name } else { '{0} panel {1}' -f $f.Mfg, $key })
+            $detail += $(if ($a) { '{0}: {1}' -f $a.Label, (@($a.Map.Keys) -join '/') } else { 'not managed' })
         }
-        if ($Carry.ContainsKey($key)) { $prior = $Carry[$key] }
+        $items += ''; $detail += ''
+        $done = $items.Count
+        $items += 'Done'; $detail += ''
+
+        # The first panel nobody has answered for, else the way out.
+        $land = $done
+        for ($i = 0; $i -lt $Found.Count; $i++) { if ($detail[$i] -eq 'not managed') { $land = $i; break } }
+
+        Write-Host ''
+        Write-Host '--- monitors ---'
+        Write-Host 'Which of these should follow the switch, and which input is each'
+        Write-Host 'computer on?'
+        Write-Host ''
+        $pick = Select-One -Items $items -Detail $detail -Default $land
+        if ($pick -eq $done) { return @($out) }
+
+        $f    = $Found[$pick]
+        $key  = '{0:X4}:{1:X4}' -f $f.EdidVendor, $f.EdidProduct
+        $was  = @($out | Where-Object { $_.Key -eq $key })[0]
+        $prior = $was
+        if (-not $prior) { $prior = Get-PriorDisplay -Existing $Existing -Key $key -Computers $Computers }
+
         $a = Get-DisplayAnswers -Found $f -Existing $prior -Computers $Computers -This $This
+        $out = @($out | Where-Object { $_.Key -ne $key })
         if ($a) { $out += $a }
     }
-    return $out
+}
+
+# What the config already says about one panel, matched on its EDID rather than on
+# whatever label someone gave it.
+function Get-PriorDisplay {
+    param([hashtable]$Existing, [string]$Key, [string[]]$Computers = @())
+
+    foreach ($k in $Existing.Keys) {
+        if ($k -notmatch '^display\.([^.]+)\.vendor$') { continue }
+        $l = $Matches[1]
+        if (($Existing["display.$l.vendor"] -replace '^0[xX]','').ToUpper().PadLeft(4,'0') -ne $Key.Split(':')[0]) { continue }
+        if (($Existing["display.$l.product"] -replace '^0[xX]','').ToUpper().PadLeft(4,'0') -ne $Key.Split(':')[1]) { continue }
+        return [PSCustomObject]@{
+            Label  = $l
+            Method = $(if ($Existing.ContainsKey("display.$l.method")) { $Existing["display.$l.method"] } else { '' })
+            Map    = (Get-DisplayMap -Existing $Existing -Label $l -Computers $Computers)
+        }
+    }
+    return $null
 }
 
 # The walkthrough. Current settings pre-fill every default, so a re-run is a review
@@ -1428,6 +1483,7 @@ function Invoke-Configure {
     $computers = @(Get-KnownComputers -Cfg $seed)
     if ($computers.Count -gt 0) { $computers = @(@($this) + @($computers | Where-Object { $_ -ne $this })) }
     $answers   = @(Get-ConfiguredAnswers -Found $found -Existing $seed -Computers $computers)
+    $carry     = @{}
 
     $devices = @()
     if ($seed.ContainsKey('trigger.device')) {
@@ -1481,7 +1537,12 @@ function Invoke-Configure {
         # was seen and becomes the whole thing working, which is the last thing you
         # want to see before saving.
         $items  += ''; $detail += ''
-        $items  += $(if ($answers.Count -eq 1) { 'Test the monitor' } else { 'Test the monitors' })
+        # "the monitor inputs", not "the monitors": what is under test is the claim
+        # that input V of panel P is computer C. A panel that answers perfectly while
+        # its inputs are mapped to the wrong computers fails this and is not broken.
+        $claims = 0
+        foreach ($a in $answers) { $claims += @($a.Map.Keys | Where-Object { $_ -ne $this }).Count }
+        $items  += $(if ($claims -eq 1) { 'Test the monitor input' } else { 'Test the monitor inputs' })
         $detail += $(if ($ranDisplays) { $ranDisplays.Text } else { 'untested' })
         $items  += $(if ($devices.Count -eq 1) { 'Test the trigger' } else { 'Test the triggers' })
         $detail += $(if ($ranTriggers) { $ranTriggers.Text } else { 'untested' })
@@ -1552,14 +1613,14 @@ function Invoke-Configure {
                 if ($m.Renames.Count -or $m.Removed.Count) { $ranDisplays = $null }
             }
             'Monitors' {
-                $again = @(Get-AllDisplayAnswers -Found $found -Existing $seed -Computers $computers -This $this -Carry $carry)
-                if ($again.Count -gt 0) {
-                    $answers = $again
-                    foreach ($a in $answers) { $carry[$a.Key] = $a }
-                } else { Write-Host '  No monitors selected -- keeping the previous answers.' }
+                $before  = ($answers | ForEach-Object { '{0}={1}' -f $_.Label, (@($_.Map.Values) -join ',') }) -join '|'
+                $answers = @(Read-Monitors -Found $found -Answers $answers -Computers $computers `
+                                           -This $this -Existing $seed)
+                $after   = ($answers | ForEach-Object { '{0}={1}' -f $_.Label, (@($_.Map.Values) -join ',') }) -join '|'
                 # A pass belongs to the values that passed. Carrying it across an edit
-                # would show "all responded" beside numbers nothing tried.
-                $ranDisplays = $null
+                # would show "all responded" beside numbers nothing tried -- but
+                # looking at the list and changing nothing is not an edit.
+                if ($before -ne $after) { $ranDisplays = $null }
             }
             'Triggers' {
                 $devices = @(Read-Triggers -Cands $cands -Current $devices)
@@ -1577,7 +1638,7 @@ function Invoke-Configure {
                 $ranTriggers = Invoke-TriggerTest -Devices $devices -Answers $answers -This $this `
                                                   -Pull:([bool]($ranDisplays -and $ranDisplays.Ok))
             }
-            { $_ -like 'Test the monitor*' } {
+            { $_ -like 'Test the monitor input*' } {
                 $ranDisplays = Invoke-DisplayTest -Answers $answers -This $this
                 foreach ($a in $answers) { $carry[$a.Key] = $a }
             }

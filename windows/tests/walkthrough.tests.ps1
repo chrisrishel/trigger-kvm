@@ -17,7 +17,7 @@ Import-Subject -Script 'install.ps1' -Variables @('DIALECTS','MCCS_INPUTS','COMP
     'Get-DefaultComputerName','Get-KnownComputers','Read-Computers',
     'Format-ComputerName','Read-ComputerName',
     'Read-InputValue','Get-InputTable','Get-DisplayMap',
-    'Get-DisplayAnswers','Get-ConfiguredAnswers','Get-AllDisplayAnswers',
+    'Get-DisplayAnswers','Get-ConfiguredAnswers','Get-PriorDisplay','Read-Monitors',
     'Invoke-DisplayTest','Invoke-TestRound','Invoke-TestRoundBody','Test-OneComputer',
     'Test-DisplayInput','Test-OneValue','Invoke-BlindWalk',
     'Read-Triggers','Read-Tier','Get-CandidateLabel',
@@ -106,7 +106,7 @@ $CONFIGURED = @(
 # section, come back to the menu.
 #
 #   1 Computers  2 Monitors  3 Triggers  4 Autostart?  5 Add to PATH?
-#   (6 blank)  7 Test the monitors  8 Test the triggers  (9 blank)  10 Save  11 Cancel
+#   (6 blank)  7 Test the monitor inputs  8 Test the triggers  (9 blank)  10 Save  11 Cancel
 #
 # Monitors are checked BEFORE the triggers: once their values are confirmed, the
 # trigger check can pull for real, which is what makes it worth doing last.
@@ -125,12 +125,15 @@ Set-Answers @(
     'mac',          #   and its name
     '5',            #   the list: Done
     '2',            # back at the menu, and it lands on Monitors
-    'y','',         #   PG42UQ: manage? / label
+    '1',            #   the list: PG42UQ
+    'y','',         #     manage? / label
     '3',            #     pc  is on HDMI 1
-    '2',            #     mac is on DisplayPort 1 (row 1 is now pc)
-    'y','',         #   LG: manage? / label
-    '9','0xD0',     #     pc  -- not an MCCS value, so "Type a value..."
-    '10','0xD1',    #     mac -- row 10 now, since pc was added to the list
+    '1',            #     mac on HDMI 1 is now DISABLED, so this picks DisplayPort 1
+    '2',            #   the list: LG ULTRAGEAR+
+    'y','',         #     manage? / label
+    '9','0xD0',     #     pc  -- not an MCCS value, so "Type a value..." (row 9)
+    '10','0xD1',    #     mac -- 0xD0 is now a row of its own, marked assigned
+    '4',            #   the list: Done
     '3',            # menu -> Triggers
     '1,3',
     '7',            # menu -> Test the monitors
@@ -149,6 +152,20 @@ Assert-Equal 'pc'   $c['display.lg.input.0xd0']
 Assert-Equal 'mac'  $c['display.lg.input.0xd1']
 Assert-True (-not $c.ContainsKey('display.lg.self')) 'self is gone'
 Assert-Equal 'PG42UQ' $c['display.pg42uq.name'] 'the panel names come out of the EDID'
+
+# ---- an assigned input keeps its name, its place, and cannot be taken ---------
+
+# Answering for the second computer used to show "pc  0x11" where "HDMI 1  0x11" had
+# been, and the rows moved under you. The monitor's own menu says HDMI 1.
+$t = Get-InputTable -Method 'standard' -Map ([ordered]@{ pc = '0x11' })
+Assert-Equal 'HDMI 1' @($t.Keys)[2] 'an assigned input keeps its own name'
+Assert-Equal (@($MCCS_INPUTS.Keys) -join ',') (@($t.Keys) -join ',') 'and the list keeps its order'
+
+# A value the channel does not list is appended, so it can be shown as assigned
+# rather than silently missing.
+$t = Get-InputTable -Method 'standard' -Map ([ordered]@{ pc = '0xD0' })
+Assert-Equal ($MCCS_INPUTS.Count + 1) $t.Count
+Assert-Equal '0xD0' @($t.Keys)[-1] 'a typed value is appended, never inserted'
 
 # ---- it will not save half a setup -------------------------------------------
 
@@ -215,7 +232,7 @@ Set-Config $CONFIGURED
 Set-Outcomes @()
 Set-Answers @(
     '1','pc','1','mac','5',
-    '2','y','','3','2','y','','9','0xD0','10','0xD1',
+    '2','1','y','','3','1','2','y','','9','0xD0','10','0xD1','4',
     '3','1,3',
     '10'                        # Save (the checks are optional)
 )
@@ -262,12 +279,11 @@ Set-Config $null
 Set-Outcomes @()
 Set-Answers @(
     '1','pc','1','mac','5',
-    '2',
+    '2','1',
     'y','',
     '3',            # pc on HDMI 1
-    '1',            # mac on ... pc's own row: refused
-    '2',            # ... so pick DisplayPort 1 instead
-    'y','','9','0xD0','10','0xD1',
+    '1',            # HDMI 1 is disabled now, so this lands on DisplayPort 1
+    '2','y','','9','0xD0','10','0xD1','4',
     '3','1,3',
     '10'
 )
