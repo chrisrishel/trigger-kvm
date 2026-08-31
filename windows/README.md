@@ -165,6 +165,36 @@ first, so the name survives exactly as typed — and offered ahead of the standa
 names on every later run. "Mac" is a better label than "HDMI 2", and it is the only
 one that is true about your room.
 
+**Checking the monitors batches across panels, never across machines.** Monitors sit
+side by side, so several can be confirmed in one glance; a *sequence* of switches
+over half a minute has to be held in memory and reported afterwards, and memory is
+the weak link. So each round sends every panel that claims a machine to that machine
+at once and asks straight away:
+
+```
+  Sending ASUS, DELL and BIG to mac for 8s, then back automatically.
+  LG stays here, so you can read this.
+
+  Did all of them show mac, then come back?  [Y/n]
+```
+
+The win is the question, not the wall clock. The common case — everything worked —
+is one keystroke, and the four-way diagnosis only appears for the panels you say
+went wrong ("Which ones did not?"). At two monitors that replaces two menus with one
+yes/no; at four panels and three machines it replaces twelve with four.
+
+**It asks which monitor this window is on, once**, and then holds that panel back
+until there is no choice, warning before the round that finally moves it. That
+matters most when something is *wrong*: a panel that does not come back has taken
+the window with it, and there is then no way to answer the question or fix anything.
+
+**With one monitor you can genuinely get stuck, so it says so first.** Nothing can be
+held back, and if the switch back fails this tool cannot draw on a screen that is
+showing another computer. The way back is the monitor's own input button — so the
+pre-flight names the input in the panel's own words (`HDMI 1, value 0x11`), never as
+a machine name the OSD has never heard of, and waits for a Ready? before sending
+anything. Declining reads as **not checked**, never as a pass.
+
 **Testing the monitors happens before anything is written.** The switcher takes a panel's method
 and identity from a config file rather than from the command line — deliberately,
 so there is one description of a panel and not two — so the test writes a throwaway

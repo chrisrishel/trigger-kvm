@@ -551,17 +551,44 @@ function Write-MenuFrame {
     if ($Previous -gt 0) {
         try { [Console]::SetCursorPosition(0, [Math]::Max(0, [Console]::CursorTop - $Previous)) } catch { }
     }
+    # Pad to overwrite the previous frame. Callers wrap their own long content
+    # (Split-Detail) rather than having it cut here: this used to truncate, which on
+    # the review screen hid the very values someone opened it to check. A line that
+    # is still over-long wraps in the terminal and is counted, so the frame height
+    # stays honest.
+    $n = 0
     foreach ($l in $Lines) {
         $t = "$l"
-        # Pad to overwrite the previous frame; truncate so a long name cannot wrap
-        # and silently add a line to the block.
-        if ($t.Length -gt $Width) { $t = $t.Substring(0, $Width) }
         Write-Host $t.PadRight($Width)
+        $n += [Math]::Max(1, [Math]::Ceiling(($t.Length + 1) / [double]$Width))
     }
-    return $Lines.Count
+    return $n
 }
 
 # One choice from a list. Returns the index.
+# A row's detail, wrapped to the width left for it -- broken at the ", " between
+# items wherever possible, so a line never ends mid-identifier.
+#
+# Nothing in a menu is ever truncated. The review screen exists to let someone
+# confirm what is about to be written, and an ellipsis there hides exactly the thing
+# they came to check. Growing the menu is the cheaper failure.
+function Split-Detail {
+    param([string]$Text, [int]$Width)
+
+    if (-not $Text) { return @('') }
+    if ($Width -lt 12) { return @($Text) }          # too narrow to wrap usefully
+
+    $out = @()
+    $line = ''
+    foreach ($part in ($Text -split '(?<=, )')) {
+        if ($line -and ($line.Length + $part.Length) -gt $Width) { $out += $line.TrimEnd(); $line = '' }
+        # A single item longer than the column: let it overrun rather than cut it.
+        $line += $part
+    }
+    if ($line) { $out += $line.TrimEnd() }
+    return @($out)
+}
+
 function Select-One {
     param([string[]]$Items, [string[]]$Detail = @(), [int]$Default = 0, [string]$Help,
           # The row that is configured RIGHT NOW, if any. Starting the cursor there
@@ -571,23 +598,41 @@ function Select-One {
 
     # An empty item is a SEPARATOR: drawn as a blank line, skipped by the cursor and
     # unpickable. Grouping a long menu beats renaming its rows to imply grouping.
-    $rows = @()
-    $sel  = @()
-    for ($i = 0; $i -lt $Items.Count; $i++) {
-        if (-not $Items[$i]) { $rows += ''; continue }
-        $sel += $i
-        $d = if ($i -lt $Detail.Count) { "$($Detail[$i])" } else { '' }
-        $row = $(if ($d) { '{0,-28} {1}' -f $Items[$i], $d } else { $Items[$i] })
-        if ($i -eq $Current) { $row = $row.TrimEnd() + '   (current)' }
-        $rows += $row
-    }
+    $sel = @()
+    for ($i = 0; $i -lt $Items.Count; $i++) { if ($Items[$i]) { $sel += $i } }
     if ($sel.Count -eq 0) { throw 'Select-One: nothing selectable' }
     if ($sel -notcontains $Default) { $Default = $sel[0] }
 
+    $ITEMW = 28                                     # the item column
+    $LEAD  = 4                                      # '  > ' before it
+
+    # One row of text, possibly several lines when the detail does not fit.
+    function Build-Row {
+        param([int]$Index, [int]$Width, [string]$Marker)
+        $d = if ($Index -lt $Detail.Count) { "$($Detail[$Index])" } else { '' }
+        if ($Index -eq $Current) { $d = ($d + '   (current)').TrimStart() }
+        if (-not $d) { return @(('{0} {1}' -f $Marker, $Items[$Index]).TrimEnd()) }
+
+        # @(...) around the call, not just inside it: PowerShell unrolls a
+        # one-element array on return, and $chunks[0] on a bare string is its first
+        # CHARACTER -- which renders as a menu of single letters.
+        $chunks = @(Split-Detail -Text $d -Width ([Math]::Max(12, $Width - $LEAD - $ITEMW - 1)))
+        $out = @('{0} {1,-28} {2}' -f $Marker, $Items[$Index], $chunks[0])
+        foreach ($c in @($chunks | Select-Object -Skip 1)) {
+            $out += '{0} {1,-28} {2}' -f (' ' * $Marker.Length), '', $c
+        }
+        return @($out)
+    }
+
     if (-not (Test-CanReadKeys)) {
-        for ($i = 0; $i -lt $rows.Count; $i++) {
-            if ($sel -contains $i) { Write-Host ('    {0}) {1}' -f ($i + 1), $rows[$i]) }
-            else                   { Write-Host '' }
+        for ($i = 0; $i -lt $Items.Count; $i++) {
+            if (-not ($sel -contains $i)) { Write-Host ''; continue }
+            $first = $true
+            foreach ($l in (Build-Row -Index $i -Width 100 -Marker '   ')) {
+                if ($first) { Write-Host ('  {0,2}) {1}' -f ($i + 1), $l.Substring(4)) }
+                else        { Write-Host ('      {0}' -f $l.Substring(4)) }
+                $first = $false
+            }
         }
         if ($Help) { Write-Host ''; Write-Host $Help }
         while ($true) {
@@ -600,15 +645,16 @@ function Select-One {
     $width    = Get-MenuWidth
     $helpBody = if ($Help) { @('') + @($Help -split "`r?`n") } else { @() }
     # The cursor moves over the SELECTABLE rows, not over the drawn ones, so a
-    # separator can never be landed on or wrapped onto.
+    # separator can never be landed on or wrapped onto -- and a row may now be more
+    # than one line tall, which is why nothing here counts lines to find a row.
     $at    = [Math]::Max(0, $sel.IndexOf($Default))
     $drawn = 0
 
     while ($true) {
         $lines = @()
-        for ($i = 0; $i -lt $rows.Count; $i++) {
+        for ($i = 0; $i -lt $Items.Count; $i++) {
             if (-not ($sel -contains $i)) { $lines += ''; continue }
-            $lines += '{0} {1}' -f $(if ($i -eq $sel[$at]) { '  >' } else { '   ' }), $rows[$i]
+            $lines += Build-Row -Index $i -Width $width -Marker $(if ($i -eq $sel[$at]) { '  >' } else { '   ' })
         }
         $lines += $helpBody
         $lines += ''
@@ -709,6 +755,17 @@ function Read-YesNo {
     }
 }
 
+# The one place the installer actually moves a monitor. Everything that switches a
+# panel goes through here -- the probe, a batched round, a blind walk -- so there is
+# a single line to read when asking "what can send a packet?", and a single thing for
+# a test harness to stand in for.
+function Send-Input {
+    param([string]$Label, [string]$Value, [string]$Config)
+    $sw = Join-Path $PSScriptRoot 'trigger-kvm.ps1'
+    if (-not (Test-Path $sw)) { $sw = $SWITCH }
+    & $sw set -Only $Label -Value $Value -Config $Config | Out-Null
+}
+
 # Switch one display to a candidate input, hold, bring it BACK automatically, and
 # only then ask.
 #
@@ -728,9 +785,6 @@ function Test-DisplayInput {
     param([string]$Label, [string]$Name, [string]$Candidate, [string]$CandidateName,
           [string]$Current, [switch]$IsMachine, [int]$Hold = 8, [string]$Config = $CONFIG)
 
-    $sw = Join-Path $PSScriptRoot 'trigger-kvm.ps1'
-    if (-not (Test-Path $sw)) { $sw = $SWITCH }
-
     Write-Host ''
     Write-Host ("  Switching $Name to $CandidateName for ${Hold}s, then back automatically.")
     if ($IsMachine) {
@@ -741,9 +795,9 @@ function Test-DisplayInput {
         Write-Host '  Watch that monitor. It only has to CHANGE -- if nothing is plugged into'
         Write-Host '  that input it will say No Signal, and that still proves the switch worked.'
     }
-    & $sw set -Only $Label -Value $Candidate -Config $Config | Out-Null
+    Send-Input -Label $Label -Value $Candidate -Config $Config
     Start-Sleep -Seconds $Hold
-    if ($Current) { & $sw set -Only $Label -Value $Current -Config $Config | Out-Null; Start-Sleep -Seconds 2 }
+    if ($Current) { Send-Input -Label $Label -Value $Current -Config $Config; Start-Sleep -Seconds 2 }
 
     Write-Host ''
     Write-Host ("  What did the {0} do?" -f $Name)
@@ -780,12 +834,9 @@ function Test-DisplayInput {
 function Test-OneValue {
     param([string]$Label, [string]$Name, [string]$Value, [string]$Config, [int]$Hold = 6)
 
-    $sw = Join-Path $PSScriptRoot 'trigger-kvm.ps1'
-    if (-not (Test-Path $sw)) { $sw = $SWITCH }
-
     Write-Host ''
     Write-Host ('  Trying {0} ...' -f $Value)
-    & $sw set -Only $Label -Value $Value -Config $Config | Out-Null
+    Send-Input -Label $Label -Value $Value -Config $Config
     Start-Sleep -Seconds $Hold
     return (Read-YesNo ("  Is the {0} showing THIS computer now?" -f $Name) $false)
 }
@@ -1322,7 +1373,7 @@ function Invoke-Configure {
         $items  += ''; $detail += ''
         $items  += 'Test the trigger'
         $detail += $(if ($ranTriggers) { $ranTriggers.Text } else { 'untested' })
-        $items  += 'Test the monitors'
+        $items  += $(if ($answers.Count -eq 1) { 'Test the monitor' } else { 'Test the monitors' })
         $detail += $(if ($ranDisplays) { $ranDisplays.Text } else { 'untested' })
 
         $items  += ''; $detail += ''
@@ -1377,7 +1428,7 @@ function Invoke-Configure {
             # just be a second way to say the same thing.
             'PATH'            { $wantPath = -not $wantPath }
             'Test the trigger'  { $ranTriggers = Invoke-TriggerTest -Devices $devices }
-            'Test the monitors' {
+            { $_ -like 'Test the monitor*' } {
                 $ranDisplays = Invoke-DisplayTest -Answers $answers -This $this
                 foreach ($a in $answers) { $carry[$a.Key] = $a }
             }
@@ -1431,22 +1482,209 @@ function Invoke-TriggerTest {
 # The switcher takes its map from a config file rather than from the command line --
 # deliberately, so a panel has one description and not two -- so testing early means
 # writing a temp one, not weakening the rule that nothing is written until you save.
+#
+# BATCHED ACROSS PANELS, NEVER ACROSS MACHINES. Monitors sit side by side, so several
+# can be checked in one glance; a sequence of switches over half a minute has to be
+# held in memory and reported afterwards, and memory is the weak link. So each round
+# sends every panel that claims a machine to that machine at once, and asks straight
+# away.
+#
+# The win is the question, not the wall clock. Asking "did they all show mac?" makes
+# the common case -- everything worked -- one keystroke, and the four-way diagnosis
+# only appears for the panels someone says went wrong. At two monitors that is two
+# menus replaced by one yes/no; at four it is twelve replaced by three.
 function Invoke-DisplayTest {
     param($Answers, [string]$This)
 
     $tmp = Join-Path ([IO.Path]::GetTempPath()) ('trigger-kvm-test-{0}.cfg' -f $PID)
     $bad = @()
     try {
+        Write-ConfigFile -Path $tmp -Displays $Answers -Devices @() -Tier 'user' -This $This -Existing @{}
+
+        $others = @()
         foreach ($a in $Answers) {
-            if (-not (Test-OnePanel -Answer $a -All $Answers -This $This -Config $tmp)) { $bad += $a.Name }
+            foreach ($m in $a.Map.Keys) { if ($m -ne $This -and -not ($others -contains $m)) { $others += $m } }
+        }
+
+        # Which panel is this window on? Asked once, and worth the question: knowing
+        # it lets every round hold that panel back until there is no choice, so the
+        # screen carrying the prompt is the last thing to move. It matters most when
+        # something is WRONG -- a panel that does not come back has taken the window
+        # with it, and there is then no way to answer the question or fix anything.
+        $term = ''
+        if (@($Answers).Count -gt 1) {
+            $rows = @(@($Answers | ForEach-Object { $_.Name }) + @('Not sure'))
+            Write-Host ''
+            Write-Host '  Which monitor is this window on?'
+            Write-Host '  It will be kept until last, and you will be told before it moves.'
+            $pick = Select-One -Items $rows -Default 0
+            if ($pick -lt @($Answers).Count) { $term = $Answers[$pick].Label }
+        }
+
+        if ($others.Count -eq 0) {
+            # Nothing else is on this desk, so there is no claim to check beyond "the
+            # transport reaches each panel".
+            foreach ($a in $Answers) {
+                if (-not (Test-OneMachine -Answer $a -All $Answers -This $This -Target '' -Config $tmp)) { $bad += $a.Name }
+            }
+        }
+
+        foreach ($m in $others) {
+            $panels = @($Answers | Where-Object { $_.Map.Contains($m) -and $_.Map.Contains($This) })
+            if ($panels.Count -eq 0) { continue }
+
+            # Hard rule 4: one panel always stays on this computer, so the question
+            # arrives on a screen you can still read. When every panel claims this
+            # machine, that means two rounds -- the second covers the one held back.
+            # Sorted so the window's panel is last: the split below holds back
+            # whatever ends up at the end.
+            if ($term) { $panels = @(@($panels | Where-Object { $_.Label -ne $term }) +
+                                     @($panels | Where-Object { $_.Label -eq $term })) }
+
+            $rounds = @()
+            if ($panels.Count -eq @($Answers).Count -and $panels.Count -gt 1) {
+                $rounds += ,@($panels[0..($panels.Count - 2)])
+                $rounds += ,@($panels[-1])
+            } else {
+                $rounds += ,@($panels)
+            }
+
+            foreach ($r in $rounds) {
+                $stays = @($Answers | Where-Object { $n = $_.Label; -not (@($r | ForEach-Object { $_.Label }) -contains $n) })
+                foreach ($f in (Invoke-TestRound -Panels $r -Stays $stays -Target $m -All $Answers `
+                                                 -This $This -Terminal $term -Config $tmp)) {
+                    if (-not ($bad -contains $f)) { $bad += $f }
+                }
+            }
         }
     } finally {
         Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
     }
 
+    # Declining is not a failure and must not read as a pass either.
+    if ($bad -contains '(skipped)') { return [PSCustomObject]@{ Ok = $false; Text = 'not checked' } }
     if ($bad.Count -gt 0) { return [PSCustomObject]@{ Ok = $false; Text = ('trouble with ' + ($bad -join ', ')) } }
     return [PSCustomObject]@{ Ok = $true; Text = 'all responded' }
 }
+
+# "LG, ASUS and DELL" rather than "LG and ASUS and DELL". These lines are read
+# under mild pressure -- a monitor is about to go dark -- so they should not also be
+# awkward.
+function Join-Names {
+    param([string[]]$Names)
+    if ($Names.Count -le 1) { return ($Names -join '') }
+    if ($Names.Count -eq 2) { return ($Names -join ' and ') }
+    return (($Names[0..($Names.Count - 2)] -join ', ') + ' and ' + $Names[-1])
+}
+
+# What the monitor's own menu calls an input value, so recovery instructions can say
+# "choose HDMI 1" rather than "choose 0x11". Nobody's OSD shows hex.
+function Get-InputName {
+    param($Answer, [string]$Value)
+    # The channel's own table only, never the map: a machine name like "pc" is what
+    # THIS tool calls an input, and the monitor's menu has never heard of it.
+    $t = $MCCS_INPUTS
+    foreach ($d in $DIALECTS.Values) { if ($d.Method -eq $Answer.Method) { $t = $d.Inputs } }
+    foreach ($n in $t.Keys) { if ($t[$n] -ieq $Value) { return $n } }
+    return ''
+}
+
+# One round: send a group of panels to one machine together, bring them all back,
+# and ask once. Returns the names of the panels that did not do the right thing.
+function Invoke-TestRound {
+    param($Panels, $Stays, [string]$Target, $All, [string]$This, [string]$Terminal,
+          [string]$Config, [int]$Hold = 8)
+
+    $names = @($Panels | ForEach-Object { $_.Name })
+    Write-Host ''
+    Write-Host ('  Sending {0} to {1} for {2}s, then back automatically.' -f (Join-Names $names), $Target, $Hold)
+    if ($Stays) {
+        $sn = @($Stays | ForEach-Object { $_.Name })
+        Write-Host ('  {0} {1} here, so you can read this.' -f (Join-Names $sn),
+                    $(if ($sn.Count -eq 1) { 'stays' } else { 'stay' }))
+    }
+
+    # Two different warnings, and the gate is what is being LEFT, not what is known.
+    # Nothing held back means the screen goes dark whatever anyone answered about
+    # where the window is -- and with a single monitor that question is never even
+    # asked, which is how this branch first went unreachable in exactly the case it
+    # exists for.
+    $movesTerminal = $Terminal -and (@($Panels | ForEach-Object { $_.Label }) -contains $Terminal)
+    if ($movesTerminal -or -not $Stays) {
+        if ($Stays) {
+            Write-Host ('  If {0} is asleep or off you will see No Signal, which still proves' -f $Target)
+            Write-Host '  the switch worked.'
+            Write-Host ''
+            Write-Host ('  THIS WINDOW is on {0}, which is about to move. Drag it to {1} first.' -f `
+                        (@($Panels | Where-Object { $_.Label -eq $Terminal } | ForEach-Object { $_.Name })[0]),
+                        @($Stays | ForEach-Object { $_.Name })[0])
+            Write-Host '  If the switch back fails, the window goes dark with it and there is'
+            Write-Host '  no way to answer from there.'
+            # Last, and blocking: it is the thing to act on, so nothing may print
+            # after it and be read too late.
+            $null = Read-Default '  Enter when it has moved' ''
+            return (Invoke-TestRoundBody -Panels $Panels -Target $Target -All $All -This $This -Config $Config -Hold $Hold -Names $names)
+        }
+        # One monitor and no way to hold anything back: if the switch back fails,
+        # this person is looking at a black screen with no way to read a prompt, ask
+        # a question or undo anything. That is unavoidable -- but being stranded
+        # WITHOUT having been told how to get back is not, and the telling has to
+        # happen while there is still a screen to read it on.
+        $back  = $Panels[0].Map[$This]
+        $bname = Get-InputName -Answer $Panels[0] -Value $back
+        Write-Host ''
+        Write-Host '  READ THIS FIRST -- this is your only monitor.'
+        Write-Host ('  It will show {0} for about {1} seconds, then come back on its own.' -f $Target, $Hold)
+        Write-Host '  You will not be able to read anything while it is away.'
+        Write-Host ''
+        Write-Host '  IF IT DOES NOT COME BACK there is nothing this tool can do for you --'
+        Write-Host '  it cannot draw on a screen that is showing another computer. The way'
+        Write-Host '  back is the monitor itself: press its input (or source) button and'
+        Write-Host ('  choose {0}. No software can take that button away from you.' -f `
+                    $(if ($bname) { '{0}, value {1}' -f $bname, $back } else { "value $back" }))
+        Write-Host ''
+        if (-not (Read-YesNo '  Ready?' $true)) {
+            Write-Host '  Skipped. Nothing was sent.'
+            return @('(skipped)')
+        }
+    }
+    Write-Host ('  If {0} is asleep or off you will see No Signal, which still proves the' -f $Target)
+    Write-Host '  switch worked.'
+
+    return (Invoke-TestRoundBody -Panels $Panels -Target $Target -All $All -This $This -Config $Config -Hold $Hold -Names $names)
+}
+
+# The half after the explaining: send, wait, send back, and find out what happened.
+function Invoke-TestRoundBody {
+    param($Panels, [string]$Target, $All, [string]$This, [string]$Config, [int]$Hold, [string[]]$Names)
+
+    foreach ($a in $Panels) { Send-Input -Label $a.Label -Value $a.Map[$Target] -Config $Config }
+    Start-Sleep -Seconds $Hold
+    foreach ($a in $Panels) { Send-Input -Label $a.Label -Value $a.Map[$This] -Config $Config }
+    Start-Sleep -Seconds 2
+
+    Write-Host ''
+    $q = if ($Panels.Count -eq 1) { "  Did $($Names[0]) show $Target, then come back?" }
+         else                     { "  Did all of them show $Target, then come back?" }
+    if (Read-YesNo $q $true) { return @() }
+
+    # Only now does anyone have to think. One panel needs no narrowing question.
+    $wrong = $Panels
+    if ($Panels.Count -gt 1) {
+        Write-Host ''
+        Write-Host '  Which ones did not?'
+        $picked = Select-Many -Items $Names -Detail @($Panels | ForEach-Object { $_.Label }) `
+                              -DoneLabel 'Done'
+        $wrong = @($picked | ForEach-Object { $Panels[$_] })
+    }
+
+    $bad = @()
+    foreach ($a in $wrong) {
+        if (-not (Test-OneMachine -Answer $a -All $All -This $This -Target $Target -Config $Config)) { $bad += $a.Name }
+    }
+    return $bad
+}
+
 
 # One panel, one machine: send it there, bring it back, act on what the human saw.
 # Fixes retry in place, because bouncing out to the review menu to change one value
@@ -1548,25 +1786,6 @@ function Test-OneMachine {
     Write-Host '  Everything else is still configured; this monitor just will not follow'
     Write-Host '  the switch. Leave it out with Monitors -> "Manage this monitor? no".'
     return $false
-}
-
-# Check every claim made about one panel: send it to each other machine in turn and
-# bring it back. With three computers that is two round trips, which is what actually
-# proves the map rather than proving the transport twice.
-function Test-OnePanel {
-    param($Answer, $All, [string]$This, [string]$Config)
-
-    if (-not $Answer.Map.Contains($This)) { return $false }
-    $targets = @($Answer.Map.Keys | Where-Object { $_ -ne $This })
-
-    if ($targets.Count -eq 0) {
-        return (Test-OneMachine -Answer $Answer -All $All -This $This -Target '' -Config $Config)
-    }
-    $ok = $true
-    foreach ($t in $targets) {
-        if (-not (Test-OneMachine -Answer $Answer -All $All -This $This -Target $t -Config $Config)) { $ok = $false }
-    }
-    return $ok
 }
 
 # Rewrite the config from the answers. There is nothing left to preserve: scenes are
