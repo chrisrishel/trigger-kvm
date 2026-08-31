@@ -1,0 +1,265 @@
+#!/bin/bash
+#
+# trigger-kvm -- point this computer's monitors at an input.
+#
+#   trigger-kvm pull                 point every configured monitor at THIS computer
+#   trigger-kvm to <computer>        point them at another, by name. MANUAL ONLY
+#   trigger-kvm list                 connected displays, with their identifiers
+#   trigger-kvm pull --only lg       one monitor only -- use when testing
+#   trigger-kvm pull --dry-run       resolve and print the packets, send nothing
+#
+# A monitor's inputs are named after the COMPUTERS plugged into them, and that
+# one map answers both verbs:
+#
+#     display.lg.input.0xD0 = pc
+#     display.lg.input.0xD1 = mac
+#     computer.this         = mac
+#
+# `pull` points every configured monitor at computer.this. `to pc` points them
+# at pc. Same lookup, same code path, different name -- there is no second
+# table, so the two can never disagree about where a computer is.
+#
+# `to` IS MANUAL ONLY and the trigger cannot reach it by any path. computer.this
+# describes inputs on hardware this computer is plugged into and can be sure of;
+# any other name describes inputs on hardware it CANNOT observe, which go stale
+# the moment someone moves a cable over there. So a stale name can only spoil a
+# command you typed and are watching, never an automatic switch. That separation
+# is why these are two verbs rather than one verb with an optional argument.
+#
+# Everything is resolved BEFORE anything is sent. A computer that two displays
+# know about and a third does not moves neither: a half-applied arrangement
+# leaves the desk in a state nobody configured, and you have to work out which
+# half landed.
+#
+# NEVER verify a switch by reading a VCP value back -- see ../displays.toml for
+# why. Both monitors switched correctly during testing while reads said they had
+# not. Writes are fire-and-forget; there are deliberately no reads here.
+#
+# SAFETY: I2C source 0x50 is LG's service channel. It is reachable from exactly
+# one function, ddc_send in lib/display.sh, which refuses any target whose EDID
+# vendor is not GSM (0x1E6D). The channel is chosen there from the method rather
+# than passed in, so no caller can aim it at another vendor's panel. Setting
+# `method = lg-alt` on a non-LG panel makes the write REFUSE; it does not make
+# the write happen.
+
+set -euo pipefail
+
+# --- where we are ------------------------------------------------------------
+#
+# Resolved through symlinks, because the thing on PATH is a symlink to the
+# installed copy and $0 would otherwise point at the link's directory, where
+# lib/ is not.
+tk_self() {
+  _p=$0
+  while [ -L "$_p" ]; do
+    _d=$(cd -P "$(dirname "$_p")" && pwd)
+    _p=$(readlink "$_p")
+    case $_p in /*) ;; *) _p="$_d/$_p" ;; esac
+  done
+  printf '%s\n' "$(cd -P "$(dirname "$_p")" && pwd)"
+}
+
+TK_ROOT=$(tk_self)
+# Overridable so the test suite can point the helpers at recorders. That is the
+# same reason M1DDC is overridable, and it is what lets the tests drive the real
+# program end to end while being physically unable to reach a monitor.
+TK_PROBE=${TK_PROBE:-$TK_ROOT/display-probe}
+TK_WATCHER=${TK_WATCHER:-$TK_ROOT/event-watch}
+
+# shellcheck source=lib/common.sh
+. "$TK_ROOT/lib/common.sh"
+# shellcheck source=lib/config.sh
+. "$TK_ROOT/lib/config.sh"
+# shellcheck source=lib/display.sh
+. "$TK_ROOT/lib/display.sh"
+
+# --- arguments ---------------------------------------------------------------
+
+usage() {
+  cat >&2 <<'EOF'
+usage: trigger-kvm <verb> [options]
+
+  pull                  point every configured monitor at THIS computer
+  to <computer>         point them at another, by name (manual only)
+  list                  connected displays, with their identifiers
+
+options:
+  --only <label>        one configured display only
+  --dry-run             resolve and print the packets, send nothing
+  --config <path>       use this config instead of the default
+EOF
+  exit 2
+}
+
+VERB=${1:-pull}
+[ $# -gt 0 ] && shift || true
+
+WHO=""
+ONLY="all"
+DRY=0
+RAW=0
+VALUE=""
+CONFIG=""
+
+case $VERB in
+  to)
+    if [ $# -gt 0 ]; then case $1 in -*) ;; *) WHO=$1; shift ;; esac; fi
+    ;;
+esac
+
+while [ $# -gt 0 ]; do
+  case $1 in
+    --only)    ONLY=${2:-}; shift 2 ;;
+    --value)   VALUE=${2:-}; shift 2 ;;
+    --config)  CONFIG=${2:-}; shift 2 ;;
+    --dry-run|--what-if) DRY=1; shift ;;
+    --raw)     RAW=1; shift ;;
+    -h|--help) usage ;;
+    *)         printf 'trigger-kvm: unknown option %s\n' "$1" >&2; usage ;;
+  esac
+done
+
+[ -n "$CONFIG" ] || CONFIG=$(config_default_path)
+config_load "$CONFIG"
+
+# --- list --------------------------------------------------------------------
+#
+# Reads nothing from the config and writes nothing to any monitor. It exists so
+# you can see what is actually attached in the exact form the config wants, and
+# so the walkthrough has one place to get that from rather than a second copy of
+# the enumeration.
+cmd_list() {
+  _found=$(display_enumerate) || exit 2
+  if [ -z "$_found" ]; then
+    tk_log 'no external displays found'
+    exit 2
+  fi
+
+  if [ "$RAW" = "1" ]; then
+    printf '%s\n' "$_found"
+    exit 0
+  fi
+
+  # What the config already claims, so a row can say which label it is.
+  _known=""
+  for _l in $(config_display_labels); do
+    _v=$(config_get "display.$_l.vendor"); _p=$(config_get "display.$_l.product")
+    if _vn=$(config_to_word "$_v") && _pn=$(config_to_word "$_p"); then
+      _known="$_known$(printf '%04X:%04X\t%s\n' "$_vn" "$_pn" "$_l")
+"
+    fi
+  done
+
+  printf '\n'
+  printf '  %-8s %-9s %-11s %-22s %s\n' vendor product connector 'name (from the panel)' 'configured as'
+  printf '  %-8s %-9s %-11s %-22s %s\n' ------ ------- --------- --------------------- -------------
+  printf '%s\n' "$_found" | while IFS='|' read -r _v _p _mfg _conn _ser _uuid _name; do
+    _key="$_v:$_p"
+    _as=$(printf '%s' "$_known" | awk -F'\t' -v k="$_key" '$1 == k { print $2; exit }')
+    [ -n "$_as" ] || _as='-- not in config --'
+    [ -n "$_name" ] || _name="($_mfg, unnamed)"
+    printf '  0x%s   0x%s    %-11s %-22s %s\n' "$_v" "$_p" "${_conn:--}" "$_name" "$_as"
+  done
+  printf '\n'
+  echo 'To add one, put this in the config and name the input each computer is on:'
+  printf '\n'
+  _ex=$(printf '%s\n' "$_found" | head -1)
+  printf '    display.<label>.vendor  = 0x%s\n' "$(display_field "$_ex" 1)"
+  printf '    display.<label>.product = 0x%s\n' "$(display_field "$_ex" 2)"
+  echo  '    display.<label>.name    = <a name for logs>'
+  echo  '    display.<label>.method  = standard        # or lg-alt, for an LG whose 0x60 is stubbed'
+  echo  '    display.<label>.input.0x11 = pc           # name each input after what is plugged in'
+  # shellcheck disable=SC2016  # the backticks are prose, quoting a command name
+  echo  '    display.<label>.input.0x0f = mac          # `pull` uses computer.this; `to mac` uses this'
+  printf '\n'
+  echo 'NOTE: some panels report a DIFFERENT product id per input -- the LG 45GX950A does.'
+  echo 'Use the value shown HERE, measured on this computer. Never copy one from another host.'
+  exit 0
+}
+
+# --- pull / to / set ---------------------------------------------------------
+
+cmd_switch() {
+  _labels=$(config_display_labels)
+  if [ -z "$_labels" ]; then
+    tk_log "no displays configured. Expected a config at $CONFIG; run: trigger-kvm configure"
+    exit 2
+  fi
+
+  if [ "$ONLY" != "all" ]; then
+    if ! printf '%s\n' "$_labels" | grep -qx "$ONLY"; then
+      tk_log "no configured display labelled '$ONLY'. Known: $(printf '%s' "$_labels" | tr '\n' ' ')"
+      exit 2
+    fi
+    _labels=$ONLY
+  fi
+
+  # Resolve every value BEFORE sending anything, and refuse the whole operation
+  # if any of them cannot be resolved. This is the property AGENTS.md hard rule
+  # 5 asks to be asserted -- that NOTHING IS SENT -- rather than that a check
+  # ran: on Windows the null check was present, did not fire, and an unresolved
+  # value went out as 0x00, an input no monitor has, so every switch silently
+  # did nothing.
+  _plan=""
+  for _l in $_labels; do
+    if [ "$VERB" = "set" ]; then
+      if [ "$ONLY" = "all" ]; then
+        tk_log 'set requires --only naming exactly one display'
+        exit 2
+      fi
+      if ! _value=$(config_to_byte "$VALUE"); then
+        tk_log "REFUSING: --value '$VALUE' is not a byte (use 0x11 or 17). Nothing was sent."
+        exit 2
+      fi
+    else
+      # pull and to are the same operation: point every display at a named
+      # computer. pull looks up the one this config calls itself; to looks up
+      # the one you asked for. One table, one code path.
+      if [ "$VERB" = "pull" ]; then _who=$(config_this_computer); else _who=$(tk_lower "$WHO"); fi
+      if [ -z "$_who" ]; then
+        if [ "$VERB" = "pull" ]; then
+          tk_log "REFUSING: computer.this is missing from $CONFIG. Run: trigger-kvm configure"
+        else
+          tk_log 'usage: trigger-kvm to <computer>'
+        fi
+        exit 2
+      fi
+
+      _value=$(config_input_for "$_l" "$_who")
+      if [ -z "$_value" ]; then
+        _known=$(config_input_map "$_l" | cut -f1 | sort | tr '\n' ' ')
+        if [ -n "$_known" ]; then _known="it knows: $_known"; else _known='it names no computers at all'; fi
+        tk_log "REFUSING: '$_l' has no input named '$_who' ($_known). Nothing was sent."
+        exit 2
+      fi
+      if [ "$_value" = "AMBIGUOUS" ]; then
+        tk_log "REFUSING: '$_l' names '$_who' on more than one input. Fix $CONFIG. Nothing was sent."
+        exit 2
+      fi
+    fi
+    _plan="$_plan$_l$(printf '\t')$_value
+"
+  done
+
+  # Fed by a here-document rather than a pipe: a `while` on the right of a pipe
+  # runs in a subshell, so _rc would be set in a process that then exits and the
+  # caller would always see success.
+  _rc=0
+  while IFS=$'\t' read -r _l _v; do
+    [ -n "$_l" ] || continue
+    display_switch "$_l" "$_v" "$DRY" || _rc=1
+  done <<EOF
+$_plan
+EOF
+
+  # A zero exit means the writes were SENT, not that the monitors switched.
+  # There is no way to verify that from here -- reads on this hardware lie.
+  # Confirm by looking at the screen.
+  exit $_rc
+}
+
+case $VERB in
+  list)          cmd_list ;;
+  pull|to|set)   cmd_switch ;;
+  *) printf 'trigger-kvm: unknown verb %s\n' "$VERB" >&2; usage ;;
+esac

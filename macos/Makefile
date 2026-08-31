@@ -1,33 +1,58 @@
 LABEL   := com.chrisrishel.trigger-kvm
 PREFIX  ?= $(HOME)/.local
 BINDIR  := $(PREFIX)/bin
+LIBDIR  := $(PREFIX)/share/trigger-kvm
 LADIR   := $(HOME)/Library/LaunchAgents
 PLIST   := $(LADIR)/$(LABEL).plist
 LOGDIR  := $(HOME)/Library/Logs
 UID     := $(shell id -u)
 
-# Watched USB devices — the peripherals that actually move through the USB switch.
-# Keyboard and mouse are wired directly to the Windows PC and never move, so they
-# cannot be the trigger. Keep in sync with ../displays.toml.
-DEVICES := --device 046d:0843 --device 1235:820a
+# Watched USB devices -- the peripherals that actually move through the USB
+# switch. Only used by the plist target below, and only until the walkthrough
+# writes them into the config; the watcher reads them from there.
+DEVICES  := --device 046d:0843 --device 1235:820a
 DEBOUNCE := 3.0
 SETTLE   := 0.75
 
 CFLAGS  := -O2 -Wall -Wextra
-LDFLAGS := -framework IOKit -framework CoreFoundation
 
-.PHONY: all clean install uninstall status logs plist
+.PHONY: all clean test lint install uninstall status logs plist
 
-all: usb-watch
+all: usb-watch display-probe
+
+# Identity and the m1ddc handle in one place. See the header comment for why it
+# uses CoreGraphics and IOKit together rather than either alone.
+display-probe: display-probe.c
+	clang $(CFLAGS) -o $@ $< -framework CoreFoundation -framework IOKit -framework ApplicationServices
 
 usb-watch: usb-watch.c
-	clang $(CFLAGS) -o $@ $< $(LDFLAGS)
+	clang $(CFLAGS) -o $@ $< -framework IOKit -framework CoreFoundation
 
 clean:
-	rm -f usb-watch
+	rm -f usb-watch display-probe
 
-# Generate the LaunchAgent plist. Split out from `install` so it can be validated
-# without loading anything:  make plist PLIST=/tmp/t.plist && plutil -lint /tmp/t.plist
+# The suite runs without hardware and cannot move a monitor: it points M1DDC at
+# a recorder and display-probe at a fixture.
+test: display-probe
+	@bash tests/run.sh
+
+lint:
+	@bash tests/run.sh --no-lint >/dev/null && shellcheck -x -P SCRIPTDIR -s bash \
+	  trigger-kvm lib/*.sh tests/*.sh
+
+# A passing test proves nothing until it can fail. Reintroduces each bug the
+# suite is supposed to catch and checks that something goes red.
+mutate:
+	@bash tests/mutate.sh
+
+# Generate the LaunchAgent plist. Split out from `install` so it can be
+# validated without loading anything:
+#     make plist PLIST=/tmp/t.plist && plutil -lint /tmp/t.plist
+#
+# The watcher runs `trigger-kvm pull` and nothing else. Never another computer's
+# name: a name other than computer.this describes inputs on hardware this
+# machine cannot observe, and a stale one would then be able to cause an
+# AUTOMATIC switch to a dead input.
 plist:
 	@mkdir -p $(dir $(PLIST))
 	@printf '%s\n' \
@@ -36,9 +61,9 @@ plist:
 	  '<plist version="1.0"><dict>' \
 	  '  <key>Label</key><string>$(LABEL)</string>' \
 	  '  <key>ProgramArguments</key><array>' \
-	  '    <string>$(BINDIR)/usb-watch</string>' \
-	  '    <string>--exec</string><string>$(BINDIR)/trigger-kvm.sh</string>' \
-	  '    <string>--arg</string><string>mac</string>' \
+	  '    <string>$(LIBDIR)/usb-watch</string>' \
+	  '    <string>--exec</string><string>$(LIBDIR)/trigger-kvm</string>' \
+	  '    <string>--arg</string><string>pull</string>' \
 	  '    <string>--debounce</string><string>$(DEBOUNCE)</string>' \
 	  '    <string>--settle</string><string>$(SETTLE)</string>' \
 	  $(foreach d,$(DEVICES),'    <string>$(d)</string>') \
@@ -51,18 +76,24 @@ plist:
 	  '</dict></plist>' > $(PLIST)
 	@plutil -lint $(PLIST)
 
-install: usb-watch plist
-	@mkdir -p $(BINDIR) $(LOGDIR)
-	install -m 755 usb-watch          $(BINDIR)/usb-watch
-	install -m 755 trigger-kvm.sh $(BINDIR)/trigger-kvm.sh
+# Only a directory holding the launcher goes on PATH -- one symlink, never the
+# program directory, which would publish every file in it as a command.
+install: all plist
+	@mkdir -p $(LIBDIR)/lib $(BINDIR) $(LOGDIR)
+	install -m 755 trigger-kvm    $(LIBDIR)/trigger-kvm
+	install -m 755 usb-watch      $(LIBDIR)/usb-watch
+	install -m 755 display-probe  $(LIBDIR)/display-probe
+	install -m 644 lib/*.sh       $(LIBDIR)/lib/
+	ln -sf $(LIBDIR)/trigger-kvm  $(BINDIR)/trigger-kvm
 	@launchctl bootout gui/$(UID)/$(LABEL) 2>/dev/null || true
 	launchctl bootstrap gui/$(UID) $(PLIST)
 	@echo "installed and loaded. logs: $(LOGDIR)/trigger-kvm.log"
 
 uninstall:
 	@launchctl bootout gui/$(UID)/$(LABEL) 2>/dev/null || true
-	rm -f $(PLIST) $(BINDIR)/usb-watch $(BINDIR)/trigger-kvm.sh
-	@echo "uninstalled."
+	rm -f $(PLIST) $(BINDIR)/trigger-kvm
+	rm -rf $(LIBDIR)
+	@echo "uninstalled. config and log kept."
 
 status:
 	@launchctl print gui/$(UID)/$(LABEL) 2>/dev/null | head -20 || echo "not loaded"
