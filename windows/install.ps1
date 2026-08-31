@@ -6,6 +6,8 @@ Install the Windows half of trigger-kvm as a Scheduled Task.
     .\install.ps1              install and start (user tier -- no admin needed)
     .\install.ps1 -Tier s4u    pre-login tier -- NEEDS ADMIN to register
     .\install.ps1 -Status      which tier is installed, and what it can do
+    .\install.ps1 -Discover    what is attached, in the form the config wants
+    .\install.ps1 -Pause       stand the watcher down to test one by hand
     .\install.ps1 -Logs        tail the log
     .\install.ps1 -Uninstall   stop, unregister, remove installed files
 
@@ -60,7 +62,11 @@ param(
     [Parameter(ParameterSetName = 'Logs')]      [switch]$Logs,
 
     # Show what is attached, in the form the config wants. Changes nothing.
-    [Parameter(ParameterSetName = 'Discover')]  [switch]$Discover
+    [Parameter(ParameterSetName = 'Discover')]  [switch]$Discover,
+
+    # Stand the installed watcher down so one can be run by hand. Re-run
+    # install.ps1 (no switch) to bring it back.
+    [Parameter(ParameterSetName = 'Pause')]     [switch]$Pause
 )
 
 Set-StrictMode -Version Latest
@@ -378,6 +384,26 @@ if ($Discover) {
 
 # --- status / logs / uninstall ---------------------------------------------
 
+if ($Pause) {
+    # Stopping the task is NOT enough, twice over, and both traps have caught
+    # people (including the docs, which used to give this advice incompletely):
+    #
+    #   1. The watcher is a GRANDCHILD of the task -- the task runs wscript.exe,
+    #      which runs powershell.exe. Stopping the task kills the shim and leaves
+    #      the watcher holding the single-instance mutex, so a hand-run watcher
+    #      exits immediately with "another watcher is already running".
+    #   2. The 1-minute self-heal trigger would start it again within the minute.
+    #      The task has to be DISABLED, not merely stopped.
+    Disable-ScheduledTask -TaskName $TASK -ErrorAction SilentlyContinue | Out-Null
+    Stop-ScheduledTask    -TaskName $TASK -ErrorAction SilentlyContinue
+    Stop-Watchers
+    Write-Log "paused: task disabled and watcher stopped"
+    Write-Log 'run one by hand now, e.g.:'
+    Write-Log '    .\event-watch.ps1 -Exec .\nvapi-probe.ps1 -Arg TEST -Device bt:AAAAAAAAAAAA -Verbose'
+    Write-Log 'then restore with:  .\install.ps1'
+    exit 0
+}
+
 if ($Status) {
     $t = Get-ScheduledTask -TaskName $TASK -ErrorAction SilentlyContinue
     if (-not $t) { Write-Host 'not installed'; exit 1 }
@@ -632,6 +658,9 @@ Register-ScheduledTask -TaskName $TASK -Action $action -Trigger $triggers `
     -Principal $principal -Settings $settings `
     -Description "trigger-kvm ($Tier tier): pull both monitors to this PC when the shared USB peripherals arrive." | Out-Null
 
+# -Pause disables the task; installing again must undo that or the watcher would
+# be registered, reported healthy, and never actually start.
+Enable-ScheduledTask -TaskName $TASK -ErrorAction SilentlyContinue | Out-Null
 Start-ScheduledTask -TaskName $TASK
 Write-Log "registered and started task '$TASK' ($Tier tier)"
 Write-Log "log: $LOG"

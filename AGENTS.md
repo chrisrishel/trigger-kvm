@@ -86,6 +86,23 @@ once already — do not go looking for a bug in it.
 Neither of these is a bug to fix on sight; they are things to know before changing
 the detectors, and to reach for first if a spurious switch is ever reported.
 
+**A force-killed watcher leaves the lock ABANDONED, and that is a normal condition
+here -- not an error.** `install.ps1` force-kills the watcher on every install,
+because stopping the task only kills the `wscript` shim and leaves the watcher
+running as its grandchild. Task Manager and a crash do the same. .NET signals this
+by throwing `AbandonedMutexException` from `WaitOne` **after** handing the lock
+over; `event-watch.ps1` catches it and continues, because the alternative is an
+install that registers the task, reports success, and leaves nothing watching.
+
+Verified rather than assumed: after catching it, `ReleaseMutex()` succeeds -- which
+only works if the lock is genuinely owned -- and that release consumes the
+abandonment so the next start sees a clean lock.
+
+Do not "simplify" the catch away. Uncaught, it also strands the lock when the
+watcher is run BY HAND, because an aborted script does not end an interactive
+shell: the acquiring thread lives on still owning it, and every later watcher then
+reports "another watcher is already running" until that window is closed.
+
 **One physical USB plug produces DOZENS of `Win32_DeviceChangeEvent` indications,
 not one.** Measured 2026-08-30: plugging a single device in generated 32 events in
 about three seconds, and unplugging it another 13. The event carries no device
@@ -392,14 +409,22 @@ $e
 The equivalent watcher smoke test, which fires nothing:
 
 ```powershell
-Stop-ScheduledTask -TaskName trigger-kvm    # the installed watcher holds the mutex
+.\install.ps1 -Pause                        # stand the installed watcher down
 .\event-watch.ps1 -Exec .\some-harmless-script.ps1 -Arg TEST -Device 046d:c547 -Verbose
+.\install.ps1                               # restore it afterwards
 ```
 
 `046d:c547` is the keyboard, which is always present, so this is the direct check
-that already-present devices do not fire. The `Stop-ScheduledTask` matters:
-`event-watch.ps1` is single-instance via a named mutex and will otherwise exit at
-once with `another usb-watch is already running`.
+that already-present devices do not fire.
+
+**`-Pause` rather than `Stop-ScheduledTask`, and the difference has caught people.**
+Stopping the task is insufficient twice over: the watcher is a *grandchild* of the
+task (task -> `wscript.exe` -> `powershell.exe`), so stopping the task kills only
+the shim and leaves the watcher holding the single-instance mutex -- a hand-run one
+then exits at once with `another watcher is already running`. And the 1-minute
+self-heal trigger would restart it within the minute regardless, so the task has to
+be *disabled*, not merely stopped. `-Pause` does both; a plain `.\install.ps1`
+re-enables and restarts.
 
 ## Conventions
 

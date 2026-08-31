@@ -415,7 +415,38 @@ try {
     $mutex = New-Object System.Threading.Mutex($false, $MUTEX_LOCAL)
 }
 
-if (-not $mutex.WaitOne(0)) {
+# An ABANDONED mutex is a normal condition here, not an error. A watcher that is
+# force-killed rather than exiting cleanly leaves the lock abandoned -- and
+# install.ps1 force-kills it on EVERY install, because stopping the task only kills
+# the wscript shim and leaves the watcher running as its grandchild. Task Manager
+# and a crash do the same.
+#
+# .NET throws AbandonedMutexException *after* handing the lock over: it is a
+# warning that the previous owner died abnormally, not a failure to acquire. Left
+# uncaught it aborts the watcher at startup, so an install would register the task,
+# report success, and leave nothing watching.
+#
+# Nothing is protected by this lock except "only one watcher runs", and no shared
+# state can be inconsistent, so taking it over is safe. It is logged rather than
+# swallowed: it means something killed the last watcher, which is worth seeing.
+#
+# Verified semantics, not assumed: the exception is thrown AFTER the handover, and
+# a subsequent ReleaseMutex() succeeds -- which only works if we genuinely own it.
+# Releasing then consumes the abandonment, so the next start sees a clean lock.
+#
+# Left uncaught it also strands the lock when run BY HAND, because an aborted script
+# does not end an interactive shell: the acquiring thread lives on still owning it,
+# and every later watcher reports "another watcher is already running" until that
+# window is closed. That is how this bug was found.
+$acquired = $false
+try {
+    $acquired = $mutex.WaitOne(0)
+} catch [System.Threading.AbandonedMutexException] {
+    $acquired = $true
+    Write-Log 'took over an abandoned lock (the previous watcher was killed, not stopped)'
+}
+
+if (-not $acquired) {
     Write-Log "another watcher is already running ($scope scope); exiting"
     exit 0
 }
