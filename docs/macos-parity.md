@@ -46,9 +46,9 @@ display.lg.name    = LG 45GX950A
 display.lg.method  = lg-alt     # standard | lg-alt
 display.lg.self    = 0xD1       # the input where THIS machine is. Required.
 
-trigger.device   = 046d:0843,1235:820a
-trigger.debounce = 3.0
-trigger.settle   = 0.75
+trigger.device.usb      = 046d:0843,1235:820a
+trigger.device.debounce = 3.0
+trigger.device.settle   = 0.75
 
 scene.windows.lg = 0xD0         # manual only -- the trigger never reads scenes
 ```
@@ -59,6 +59,16 @@ device arrival and must not need a parser. In shell that is one function:
 ```sh
 cfg() { sed -n "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*//p" "$CONFIG" | sed 's/[[:space:]]*#.*//;s/[[:space:]]*$//' | head -1; }
 ```
+
+**Why `trigger.device.usb` and not `trigger.usb.device`.** Debounce and settle belong
+to device-presence detection as a whole, not to a transport: if you ever watch a
+Bluetooth device as well, it must **share** the debounce, because two independent
+windows cannot dedupe against each other. The id *list* is transport-specific,
+because a USB `VID:PID` and a Bluetooth address are not the same kind of string. On
+Windows the detection mechanism turned out not to be USB-specific at all —
+`Win32_PnPEntity` enumerates Bluetooth, PCI and Thunderbolt too, and USB is only the
+ID pattern matched. Check whether IOKit gives macOS the same latitude before
+assuming its watcher is inherently USB-bound.
 
 **The Mac's `self` values are different from the PC's, and that is the whole point.**
 Each machine configures only its own inputs. On this desk the Mac sits on the LG's
