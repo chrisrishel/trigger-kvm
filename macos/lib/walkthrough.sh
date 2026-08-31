@@ -934,6 +934,10 @@ cmd_configure() {
   _isfirst=1
   [ -f "$CONFIG" ] && _isfirst=0
 
+  # Said HERE as well as in `status`: configure is where a stale install shows
+  # up, as a row that is missing or wrong.
+  tk_warn_if_stale
+
   printf '\n==============================================================\n' >&2
   if [ "$_isfirst" = "1" ]; then printf ' trigger-kvm setup\n' >&2
   else printf ' trigger-kvm reconfigure\n' >&2; fi

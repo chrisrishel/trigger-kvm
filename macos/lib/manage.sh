@@ -141,6 +141,38 @@ cmd_logs() {
 
 # --- status --------------------------------------------------------------------
 
+# Is the copy that is RUNNING older than the tree it was installed from?
+#
+# This exists because the mistake happened twice in one afternoon: a feature was
+# built, committed, and then reported missing -- because `trigger-kvm` resolves
+# to the installed copy, not to the source tree it was written in. A stale
+# install looks EXACTLY like a missing feature, and nothing said so.
+#
+# Warned about wherever the symptom would show up, not only in `status`, since
+# nobody runs `status` to find out why a menu row is wrong. Silent when the
+# source tree is gone, is not a git repository, or matches -- all normal.
+tk_warn_if_stale() {
+  local _src _was _now _dirty
+  [ -f "$TK_PREFIX/version.txt" ] || return 0
+  _src=$(sed -n 's/^source[[:space:]]*=[[:space:]]*//p' "$TK_PREFIX/version.txt" | tail -1)
+  _was=$(sed -n 's/^commit[[:space:]]*=[[:space:]]*//p' "$TK_PREFIX/version.txt" | tail -1)
+  [ -n "$_src" ] && [ -d "$_src" ] || return 0
+  _now=$(git -C "$_src" rev-parse --short HEAD 2>/dev/null) || return 0
+  [ -n "$_now" ] || return 0
+  _dirty=$(git -C "$_src" status --porcelain -- "$_src" 2>/dev/null | head -1)
+
+  if [ "$_now" != "$_was" ]; then
+    tk_log "NOTE: you are running the copy installed from $_was, but"
+    tk_log "      $_src is now at $_now."
+  elif [ -n "$_dirty" ]; then
+    tk_log "NOTE: $_src has uncommitted changes that are not installed."
+  else
+    return 0
+  fi
+  tk_log "      Re-run:  cd $_src && ./install.sh"
+  return 0
+}
+
 # Which tier is actually installed, read from the system rather than from the
 # config: the config records what was ASKED for, and these record what is there.
 tk_installed_tier() {
@@ -151,6 +183,7 @@ tk_installed_tier() {
 
 cmd_status() {
   local _n _note _labels _this _machines _c _v _when _rev _commit
+  tk_warn_if_stale
   # Say when it runs and what that therefore COVERS -- never just a tier name.
   # What someone wants to know is whether a locked or logged-out machine still
   # follows the switch.
