@@ -57,7 +57,10 @@ param(
 
     [Parameter(ParameterSetName = 'Uninstall')] [switch]$Uninstall,
     [Parameter(ParameterSetName = 'Status')]    [switch]$Status,
-    [Parameter(ParameterSetName = 'Logs')]      [switch]$Logs
+    [Parameter(ParameterSetName = 'Logs')]      [switch]$Logs,
+
+    # Show what is attached, in the form the config wants. Changes nothing.
+    [Parameter(ParameterSetName = 'Discover')]  [switch]$Discover
 )
 
 Set-StrictMode -Version Latest
@@ -155,14 +158,23 @@ function New-DefaultConfig {
         'display.asus.method  = standard'
         'display.asus.self    = 0x11'
         ''
-        '# --- trigger ----------------------------------------------------------'
+        '# --- triggers ---------------------------------------------------------'
+        '#'
+        '# A trigger is anything that runs:  trigger-kvm.ps1 pull'
+        '# A USB watcher is the one shipped here; the keys below configure it. Any'
+        '# other trigger -- a hotkey, a Stream Deck button, a scheduled task -- needs'
+        '# no support from this tool, it just runs that command.'
+        '#'
+        '# Triggers run `pull` and nothing else. Never wire one to a scene: a scene'
+        '# names inputs on hardware this machine cannot see, and a stale one would'
+        '# then be able to cause an AUTOMATIC switch to a dead input.'
         '# VVVV:PPPP pairs. Match the FULL vendor+product: a vendor-only match fires'
         '# constantly, because the keyboard and mouse share a vendor id with the'
         '# webcam and never move.'
         ''
-        "trigger.device   = $SEED_DEVICES"
-        "trigger.debounce = $SEED_DEBOUNCE"
-        "trigger.settle   = $SEED_SETTLE"
+        "trigger.usb.device   = $SEED_DEVICES"
+        "trigger.usb.debounce = $SEED_DEBOUNCE"
+        "trigger.usb.settle   = $SEED_SETTLE"
         ''
         '# --- scenes -----------------------------------------------------------'
         '# Saved arrangements for MANUAL use:  trigger-kvm.ps1 to mac'
@@ -224,6 +236,85 @@ function Remove-LegacyInstall {
         Move-Item -LiteralPath $OLD_LOG -Destination "$LOG.pre-rename" -Force -ErrorAction SilentlyContinue
         Write-Log "kept the pre-rename log as $LOG.pre-rename"
     }
+}
+
+# --- discovery ---------------------------------------------------------------
+
+# Candidate trigger devices: USB devices that are attached RIGHT NOW.
+#
+# "Attached right now" is the filter that does most of the work, and it comes from
+# how installing actually happens -- you run this on the machine that currently
+# holds the peripherals, so the devices that move are by definition present. That is
+# far more discriminating than any heuristic about device class.
+#
+# The rest is noise removal. Hubs and host controllers never move through a USB
+# switch, and one physical device usually enumerates several PnP nodes sharing a
+# VID:PID (a webcam appears as a composite parent plus camera and audio children),
+# so entries are grouped by VID:PID and the most specific name in each group wins.
+function Get-TriggerCandidates {
+    $rows = @()
+    foreach ($d in (Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue)) {
+        if ($d.InstanceId -notmatch '^USB\\VID_([0-9A-Fa-f]{4})&PID_([0-9A-Fa-f]{4})') { continue }
+        $key  = ('{0}:{1}' -f $Matches[1], $Matches[2]).ToLower()
+        $name = $d.FriendlyName
+        if (-not $name) { continue }
+
+        # Infrastructure, not peripherals. These are attached permanently and would
+        # only pad the list.
+        if ($name -match 'Hub|Host Controller|Root Complex') { continue }
+
+        $rows += [PSCustomObject]@{
+            Key   = $key
+            Name  = $name
+            Class = $d.Class
+            # Rank by how specific the class is. 'USB' is the generic fallback node;
+            # a real Camera/AudioEndpoint/Image entry names the device far better.
+            Rank  = $(switch -Regex ($d.Class) {
+                        'Camera|Image'            { 0 }
+                        'AudioEndpoint|MEDIA'     { 1 }
+                        'HIDClass|Mouse|Keyboard' { 2 }
+                        'USB'                     { 4 }
+                        default                   { 3 }
+                     })
+        }
+    }
+
+    # One row per VID:PID, keeping the best-named entry.
+    return @($rows | Group-Object Key | ForEach-Object {
+        $best = $_.Group | Sort-Object Rank | Select-Object -First 1
+        [PSCustomObject]@{ Key = $_.Name; Name = $best.Name; Class = $best.Class; Rank = $best.Rank }
+    } | Sort-Object Rank, Name)
+}
+
+if ($Discover) {
+    Write-Host ''
+    Write-Host '=== displays on this machine ==='
+    & (Join-Path $PSScriptRoot 'trigger-kvm.ps1') list -Config $CONFIG
+
+    Write-Host ''
+    Write-Host '=== USB devices attached right now ==='
+    Write-Host ''
+    Write-Host 'The trigger is whatever MOVES when you flip the switch. Everything below is'
+    Write-Host 'attached to this machine at this moment; pick the ones that travel.'
+    Write-Host ''
+
+    $cur = @()
+    if (Test-Path -LiteralPath $CONFIG) {
+        $c = Read-Config -Path $CONFIG
+        if ($c.ContainsKey('trigger.usb.device')) { $cur = @(($c['trigger.usb.device'] -replace '\s','') -split ',') }
+    }
+
+    foreach ($d in (Get-TriggerCandidates)) {
+        $mark = $(if ($cur -contains $d.Key) { ' <- currently a trigger' } else { '' })
+        Write-Host ('  {0,-12} {1,-18} {2}{3}' -f $d.Key, $d.Class, $d.Name, $mark)
+    }
+
+    Write-Host ''
+    Write-Host 'TRAP: match the FULL vendor+product pair. A keyboard and mouse often share a'
+    Write-Host 'vendor id with a webcam and are always present, so a vendor-only match fires'
+    Write-Host 'constantly. Set trigger.device in the config, then re-run install.ps1.'
+    Write-Host ("config: {0}" -f $CONFIG)
+    exit 0
 }
 
 # --- status / logs / uninstall ---------------------------------------------
@@ -333,9 +424,22 @@ New-DefaultConfig -Path $CONFIG
 # than using the seed values, so that a hand-edited config actually takes effect on
 # the next install -- otherwise editing trigger.device would silently do nothing.
 $cfg      = Read-Config -Path $CONFIG
-$devices  = $(if ($cfg.ContainsKey('trigger.device'))   { $cfg['trigger.device'] -replace '\s', '' } else { $SEED_DEVICES })
-$debounce = $(if ($cfg.ContainsKey('trigger.debounce')) { $cfg['trigger.debounce'] }                 else { $SEED_DEBOUNCE })
-$settle   = $(if ($cfg.ContainsKey('trigger.settle'))   { $cfg['trigger.settle'] }                   else { $SEED_SETTLE })
+
+# The trigger keys were namespaced (trigger.device -> trigger.usb.device) so that a
+# future non-USB trigger has somewhere to live. Falling back to the seed values on
+# an old key would silently revert customised triggers, so say so instead. Drop this
+# check once no config can plausibly still use the old names.
+foreach ($old in @('trigger.device', 'trigger.debounce', 'trigger.settle')) {
+    if ($cfg.ContainsKey($old)) {
+        Write-Log ("WARNING: '{0}' is the old key name; rename it to 'trigger.usb.{1}' in {2}." -f `
+                   $old, $old.Substring(8), $CONFIG)
+        Write-Log '         Until you do, the seed defaults are used instead of your value.'
+    }
+}
+
+$devices  = $(if ($cfg.ContainsKey('trigger.usb.device'))   { $cfg['trigger.usb.device'] -replace '\s', '' } else { $SEED_DEVICES })
+$debounce = $(if ($cfg.ContainsKey('trigger.usb.debounce')) { $cfg['trigger.usb.debounce'] }                 else { $SEED_DEBOUNCE })
+$settle   = $(if ($cfg.ContainsKey('trigger.usb.settle'))   { $cfg['trigger.usb.settle'] }                   else { $SEED_SETTLE })
 Write-Log "watching: $devices  (debounce ${debounce}s, settle ${settle}s)"
 
 New-Item -ItemType Directory -Force -Path $DEST              | Out-Null

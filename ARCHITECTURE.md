@@ -82,13 +82,13 @@ reaches the joystick.
 ```
 displays.toml          researched model knowledge — shared by both platforms
 ├── macos/
-│   ├── usb-watch.c          detects arrival  →  execs the switcher
-│   └── trigger-kvm.sh   drives m1ddc     →  sends the DDC writes
+│   ├── usb-watch.c       detects arrival  →  execs the switcher
+│   └── trigger-kvm.sh    drives m1ddc     →  sends the DDC writes
 └── windows/
-    ├── usb-watch.ps1        detects arrival  →  execs the switcher
-    ├── trigger-kvm.ps1  aimed NVAPI I2C, both panels → sends the DDC writes
-    ├── nvapi-probe.ps1      read-only display enumeration probe (diagnostic)
-    └── install.ps1          Scheduled Task at logon (generates launcher.vbs)
+    ├── usb-watch.ps1     detects arrival  →  execs the switcher
+    ├── trigger-kvm.ps1   aimed NVAPI I2C, both panels → sends the DDC writes
+    ├── nvapi-probe.ps1   read-only display enumeration probe (diagnostic)
+    └── install.ps1       tiers, config generation, discovery, task registration
 ```
 
 On Windows the watcher is a *grandchild* of the scheduled task — the task runs a
@@ -101,6 +101,18 @@ Every platform implementation is the same two roles: **a detector** and **a
 switcher**. The detector answers "do I own the peripherals now?"; the switcher
 answers "make the monitors show me." They are separate processes so the switcher
 stays usable by hand and testable in isolation.
+
+That process boundary *is* the trigger abstraction, and it is why there is no
+plugin system. The whole interface is one command — `trigger-kvm pull` — so a
+hotkey, a Stream Deck button or a scheduled task is already a valid trigger with no
+support from this project. A USB watcher is simply the one that ships.
+
+Keeping that interface narrow is also a safety property. A trigger runs `pull` and
+nothing else, so it can only ever select *this* machine's own inputs. A general
+trigger framework would invite letting a trigger apply a **scene** instead — and a
+scene names inputs on hardware this machine cannot observe, so a stale one could
+then drive an automatic switch to a dead input. There is no mechanism to forbid;
+there is simply nothing to configure.
 
 ## Two kinds of knowledge, two homes
 

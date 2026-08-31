@@ -58,7 +58,7 @@ param(
     # trigger ever runs, and the only verb that touches `self` values.
     # to   -- apply a saved scene by name. Manual use only.
     [Parameter(Position = 0)]
-    [ValidateSet('pull', 'to')]
+    [ValidateSet('pull', 'to', 'list')]
     [string]$Command = 'pull',
 
     # Scene name, for `to`.
@@ -683,6 +683,49 @@ function Switch-Display {
 }
 
 # --- main -------------------------------------------------------------------
+
+# `list` reads nothing from the config and writes nothing to any monitor. It exists
+# so you can see what is actually attached, in the exact form the config wants --
+# and so the installer has one place to get that from rather than a second copy of
+# the NVAPI bindings.
+if ($Command -eq 'list') {
+    $status = [NvDdc]::Init()
+    if ($status -ne 'OK') { Write-Log "NVAPI unavailable -- $status"; exit 2 }
+
+    $found = @([NvDdc]::Enumerate())
+    if ($found.Count -eq 0) { Write-Log 'no connected displays found on any NVIDIA GPU'; exit 2 }
+
+    $known = @{}
+    foreach ($d in (Get-ConfiguredDisplays -Cfg (Read-Config -Path $Config))) {
+        if ($null -ne $d.Vendor -and $null -ne $d.Product) {
+            $known[('{0:X4}:{1:X4}' -f $d.Vendor, $d.Product)] = $d.Label
+        }
+    }
+
+    Write-Host ''
+    Write-Host ('  {0,-8} {1,-12} {2,-9} {3,-11} {4,-12} {5}' -f 'vendor', 'product', 'mfg', 'connector', 'serial', 'configured as')
+    Write-Host ('  {0,-8} {1,-12} {2,-9} {3,-11} {4,-12} {5}' -f '------', '-------', '---', '---------', '------', '-------------')
+    foreach ($d in $found) {
+        $key = '{0:X4}:{1:X4}' -f $d.EdidVendor, $d.EdidProduct
+        Write-Host ('  0x{0:X4}   0x{1:X4}       {2,-9} {3,-11} 0x{4:X8}   {5}' -f `
+                    $d.EdidVendor, $d.EdidProduct, [NvDdc]::DecodeMfg($d.EdidVendor),
+                    $d.Connector, $d.EdidSerial,
+                    $(if ($known.ContainsKey($key)) { $known[$key] } else { '-- not in config --' }))
+    }
+    Write-Host ''
+    Write-Host 'To add one, put this in the config and set .self to the input where THIS machine is:'
+    Write-Host ''
+    $ex = $found[0]
+    Write-Host ('    display.<label>.vendor  = 0x{0:X4}' -f $ex.EdidVendor)
+    Write-Host ('    display.<label>.product = 0x{0:X4}' -f $ex.EdidProduct)
+    Write-Host  '    display.<label>.name    = <a name for logs>'
+    Write-Host  '    display.<label>.method  = standard        # or lg-alt, for an LG whose 0x60 is stubbed'
+    Write-Host  '    display.<label>.self    = 0x11            # see displays.toml for known values'
+    Write-Host ''
+    Write-Host 'NOTE: some panels report a DIFFERENT product id per input -- the LG 45GX950A does.'
+    Write-Host 'Use the value shown HERE, measured on this machine. Never copy one from another host.'
+    exit 0
+}
 
 $cfg      = Read-Config -Path $Config
 $displays = @(Get-ConfiguredDisplays -Cfg $cfg)
