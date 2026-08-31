@@ -123,3 +123,10 @@ function Reset-Sent { $script:Sent = @() }
 function Get-Sent   { return ,@($script:Sent) }   # comma: keep the array, so .Count survives
 
 function Write-Log { param([string]$m) if ($env:TK_TEST_VERBOSE) { Write-Host "install: $m" } }
+
+# The user PATH, as a GLOBAL rather than a redefinable stub. Import-Subject defines
+# the code under test with `function global:`, and a test that redefines a helper at
+# its own script scope does not reliably reach it -- the redefinition looks like it
+# took and quietly did not, which is the least useful kind of test failure.
+$global:TestUserPath = 'C:\Windows'
+function Get-UserPath { $global:TestUserPath }

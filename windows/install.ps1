@@ -1503,7 +1503,7 @@ function Read-Monitors {
         Write-Host 'Which of these should follow the switch, and which input is each'
         Write-Host 'computer on?'
         Write-Host ''
-        $pick = Select-One -Items $items -Detail $detail -Default $land -Escapable
+        $pick = Select-One -Items $items -Detail $detail -Default $land -Disabled $off -Escapable
         if ($pick -eq $done -or $pick -lt 0) { return @($out) }
 
         $f    = $Found[$pick]
@@ -1640,7 +1640,13 @@ function Invoke-Configure {
                          'boot' { 's4u' } 'no' { 'manual' } default { 'user' } })
                  } else { '' })
 
-    $onPath   = @((Get-UserPath -split ';')) -contains $BINDIR
+    # (Get-UserPath) -split ';' -- the parentheses are load-bearing. Written as
+    # `Get-UserPath -split ';'`, PowerShell reads -split as a PARAMETER of the
+    # function rather than as the operator, hands it the unsplit string, and the
+    # -contains never matches. That made $onPath permanently false: the walkthrough
+    # offered to add a directory that was already there, and `status` reported "not
+    # on PATH" about a PATH containing it.
+    $onPath   = @((Get-UserPath) -split ';') -contains $BINDIR
     $wantPath = $null
 
     # ---- the menu ------------------------------------------------------------
@@ -1667,10 +1673,17 @@ function Invoke-Configure {
             $(switch ($newTier) { 's4u' { 'from boot' } 'manual' { 'no' }
                                   'user' { 'from login' } default { 'not set' } })
         )
-        if (-not $onPath) {
-            $items  += 'Add to PATH?'
-            $detail += $(if ($null -eq $wantPath) { 'not set' } elseif ($wantPath) { 'yes' } else { 'no' })
-        }
+        # Always drawn, even when there is nothing to decide. Hiding it moved every
+        # row below it and left the cursor apparently skipping a step, with no way to
+        # tell whether PATH had been handled or forgotten. Shown and disabled, the
+        # menu keeps its shape and answers the question it raises.
+        $items  += 'Add to PATH?'
+        $pathRow = $items.Count - 1
+        $detail += $(if ($onPath) { 'already on PATH' }
+                     elseif ($null -eq $wantPath) { 'not set' }
+                     elseif ($wantPath) { 'yes' } else { 'no' })
+        $off = @()
+        if ($onPath) { $off += $pathRow }
 
         # Monitors first, then the trigger. The trigger check asks someone to flip
         # the switch away and back, and once the monitors are known good the flip
@@ -1702,7 +1715,7 @@ function Invoke-Configure {
             elseif ($answers.Count   -eq 0) { 1 }
             elseif ($devices.Count   -eq 0) { 2 }
             elseif (-not $newTier)          { 3 }
-            elseif (-not $onPath -and $null -eq $wantPath) { 4 }
+            elseif (-not $onPath -and $null -eq $wantPath) { $pathRow }
             elseif (-not $ranDisplays)      { $save - 3 }
             elseif (-not $ranDisplays.Ok)   { 1 }
             elseif (-not $ranTriggers)      { $save - 2 }
@@ -2531,7 +2544,7 @@ if ($Command -eq 'status') {
         Write-Host 'version  : unknown  <- installed before version stamping'
     }
 
-    $onPath = @((Get-UserPath -split ';')) -contains $BINDIR
+    $onPath = @((Get-UserPath) -split ';') -contains $BINDIR
     Write-Host ("path     : {0}" -f $(if ($onPath) { "$BINDIR (on PATH)" } else { "$BINDIR  <- not on PATH; re-run the installer with -AddToPath" }))
 
     $c = Read-Config -Path $CONFIG
@@ -2949,7 +2962,7 @@ if ($AddToPath) { Add-ToUserPath -Dir $BINDIR }
 # that, and the four things you can do to it. Everything else -- tiers, sessions,
 # the transport -- is in the docs for the day someone needs it, and is noise on the
 # day they do not.
-$onPath = @((Get-UserPath -split ';')) -contains $BINDIR
+$onPath = @((Get-UserPath) -split ';') -contains $BINDIR
 $cmd    = if ($onPath) { 'trigger-kvm' } else { $SHIM }
 Write-Host ''
 if ($EffectiveTier -eq 'manual') {

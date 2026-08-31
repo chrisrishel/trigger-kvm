@@ -34,7 +34,6 @@ $global:SEED_SETTLE   = '0.75'
 $global:SWITCH = Join-Path (Split-Path -Parent $PSScriptRoot) 'trigger-kvm.ps1'
 $global:Relaunched = $false
 
-function Get-UserPath { 'C:\Windows' }
 function Add-ToUserPath { param([string]$Dir) }
 function Get-TriggerCandidates {
     @(
@@ -229,6 +228,23 @@ Assert-Equal 0 $LASTEXITCODE
 $c = Get-Written
 Assert-True (-not $c.ContainsKey('display.lg.input.0xd1')) 'a removed computer leaves no input naming it'
 Assert-Equal 'pc' $c['display.lg.input.0xd0']
+
+# ---- the PATH row is drawn even when there is nothing to decide ---------------
+
+# It used to be omitted when bin\ was already on PATH, which moved every row below
+# it and left the cursor apparently skipping a step -- with no way to tell whether
+# PATH had been handled or forgotten. Reported as "it doesn't advance to add to
+# path", and the behaviour was right; the display was not.
+$global:TestUserPath = 'C:\Windows;C:\fake\bin'      # already there
+Set-Config $CONFIGURED
+Set-Outcomes @()
+Set-Answers @('10')                                     # Save at once; nothing to answer
+Invoke-Configure
+Assert-Equal 0 $LASTEXITCODE 'an already-on-PATH install has nothing left to answer'
+$asked = (Get-Asked) -join '|'
+Assert-NoMatch $asked 'Add .* to your PATH' 'and must not ask about it'
+
+$global:TestUserPath = 'C:\Windows'                      # back to not-on-PATH
 
 # ---- backing out of a submenu changes nothing ---------------------------------
 

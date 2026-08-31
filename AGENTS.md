@@ -445,6 +445,15 @@ Add to it when you change the walkthrough or the menus -- and then MUTATE the th
 you changed and confirm the new test fails. Every regression listed in those files
 got there by being shipped once.
 
+**`(Get-Something) -split ';'` needs the parentheses.** Written as
+`Get-Something -split ';'`, PowerShell reads `-split` as a PARAMETER of the function,
+not as the operator -- a function without `[CmdletBinding()]` swallows it into
+`$args` and returns the unsplit string, so the surrounding `-contains` silently never
+matches. That shipped, and made `$onPath` permanently false: the walkthrough offered
+to add a directory already on PATH, and `status` reported "not on PATH" about a PATH
+containing it. The same trap applies to any operator-looking token after a command
+name.
+
 **The harness runs `Set-StrictMode -Version Latest`, because the scripts do.** Do not
 take it out. Indexing `[0]` into an empty match, reading a property that was never
 set, using an undeclared variable -- all of them are quiet under the default mode and
