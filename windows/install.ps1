@@ -607,7 +607,13 @@ function Select-One {
           # list that changes shape as you answer, and renaming it would lose the
           # only label the monitor's own menu agrees with. So it stays where it was,
           # says who has it, and the cursor passes over it.
-          [int[]]$Disabled = @())
+          [int[]]$Disabled = @(),
+          # Esc returns -1, meaning "back, and change nothing". Opt-in, because it is
+          # only unambiguous where backing out has an obvious meaning: a submenu you
+          # entered from somewhere. It is deliberately NOT offered on the main menu
+          # (which has Cancel, and should not discard a setup on a stray keypress) or
+          # on a question that must be answered before the code can continue.
+          [switch]$Escapable)
 
     # An empty item is a SEPARATOR: drawn as a blank line, skipped by the cursor and
     # unpickable. Grouping a long menu beats renaming its rows to imply grouping.
@@ -666,8 +672,10 @@ function Select-One {
         if ($Help) { Write-Host ''; Write-Host $Help }
         while ($true) {
             $pick = Read-Default '  Choice' ([string]($Default + 1))
+            if ($Escapable -and $pick -eq 'q') { return -1 }
             if ($pick -match '^[0-9]+$' -and $sel -contains ([int]$pick - 1)) { return ([int]$pick - 1) }
-            Write-Host '  Pick a number from the list.'
+            Write-Host $(if ($Escapable) { '  Pick a number from the list, or q to go back.' }
+                         else            { '  Pick a number from the list.' })
         }
     }
 
@@ -688,13 +696,15 @@ function Select-One {
         }
         $lines += $helpBody
         $lines += ''
-        $lines += '  up/down move   enter choose'
+        $lines += $(if ($Escapable) { '  up/down move   enter choose   esc back' }
+                    else            { '  up/down move   enter choose' })
         $drawn = Write-MenuFrame -Lines $lines -Width $width -Previous $drawn
 
         switch (Read-MenuKey) {
             'UpArrow'   { $at = ($at - 1 + $sel.Count) % $sel.Count }
             'DownArrow' { $at = ($at + 1) % $sel.Count }
             'Enter'     { Write-Host ''; return $sel[$at] }
+            'Escape'    { if ($Escapable) { Write-Host ''; return -1 } }
         }
     }
 }
@@ -704,7 +714,10 @@ function Select-One {
 # hint line nobody reads. Space toggles too, for anyone who reaches for it.
 function Select-Many {
     param([string[]]$Items, [string[]]$Detail, [int[]]$Checked = @(), [string]$Help,
-          [string]$DoneLabel = 'Done')
+          [string]$DoneLabel = 'Done',
+          # Esc returns $null -- distinct from any list of indices, and from the
+          # empty list this refuses to return.
+          [switch]$Escapable)
 
     $state = @($Items | ForEach-Object { $false })
     foreach ($i in $Checked) { if ($i -ge 0 -and $i -lt $state.Count) { $state[$i] = $true } }
@@ -719,13 +732,15 @@ function Select-Many {
         for ($i = 0; $i -lt $state.Count; $i++) { if ($state[$i]) { $pre += ($i + 1) } }
         while ($true) {
             $pick = Read-Default '  Numbers, comma-separated' ($pre -join ',')
+            if ($Escapable -and $pick -eq 'q') { return $null }
             $out = @()
             foreach ($n in ($pick -split ',')) {
                 $n = $n.Trim()
                 if ($n -match '^[0-9]+$' -and [int]$n -ge 1 -and [int]$n -le $Items.Count) { $out += ([int]$n - 1) }
             }
             if ($out.Count -gt 0) { return $out }
-            Write-Host '  Pick at least one.'
+            Write-Host $(if ($Escapable) { '  Pick at least one, or q to go back.' }
+                         else            { '  Pick at least one.' })
         }
     }
 
@@ -755,12 +770,14 @@ function Select-Many {
                                        $(if ($n -gt 0) { "$n selected" } else { 'nothing selected' })
         $lines += $helpBody
         $lines += ''
-        $lines += '  up/down move   enter toggles the highlighted row'
+        $lines += $(if ($Escapable) { '  up/down move   enter toggles the highlighted row   esc back' }
+                    else            { '  up/down move   enter toggles the highlighted row' })
         $lines += $note
         $drawn = Write-MenuFrame -Lines $lines -Width $width -Previous $drawn
 
         $key  = Read-MenuKey
         $note = ''
+        if ($key -eq 'Escape' -and $Escapable) { Write-Host ''; return $null }
         switch ($key) {
             'UpArrow'   { $cursor = ($cursor - 1 + $done + 1) % ($done + 1) }
             'DownArrow' { $cursor = ($cursor + 1) % ($done + 1) }
@@ -1150,9 +1167,9 @@ function Read-Computers {
         $rows += 'Done';                 $det += ''
 
         Write-Host ''
-        $pick = Select-One -Items $rows -Detail $det -Default ($add + 1) `
+        $pick = Select-One -Items $rows -Detail $det -Default ($add + 1) -Escapable `
                            -Help '  Pick a name to change it, or Done.'
-        if ($pick -eq $add + 1) { break }
+        if ($pick -eq $add + 1 -or $pick -lt 0) { break }
 
         if ($pick -eq $add) {
             $rest += Read-ComputerName -Prompt 'Name for the new computer' -Default '' `
@@ -1374,10 +1391,11 @@ function Read-Triggers {
     $help = '  Keyboards and mice often share a vendor id with something that never' + "`n" +
             '  moves. The full vendor+product is matched, so pick the exact rows.'
 
-    $picked = Select-Many -Checked $checked -Help $help `
+    $picked = Select-Many -Checked $checked -Help $help -Escapable `
         -Items  @($Cands | ForEach-Object { '{0,-20} {1,-4}' -f $_.Key, $_.Bus }) `
         -Detail @($Cands | ForEach-Object { Get-CandidateLabel $_ })
 
+    if ($null -eq $picked) { return @($Current) }
     return @($picked | ForEach-Object { $Cands[$_].Key })
 }
 
@@ -1398,9 +1416,10 @@ function Read-PathChoice {
     Write-Host '  Only that directory is added, and it holds only the launcher.'
     Write-Host ''
     $now = $(if ($null -eq $Current) { -1 } elseif ($Current) { 0 } else { 1 })
-    $pick = Select-One -Default ([Math]::Max(0, $now)) -Current $now `
+    $pick = Select-One -Default ([Math]::Max(0, $now)) -Current $now -Escapable `
                        -Items @('Yes', 'No') `
                        -Detail @('trigger-kvm works from anywhere', 'call it by its full path')
+    if ($pick -lt 0) { return $Current }
     return ($pick -eq 0)
 }
 
@@ -1424,10 +1443,11 @@ function Read-Tier {
     Write-Host '  back after a restart until you run:  trigger-kvm restart'
     Write-Host ''
     $now = $(switch ($Current) { 's4u' { 0 } 'user' { 1 } 'manual' { 2 } default { -1 } })
-    $pick = Select-One -Default ([Math]::Max(0, $now)) -Current $now -Items @(
+    $pick = Select-One -Default ([Math]::Max(0, $now)) -Current $now -Escapable -Items @(
         'From boot (requires admin)',
         'From login',
         'No -- I will start it myself')
+    if ($pick -lt 0) { return $Current }
     return $(switch ($pick) { 1 { 'user' } 2 { 'manual' } default { 's4u' } })
 }
 
@@ -1483,8 +1503,8 @@ function Read-Monitors {
         Write-Host 'Which of these should follow the switch, and which input is each'
         Write-Host 'computer on?'
         Write-Host ''
-        $pick = Select-One -Items $items -Detail $detail -Default $land
-        if ($pick -eq $done) { return @($out) }
+        $pick = Select-One -Items $items -Detail $detail -Default $land -Escapable
+        if ($pick -eq $done -or $pick -lt 0) { return @($out) }
 
         $f    = $Found[$pick]
         $key  = '{0:X4}:{1:X4}' -f $f.EdidVendor, $f.EdidProduct
@@ -2141,7 +2161,7 @@ function Test-OneComputer {
         # A menu, like every other decision in the walkthrough. This one used to be
         # the last y/n confirm left, which made the most consequential question in the
         # program look like the least considered.
-        $go = Select-One -Default 0 `
+        $go = Select-One -Default 0 -Escapable `
                   -Items @(("Yes, try the {0} channel" -f $d.What), 'No, leave this monitor out') `
                   -Detail @('and say which input each computer is on',
                             'everything else stays configured')

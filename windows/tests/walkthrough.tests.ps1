@@ -230,6 +230,39 @@ $c = Get-Written
 Assert-True (-not $c.ContainsKey('display.lg.input.0xd1')) 'a removed computer leaves no input naming it'
 Assert-Equal 'pc' $c['display.lg.input.0xd0']
 
+# ---- backing out of a submenu changes nothing ---------------------------------
+
+# Esc in a real terminal; 'q' in the typed fallback these tests drive. Either way it
+# means "back, and change nothing" -- not "clear this section".
+Set-Config $CONFIGURED
+Set-Outcomes @()
+Set-Answers @(
+    '3',            # menu -> Triggers
+    'q',            #   back out without touching the selection
+    '1',            # menu -> Computers
+    'q',            #   likewise
+    '2',            # menu -> Monitors
+    'q',
+    '4','q',        # menu -> Autostart?, back
+    '5','1',        # menu -> Add to PATH? (never preset, so answer it)
+    '10'            # menu -> Save
+)
+Invoke-Configure
+Assert-Equal 0 $LASTEXITCODE
+$c = Get-Written
+Assert-Equal 'usb:046d:0843, usb:1235:820a' $c['trigger.device'] 'the triggers are as they were'
+Assert-Equal 'pc'     $c['computer.this']
+Assert-Equal 'mac'    $c['display.lg.input.0xd1'] 'and so are the monitors'
+Assert-Equal 'login'  $c['install.autostart']     'and autostart kept its configured value'
+
+# The main menu is deliberately NOT escapable: it has Cancel, and a setup should not
+# be discarded by a stray keypress.
+Set-Config $CONFIGURED
+Set-Answers @('q', '11')
+Invoke-Configure
+Assert-Equal 1 $LASTEXITCODE
+Assert-Match ((Get-Asked) -join '|') 'Choice' 'q was refused there, and Cancel was needed'
+
 # ---- -Fresh empties the answers, and the menu shows that ----------------------
 
 Set-Config $CONFIGURED

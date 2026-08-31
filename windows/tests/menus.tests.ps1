@@ -128,6 +128,35 @@ Assert-Match (Get-Drawn) 'back to pc\s\s+everything works' 'the column widens to
 Assert-Match (Get-Drawn) 'change back to pc\s\s+the input for pc is wrong' `
     'even the longest item keeps two spaces -- one reads as a word break'
 
+# ---- esc goes back, where back has a meaning ---------------------------------
+
+# Opt-in, because it is only unambiguous in a submenu you entered from somewhere. On
+# a menu without it, Escape must do nothing at all rather than fall through to some
+# other row.
+Set-Keys @('Escape','Enter')
+Assert-Equal 0 (Select-One -Items @('a','b') -Default 0) 'Escape is inert without -Escapable'
+
+Set-Keys @('Escape')
+Assert-Equal -1 (Select-One -Items @('a','b') -Default 0 -Escapable) 'and returns -1 with it'
+
+Reset-Drawn; Set-Keys @('Escape')
+$null = Select-One -Items @('a','b') -Default 0 -Escapable
+Assert-Match (Get-Drawn) 'esc back' 'the hint says so, since nothing else would'
+
+Reset-Drawn; Set-Keys @('Enter')
+$null = Select-One -Items @('a','b') -Default 0
+Assert-NoMatch (Get-Drawn) 'esc back' 'and does not, where it would be a lie'
+
+# Select-Many returns $null, which is distinct both from a list of indices and from
+# the empty list it refuses to return.
+Set-Keys @('Escape')
+$got = Select-Many -Items @('a','b') -Detail @('one','two') -Checked @(0) -Escapable
+Assert-True ($null -eq $got) 'Escape backs out of a multi-select without choosing'
+
+Set-Keys @('Escape','DownArrow','DownArrow','Enter')
+$got = Select-Many -Items @('a','b') -Detail @('one','two') -Checked @(0)
+Assert-Equal '0' ($got -join ',') 'and is inert there too without the switch'
+
 # ---- Join-Names --------------------------------------------------------------
 
 Assert-Equal 'LG'                (Join-Names @('LG'))

@@ -102,7 +102,7 @@ single unbreakable item, and that case had to be added.
 ### The walkthrough
 
 Every list question is an arrow-key menu, and the rule is the same in all of them:
-**enter does what the highlighted row says.** So a multi-select has no accept key —
+**enter does what the highlighted row says**, and **esc goes back**. So a multi-select has no accept key —
 it has a `Done` button you move to, drawn as a button and not as another list row,
 with a live count of what it will use:
 
@@ -122,6 +122,14 @@ every other menu here ends with a bare `Done`. The count moved to the detail col
 where every other menu puts a value.) Every menu falls back to a typed number when the host cannot read individual
 keys — redirected stdin, some remote sessions — which is also what makes the flow
 testable end to end.
+
+**Esc backs out of a submenu**, changing nothing — the triggers you had stay
+selected, the computers keep their names. It is opt-in per menu rather than
+universal, because "back" only has a meaning somewhere you arrived *from*: the main
+menu deliberately does not take it, since it has Cancel and a setup should not be
+discarded by a stray keypress, and neither do the questions that must be answered
+before the code can go on. In the typed fallback (a redirected stdin, some remote
+sessions) the same thing is `q`.
 
 **The menu is the whole flow.** There is no separate first-run questionnaire: an
 empty install is this same menu with `not set` in it and the cursor already on the
