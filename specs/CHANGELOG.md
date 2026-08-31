@@ -43,6 +43,37 @@ it does not have. It is blind to two things, and this closes them:
 
 ---
 
+## Revision 2 — 2026-08-31
+
+**Offer a manufacturer's alternative method up front, and make esc on the top
+menu move to Cancel.**
+
+Sections: [`configure.md`](configure.md) §3.3, §6, §6.2, §10.5.
+Also amends [`../AGENTS.md`](../AGENTS.md) hard rule 1b.
+
+**Act on:**
+
+1. **§6.2 — a new question.** When the chosen panel's EDID vendor has a
+   documented alternative method, ask which method to use, immediately after the
+   short name and before any input question, because the values on offer depend
+   on the answer. Standard stays the default and stays the cursor's start.
+   Previously the alternative was reachable only by failing the check first.
+
+2. **§10.5 — the escalation becomes symmetric.** A panel already on the
+   manufacturer method that answers nothing must be offered *standard*. Before
+   this it was told "no manufacturer values are known here", which is now
+   reachable, false, and a dead end.
+
+3. **§3.3 — esc on the top menu moves the cursor to `Cancel`** rather than doing
+   nothing. It must not activate it: a setup still cannot be discarded by one
+   keypress.
+
+**Why:** forcing a known-alt-mode user to fail first cost more than it bought,
+and someone who saw the standard method fail without being told the alternative
+existed could reasonably give up before the check offered it. The "never probed"
+half of hard rule 1b is untouched — values still come only from the documented
+table or from the user, and the transport gate is unchanged.
+
 ## Revision 1 — 2026-08-31
 
 The initial corpus: [`README.md`](README.md), [`config-format.md`](config-format.md)

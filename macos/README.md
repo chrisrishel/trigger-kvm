@@ -82,9 +82,10 @@ is the same menu with the answers in it.
 - Computers are asked **before** the monitors, so a computer is described once
   rather than once per screen, and every panel then offers the same names. A
   rename is carried into every panel's map; the monitors are never re-asked.
-- Every panel starts on **standard** DDC/CI, whatever the make. A manufacturer
-  dialect is *offered*, never probed, and only after the check shows that
-  standard does not work.
+- **Standard** DDC/CI is the default for every panel, whatever the make. Where
+  the panel's manufacturer has a documented alternative, that choice is *offered*
+  up front — never probed, never chosen for you — and the check offers it again,
+  in either direction, if the chosen method turns out not to answer.
 
 ## The checks
 

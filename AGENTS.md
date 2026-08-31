@@ -29,14 +29,35 @@ M is on input V of display D" can disagree and one cannot. `to` is still MANUAL
 ONLY: a trigger may never reach a name other than `computer.this`, because a name
 describes hardware this machine cannot observe.
 
-**1b. A manufacturer dialect is OFFERED, never probed, and only after standard
-DDC/CI has been shown not to work.** `$DIALECTS` in `install.ps1` is keyed by EDID
-**vendor** -- never vendor:product, which was one row per monitor someone here
-happened to own. Values in it come from documentation and measurement. The
-walkthrough sets every panel to `standard` first, whatever the make; only when the
-user reports that nothing happened is the vendor's channel offered, with its values
-shown. Blind value-walking is standard-DDC-only, one MCCS value at a time, offered
-with its cost stated, and refused when it would take the last display.
+**1b. A manufacturer dialect is OFFERED, never probed.** The dialect table is
+keyed by EDID **vendor** -- never vendor:product, which was one row per monitor
+someone here happened to own. Values in it come from documentation and
+measurement, never from a search, a sweep or a range.
+
+Standard DDC/CI is the DEFAULT for every panel, whatever the make. Where the
+vendor has a documented alternative, the walkthrough offers the choice up front
+once that panel is being configured, and the check offers it again -- in either
+direction -- if the chosen method turns out not to answer. See
+`specs/configure.md` sections 6.2 and 10.5.
+
+**Amended 2026-08-31.** This rule previously said the dialect could be offered
+"only after standard DDC/CI has been shown not to work". That clause was doing
+two jobs: "never probed", which is the half that stops monitors being bricked and
+is UNCHANGED, and "standard must fail first", which was a conservative default
+rather than a safety mechanism. Forcing a failure first cost more than it bought:
+someone who already knows their model needs the alternative had to run a check
+that moves a panel and sends packets purely in order to fail, and someone who saw
+the standard method fail without being told the alternative existed could
+reasonably conclude the tool did not know about it. Offering up front sends fewer
+packets, not more.
+
+What did not change, and must not: values come only from the table or from what
+the user types in that moment; and the transport gate still refuses a
+manufacturer channel to a panel whose EDID vendor does not match, in code, at the
+transport -- see hard rule 5.
+
+Blind value-walking is standard-DDC-only, one MCCS value at a time, offered with
+its cost stated, and refused when it would take the last display.
 
 **2. Never verify a switch by reading a VCP value back.**
 Reads are unreliable on both monitors and *have already produced false negatives*:

@@ -154,6 +154,31 @@ it 'esc does nothing at all when the menu is not escapable'
 three; keys 'Escape Escape Enter' select_one --default 1
 assert_equal 1 "$MENU_PICK"
 
+it 'esc MOVES the cursor to the way out rather than taking it'
+# The top menu's way out is a Cancel row. Moving rather than acting is what
+# keeps a stray keypress from discarding a setup.
+menu_reset; menu_add alpha ''; menu_add beta ''; menu_add 'Cancel (discard changes)' ''
+keys 'Escape Enter' select_one --default 0 --escape-to 2
+assert_equal 2 "$MENU_PICK"
+assert_match "$MENU_TEXT" '  > Cancel (discard changes)' 'the cursor lands there'
+
+it 'and one esc alone is not enough to take it'
+# Two keystrokes, never one.
+menu_reset; menu_add alpha ''; menu_add beta ''; menu_add 'Cancel (discard changes)' ''
+keys 'Escape' select_one --default 0 --escape-to 2
+assert_equal -1 "$MENU_PICK" 'nothing was chosen -- the keys ran out first'
+
+it 'esc does nothing at all when there is no way out to move to'
+menu_reset; menu_add alpha ''; menu_add beta ''
+keys 'Escape Escape Enter' select_one --default 1
+assert_equal 1 "$MENU_PICK"
+
+it 'q makes the way out the default in the typed fallback'
+menu_reset; menu_add alpha ''; menu_add beta ''; menu_add 'Cancel (discard changes)' ''
+typed 'q
+' select_one --default 0 --escape-to 2
+assert_equal 2 "$MENU_PICK"
+
 it 'says esc is available only when it is'
 three; keys 'Enter' select_one --default 0 --escapable
 assert_match "$MENU_TEXT" 'esc back'

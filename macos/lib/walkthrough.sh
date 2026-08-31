@@ -527,6 +527,51 @@ wt_read_input() {
 
 # --- monitors ----------------------------------------------------------------
 
+# Which method to use on a panel whose vendor has a documented alternative.
+#
+# OFFERED UP FRONT, not only after standard has failed. Someone who already
+# knows their model needs the alternative should not have to run a check that
+# moves a panel and sends packets purely in order to fail -- and someone who
+# knows they need it, watches standard fail, and has not been told the
+# alternative exists may reasonably decide the tool does not know about it.
+#
+# This changes WHEN the choice is offered and nothing else. Values still come
+# only from the documented table or from what the user types in that moment;
+# nothing is probed, swept or guessed; and the transport gate still refuses a
+# manufacturer channel to a panel whose EDID vendor does not match. See
+# AGENTS.md hard rule 1b, amended for this, and specs/configure.md section 6.2.
+#
+# Standard stays the default and stays where the cursor starts.
+wt_choose_method() {
+  local _di _current _what _alt _now _default
+  _di=$1 _current=$2
+  _what=${DIALECT_WHAT[$_di]}
+  _alt=${DIALECT_METHOD[$_di]}
+
+  printf '\n--- how to talk to this monitor ---\n' >&2
+  printf '  Nearly every monitor takes the standard method, including most %s ones.\n' "$_what" >&2
+  printf '  A few %s models ignore it and need %s'"'"'s own method instead.\n\n' "$_what" "$_what" >&2
+  printf '  If you are not sure, take the standard one. If it turns out not to\n' >&2
+  printf '  work, the check further down will offer you this again.\n' >&2
+
+  menu_reset
+  menu_add 'Standard' 'what nearly every monitor takes'
+  menu_add "$_what's own method" "for $_what models that ignore the standard one"
+
+  _now=-1
+  if [ "$_current" = "standard" ]; then _now=0
+  elif [ "$_current" = "$_alt" ]; then _now=1; fi
+  _default=0
+  [ "$_now" -ge 0 ] && _default=$_now
+
+  select_one --default "$_default" --current "$_now" --escapable
+  case $MENU_PICK in
+    0) printf 'standard\n' ;;
+    1) printf '%s\n' "$_alt" ;;
+    *) printf '%s\n' "$_current" ;;   # esc: change nothing
+  esac
+}
+
 # One display: identity is already known; what we need from the human is whether
 # to manage it, what to call it, and which input each computer is on.
 #
@@ -536,7 +581,7 @@ wt_read_input() {
 # does not work.
 wt_display_answers() {
   local _fi _key _desc _ai _defaultlabel _method _prior _label _map _c _was
-  local _sub _allownone
+  local _sub _allownone _di
   _fi=$1
   _key=${WT_F_KEY[$_fi]}
   _desc=${WT_F_NAME[$_fi]}
@@ -564,6 +609,11 @@ wt_display_answers() {
   _label=$(menu_read_line '  Short name for it' "$_defaultlabel") || menu_eof
   _label=$(wt_format_name "$_label")
   [ -n "$_label" ] || _label=$_defaultlabel
+
+  # BEFORE the inputs, because which values are on offer depends on the answer.
+  if _di=$(wt_dialect_for "$(printf '%s' "$_key" | cut -d: -f1)"); then
+    _method=$(wt_choose_method "$_di" "$_method")
+  fi
 
   _map=''
   for _c in "${WT_COMPUTERS[@]}"; do
@@ -1030,7 +1080,10 @@ cmd_configure() {
       printf -- '--- configuration ---\n\n' >&2
     fi
 
-    select_one --default "$_land"
+    # esc moves the cursor to Cancel; it does not take it. A setup still cannot
+    # be discarded by a stray keypress -- enter on a row that says
+    # "Cancel (discard changes)" is still required.
+    select_one --default "$_land" --escape-to $(( _saverow + 1 ))
     _pick=$MENU_PICK
 
     if [ "$_pick" -eq $(( _saverow + 1 )) ]; then

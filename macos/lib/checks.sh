@@ -373,7 +373,7 @@ wt_probe_one() {
 # ONE RETRY PER FIX, then take the answer. Do not loop.
 wt_check_one() {
   local _i _target _cfg _attempt _here _cand _candname _j _vendor _di _what
-  local _keep _c _allownone
+  local _keep _c _allownone _alt _to _offer
   _i=$1 _target=$2 _cfg=$3 _attempt=${4:-1}
 
   # Write before every attempt: escalating to a dialect changes the method, and
@@ -436,34 +436,54 @@ wt_check_one() {
     return $?
   fi
 
-  # 3: nothing at all. The channel is wrong. This is where a manufacturer
-  # dialect is OFFERED -- offered, from documented values, never probed.
+  # 3: nothing at all. The channel is wrong. This is where a method change is
+  # OFFERED -- offered, from documented values, never probed.
+  #
+  # SYMMETRIC, because specs/configure.md section 6.2 lets someone choose the
+  # manufacturer method up front: a panel can arrive here already on it, and
+  # telling that person "no manufacturer values are known" would be false and a
+  # dead end. So a panel on standard is offered the manufacturer method, and a
+  # panel on the manufacturer method is offered standard.
   _vendor=$(printf '%s' "${WT_A_KEY[$_i]}" | cut -d: -f1)
-  if _di=$(wt_dialect_for "$_vendor") && [ "${WT_A_METHOD[$_i]}" != "${DIALECT_METHOD[$_di]}" ]; then
+  if _di=$(wt_dialect_for "$_vendor"); then
     _what=${DIALECT_WHAT[$_di]}
-    printf '\n  %s did not answer the standard channel. It is %s, and some %s\n' \
-           "${WT_A_NAME[$_i]}" "$_what" "$_what" >&2
-    printf '  panels put input switching on a manufacturer channel instead. These\n' >&2
-    printf '  values are documented for %s, and are the only ones that will be\n' "$_what" >&2
-    printf '  sent -- nothing is guessed at on a manufacturer channel:\n\n' >&2
-    wt_input_table "${DIALECT_METHOD[$_di]}" ''
+    _alt=${DIALECT_METHOD[$_di]}
+
+    if [ "${WT_A_METHOD[$_i]}" != "$_alt" ]; then
+      _to=$_alt
+      printf '\n  %s did not answer the standard channel. It is %s, and some %s\n' \
+             "${WT_A_NAME[$_i]}" "$_what" "$_what" >&2
+      printf '  panels put input switching on a manufacturer channel instead. These\n' >&2
+      printf '  values are documented for %s, and are the only ones that will be\n' "$_what" >&2
+      printf '  sent -- nothing is guessed at on a manufacturer channel:\n\n' >&2
+      _offer="Yes, try the $_what channel"
+    else
+      _to=standard
+      printf '\n  %s is on %s'"'"'s own method and did not answer it. The standard method\n' \
+             "${WT_A_NAME[$_i]}" "$_what" >&2
+      printf '  is the other thing to try. These are its documented values:\n\n' >&2
+      _offer='Yes, try the standard method'
+    fi
+
+    wt_input_table "$_to" ''
     _j=0
     while [ "$_j" -lt "${#IT_NAMES[@]}" ]; do
       printf '    %-14s %s\n' "${IT_NAMES[$_j]}" "${IT_VALUES[$_j]}" >&2
       _j=$(( _j + 1 ))
     done
     printf '\n' >&2
+
     # A menu, like every other decision in the walkthrough. This used to be the
     # last y/n confirm left, which made the most consequential question in the
     # program look like the least considered.
     menu_reset
-    menu_add "Yes, try the $_what channel" 'and say which input each computer is on'
-    menu_add 'No, leave this monitor out'  'everything else stays configured'
+    menu_add "$_offer" 'and say which input each computer is on'
+    menu_add 'No, leave this monitor out' 'everything else stays configured'
     select_one --default 0 --escapable
     if [ "$MENU_PICK" = "0" ]; then
       # Every value in the old map was for a channel that does not work, so the
       # map starts again rather than carrying meaningless numbers across.
-      WT_A_METHOD[_i]=${DIALECT_METHOD[$_di]}
+      WT_A_METHOD[_i]=$_to
       _keep=$(map_computers "${WT_A_MAP[$_i]}")
       WT_A_MAP[_i]=''
       for _c in $_keep; do

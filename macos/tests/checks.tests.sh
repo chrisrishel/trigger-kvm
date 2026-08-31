@@ -232,6 +232,35 @@ assert_match "$CK_OUT" 'USB-C          0xD1'
 it 'sends NOTHING on the manufacturer channel when the offer is declined'
 assert_no_match "$(fake_sent)" 'input-alt'
 
+it 'offers STANDARD to a panel already on the manufacturer method'
+# specs/configure.md 10.5. Since a method can now be chosen up front, a panel
+# can reach the check already on the manufacturer one. Telling that person "no
+# manufacturer values are known here" would be false, and a dead end.
+seed_three
+sed -i '' 's/^display.lg.method  = standard/display.lg.method  = lg-alt/' "$CFG"
+sed -i '' 's/^display.lg.input.0x10 = mac/display.lg.input.0xD1 = mac/' "$CFG"
+sed -i '' 's/^display.lg.input.0x11 = pc/display.lg.input.0xD0 = pc/' "$CFG"
+check_with '7
+1
+
+n
+1
+3
+2
+2
+
+y
+11'
+assert_match "$CK_OUT" "is on LG's own method and did not answer it"
+assert_match "$CK_OUT" 'The standard method'
+assert_match "$CK_OUT" 'Yes, try the standard method'
+
+it 'and shows the standard values it would switch to'
+assert_match "$CK_OUT" 'DisplayPort 1  0x0F'
+
+it 'never tells a panel that has a documented alternative there is none'
+assert_no_match "$CK_OUT" 'no manufacturer values'
+
 it 'does NOT offer a dialect for a vendor that has none'
 # A panel absent from the table is offered standard DDC/CI only, because what
 # source 0x50 means on an untested panel is unknown. The Dell is the panel held

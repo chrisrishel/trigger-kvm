@@ -49,6 +49,7 @@ pc
 1
 
 
+
 9
 0xD1
 10
@@ -105,12 +106,71 @@ it "writes each panel's own name, from the EDID"
 assert_match "$c" 'display.lg.name    = LG ULTRAGEAR+'
 assert_match "$c" 'display.asus.name    = PG42UQ'
 
-it 'starts EVERY panel on standard, whatever the make'
-# A manufacturer dialect is OFFERED, never probed, and only after standard
-# DDC/CI has been shown not to work. The LG gets lg-alt from the check, not
-# from the walkthrough guessing by vendor.
+it 'defaults every panel to standard, whatever the make'
+# Standard is the default and the cursor starts there; the script above takes it
+# by answering blank. A manufacturer method is never chosen FOR someone.
 assert_match "$c" 'display.lg.method  = standard'
 assert_match "$c" 'display.asus.method  = standard'
+
+it "offers the manufacturer's method up front for a vendor that has one"
+# specs/configure.md 6.2. Someone who already knows their model needs it should
+# not have to run a check that moves a panel purely in order to fail.
+assert_match "$WT_OUT" '--- how to talk to this monitor ---'
+assert_match "$WT_OUT" "LG's own method"
+assert_match "$WT_OUT" 'for LG models that ignore the standard one'
+
+it 'and does NOT offer it for a vendor that has none'
+# Keyed by vendor, never by model, from the one table the check escalates to.
+n=$(printf '%s\n' "$WT_OUT" | grep -c 'how to talk to this monitor' || true)
+assert_equal 1 "$n" 'only the LG should be asked; the ASUS has no documented alternative'
+
+it 'choosing it up front writes that method, with no check having run'
+# The whole point: the documented values are reachable without failing first.
+# Written out rather than derived from $FULL -- the two scripts diverge at the
+# method question and stay diverged, because the input tables differ from there.
+ALT='1
+mac
+
+pc
+5
+2
+1
+
+
+2
+2
+1
+2
+
+asus
+1
+3
+4
+3
+1,2
+4
+2
+5
+2
+10'
+rm -f "$CFG"
+PATH=$SAVED_PATH configure_with "$ALT"
+assert_match "$(cat "$CFG")" 'display.lg.method  = lg-alt' "$WT_OUT"
+
+it "and offers that method's OWN documented values, not the standard ones"
+assert_match "$WT_OUT" '0xD1'
+assert_match "$WT_OUT" '0xD0'
+
+it 'so the map it writes uses them'
+assert_match "$(cat "$CFG")" 'display.lg.input.0xd1 = mac'
+assert_match "$(cat "$CFG")" 'display.lg.input.0xd0 = pc'
+
+it 'the values it offers come from the documented table, never from a probe'
+# AGENTS.md hard rule 1b: OFFERED, never probed. Nothing is sent while asking.
+assert_nothing_sent 'choosing a method must not touch a monitor'
+
+rm -f "$CFG"
+PATH=$SAVED_PATH configure_with "$FULL"
 
 it 'writes the input map, and only the input map'
 assert_match "$c" 'display.lg.input.0xd1 = mac'
@@ -169,6 +229,14 @@ it 'the cursor lands on the first CHECK once every setting is answered'
 # is not done": the unanswered sections in order, THEN the checks in order,
 # then Save. Nothing has been checked yet, so it lands there and not on Save.
 assert_match "$WT_OUT" 'Choice [7]'
+
+it 'esc on the top menu moves to Cancel, and does not discard on its own'
+# specs/configure.md 3.3. In the typed fallback "moving the cursor" is making it
+# the default, so this is still two keystrokes: q, then enter.
+configure_with 'q
+'
+assert_equal 1 "$WT_RC"
+assert_match "$WT_OUT" 'cancelled; nothing was changed'
 
 it 'Cancel changes nothing'
 before=$(cat "$CFG")

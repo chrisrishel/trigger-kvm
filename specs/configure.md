@@ -94,10 +94,19 @@ Item on the left, its value on the right.
 | space | in a multi-select, toggles — for anyone who reaches for it |
 | esc | back, and change nothing |
 
-**Esc is opt-in per menu.** It is only unambiguous where backing out has an
-obvious meaning: a submenu you entered from somewhere. It is deliberately **not**
-offered on the top menu — that has Cancel, and a setup should not be discarded by
-a stray keypress — nor on a question that must be answered.
+**Esc always means "take me to the way out"** — but what the way out *is*
+depends on the menu, and it is never "discard everything on one keypress".
+
+| menu | esc does |
+|---|---|
+| a submenu you entered from somewhere | returns, changing nothing |
+| the top menu | **moves the cursor to `Cancel`** — it does not activate it |
+| a question that must be answered | nothing |
+
+On the top menu it moves rather than acts, so a setup still cannot be discarded
+by a stray keypress: you have to press enter on a row that says
+`Cancel (discard changes)`. That keeps the property while making esc do the
+useful thing instead of nothing.
 
 The hint line says what is available and nothing more:
 
@@ -370,12 +379,63 @@ Short name for it
 - Picking one asks: manage it? → a short name → **for each computer, which input
   it is on**. **Machines-major, not inputs-major**: a panel has eight possible
   inputs and two real ones.
-- **Every panel starts on `standard` DDC/CI, whatever the make.** A manufacturer
-  dialect is offered only by the check, and only after standard has been shown
-  not to work. An existing method is a settled answer — it was proven by someone
-  watching a screen — and must not be walked back to standard on a re-run.
+- **Standard DDC/CI is the default for every panel, whatever the make.** An
+  existing method is a settled answer — it was proven by someone watching a
+  screen — and must not be walked back to standard on a re-run.
+- Where the panel's manufacturer has a **documented alternative**, that choice is
+  offered **up front**, immediately after the short name and before any input is
+  asked for. See §6.2.
 - Looking at the list and changing nothing is **not** an edit, and must not
   invalidate a pass.
+
+### 6.2 Choosing how to talk to the monitor
+
+Shown **only** when the panel's EDID vendor has a documented alternative. This is
+keyed by vendor, never by model, and comes from the same table the check
+escalates to — there is one list of manufacturer methods, not two.
+
+It comes **before** the input questions, because the values on offer depend on
+which method is chosen.
+
+```
+--- how to talk to this monitor ---
+  Nearly every monitor takes the standard method, including most LG ones.
+  A few LG models ignore it and need LG's own method instead.
+
+  If you are not sure, take the standard one. If it turns out not to
+  work, the check further down will offer you this again.
+
+ > 1) Standard                     what nearly every monitor takes   (current)
+   2) LG's own method              for LG models that ignore the standard one
+```
+
+```normative
+--- how to talk to this monitor ---
+  Nearly every monitor takes the standard method, including most {vendor} ones.
+  A few {vendor} models ignore it and need {vendor}'s own method instead.
+  If you are not sure, take the standard one. If it turns out not to
+  work, the check further down will offer you this again.
+Standard
+what nearly every monitor takes
+{vendor}'s own method
+for {vendor} models that ignore the standard one
+```
+
+**Why up front rather than only on failure.** Someone who already knows their
+model needs the alternative should not have to run a check that moves a panel
+and sends packets purely in order to fail. And someone who knows they need it,
+sees the standard method fail, and has not been told the alternative exists may
+reasonably conclude the tool does not know about it and give up before the check
+offers it.
+
+**What this does not change**, and must not:
+
+- The values still come **only** from the documented table or from what the user
+  types in that moment. Nothing is probed, swept, or guessed. See
+  [`../AGENTS.md`](../AGENTS.md) hard rule 1.
+- The transport gate is unchanged: a manufacturer channel is refused for a panel
+  whose EDID vendor does not match, in code, at the transport.
+- **Standard remains the default** and the cursor starts there on a fresh panel.
 
 ### 6.1 Choosing an input
 
@@ -595,10 +655,17 @@ this panel does not answer on this channel
   Do you know which input it is?
 ```
 
-### 10.5 The manufacturer dialect
+### 10.5 Switching method after a failure
 
-Reached only from outcome 3, **offered, never probed**, and only for a vendor
-that has documented values. The values are shown before the question is asked.
+Reached only from outcome 3 — the panel did nothing at all, so the channel is
+wrong. **Offered, never probed**, and only for a vendor that has documented
+values. The values are shown before the question is asked.
+
+The offer is **symmetric**: a panel on the standard method is offered the
+manufacturer one, and a panel already on the manufacturer method is offered
+standard. Since §6.2 lets someone choose the manufacturer method up front, a
+panel can arrive here already on it — and telling that person "no manufacturer
+values are known" would be both false and a dead end.
 
 ```normative
 did not answer the standard channel. It is
@@ -613,7 +680,15 @@ everything else stays configured
 Accepting it **clears that panel's map**: every value in it was for a channel
 that does not work, so carrying the numbers across would be meaningless.
 
-With no documented values for that vendor:
+Going the other way, back to standard:
+
+```normative
+is on {vendor}'s own method and did not answer it. The standard method
+is the other thing to try.
+Yes, try the standard method
+```
+
+With no documented values for that vendor, and already on standard:
 
 ```normative
 did not answer the standard channel, and no manufacturer values

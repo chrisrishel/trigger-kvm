@@ -244,6 +244,21 @@ mutate 'revision: this platform falls behind the changelog' SPEC-REVISION spec.t
 mutate 'revision: this platform claims a revision that does not exist' SPEC-REVISION spec.tests.sh \
   's%^revision = 1%revision = 99%'
 
+# --- revision 2: the method choice, and esc on the top menu ------------------
+
+mutate 'method: the choice is never offered up front' lib/walkthrough.sh walkthrough.tests.sh \
+  's@  if _di=$(wt_dialect_for "$(printf .%s. "$_key" | cut -d: -f1)"); then@  if false; then@'
+mutate 'method: a vendor with a dialect is given it instead of being asked' lib/walkthrough.sh walkthrough.tests.sh \
+  '/^wt_choose_method() {/{n;n;n;n;n;s%.*%  printf "lg-alt\\n"; return 0%;}'
+mutate 'method: choosing it does not change which values are offered' lib/walkthrough.sh walkthrough.tests.sh \
+  's%    _method=$(wt_choose_method "$_di" "$_method")%    wt_choose_method "$_di" "$_method" >/dev/null%'
+mutate 'method: the escalation is one-way again' lib/checks.sh checks.tests.sh \
+  's%    if \[ "${WT_A_METHOD\[$_i\]}" != "$_alt" \]; then%    if true; then%'
+mutate 'esc: the top menu ignores esc again' lib/menu.sh menu.tests.sh \
+  's%        if \[ "$_escapeto" -ge 0 \]; then%        if false; then%'
+mutate 'esc: the top menu ACTIVATES the way out instead of moving to it' lib/menu.sh menu.tests.sh \
+  's%        if \[ "$_escapable" = "1" \]; then printf ..n. >&2; MENU_PICK=-1; return 0; fi%        if [ "$_escapable" = "1" ] || [ "$_escapeto" -ge 0 ]; then printf "\\n" >\&2; MENU_PICK=$_escapeto; return 0; fi%'
+
 echo
 if [ "$survived" = "0" ]; then
   echo "all $checked mutations were caught"

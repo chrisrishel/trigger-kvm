@@ -286,19 +286,26 @@ read_yesno() {
 #
 #   select_one [--default N] [--current N] [--help TEXT] [--escapable]
 #
-# Esc means "back, and change nothing", and is opt-in per menu: it is only
-# unambiguous where backing out has an obvious meaning. It is deliberately NOT
-# offered on the top menu (which has Cancel, and should not discard a setup on a
-# stray keypress) nor on a question that must be answered.
+# Esc always means "take me to the way out", but what the way out IS depends on
+# the menu:
+#
+#   --escapable        returns -1: back, changing nothing. For a submenu you
+#                      entered from somewhere, where backing out is unambiguous.
+#   --escape-to N      MOVES THE CURSOR to row N and activates nothing. For the
+#                      top menu, whose way out is a Cancel row: a setup still
+#                      cannot be discarded by a stray keypress, because enter on
+#                      a row saying "Cancel (discard changes)" is still required.
+#   neither            esc does nothing. For a question that must be answered.
 select_one() {
-  local _default _current _help _escapable _sel _i _ok _s _itemw _at _n _width
-  local _buf
-  _default=0 _current=-1 _help='' _escapable=0
+  local _default _current _help _escapable _escapeto _sel _i _ok _s _itemw _at
+  local _n _width _buf _j
+  _default=0 _current=-1 _help='' _escapable=0 _escapeto=-1
   while [ $# -gt 0 ]; do
     case $1 in
       --default)   _default=$2; shift 2 ;;
       --current)   _current=$2; shift 2 ;;
       --help)      _help=$2; shift 2 ;;
+      --escape-to) _escapeto=$2; shift 2 ;;
       --escapable) _escapable=1; shift ;;
       *) shift ;;
     esac
@@ -325,7 +332,7 @@ select_one() {
   _itemw=$(menu_itemw)
 
   if ! menu_can_read_keys; then
-    select_one_typed "$_default" "$_current" "$_help" "$_escapable" "$_itemw"
+    select_one_typed "$_default" "$_current" "$_help" "$_escapable" "$_itemw" "$_escapeto"
     return 0
   fi
 
@@ -370,7 +377,17 @@ $_help
       Up)     _at=$(( (_at - 1 + ${#_sel[@]}) % ${#_sel[@]} )) ;;
       Down)   _at=$(( (_at + 1) % ${#_sel[@]} )) ;;
       Enter)  printf '\n' >&2; MENU_PICK=${_sel[$_at]}; return 0 ;;
-      Escape) if [ "$_escapable" = "1" ]; then printf '\n' >&2; MENU_PICK=-1; return 0; fi ;;
+      Escape)
+        if [ "$_escapable" = "1" ]; then printf '\n' >&2; MENU_PICK=-1; return 0; fi
+        # Move to the way out; do not take it.
+        if [ "$_escapeto" -ge 0 ]; then
+          _j=0
+          for _s in "${_sel[@]}"; do
+            [ "$_s" = "$_escapeto" ] && _at=$_j
+            _j=$(( _j + 1 ))
+          done
+        fi
+        ;;
       EOF)    MENU_PICK=-1; return 0 ;;
     esac
   done
@@ -378,8 +395,9 @@ $_help
 
 # The typed fallback. A numbered list and a prompt -- and `q` is its `esc`.
 select_one_typed() {
-  local _default _current _help _escapable _itemw _i _l _first _pick _idx _s
-  _default=$1 _current=$2 _help=$3 _escapable=$4 _itemw=$5
+  local _default _current _help _escapable _itemw _escapeto _i _l _first _pick
+  local _idx _s
+  _default=$1 _current=$2 _help=$3 _escapable=$4 _itemw=$5 _escapeto=${6:--1}
 
   _i=0
   while [ "$_i" -lt "${#MENU_ITEMS[@]}" ]; do
@@ -403,6 +421,9 @@ select_one_typed() {
   while :; do
     _pick=$(menu_read_line '  Choice' "$(( _default + 1 ))") || menu_eof
     if [ "$_escapable" = "1" ] && [ "$_pick" = "q" ]; then MENU_PICK=-1; return 0; fi
+    # The typed analogue of moving the cursor: make the way out the default, so
+    # the next bare enter takes it. Still two keystrokes, still not one.
+    if [ "$_escapeto" -ge 0 ] && [ "$_pick" = "q" ]; then _default=$_escapeto; continue; fi
     case $_pick in
       ''|*[!0-9]*) ;;
       *)
