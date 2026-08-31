@@ -1,5 +1,11 @@
 # macOS side
 
+> **Behind the Windows side as of 2026-08-30.** The rename to `trigger-kvm` was
+> applied mechanically here but **never run on a Mac**, and the config file, the
+> `pull` / `to` CLI, install tiers and log rotation are all Windows-only so far.
+> See [`../docs/macos-parity.md`](../docs/macos-parity.md) before changing anything.
+
+
 A LaunchAgent runs `usb-watch`, which fires `trigger-kvm.sh mac` when a watched
 USB device is plugged in.
 

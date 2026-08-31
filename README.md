@@ -36,6 +36,7 @@ USB switch ──> peripherals ──> whichever machine gets them pulls both di
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | The design and its rationale — why pull-to-self, why two DDC dialects, why post-login |
 | [`AGENTS.md`](AGENTS.md) | Instructions for anyone (human or agent) changing this repo, including the hard safety rules |
 | `docs/decisions/` | Architectural trade-offs and why they went the way they did, so they don't get relitigated |
+| [`docs/macos-parity.md`](docs/macos-parity.md) | What the macOS side still needs to catch up on, and the invariants it must not break |
 | `ideas/` | Exploratory design notes, including `ideas/rejected/` for options deliberately declined |
 | `macos/` | Working implementation: `usb-watch` (IOKit) + `trigger-kvm.sh` (m1ddc) + LaunchAgent |
 | `windows/` | Working implementation: `usb-watch.ps1` (WMI) + `trigger-kvm.ps1` (aimed NVAPI I2C, both panels) + Scheduled Task |
