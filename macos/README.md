@@ -1,9 +1,13 @@
 # macOS side
 
-At parity with the Windows side, per
-[`../docs/macos-parity.md`](../docs/macos-parity.md). Read that document before
-changing anything here — almost everything in it was arrived at by getting it
-wrong first, on real hardware.
+At parity with the Windows side. The shared behaviour is specified in
+[`../specs/`](../specs/) and the hard safety rules in
+[`../AGENTS.md`](../AGENTS.md) — read both before changing anything here.
+Almost everything in them was arrived at by getting it wrong first, on real
+hardware.
+
+**Change the spec first**, then this implementation, then add an entry to
+[`HANDOFF.md`](HANDOFF.md) saying what Windows owes.
 
 A LaunchAgent runs `trigger-kvm watch`, which reads the config and execs the
 watcher; the watcher fires `trigger-kvm pull` when a watched device arrives.
@@ -149,8 +153,8 @@ you typed and are watching, never an automatic switch.
 ## Configuration
 
 `~/Library/Application Support/trigger-kvm/config` — the same flat `key = value`
-format the Windows side uses, documented in
-[`../docs/macos-parity.md`](../docs/macos-parity.md) §2. Everything is read at
+format the Windows side uses, specified in
+[`../specs/config-format.md`](../specs/config-format.md). Everything is read at
 the point it is used, so there is no apply step.
 
 A config is **machine-local**. `computer.this` differs per machine, and the LG

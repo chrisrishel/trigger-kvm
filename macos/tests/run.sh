@@ -52,6 +52,8 @@ if [ "$LINT" = "1" ]; then
     # so shellcheck cannot infer their shell without being told.
     targets="$MAC_DIR/trigger-kvm"
     [ -f "$MAC_DIR/install.sh" ] && targets="$targets $MAC_DIR/install.sh"
+    [ -f "$MAC_DIR/../specs/check-conformance.sh" ] &&
+      targets="$targets $MAC_DIR/../specs/check-conformance.sh"
     # shellcheck disable=SC2086
     if shellcheck -x -P SCRIPTDIR -s bash $targets "$MAC_DIR"/lib/*.sh "$HERE"/*.sh 2>&1; then
       echo "  PASS  shellcheck"

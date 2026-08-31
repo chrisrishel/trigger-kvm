@@ -223,6 +223,19 @@ mutate 'scope: a menu stops declaring its scratch local' lib/menu.sh conventions
 mutate 'sidechannel: input-alt appears somewhere else too' lib/display.sh conventions.tests.sh \
   's%^# --- the packet%_unused_alt="input-alt"\n# --- the packet%'
 
+# --- spec conformance --------------------------------------------------------
+#
+# The check is what makes "change the spec first" a rule rather than a hope, so
+# it has to be able to fail. Drop a normative string from the implementation and
+# the suite must go red.
+
+mutate 'spec: an implementation renames a section header' lib/walkthrough.sh spec.tests.sh \
+  's%--- computers ---%--- machines ---%'
+mutate 'spec: an implementation drops a normative sentence' lib/walkthrough.sh spec.tests.sh \
+  's%These monitors are shared between this computer%These monitors are shared between this box%'
+mutate 'spec: the checker stops reporting anything missing' ../specs/check-conformance.sh spec.tests.sh \
+  's%MISSING=$(( MISSING + 1 ))%:%'
+
 echo
 if [ "$survived" = "0" ]; then
   echo "all $checked mutations were caught"

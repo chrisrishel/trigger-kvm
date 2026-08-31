@@ -435,6 +435,8 @@ code**, update whichever of these the change affects:
 | `displays.toml` | Any monitor, input value, DDC method, or trigger device changes |
 | `macos/README.md`, `windows/README.md` | That platform's install, components, or behaviour changes |
 | `AGENTS.md` | A new constraint or hazard is discovered that future work must respect |
+| `specs/*.md` | Any behaviour BOTH platforms must share changes -- and this happens FIRST, before the implementation |
+| `<platform>/HANDOFF.md` | You changed something the other platform now owes. Delete the entry when it lands there. |
 
 Two specific obligations:
 
@@ -446,9 +448,51 @@ Two specific obligations:
   are actively dangerous — this repo's docs encode which values are safe to send to
   a service channel.
 
-New docs earn their existence when their job arises, not before. A spec directory
-is not warranted yet; `displays.toml` plus `ARCHITECTURE.md` currently carry the
-contract. If the map outgrows a single readable file, graduate it to `specs/`.
+## specs/ is normative -- change it FIRST
+
+`specs/` is what the implementations are built FROM. **Where a spec and an
+implementation disagree, the implementation is wrong.** Start at
+[`specs/README.md`](specs/README.md).
+
+It exists because there are now two implementations of one flow sharing no code.
+This section used to say a spec directory was not warranted; it became warranted
+the moment the macOS side reached parity.
+
+**A change to anything specified there happens in this order, and the order is
+the point:**
+
+1. **Change the spec first.** If you cannot describe the new behaviour there, it
+   is not ready to implement.
+2. **Implement it on the platform you are working on**, with tests.
+3. **Write a handoff entry** in that platform's `HANDOFF.md` -- what changed,
+   which spec section, why, and what the other platform owes.
+
+**DO NOT EDIT THE OTHER PLATFORM.** You cannot run its tests or see its
+hardware, and a half-made change there is worse than none. `macos/HANDOFF.md`
+and `windows/HANDOFF.md` are how the work gets there. They are QUEUES, not logs:
+delete an entry once the other side lands it, because git already keeps the
+history.
+
+This is enforced, not merely asked for. Each platform's suite runs a conformance
+check asserting that every string the spec marks normative is present in that
+platform's sources, so **a spec edit fails the other platform's tests until it
+catches up**. On macOS that is `macos/tests/spec.tests.sh` driving
+`specs/check-conformance.sh`.
+
+Know what that check does not prove: it proves a string is PRESENT, not that it
+is REACHABLE. A shadowed function can still contain it -- which is exactly how
+`windows/install.ps1` ended up with the older wording live and the newer wording
+dead in the same file. Pair it with a structural check for duplicate
+definitions.
+
+**What does NOT go in a spec.** Each fact lives in exactly one file, because two
+representations of one fact can disagree and one cannot -- which is why `scene.*`
+and `display.<label>.self` were both deleted. The hard safety rules and every
+hardware-learned hazard stay in THIS file. Measured values stay in
+`displays.toml`. The high-level map stays in `ARCHITECTURE.md`. A spec may point
+at them; it may not restate them.
+
+New docs earn their existence when their job arises, not before.
 
 ## Build and test
 

@@ -13,9 +13,14 @@
   part of that note with no home yet. Trigger: when someone reports a monitor that answers
   neither standard DDC nor a known manufacturer dialect.
 
-- **The macOS side is now well behind Windows.** `macos/trigger-kvm.sh` still speaks the
-  pre-machines config (`display.<label>.self`, `scene.*`), which no longer exists, and knows
-  nothing about `computer.this`, the input map, `install.autostart`, or Bluetooth triggers.
-  `docs/macos-parity.md` has been kept current as the handoff brief. Trigger: before using
-  the Mac side again, or before publishing — whichever comes first. Until then the Mac
-  cannot read a config this repo writes.
+- **Windows owes three spec conformance fixes and a duplicate-definition cleanup.**
+  Written up in `macos/HANDOFF.md`, with the failing conformance output. The
+  sharpest of them: `install.ps1` defines `Test-DisplayInput` twice and the live
+  one is the older single-question version, so the monitor check does not behave
+  the way `specs/configure.md` §10.4 says. Trigger: next time the Windows side is
+  worked on.
+
+- **The Windows suite has no conformance check.** `specs/check-conformance.sh` is
+  the macOS implementation; the marker format is the contract and Windows needs
+  its own in PowerShell, run by `run.ps1`. Until it exists, a spec edit fails only
+  the macOS suite. Trigger: with the handoff above.
