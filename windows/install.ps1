@@ -520,7 +520,10 @@ function Test-DisplayInput {
 # One display: identity is already known from NVAPI; what we need from the human is
 # whether to manage it, what to call it, and which input THIS machine is on.
 function Get-DisplayAnswers {
-    param($Found, [hashtable]$Existing, [bool]$AllowDemo)
+    # $Existing is a PSCustomObject or $null -- deliberately untyped, because a
+    # [hashtable] annotation here silently accepted the call at parse time and threw
+    # a transformation error at RUN time, i.e. mid-walkthrough.
+    param($Found, $Existing)
 
     $key   = '{0:X4}:{1:X4}' -f $Found.EdidVendor, $Found.EdidProduct
     $known = $KNOWN_MONITORS[$key]
@@ -550,11 +553,21 @@ function Get-DisplayAnswers {
     }
     Write-Host '    t) type a value'
 
+    # Pre-fill with the configured value's row, so enter-through keeps it. A
+    # re-run should be a review, not a re-entry.
+    $defaultPick = ''
+    if ($Existing -and $Existing.Self) {
+        for ($i = 0; $i -lt $names.Count; $i++) {
+            if ($table[$names[$i]] -ieq $Existing.Self) { $defaultPick = [string]($i + 1) }
+        }
+        if (-not $defaultPick) { $defaultPick = 't' }
+    }
+
     $self = $null
     while (-not $self) {
-        $pick = Read-Default '  Choice' $(if ($Existing) { '' } else { '' })
+        $pick = Read-Default '  Choice' $defaultPick
         if ($pick -eq 't') {
-            $typed = Read-Default '  Value (e.g. 0x11)' ''
+            $typed = Read-Default '  Value (e.g. 0x11)' $(if ($Existing) { $Existing.Self } else { '' })
             if ($typed -match '^(0[xX])?[0-9A-Fa-f]{1,2}$') { $self = $typed }
             else { Write-Host '  Not a byte.' }
         }
@@ -633,11 +646,14 @@ function Invoke-Configure {
                 $l = $Matches[1]
                 if (($existing["display.$l.vendor"] -replace '^0[xX]','').ToUpper().PadLeft(4,'0') -eq $key.Split(':')[0] -and
                     ($existing["display.$l.product"] -replace '^0[xX]','').ToUpper().PadLeft(4,'0') -eq $key.Split(':')[1]) {
-                    $prior = [PSCustomObject]@{ Label = $l }
+                    $prior = [PSCustomObject]@{
+                        Label = $l
+                        Self  = $(if ($existing.ContainsKey("display.$l.self")) { $existing["display.$l.self"] } else { '' })
+                    }
                 }
             }
         }
-        $a = Get-DisplayAnswers -Found $f -Existing $prior -AllowDemo $true
+        $a = Get-DisplayAnswers -Found $f -Existing $prior
         if ($a) { $answers += $a }
     }
 
@@ -705,7 +721,9 @@ function Invoke-Configure {
     if (-not $onPath) {
         Write-Host ''
         Write-Host '--- PATH ---'
-        Write-Host ("  Add {0} to your PATH, so `trigger-kvm` works from anywhere?" -f $BINDIR)
+        # Single quotes: in a DOUBLE-quoted PowerShell string a backtick is the escape
+        # character, so "`trigger-kvm`" renders as TAB + "rigger-kvm".
+        Write-Host ('  Add {0} to your PATH, so `trigger-kvm` works from anywhere?' -f $BINDIR)
         Write-Host '  Only that directory is added, and it holds only the launcher.'
         $wantPath = Read-YesNo '  Add it?' $true
     }
