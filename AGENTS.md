@@ -86,6 +86,27 @@ once already — do not go looking for a bug in it.
 Neither of these is a bug to fix on sight; they are things to know before changing
 the detectors, and to reach for first if a spurious switch is ever reported.
 
+**One physical USB plug produces DOZENS of `Win32_DeviceChangeEvent` indications,
+not one.** Measured 2026-08-30: plugging a single device in generated 32 events in
+about three seconds, and unplugging it another 13. The event carries no device
+identity, so each one costs a `Win32_PnPEntity` query to find out what happened.
+
+Two consequences. The debounce is not belt-and-braces against a flaky switch, it is
+load-bearing for ordinary operation -- without it a single arrival would fire the
+switcher dozens of times. And the no-edge branch is the common case by a wide
+margin, which is why its log line is `Write-Verbose` and not `Write-Log`; promoting
+it would bury the log in noise on every plug.
+
+**WMI device notifications DO reach session 0.** Measured 2026-08-30 from an
+unelevated S4U task: 45 indications in 90s, and `Win32_PnPEntity` presence queries
+work there too. This is what makes the pre-login tier viable rather than a silent
+failure -- the switcher was already proven in session 0, but a detector that never
+fires would have been worse than one that errors. The reason it works: the watcher
+uses `Win32_DeviceChangeEvent`, a WMI extrinsic event from the Winmgmt service,
+**not** `WM_DEVICECHANGE`, which is a window message and would need a desktop. Do
+not "simplify" the detector onto window messages; it would break the s4u tier
+silently and post-login would keep working, so nobody would notice.
+
 **Only one device ever appears in the log, and that is correct.** Both watched
 devices arrive together when the USB switch moves. Whichever lands first fires; the
 other falls inside the debounce window and is discarded. In practice the Focusrite

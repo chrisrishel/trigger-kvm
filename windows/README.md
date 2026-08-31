@@ -369,8 +369,19 @@ corroborated by `lg-input-switch`.
   working there did not imply this, and the two had to be tested separately -- phase
   1 deliberately sent no writes. This settles the pre-login design: a plain
   at-startup task drives the displays directly, with no relay.
-- **Does a pre-login tier get built?** Open, and now a permissions question rather
-  than a technical one. It needs admin to register (measured: `S4U` and `SYSTEM`
+- **Do WMI device notifications reach a session-0 watcher? YES.** Measured
+  2026-08-30 from an unelevated S4U task (`sessionId=0 interactive=False`): 45
+  `Win32_DeviceChangeEvent` indications received in 90s, and `Win32_PnPEntity`
+  presence queries returned correct results there too. This was the last thing that
+  could have made the s4u tier fail *silently* -- the switcher was already proven in
+  session 0, but the detector was not, and a watcher that runs and never fires is
+  the worst failure shape available. The distinction that made it plausible either
+  way: `WM_DEVICECHANGE` is a window message and needs a desktop, while
+  `Win32_DeviceChangeEvent` is a WMI extrinsic event from the Winmgmt service. Only
+  the latter is used here, and it is session-independent.
+- **Does a pre-login tier get built?** Built as opt-in (`-Tier s4u`); the remaining
+  step is a reboot acceptance test. It is a permissions question rather than a
+  technical one. It needs admin to register (measured: `S4U` and `SYSTEM`
   principals both fail with "Access is denied" for an ordinary user, while the
   `Interactive` task this installer uses does not). That changes the project's
   current "no admin needed" posture, so it is a deliberate call, not a default.
