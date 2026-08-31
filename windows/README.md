@@ -322,19 +322,22 @@ corroborated by `lg-input-switch`.
   Verified visually 2026-08-30, both directions, including the pull-back from an
   inactive link. That collapsed the two identity mechanisms into one and removed the
   last `dxva2` dependency, so the switcher no longer needs a desktop at all.
-- **Does either write work from session 0?** Unknown. Enumeration does, in every
-  context tested; writing has only ever been done from an interactive session. This
-  is the remaining gate on a pre-login tier, and phase 1 could not answer it because
-  phase 1 deliberately sent no writes.
-- **Does a pre-login tier get built?** The capability is all but proven; the cost is
-  admin rights to register the task (measured: S4U registration is denied to a
-  standard user). Nothing is built yet. See
-  [`../ideas/nvapi-transport.md`](../ideas/nvapi-transport.md).
-- Could NVAPI carry both monitors and remove the dual-code-path? Now looks likely
-  rather than merely possible: the enumeration and identity halves are proven, and
-  the write half would use the already-corroborated `NvAPI_I2CWrite`.
-- Pre-login needs admin regardless: registering a scheduled task with `S4U` or a
-  `SYSTEM` principal both fail with "Access is denied" for an ordinary user, while
-  the `Interactive` task this installer uses does not. There is no zero-admin route.
-  An `S4U` task is nonetheless preferable to a service -- it needs admin once to
-  register, then runs with ordinary user rights.
+- **Does a WRITE work from session 0? YES.** Measured 2026-08-30 from an unelevated
+  on-demand S4U task (`sessionId=0 interactive=False`): it pushed the LG to the Mac,
+  held 12s, and pulled it back, **both moves confirmed visually**. Enumeration
+  working there did not imply this, and the two had to be tested separately -- phase
+  1 deliberately sent no writes. This settles the pre-login design: a plain
+  at-startup task drives the displays directly, with no relay.
+- **Does a pre-login tier get built?** Open, and now a permissions question rather
+  than a technical one. It needs admin to register (measured: `S4U` and `SYSTEM`
+  principals both fail with "Access is denied" for an ordinary user, while the
+  `Interactive` task this installer uses does not). That changes the project's
+  current "no admin needed" posture, so it is a deliberate call, not a default.
+  `S4U` is the tier to prefer: admin once to register, then ordinary user rights at
+  runtime, and no elevated code on the switch path.
+- **Note what it would actually add. Locking is already covered.** Confirmed
+  2026-08-30: with the screen locked, flipping the USB switch still pulls the
+  displays back, because the session and its watcher are still alive. A pre-login
+  tier buys the two narrower cases -- **before the first login after a boot** and
+  **after a full logoff**. The first is the one that stings: a rebooted PC sitting at
+  a login screen you cannot see, because the monitors are still showing the Mac.

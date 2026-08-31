@@ -332,11 +332,18 @@ once with `another usb-watch is already running`.
   unrelated line. Prose files are unaffected; use ASCII punctuation in scripts.
 - Send DDC writes more than once. They are idempotent and the bus is lossy.
 - Post-login only, both platforms, as shipped. Do not add pre-login support without
-  asking. The old reasoning — session 0 has no `HMONITOR` — was true of the `dxva2`
-  path, which no longer exists. Measured 2026-08-30: NVAPI enumerates and identifies
-  both panels from session 0, and the Windows switcher now has no desktop dependency
-  at all. **Writing from session 0 is still untested**, and registering a pre-login
-  task needs admin. macOS is unchanged and still blocked.
+  asking — that is a permissions decision, not a technical one, and it is no longer
+  blocked by anything. The old reasoning (session 0 has no `HMONITOR`) was true of
+  the `dxva2` path, which no longer exists. Measured 2026-08-30: NVAPI both
+  enumerates **and writes** from session 0, an unelevated S4U task moved the LG in
+  both directions with no desktop, and the switcher has no desktop dependency left.
+  What still stands in the way is that registering such a task needs admin, which
+  changes this project's "no admin needed" posture. macOS is unchanged and blocked.
+- **Enumerating is not writing. Do not generalise from one to the other.** Phase 1
+  proved NVAPI enumerates in session 0 and it was tempting to call pre-login solved;
+  it was not, and the write had to be tested separately before anything could be
+  claimed. It happened to pass. It could have failed, and the fallback design was
+  far more expensive.
 - **Never let the switcher trust the Windows display list for identity.** In session
   0 `user32` reports one *phantom* monitor rather than none, so it fails by
   mis-resolving instead of erroring. NVAPI is the sole identity source. This is why

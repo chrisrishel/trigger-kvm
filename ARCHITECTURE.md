@@ -224,15 +224,25 @@ identity check that trusts the Windows display list in a non-interactive context
 matches against a fiction. NVAPI is therefore the sole identity source. See
 `AGENTS.md`.
 
-The Windows side is still a Scheduled Task at logon in the interactive session, and
-what remains between here and a pre-login tier is no longer about desktops:
+The Windows side is still a Scheduled Task at logon in the interactive session, but
+that is now a **choice about permissions, not a technical limit**. Measured
+2026-08-30: an unelevated S4U task in session 0, with no desktop, drove the LG to
+the Mac and back — confirmed visually. Enumeration and writing both work there, and
+they had to be established separately: enumeration working did not imply writing
+would.
 
-- **Writing from session 0 is untested.** Enumeration works there; every write so far
-  has come from an interactive session. Phase 1 could not answer this because it
-  deliberately sent nothing.
-- **Registering the task needs admin** — measured: S4U registration is denied to a
-  standard user, and storing a password is rejected. So no-admin means post-login
-  only, which is a genuine capability ladder rather than an oversight.
+What remains is the permission trade, which is real and is the user's to make:
+
+- **Registering a pre-login task needs admin.** S4U registration is denied to a
+  standard user, and the password logon type is rejected because it means storing a
+  credential. So no-admin genuinely buys post-login only — a capability ladder
+  rather than an oversight.
+- **Locking is already covered without any of this.** Confirmed 2026-08-30: with the
+  screen locked, flipping the USB switch still pulls the displays back, because the
+  session and its watcher are still alive. A pre-login tier therefore buys the two
+  narrower cases: **before the first login after a boot**, and **after a full
+  logoff**. The first is the one that stings — a rebooted PC sitting at a login
+  screen you cannot see, because the monitors are still showing the other machine.
 
 See `ideas/nvapi-transport.md`.
 

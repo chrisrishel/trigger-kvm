@@ -193,13 +193,25 @@ through NVAPI, and `windows/switch-displays.ps1` now touches no desktop API at a
 Why no vendor-neutral fallback was kept:
 `../docs/decisions/001-nvapi-as-the-only-windows-transport.md`.
 
+**`NvAPI_I2CWrite` reaches the monitor from session 0, with no desktop.** Measured
+2026-08-30 from an on-demand S4U task -- `user=WINDOWS-PC\user sessionId=0
+interactive=False`, unelevated -- which pushed the LG to the Mac, held 12s, and
+pulled it back. Both writes returned 0 and **both moves were confirmed visually**.
+
+That was the last gate on a pre-login tier, and it settles the design: a plain
+at-startup task can drive the displays directly. No relay, no token duplication, no
+Winlogon input desktop, and none of the EDR-bait that design would have carried.
+
+Note what it took to be able to say this: enumeration working in session 0 (phase 1)
+did **not** imply writing would, and phase 1 deliberately could not answer it because
+it sent nothing. The two had to be tested separately.
+
 ## Still unproven
 
-- Whether the write works from session 0. Enumeration does there; writing has only
-  been done from an interactive session. This is the remaining gate on a pre-login
-  tier -- and the one thing phase 1 could not answer, because phase 1 sent no writes.
-- Whether this holds at the actual logon screen, before any user has logged in. See
-  the caveat on the boot row above.
+- Whether this holds at the actual logon screen, before any user has logged in. The
+  session-0 test above ran while a user was logged on; session 0 was empty of a
+  desktop, but the machine was not empty of a session. See also the caveat on the
+  boot row. This is now the ONLY untested step in the pre-login path.
 
 ## Licence
 
