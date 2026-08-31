@@ -88,6 +88,17 @@ is what `install.ps1` registers. There is deliberately no plugin system or trigg
 registry — the process boundary already is one, and a second abstraction on top
 would earn nothing.
 
+**Verified end to end on hardware, 2026-08-30.** With the AirPods paired but
+disconnected the watcher armed with `0 already present` -- the case a PnP check
+would have got wrong -- and connecting them produced:
+
+```
+arrival bt:0011223344ff; settling 0.75s
+fired: nvapi-probe.ps1 TEST (pid 17016)
+```
+
+Connection detected, edge recognised, settle honoured, switcher invoked.
+
 **Two transports, one list.** USB device presence and Bluetooth *connection* are
 both sources in the same process. The config takes one device list and the transport
 rides on each value:
