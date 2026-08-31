@@ -488,7 +488,8 @@ re-enables and restarts.
   dedupe across them. `event-watch.ps1` takes a `Global\` (machine-wide) mutex as
   defence in depth behind that, never a `Local\` one, which is per-session.
 - Post-login is the DEFAULT, not the only option, since 2026-08-30. `install.ps1`
-  defaults to the no-admin user tier; `-Tier s4u` adds before-first-login and
+  a headless install defaults to login-start; answering "from boot" adds
+  before-first-login and
   after-logoff at the cost of admin *to register* (it still runs unelevated). Do not
   change which is the default without asking — no-admin is a deliberate posture.
   macOS remains post-login only.

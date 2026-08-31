@@ -46,7 +46,7 @@ from anywhere:
 trigger-kvm configure          interactive; current settings pre-fill the defaults,
                                and it applies whatever you changed
 trigger-kvm configure -Fresh   ...but pre-fill nothing; scenes are still kept
-trigger-kvm status             tier, coverage, version, what is configured
+trigger-kvm status             when it starts, what that covers, version
 trigger-kvm discover           what is attached, in the form the config wants
 trigger-kvm restart            make a hand-edited config take effect now
 trigger-kvm logs               tail the log
@@ -85,24 +85,40 @@ that is the same kind of menu, with the settings themselves as the rows:
 
     Monitors                     asus on 0x11, lg on 0xD0
     Trigger devices              usb:046d:0843, bt:0011223344ff
-    When it starts               when you log in
+    When it starts               from boot
     PATH                         add ...	rigger-kvmin
-  > Test the monitors            not tried yet
+
+  > Test the trigger             untested
+    Test the monitors            untested
+
     Save configuration and run
-    Cancel, change nothing
+    Cancel (discard changes)
 ```
+
+Three groups: what you set, what you can check, and what ends the walkthrough.
+Seven flat rows read as seven equal choices, so the separators do the work that
+renaming the rows to imply grouping would have done badly.
 
 Choosing a setting re-enters that section — a menu rather than a linear "go back
 one step", because the answer you got wrong is rarely the last one you gave.
 Nothing is written until you pick save, so an interrupted run leaves a working
 setup untouched.
 
-**Where the cursor lands is the recommendation**: test first, save once it passed,
-go back to the monitors if it did not. A pass does not survive editing the monitors
-— it belonged to the values that passed, and showing "every monitor responded"
-beside numbers nothing tried would be a lie the user has no way to catch.
+**Where the cursor lands is the recommendation**, and it walks the checks in order:
+trigger, then monitors, then save. A failure sends the cursor to the setting that
+failed rather than onward. Neither pass survives editing what it was a pass *for* —
+it belonged to those values, and showing "all responded" beside numbers nothing
+tried would be a claim the user has no way to catch.
 
-**Testing happens before anything is written.** The switcher takes a panel's method
+**Testing the trigger watches for a real arrival.** `event-watch.ps1 -TestTrigger`
+prints what is present now, then waits for one of the chosen devices to *arrive* —
+the same event that fires a switch — and reports it. It lives in the watcher for the
+same reason the Bluetooth listing does: that script owns presence, and a second
+implementation in the installer would be free to disagree with the one that
+actually fires, which is the worst possible place for a disagreement. It takes no
+lock and runs nothing, so a real watcher may be running alongside.
+
+**Testing the monitors happens before anything is written.** The switcher takes a panel's method
 and identity from a config file rather than from the command line — deliberately,
 so there is one description of a panel and not two — so the test writes a throwaway
 config, uses it, and deletes it. The alternative was writing the real config early,
@@ -114,10 +130,16 @@ automatically** before asking anything, so the question always arrives on a disp
 that has already returned. It only has to *change* — "No Signal" on an empty input
 proves the switch just as well.
 
-Anywhere a value is already configured, the row carrying it is marked `[now]`.
-Starting the cursor there is not enough on its own: the cursor also means "where you
-are", so on a re-run there was no way to tell an unchanged default from a deliberate
-choice.
+Anywhere a value is already configured, its row is marked `(current)`. Starting the
+cursor there is not enough on its own: the cursor also means "where you are", so on
+a re-run there was no way to tell an unchanged default from a deliberate choice.
+
+**"When should it start watching?" offers from-boot first, and defaults to it**, so
+a PC sitting at a login screen still follows the switch. The cost is one UAC prompt
+during setup, which beats discovering months later that switching quietly does
+nothing until someone logs in. A config that already says otherwise still wins — an
+existing choice is a choice. A *headless* install still defaults to the no-admin
+tier, because it cannot ask: nothing elevates without someone choosing it.
 
 `configure -Fresh` asks everything again with **nothing pre-filled**, for when the
 desk changed enough that the old answers are the wrong starting point and
@@ -138,9 +160,19 @@ restarts it for you; `restart` exists for hand-edits.
 
 **Verbs, and the same verbs on macOS.** You use both machines daily, so the words
 typed constantly are where cross-platform muscle memory is worth buying. Flags stay
-idiomatic per platform — `-Tier` here, `--tier` there — because forcing `--tier`
-into PowerShell means hand-parsing `$args` and losing parameter binding, validation
-and completion, which is a real cost for a cosmetic gain.
+idiomatic per platform — `-AddToPath` here, `--add-to-path` there — because forcing
+the POSIX spelling into PowerShell means hand-parsing `$args` and losing parameter
+binding, validation and completion, which is a real cost for a cosmetic gain.
+
+**There is no "tier" any more, and no flag for when it starts.** It was the internal
+name for the boot-vs-login distinction and it leaked into the CLI, the status
+output and the config. A name like `s4u` tells a reader nothing they can act on;
+what they want to know is whether a locked or logged-out PC still follows the
+switch. The walkthrough asks in those words, the config records
+`install.start = boot|login`, and the installer applies what it finds — so the flag
+was redundant with a config the installer already had to read. Old configs saying
+`install.tier = s4u|user` are still honoured, with a warning, and `configure`
+rewrites the file without them.
 
 **Only `bin\` goes on PATH, and it holds exactly one file.** Putting the whole
 install directory there would publish every file in it as a global command, because

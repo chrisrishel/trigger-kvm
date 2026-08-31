@@ -71,6 +71,7 @@ param(
     # Omitted, it comes from the config -- which is the normal case. Passing it
     # explicitly is for testing a device by hand without editing anything.
     [Parameter(ParameterSetName = 'Watch')]
+    [Parameter(ParameterSetName = 'TestTrigger')]
     [string[]]$Device,
 
     # Print "address|connected|name" for every paired Bluetooth device and exit.
@@ -80,6 +81,19 @@ param(
     # shape as `trigger-kvm.ps1 list` answering for displays.
     [Parameter(Mandatory = $true, ParameterSetName = 'ListBluetooth')]
     [switch]$ListBluetooth,
+
+    # Watch the configured devices for ONE arrival and exit, reporting what it saw.
+    # The installer offers this as "test the trigger", and it lives here for the same
+    # reason -ListBluetooth does: this script owns presence, and a second
+    # implementation in the installer would be free to disagree with the one that
+    # actually fires. Takes no lock and runs nothing -- a real watcher may be running
+    # alongside, and this must not disturb it.
+    [Parameter(Mandatory = $true, ParameterSetName = 'TestTrigger')]
+    [switch]$TestTrigger,
+
+    # How long to wait for that arrival. Long enough to walk to the switch and back.
+    [Parameter(ParameterSetName = 'TestTrigger')]
+    [int]$Timeout = 90,
 
     [Parameter(ParameterSetName = 'Watch')]
     [double]$Debounce = 3.0,
@@ -400,6 +414,40 @@ function Get-PresenceMap {
         }
     }
     return $map
+}
+
+# Watch for one arrival and report it. Deliberately after the presence functions and
+# before anything that arms or locks: this is a question about the devices, not a
+# second watcher.
+if ($TestTrigger) {
+    $state = Get-PresenceMap
+    Write-Host ''
+    foreach ($w in $watch) {
+        Write-Host ('  {0,-20} {1}' -f $w.Key, $(if ($state[$w.Key]) { 'here now' } else { 'not here' }))
+    }
+    Write-Host ''
+    Write-Host '  Flip your switch AWAY from this PC, then back again.'
+    Write-Host ("  Waiting up to {0}s. Ctrl+C to give up." -f $Timeout)
+    Write-Host ''
+
+    $deadline = (Get-Date).AddSeconds($Timeout)
+    while ((Get-Date) -lt $deadline) {
+        Start-Sleep -Milliseconds 700
+        $now = Get-PresenceMap
+        foreach ($w in $watch) {
+            if ($now[$w.Key] -eq $state[$w.Key]) { continue }
+            if ($now[$w.Key]) {
+                # An arrival is the event the watcher fires on, so this is the answer.
+                Write-Host ('  {0} arrived -- this is what fires the switch.' -f $w.Key)
+                exit 0
+            }
+            Write-Host ('  {0} left.' -f $w.Key)
+        }
+        $state = $now
+    }
+
+    Write-Host '  Nothing arrived.'
+    exit 1
 }
 
 function Invoke-Exec {

@@ -50,7 +50,7 @@ trigger.device   = usb:046d:0843, bt:0011223344ff
 trigger.debounce = 3.0
 trigger.settle   = 0.75
 
-install.tier     = user         # user | s4u -- a configured value like any other
+install.start    = login        # boot | login -- a configured value like any other
 
 scene.windows.lg = 0xD0         # manual only -- the trigger never reads scenes
 ```
@@ -208,7 +208,7 @@ both run-loop sources and drop into the same place.
 ## 5. Install tiers, and the pre-login problem
 
 Windows now ships two tiers: a default needing no admin (logon task, covers
-everything from login onward **including while locked**), and `-Tier s4u` needing
+everything from login onward **including while locked**), and boot-start needing
 admin once to register, which runs at boot in session 0 and adds before-first-login
 and after-logoff.
 

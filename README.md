@@ -189,7 +189,7 @@ gotchas above.
 
 **Windows** ships two install tiers. The default needs no admin and covers
 everything from logon onward — **including while the screen is locked**, since
-locking doesn't end your session. `install.ps1 -Tier s4u` needs admin once to
+locking doesn't end your session. Choosing "from boot" needs admin once to
 register, then runs unelevated at startup in session 0, adding before-first-login
 and after-logoff. Measured 2026-08-30: NVAPI both enumerates *and writes* with no
 desktop, so no relay or token duplication is involved. See

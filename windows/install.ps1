@@ -12,7 +12,7 @@ Afterwards it is one command from anywhere (add -AddToPath, or use the full path
 
     trigger-kvm configure          interactive; current settings pre-fill the
                                    defaults, and it applies what you changed
-    trigger-kvm status             tier, coverage, version, what is configured
+    trigger-kvm status             when it starts, what that covers, version
     trigger-kvm discover           what is attached, in the form the config wants
     trigger-kvm restart            make a hand-edited config take effect now
     trigger-kvm logs               tail the log
@@ -32,36 +32,43 @@ restarts it for you; `restart` is there for hand-edits.
 
 VERBS, and the same verbs on macOS. You use both machines daily, so the words you
 type constantly are where cross-platform muscle memory is worth buying. Flags stay
-idiomatic per platform (-Tier here, --tier there): forcing `--tier` into PowerShell
-means hand-parsing $args and losing parameter binding, validation and completion,
-which is a real cost for a cosmetic gain.
+idiomatic per platform (-AddToPath here, --add-to-path there): forcing the POSIX
+spelling into PowerShell means hand-parsing $args and losing parameter binding,
+validation and completion, which is a real cost for a cosmetic gain.
 
-TWO TIERS, recorded in the config as install.tier, and you pick by what you are
-willing to grant:
+WHEN IT STARTS, recorded in the config as install.start, and chosen by what you
+are willing to grant. There is no flag for it and no name for it in anything a
+user reads -- the walkthrough asks, the config records the answer, and the
+installer applies what it finds. It was called a "tier" for a while, which told a
+reader nothing they could act on:
 
-  user (default)  Runs at logon, in your interactive session, unelevated.
-                  NO ADMIN, at install or at run time.
-                  Covers everything from logon onward -- including while the
-                  screen is LOCKED, since the session and watcher stay alive.
-                  Does not cover: before the first login after a boot, or after
-                  a full logoff.
+  install.start = boot     Runs at startup, in session 0, as you, still
+                           UNELEVATED. ADMIN ONCE, to register the task --
+                           prompted for via UAC. Nothing elevated runs on the
+                           switch path afterwards. This is what the walkthrough
+                           offers first, because it behaves the way people
+                           expect. Internally: an S4U task, $EffectiveTier 's4u'.
 
-  s4u             Runs at startup, in session 0, as you, still UNELEVATED.
-                  ADMIN ONCE, to register the task -- prompted for via UAC.
-                  Nothing elevated runs on the switch path afterwards.
-                  Adds: before-first-login and after-logoff.
+  install.start = login    Runs at logon, in your interactive session,
+                           unelevated. NO ADMIN, at install or at run time.
+                           Covers everything from logon onward -- including
+                           while the screen is LOCKED, since the session and
+                           watcher stay alive. Does not cover: before the first
+                           login after a boot, or after a full logoff. What a
+                           HEADLESS install falls back to, because it cannot ask
+                           for elevation. Internally: 'user'.
 
-The tiers are mutually exclusive by construction -- they share one task name, so
+The two are mutually exclusive by construction -- they share one task name, so
 installing either replaces the other. Two live watchers in different sessions
 would both fire on the same arrival, and the debounce is per-process, so it
 cannot dedupe across them. event-watch.ps1 also takes a machine-wide mutex as
 defence in depth.
 
-The tier is a property of the HOST, not of the switcher. Nothing in
-trigger-kvm.ps1 or event-watch.ps1 knows or asks which tier it runs under. If
-either ever needs to, the abstraction is wrong -- stop and rethink.
+This is a property of the HOST, not of the switcher. Nothing in trigger-kvm.ps1
+or event-watch.ps1 knows or asks when it was started. If either ever needs to,
+the abstraction is wrong -- stop and rethink.
 
-Why s4u is possible at all: measured 2026-08-30, NVAPI both enumerates and
+Why starting from boot is possible at all: measured 2026-08-30, NVAPI both enumerates and
 WRITES from session 0 with no desktop -- an unelevated S4U task moved the LG in
 both directions, confirmed visually. The old blocker was dxva2 needing an
 HMONITOR, and that path no longer exists. See ..\ARCHITECTURE.md.
@@ -77,12 +84,6 @@ param(
     [Parameter(Position = 0)]
     [ValidateSet('install', 'configure', 'status', 'discover', 'restart', 'logs', 'pause', 'uninstall')]
     [string]$Command = 'install',
-
-    # Overrides install.tier from the config, for scripted installs. Normally the
-    # tier is a configured value like everything else machine-local, so that
-    # `configure` can ask about it and the installer just applies what it finds.
-    [ValidateSet('user', 's4u')]
-    [string]$Tier,
 
     # Put the install directory on the user PATH so `trigger-kvm` works anywhere.
     # Opt-in: editing someone's PATH without asking is rude, and the interactive
@@ -170,16 +171,33 @@ $SEED_SETTLE   = '0.75'
 
 function Write-Log { param([string]$m) Write-Host "install: $m" }
 
-# --- the effective tier ------------------------------------------------------
+# --- when it starts ----------------------------------------------------------
 
-# Config is the source of truth; -Tier overrides it for scripted installs and is
-# what `configure` writes back. Resolved once, here, so every later decision --
-# whether to elevate, which principal to register, what status reports -- reads the
-# same answer.
+# The config is the only source: there is no flag, because a flag would have been a
+# second way to say something the installer already has to read. Resolved once,
+# here, so every later decision -- whether to elevate, which principal to register,
+# what status reports -- reads the same answer.
+#
+# Returns the INTERNAL names ('s4u' / 'user') because they are what the Scheduled
+# Task API calls these principals; nothing a user reads says either word.
 function Get-EffectiveTier {
-    if ($PSBoundParameters.ContainsKey('Tier') -and $Tier) { return $Tier }
     $c = Read-Config -Path (Get-ConfigPath)
-    if ($c.ContainsKey('install.tier') -and $c['install.tier'] -in @('user', 's4u')) { return $c['install.tier'] }
+    if ($c.ContainsKey('install.start')) {
+        if ($c['install.start'] -eq 'boot')  { return 's4u' }
+        if ($c['install.start'] -eq 'login') { return 'user' }
+    }
+    # The old spelling still counts. Unlike the other renamed keys, ignoring this one
+    # would not fall back to a harmless default -- it would silently DOWNGRADE a
+    # working boot-start install to login-only on the next install, with the loss
+    # showing up months later as "switching does nothing at the login screen". The
+    # rename warning still fires, and `configure` rewrites the file without it.
+    if ($c.ContainsKey('install.tier') -and $c['install.tier'] -in @('user', 's4u')) {
+        return $c['install.tier']
+    }
+    # Deliberately NOT the walkthrough's default. The walkthrough offers from-boot
+    # first because it can ask for the UAC prompt and get an answer; a headless or
+    # scripted install cannot, so it takes the tier that needs no elevation. Nothing
+    # ever elevates without someone choosing it.
     return 'user'
 }
 
@@ -316,10 +334,10 @@ function New-DefaultConfig {
         '# machine. Find yours with:  .\nvapi-probe.ps1'
         ''
         '# --- install ----------------------------------------------------------'
-        '# tier: user (no admin, from logon onward incl. locked)'
+        '# start: boot (watches before anyone logs in; set up once with admin)'
         '#       s4u  (admin ONCE to register; adds before-first-login and logoff)'
         ''
-        'install.tier = user'
+        'install.start = login'
         ''
         '# --- displays ---------------------------------------------------------'
         '# method: standard (I2C src 0x51, VCP 0x60) | lg-alt (src 0x50, VCP 0xF4)'
@@ -548,33 +566,46 @@ function Select-One {
           # re-run gave no way to tell an unchanged default from a deliberate one.
           [int]$Current = -1)
 
+    # An empty item is a SEPARATOR: drawn as a blank line, skipped by the cursor and
+    # unpickable. Grouping a long menu beats renaming its rows to imply grouping.
     $rows = @()
+    $sel  = @()
     for ($i = 0; $i -lt $Items.Count; $i++) {
+        if (-not $Items[$i]) { $rows += ''; continue }
+        $sel += $i
         $d = if ($i -lt $Detail.Count) { "$($Detail[$i])" } else { '' }
         $row = $(if ($d) { '{0,-28} {1}' -f $Items[$i], $d } else { $Items[$i] })
-        if ($Current -ge 0) { $row = $(if ($i -eq $Current) { '[now] ' } else { '      ' }) + $row }
+        if ($i -eq $Current) { $row = $row.TrimEnd() + '   (current)' }
         $rows += $row
     }
+    if ($sel.Count -eq 0) { throw 'Select-One: nothing selectable' }
+    if ($sel -notcontains $Default) { $Default = $sel[0] }
 
     if (-not (Test-CanReadKeys)) {
-        for ($i = 0; $i -lt $rows.Count; $i++) { Write-Host ('    {0}) {1}' -f ($i + 1), $rows[$i]) }
+        for ($i = 0; $i -lt $rows.Count; $i++) {
+            if ($sel -contains $i) { Write-Host ('    {0}) {1}' -f ($i + 1), $rows[$i]) }
+            else                   { Write-Host '' }
+        }
         if ($Help) { Write-Host ''; Write-Host $Help }
         while ($true) {
             $pick = Read-Default '  Choice' ([string]($Default + 1))
-            if ($pick -match '^[0-9]+$' -and [int]$pick -ge 1 -and [int]$pick -le $rows.Count) { return ([int]$pick - 1) }
+            if ($pick -match '^[0-9]+$' -and $sel -contains ([int]$pick - 1)) { return ([int]$pick - 1) }
             Write-Host '  Pick a number from the list.'
         }
     }
 
     $width    = Get-MenuWidth
     $helpBody = if ($Help) { @('') + @($Help -split "`r?`n") } else { @() }
-    $cursor   = [Math]::Max(0, [Math]::Min($Default, $rows.Count - 1))
-    $drawn    = 0
+    # The cursor moves over the SELECTABLE rows, not over the drawn ones, so a
+    # separator can never be landed on or wrapped onto.
+    $at    = [Math]::Max(0, $sel.IndexOf($Default))
+    $drawn = 0
 
     while ($true) {
         $lines = @()
         for ($i = 0; $i -lt $rows.Count; $i++) {
-            $lines += '{0} {1}' -f $(if ($i -eq $cursor) { '  >' } else { '   ' }), $rows[$i]
+            if (-not ($sel -contains $i)) { $lines += ''; continue }
+            $lines += '{0} {1}' -f $(if ($i -eq $sel[$at]) { '  >' } else { '   ' }), $rows[$i]
         }
         $lines += $helpBody
         $lines += ''
@@ -582,9 +613,9 @@ function Select-One {
         $drawn = Write-MenuFrame -Lines $lines -Width $width -Previous $drawn
 
         switch (Read-MenuKey) {
-            'UpArrow'   { $cursor = ($cursor - 1 + $rows.Count) % $rows.Count }
-            'DownArrow' { $cursor = ($cursor + 1) % $rows.Count }
-            'Enter'     { Write-Host ''; return $cursor }
+            'UpArrow'   { $at = ($at - 1 + $sel.Count) % $sel.Count }
+            'DownArrow' { $at = ($at + 1) % $sel.Count }
+            'Enter'     { Write-Host ''; return $sel[$at] }
         }
     }
 }
@@ -790,20 +821,26 @@ function Read-Triggers {
     return @($picked | ForEach-Object { $Cands[$_].Key })
 }
 
-# When the watcher should start running. Returns 'user' or 's4u'.
+# When the watcher should start running. Returns 's4u' or 'user'.
+#
+# From boot is offered FIRST and is the default, because it is the answer that
+# behaves the way people expect -- a PC sitting at a login screen still follows the
+# switch. The cost is one UAC prompt during setup, and asking for it once beats
+# discovering months later that switching quietly does nothing until you log in.
+# A config that already says otherwise still wins: an existing choice is a choice.
 function Read-Tier {
     param([string]$Current)
 
     Write-Host ''
-    Write-Host '--- when should it run? ---'
-    Write-Host '  Locking does not end your session, so the first covers most days. The'
-    Write-Host '  second is for a rebooted PC sitting at a login screen you cannot see.'
+    Write-Host '--- when should it start watching? ---'
+    Write-Host '  It can start as soon as the computer starts, or after you log in for'
+    Write-Host '  the first time. Starting before you log in needs administrator'
+    Write-Host '  permission to set up -- once, now. Nothing runs elevated afterwards.'
     Write-Host ''
-    $now = $(if ($Current -eq 's4u') { 1 } elseif ($Current -eq 'user') { 0 } else { -1 })
+    $now = $(if ($Current -eq 'user') { 1 } elseif ($Current -eq 's4u') { 0 } else { -1 })
     $pick = Select-One -Default ([Math]::Max(0, $now)) -Current $now `
-        -Items  @('From when you log in', 'From boot, before login') `
-        -Detail @('covers locking too; no admin', 'needs admin ONCE, a UAC prompt now')
-    return $(if ($pick -eq 1) { 's4u' } else { 'user' })
+                       -Items @('From boot (requires admin)', 'After you log in')
+    return $(if ($pick -eq 1) { 'user' } else { 's4u' })
 }
 
 # Ask about every attached display, pre-filled from whatever the config already
@@ -915,7 +952,12 @@ function Invoke-Configure {
     $devices = @(Read-Triggers -Cands $cands -Current $cur)
 
     # ---- tier --------------------------------------------------------------
-    $newTier = Read-Tier $(if ($seed.ContainsKey('install.tier')) { $seed['install.tier'] } else { 'user' })
+    # Empty, not 'user', when nothing is configured: Read-Tier reads that as "no
+    # existing choice" and offers from-boot as the default. Passing 'user' here would
+    # have quietly made the old default win under a menu that says otherwise.
+    $newTier = Read-Tier $(if ($seed.ContainsKey('install.start')) {
+                               $(if ($seed['install.start'] -eq 'boot') { 's4u' } else { 'user' })
+                           } else { '' })
 
     # ---- PATH --------------------------------------------------------------
     $onPath = @((Get-UserPath -split ';')) -contains $BINDIR
@@ -938,7 +980,11 @@ function Invoke-Configure {
     # A menu rather than a linear "go back one step" because the answer you got
     # wrong is rarely the last one you gave, and unwinding three sections to fix
     # the first is worse than re-entering the one that is wrong.
-    $tested = $null
+    # Three groups, separated by blank rows: what you set, what you can check, and
+    # what ends the walkthrough. Seven flat rows read as seven equal choices; the
+    # groups say which are edits, which are checks, and which are the way out.
+    $ranDisplays = $null
+    $ranTriggers = $null
     while ($true) {
         Write-Host ''
         Write-Host '--- review configuration ---'
@@ -948,22 +994,33 @@ function Invoke-Configure {
         $detail = @(
             (($answers | ForEach-Object { '{0} on {1}' -f $_.Label, $_.Self }) -join ', ')
             ($devices -join ', ')
-            $(if ($newTier -eq 's4u') { 'at boot, before login' } else { 'when you log in' })
+            $(if ($newTier -eq 's4u') { 'from boot' } else { 'after you log in' })
         )
         if (-not $onPath) {
             $items  += 'PATH'
             $detail += $(if ($wantPath) { "add $BINDIR" } else { 'leave it alone' })
         }
-        $items  += 'Test the monitors'
-        $detail += $(if ($tested) { $tested.Text } else { 'not tried yet' })
 
+        $items  += ''; $detail += ''
+        $items  += 'Test the trigger'
+        $detail += $(if ($ranTriggers) { $ranTriggers.Text } else { 'untested' })
+        $items  += 'Test the monitors'
+        $detail += $(if ($ranDisplays) { $ranDisplays.Text } else { 'untested' })
+
+        $items  += ''; $detail += ''
         $save = $items.Count
         $items += 'Save configuration and run'; $detail += ''
-        $items += 'Cancel, change nothing';     $detail += ''
+        $items += 'Cancel (discard changes)';   $detail += ''
 
-        # Where the cursor lands is the recommendation: test first, save once it
-        # passed, and go fix the monitors if it did not.
-        $land = if (-not $tested) { $save - 1 } elseif ($tested.Ok) { $save } else { 0 }
+        # Where the cursor lands is the recommendation, and it walks you through the
+        # checks in order: trigger, then monitors, then save. A failure sends you to
+        # the setting that failed rather than onward.
+        $land =
+            if     (-not $ranTriggers)  { $save - 3 }
+            elseif (-not $ranTriggers.Ok) { 1 }
+            elseif (-not $ranDisplays)  { $save - 2 }
+            elseif (-not $ranDisplays.Ok) { 0 }
+            else                        { $save }
 
         $pick = Select-One -Items $items -Detail $detail -Default $land
         if ($pick -eq $save) { break }
@@ -979,15 +1036,19 @@ function Invoke-Configure {
                 else { Write-Host '  No monitors selected -- keeping the previous answers.' }
                 # A pass belongs to the values that passed. Carrying it across an edit
                 # would show "every monitor responded" beside numbers nothing tried.
-                $tested = $null
+                $ranDisplays = $null
             }
-            'Trigger devices' { $devices = @(Read-Triggers -Cands $cands -Current $devices) }
+            'Trigger devices' {
+                $devices = @(Read-Triggers -Cands $cands -Current $devices)
+                $ranTriggers = $null
+            }
             'When it starts'  { $newTier = Read-Tier $newTier }
             # Binary, so the row is the control: selecting it flips it. A yes/no
             # prompt for something already shown as "add it"/"leave it alone"
             # would just be a second way to say the same thing.
             'PATH'            { $wantPath = -not $wantPath }
-            'Test the monitors' { $tested = Invoke-DisplayTest -Answers $answers }
+            'Test the trigger'  { $ranTriggers = Invoke-TriggerTest -Devices $devices }
+            'Test the monitors' { $ranDisplays = Invoke-DisplayTest -Answers $answers }
         }
     }
 
@@ -999,6 +1060,37 @@ function Invoke-Configure {
     Write-Host ''
     Write-Log 'configured. Applying...'
     $global:LASTEXITCODE = 0
+}
+
+# Watch for one real arrival of the chosen devices. Asks event-watch.ps1 rather than
+# re-deriving presence here: it owns that question, and a second implementation in
+# the installer would be free to disagree with the one that actually fires -- which
+# is the worst possible place for a disagreement, since this test exists to tell you
+# the trigger works.
+function Invoke-TriggerTest {
+    param([string[]]$Devices)
+
+    $ew = Join-Path $PSScriptRoot 'event-watch.ps1'
+    if (-not (Test-Path $ew)) { $ew = $WATCH }
+
+    Write-Host ''
+    Write-Host '--- test the trigger ---'
+    Write-Host '  This watches for the devices you picked to ARRIVE -- which is the'
+    Write-Host '  event that switches your monitors.'
+    if (Test-Path -LiteralPath $CONFIG) {
+        Write-Host '  If trigger-kvm is already running, the flip will also switch your'
+        Write-Host '  displays for real. That is fine, and is the thing working.'
+    }
+
+    & $ew -TestTrigger -Device ($Devices -join ',') -Config $CONFIG
+    $code = $LASTEXITCODE
+
+    if ($code -eq 0) { return [PSCustomObject]@{ Ok = $true; Text = 'saw the devices arrive' } }
+
+    Write-Host ''
+    Write-Host '  Nothing arrived, so these may be the wrong devices -- or they may not'
+    Write-Host '  be on the switch at all. Pick Trigger devices again to change them.'
+    return [PSCustomObject]@{ Ok = $false; Text = 'no arrival seen' }
 }
 
 # Prove the display answers BEFORE anything is written, against a throwaway config.
@@ -1039,7 +1131,7 @@ function Invoke-DisplayTest {
     }
 
     if ($bad.Count -gt 0) { return [PSCustomObject]@{ Ok = $false; Text = ('no response from ' + ($bad -join ', ')) } }
-    return [PSCustomObject]@{ Ok = $true; Text = 'every monitor responded' }
+    return [PSCustomObject]@{ Ok = $true; Text = 'all responded' }
 }
 
 # Rewrite the config, preserving every comment block and any key the walkthrough
@@ -1061,7 +1153,7 @@ function Write-ConfigFile {
         '# machine. See what is attached with:  trigger-kvm list'
         ''
         '# --- install ----------------------------------------------------------'
-        ("install.tier = {0}" -f $Tier)
+        ("install.start = {0}" -f $(if ($Tier -eq 's4u') { 'boot' } else { 'login' }))
         ''
         '# --- displays ---------------------------------------------------------'
         '# method: standard (I2C src 0x51, VCP 0x60) | lg-alt (src 0x50, VCP 0xF4)'
@@ -1317,20 +1409,24 @@ if ($Command -eq 'status') {
     if (-not $t) { Write-Host 'not installed'; exit 1 }
     $i = Get-ScheduledTaskInfo -TaskName $TASK
 
-    # Report the tier AND what it therefore covers. A tier name alone invites the
-    # reader to guess the capability, and the whole point of having tiers is that
-    # they differ in exactly that.
+    # Say when it runs and what that therefore covers -- never a tier name. The
+    # name was the internal label for the distinction and told a reader nothing they
+    # could act on; what they want to know is whether a locked or logged-out PC still
+    # follows the switch. The raw principal stays on the same line for diagnosis.
     $logon = $t.Principal.LogonType
-    $tier  = if ($logon -eq 'S4U') { 's4u' } elseif ($logon -eq 'Interactive') { 'user' } else { "unknown ($logon)" }
-    Write-Host ("tier     : {0}  (principal={1} logon={2} runlevel={3})" -f `
-                $tier, $t.Principal.UserId, $logon, $t.Principal.RunLevel)
+    Write-Host ("starts   : {0}  (principal={1} logon={2} runlevel={3})" -f `
+                $(switch ($logon) {
+                    'S4U'         { 'at boot' }
+                    'Interactive' { 'when you log in' }
+                    default       { "unknown ($logon)" }
+                  }), $t.Principal.UserId, $logon, $t.Principal.RunLevel)
 
-    switch ($tier) {
-        'user' {
+    switch ($logon) {
+        'Interactive' {
             Write-Host '           covers: from logon onward, including while LOCKED'
             Write-Host '           NOT covered: before the first login after a boot; after a logoff'
         }
-        's4u' {
+        'S4U' {
             Write-Host '           covers: from boot onward -- before first login, while locked, after logoff'
         }
         default {
@@ -1441,7 +1537,7 @@ if ($Command -eq 'uninstall') {
 $EffectiveTier = Get-EffectiveTier
 
 if ($EffectiveTier -eq 's4u' -and -not $IsElevated) {
-    $childArgs = @('install', '-Tier', 's4u')
+    $childArgs = @('install')
     if ($AddToPath) { $childArgs += '-AddToPath' }
     exit (Request-Elevation -ChildArgs $childArgs)
 }
@@ -1456,6 +1552,17 @@ if (-not (Test-Path -LiteralPath $CONFIG)) {
         if ($LASTEXITCODE -ne 0) {
             Write-Log 'setup did not complete; nothing was installed.'
             exit $LASTEXITCODE
+        }
+
+        # The check above ran BEFORE there was a config to read, so a walkthrough
+        # that asked for boot start would otherwise be silently ignored and the task
+        # registered as the login one. Re-derive and elevate here instead. This is
+        # the common path now that boot start is the default answer.
+        $EffectiveTier = Get-EffectiveTier
+        if ($EffectiveTier -eq 's4u' -and -not $IsElevated) {
+            $childArgs = @('install')
+            if ($AddToPath) { $childArgs += '-AddToPath' }
+            exit (Request-Elevation -ChildArgs $childArgs)
         }
     } else {
         Write-Log "no configuration at $CONFIG, and this is not an interactive terminal."
@@ -1493,11 +1600,18 @@ $renamed = @{
     'trigger.device.usb'      = 'trigger.device'
     'trigger.device.debounce' = 'trigger.debounce'
     'trigger.device.settle'   = 'trigger.settle'
+    'install.tier'            = 'install.start'
 }
 foreach ($old in $renamed.Keys) {
     if ($cfg.ContainsKey($old)) {
         Write-Log ("WARNING: '{0}' is an old key name; rename it to '{1}' in {2}." -f $old, $renamed[$old], $CONFIG)
-        Write-Log '         Until you do, the seed defaults are used instead of your value.'
+        if ($old -eq 'install.tier') {
+            Write-Log "         The values changed too: 's4u' is now 'boot', 'user' is now 'login'."
+            Write-Log '         This one is still honoured meanwhile, and `trigger-kvm configure`'
+            Write-Log '         rewrites the file without it.'
+        } else {
+            Write-Log '         Until you do, the seed defaults are used instead of your value.'
+        }
     }
 }
 
@@ -1730,28 +1844,25 @@ Register-ScheduledTask -TaskName $TASK -Action $action -Trigger $triggers `
 Enable-ScheduledTask -TaskName $TASK -ErrorAction SilentlyContinue | Out-Null
 # Persist the tier that was actually installed, so a later bare `install` -- or the
 # elevated relaunch -- keeps it instead of silently reverting to the default.
-Set-ConfigValue -Path $CONFIG -Key 'install.tier' -Value $EffectiveTier
+Set-ConfigValue -Path $CONFIG -Key 'install.start' -Value $(if ($EffectiveTier -eq 's4u') { 'boot' } else { 'login' })
 
 Start-ScheduledTask -TaskName $TASK
-Write-Log "registered and started task '$TASK' ($EffectiveTier tier)"
+Write-Log ("registered and started task '{0}' (starts {1})" -f $TASK, `
+           $(if ($EffectiveTier -eq 's4u') { 'at boot' } else { 'when you log in' }))
 
 if ($AddToPath) { Add-ToUserPath -Dir $BINDIR }
 
-# What is left to say is short: it works, here is how to see that, here are the
-# four things you can do to it. Everything else -- tiers, sessions, the transport --
-# is in the docs for the day someone needs it, and is noise on the day they don't.
-#
-# Two different questions, and printing the wrong one sends people to a "not
-# recognized" error: the User PATH says whether `trigger-kvm` will resolve in a NEW
-# terminal, $env:PATH whether it resolves in THIS one. A PATH entry added a moment
-# ago -- here, or by the walkthrough that invoked this -- satisfies the first and
-# not the second.
-$onPath      = @((Get-UserPath -split ';')) -contains $BINDIR
-$inThisShell = @(($env:PATH -split ';')) -contains $BINDIR
-$cmd = if ($onPath) { 'trigger-kvm' } else { $SHIM }
+# What is left to say is short: it is running, when it will run again, how to see
+# that, and the four things you can do to it. Everything else -- tiers, sessions,
+# the transport -- is in the docs for the day someone needs it, and is noise on the
+# day they do not.
+$onPath = @((Get-UserPath -split ';')) -contains $BINDIR
+$cmd    = if ($onPath) { 'trigger-kvm' } else { $SHIM }
+$when   = if ($EffectiveTier -eq 's4u') { 'each time the computer reboots' }
+          else                          { 'each time you log in' }
 
 Write-Host ''
-Write-Host '  Done. trigger-kvm is running.'
+Write-Host ('  Done. trigger-kvm is running, and will start automatically {0}.' -f $when)
 Write-Host ''
 Write-Host '  Flip your switch to this PC -- the monitors should follow.'
 Write-Host ''
@@ -1760,18 +1871,3 @@ Write-Host ("    {0} pull        bring the displays here now" -f $cmd)
 Write-Host ("    {0} logs        what has it been doing" -f $cmd)
 Write-Host ("    {0} configure   change any of this" -f $cmd)
 Write-Host ''
-
-if (-not $onPath) {
-    Write-Host ('  (Re-run with -AddToPath to put {0} on your PATH and shorten that.)' -f $BINDIR)
-    Write-Host ''
-} elseif (-not $inThisShell) {
-    Write-Host '  (Open a new terminal first -- this one has not picked up the PATH change.)'
-    Write-Host ''
-}
-
-if ($EffectiveTier -eq 's4u') {
-    Write-Host '  It starts at boot, before anyone logs in -- but that part is UNVERIFIED'
-    Write-Host '  on this machine until you try it: log out, flip the switch, and see'
-    Write-Host '  whether the monitors follow with nobody logged in.'
-    Write-Host ''
-}

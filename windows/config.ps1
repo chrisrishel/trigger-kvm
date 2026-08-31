@@ -22,7 +22,8 @@
 #   trigger.device           usb:VVVV:PPPP / VVVV:PPPP / bt:AAAAAAAAAAAA, comma-sep
 #   trigger.debounce         seconds
 #   trigger.settle           seconds
-#   install.tier             user | s4u
+#   install.start            boot | login  (install.tier = s4u|user is the old
+#                            spelling, still read by install.ps1)
 #
 # Keys are lower-cased; values are returned verbatim, trimmed. Callers parse and
 # VALIDATE their own values -- see the converters in trigger-kvm.ps1, which return
