@@ -127,8 +127,11 @@ checks themselves** — before conforming to anything else. Until they exist, th
 platform's `HANDOFF.md` has to carry what the machinery would otherwise say, and
 should say plainly that it is doing so.
 
-This is the state Windows is in today: `windows/SPEC-REVISION` is 0, the
-changelog is at 3, and nothing in `windows/tests/` would report either fact.
+Windows was in that state until it wasn't: `windows/SPEC-REVISION` sat at 0
+against a changelog at 3, and nothing in `windows/tests/` would report either
+fact. It now has both checks — `windows/tests/check-conformance.ps1` and
+`windows/tests/spec.tests.ps1` — so its own suite names the gap, and the
+paragraph its `HANDOFF.md` had to carry on the machinery's behalf is gone.
 
 ### Point at mechanisms, not at their output
 

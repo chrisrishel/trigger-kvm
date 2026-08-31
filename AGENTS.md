@@ -536,15 +536,22 @@ This is enforced, not merely asked for. Each platform's suite runs a conformance
 check asserting that every string the spec marks normative is present in that
 platform's sources, plus a revision check against `specs/CHANGELOG.md`, so **a
 spec edit fails the other platform's tests until it catches up**. On macOS that
-is `macos/tests/spec.tests.sh` driving `specs/check-conformance.sh`.
+is `macos/tests/spec.tests.sh` driving `specs/check-conformance.sh`; on Windows
+`windows/tests/spec.tests.ps1` driving `windows/tests/check-conformance.ps1`.
+
+**Prove the instrument before trusting it.** Both suites self-test their checker
+against throwaway specs -- one fragment that is present nowhere, one too short to
+pin anything down, one whole line under the split floor -- and they do it BEFORE
+asserting real conformance. A checker that can never fail passes everything, so
+in the other order a broken one reads as a clean bill of health.
 
 **THE BOOTSTRAP GAP.** Publishing once only reaches a platform that has
 implemented those checks. One that has not cannot be told it is behind by a
 mechanism it has not got, so **the first thing any implementation owes is the
 checks themselves**, and until they exist its `HANDOFF.md` must carry what the
-machinery would otherwise say -- and say that it is doing so. Windows is in that
-state today: revision 0 against a changelog at 3, with nothing on its side to
-report either.
+machinery would otherwise say -- and say that it is doing so. Windows was in that
+state -- revision 0 against a changelog at 3, with nothing on its side to report
+either -- and its handoff carried a paragraph saying so until the checks landed.
 
 A handoff entry points AT a mechanism rather than pasting its output. A pasted
 list is a snapshot of something that changes and goes stale silently; the one in
