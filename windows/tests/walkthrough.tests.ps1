@@ -99,32 +99,41 @@ $CONFIGURED = @(
  'install.autostart = login'
 )
 
-# ---- a first run asks everything, computers first ----------------------------
+# The menu is the whole flow, so every case below is: land on the menu, pick a
+# section, come back to the menu.
+#
+#   1 Computers  2 Monitors  3 Trigger devices  4 Autostart?  5 Add to PATH?
+#   (6 blank)  7 Test the trigger  8 Test the monitors  (9 blank)  10 Save  11 Cancel
+#
+# The computers list is its own menu: 1..n the computers, then a blank, then Add,
+# then Done.
+
+# ---- an empty install starts on the menu, not on a questionnaire --------------
 
 Set-Config $null
 Set-Outcomes @()
 Set-Answers @(
-    'pc',           # what this computer is called
-    '1',            # how many others
+    '1',            # the cursor is already here: Computers
+    'pc',           #   what this computer is called
+    '1',            #   how many others
     'mac',          #   and its name
-    '5',            # the list (1 pc, 2 mac, 3 blank, 4 Add, 5 Done)
-    'y','',         # PG42UQ: manage? / label
-    '3',            #   pc  is on HDMI 1
-    '2',            #   mac is on DisplayPort 1 (row 1 is now pc)
-    'y','',         # LG: manage? / label
-    '9','0xD0',     #   pc  -- not an MCCS value, so "Type a value..."
-    '10','0xD1',    #   mac -- row 10 now, since pc was added to the list
-    'y',            # check the monitors now?
-    '3',            #   which monitor is this window on -> not sure
-    'y','y',        #   two rounds, one panel each, both fine
-    '1,3',          # triggers
-    '',             # when it starts -- the default is FROM BOOT
-    'y',            # PATH
-    '',             # review -> Test the trigger (the default)
-    '10'            # review -> Save
+    '5',            #   the list: Done
+    '2',            # back at the menu, and it lands on Monitors
+    'y','',         #   PG42UQ: manage? / label
+    '3',            #     pc  is on HDMI 1
+    '2',            #     mac is on DisplayPort 1 (row 1 is now pc)
+    'y','',         #   LG: manage? / label
+    '9','0xD0',     #     pc  -- not an MCCS value, so "Type a value..."
+    '10','0xD1',    #     mac -- row 10 now, since pc was added to the list
+    '3',            # menu -> Trigger devices
+    '1,3',
+    '7',            # menu -> Test the trigger
+    '8',            # menu -> Test the monitors
+    '3','y','y',    #   window: not sure; two rounds
+    '10'            # menu -> Save
 )
 Invoke-Configure
-Assert-Equal 0 $LASTEXITCODE 'a first run must complete'
+Assert-Equal 0 $LASTEXITCODE 'an empty install must complete through the menu'
 $c = Get-Written
 Assert-Equal 'pc'   $c['computer.this']
 Assert-Equal 'boot' $c['install.autostart'] 'with nothing configured, the default is from boot'
@@ -133,38 +142,76 @@ Assert-Equal 'mac'  $c['display.pg42uq.input.0x0f']
 Assert-Equal 'pc'   $c['display.lg.input.0xd0']
 Assert-Equal 'mac'  $c['display.lg.input.0xd1']
 Assert-True (-not $c.ContainsKey('display.lg.self')) 'self is gone'
+Assert-Equal 'PG42UQ' $c['display.pg42uq.name'] 'the panel names come out of the EDID'
 
-# The panel names come out of the EDID, not a table.
-Assert-Equal 'PG42UQ' $c['display.pg42uq.name']
+# ---- it will not save half a setup -------------------------------------------
 
-# ---- a configured system goes STRAIGHT to the review -------------------------
+Set-Config $null
+Set-Outcomes @()
+Set-Answers @(
+    '10',           # Save, with nothing set at all
+    '11'            # ... so cancel instead
+)
+Invoke-Configure
+Assert-Equal 1 $LASTEXITCODE 'cancelling is a non-zero exit'
+Assert-Match ((Get-Asked) -join '|') 'Choice' 'it stayed on the menu rather than writing'
+
+# ---- a configured system opens on the menu with nothing to fill in ------------
 
 Set-Config $CONFIGURED
 Set-Outcomes @()
 Set-Answers @(
-    '8',            # review -> Test the monitors
+    '8',            # menu -> Test the monitors
     '3',            #   window: not sure
     'y','y',        #   two rounds
-    '10'            # review -> Save
+    '10'            # menu -> Save
 )
 Invoke-Configure
 Assert-Equal 0 $LASTEXITCODE
-$asked = @(Get-Asked)
-Assert-NoMatch ($asked -join '|') 'short name for it' 'a re-run must not replay the questions'
+Assert-NoMatch ((Get-Asked) -join '|') 'short name for it' 'a re-run must not replay the questions'
 Assert-Equal 'lg-alt' (Get-Written)['display.lg.method'] 'and must keep what was configured'
 
-# ---- -Fresh asks again, pre-filling nothing ----------------------------------
+# ---- finishing a section returns to the MENU ---------------------------------
+
+# Choosing Done in the computers list used to fall through into the monitors
+# questions, on the theory that a rename invalidated their maps. It does not: a
+# rename is carried into every panel instead.
+Set-Config $CONFIGURED
+Set-Outcomes @()
+Set-Answers @(
+    '1',            # menu -> Computers
+    '2',            #   rename row 2 (mac)
+    'macbook',
+    '5',            #   Done
+    '10'            # straight back to the menu, and Save -- no monitor questions
+)
+Invoke-Configure
+Assert-Equal 0 $LASTEXITCODE
+Assert-NoMatch ((Get-Asked) -join '|') 'Manage this monitor' 'Done must come back to the menu'
+$c = Get-Written
+Assert-Equal 'macbook' $c['display.lg.input.0xd1']   'and the rename must reach every panel'
+Assert-Equal 'macbook' $c['display.asus.input.0x0f']
+Assert-Equal 'pc'      $c['display.lg.input.0xd0']   'without disturbing the rest'
+
+# Removing a computer takes it out of the maps rather than leaving a dangling name.
+Set-Config $CONFIGURED
+Set-Outcomes @()
+Set-Answers @('1', '2', '', '4', '10')      # Computers -> row 2 -> remove -> Done -> Save
+Invoke-Configure
+Assert-Equal 0 $LASTEXITCODE
+$c = Get-Written
+Assert-True (-not $c.ContainsKey('display.lg.input.0xd1')) 'a removed computer leaves no input naming it'
+Assert-Equal 'pc' $c['display.lg.input.0xd0']
+
+# ---- -Fresh empties the answers, and the menu shows that ----------------------
 
 Set-Config $CONFIGURED
 Set-Outcomes @()
 Set-Answers @(
-    'pc','1','mac','5',
-    'y','','3','2',
-    'y','','9','0xD0','10','0xD1',
-    'n',            # skip the check
-    '1,3','','y',
-    '','','3','y','y',   # review: test trigger, test monitors (window/2 rounds)
-    '10'
+    '1','pc','1','mac','5',
+    '2','y','','3','2','y','','9','0xD0','10','0xD1',
+    '3','1,3',
+    '10'                        # Save (the checks are optional)
 )
 Invoke-Configure -Fresh
 Assert-Equal 0 $LASTEXITCODE
@@ -175,14 +222,13 @@ Assert-Match ((Get-Asked) -join '|') 'short name for it' '-Fresh must ask again'
 Set-Config @($CONFIGURED | Where-Object { $_ -ne 'display.lg.method = lg-alt' })
 Set-Outcomes @(3, 0)        # LG answers nothing, then works on its own channel
 Set-Answers @(
-    '8',            # review -> Test the monitors
-    '3',            #   window: not sure
+    '8','3',
     'y',            #   round 1: asus fine
     'n',            #   round 2: the LG did nothing
     'y',            #   try the LG channel? yes
     '1',            #   pc  is on DisplayPort (0xD0)
     '2',            #   mac is on USB-C (0xD1)
-    '10'            # review -> Save
+    '10'
 )
 Invoke-Configure
 Assert-Equal 0 $LASTEXITCODE
@@ -204,24 +250,26 @@ Invoke-Configure
 Assert-Equal 0 $LASTEXITCODE
 Assert-Equal 'pc' (Get-Written)['display.asus.input.0x12'] 'the walk must correct the value'
 
-# ---- two machines may not share one input ------------------------------------
+# ---- two computers may not share one input -----------------------------------
 
 Set-Config $null
 Set-Outcomes @()
 Set-Answers @(
-    'pc','1','mac','5',
+    '1','pc','1','mac','5',
+    '2',
     'y','',
     '3',            # pc on HDMI 1
     '1',            # mac on ... pc's own row: refused
     '2',            # ... so pick DisplayPort 1 instead
     'y','','9','0xD0','10','0xD1',
-    'n', '1,3','','y', '','','3','y','y', '10'
+    '3','1,3',
+    '10'
 )
 Invoke-Configure
 Assert-Equal 0 $LASTEXITCODE
 $c = Get-Written
 Assert-Equal 'pc'  $c['display.pg42uq.input.0x11']
-Assert-Equal 'mac' $c['display.pg42uq.input.0x0f'] 'the second machine had to move to a free input'
+Assert-Equal 'mac' $c['display.pg42uq.input.0x0f'] 'the second computer had to move to a free input'
 
 # ---- autostart can be answered "no" ------------------------------------------
 
@@ -229,11 +277,7 @@ Assert-Equal 'mac' $c['display.pg42uq.input.0x0f'] 'the second machine had to mo
 # still exists, so `trigger-kvm restart` is what starts it again.
 Set-Config $CONFIGURED
 Set-Outcomes @()
-Set-Answers @(
-    '4',            # review -> Autostart?
-    '3',            #   no -- I will start it myself
-    '10'            # review -> Save
-)
+Set-Answers @('4', '3', '10')       # Autostart? -> no -- I will start it myself -> Save
 Invoke-Configure
 Assert-Equal 0 $LASTEXITCODE
 Assert-Equal 'no' (Get-Written)['install.autostart'] 'the third answer has to survive the write'
@@ -254,8 +298,7 @@ Assert-Equal ''            (Format-ComputerName '!!!')           'nothing usable
 # It SUGGESTS rather than silently mangling: the old version stripped what it did not
 # like, so "My Mac" quietly became "mymac" and left someone hunting for their space.
 Set-Answers @('My Mac', 'y')
-$n = Read-ComputerName -Prompt 'name?' -Default ''
-Assert-Equal 'my-mac' $n
+Assert-Equal 'my-mac' (Read-ComputerName -Prompt 'name?' -Default '')
 Assert-Match ((Get-Asked) -join '|') "Use 'my-mac'" 'the change has to be offered, not applied behind their back'
 
 Set-Answers @('My Mac', 'n', 'mac')     # decline the suggestion, type another
@@ -267,21 +310,24 @@ Assert-Equal 'pc' (Read-ComputerName -Prompt 'name?' -Default '' -Taken @('mac')
 Set-Answers @('')
 Assert-Equal '' (Read-ComputerName -Prompt 'name?' -Default '' -AllowBlank) 'blank removes, where blank is allowed'
 
-# ---- the list corrects names without replaying the questions ------------------
+# ---- the computers list reports what CHANGED ---------------------------------
 
-Set-Answers @('2', 'macbook', '5')          # rename row 2 (no default now), then Done
+Set-Answers @('2', 'macbook', '5')
 $r = Read-Computers -This 'pc' -Others @('mac') -Existing
-Assert-Equal 'pc'         $r.This
-Assert-Equal 'pc,macbook' ($r.All -join ',') 'a rename must not disturb the rest'
-Assert-NoMatch ((Get-Asked) -join '|') 'How many OTHER' 'and must not re-ask the count'
+Assert-Equal 'pc,macbook' ($r.All -join ',')
+Assert-Equal 'macbook'    $r.Renames['mac'] 'a rename has to be reported, so the panels can follow it'
+Assert-Equal 0            @($r.Removed).Count
+Assert-NoMatch ((Get-Asked) -join '|') 'How many OTHER' 'and the count is not re-asked'
 
-Set-Answers @('4', 'linux', '6')            # Add another; Done is row 6 once the list grows
+Set-Answers @('4', 'linux', '6')
 $r = Read-Computers -This 'pc' -Others @('mac') -Existing
 Assert-Equal 'pc,mac,linux' ($r.All -join ',')
+Assert-Equal 0 $r.Renames.Count 'adding renames nothing'
 
-Set-Answers @('2', '', '4')                 # nothing typed removes it; then 1 pc, (2), 3 Add, 4 Done
+Set-Answers @('2', '', '4')
 $r = Read-Computers -This 'pc' -Others @('mac') -Existing
-Assert-Equal 'pc' ($r.All -join ',') 'entering nothing removes that computer'
+Assert-Equal 'pc'  ($r.All -join ',')
+Assert-Equal 'mac' ($r.Removed -join ',') 'a removal has to be reported too'
 
 # ---- the review rows read as one column --------------------------------------
 

@@ -1067,7 +1067,17 @@ function Read-Computers {
         }
     }
 
-    return [PSCustomObject]@{ This = $me; All = @(@($me) + $rest) }
+    # What changed, not just what it is now. A rename is a rename: every panel's map
+    # still names the old one, and discarding those maps (which is what re-asking
+    # about the monitors amounted to) threw away answers nobody asked to change.
+    $renames = @{}
+    for ($i = 0; $i -lt $rest.Count -and $i -lt $Others.Count; $i++) {
+        if ($Others[$i] -ne $rest[$i] -and ($rest -notcontains $Others[$i])) { $renames[$Others[$i]] = $rest[$i] }
+    }
+    if ($This -and $me -ne $This) { $renames[$This] = $me }
+    $gone = @($Others | Where-Object { $_ -and -not ($rest -contains $_) -and -not $renames.ContainsKey($_) })
+
+    return [PSCustomObject]@{ This = $me; All = @(@($me) + $rest); Renames = $renames; Removed = $gone }
 }
 
 # Ask which input something is on, for one panel. Returns a value, or $null when
@@ -1402,102 +1412,50 @@ function Invoke-Configure {
                     $(if ($f.Name) { $f.Name } else { '{0} panel' -f $f.Mfg }), $f.Connector)
     }
 
-    # A configured system already has every answer, so replaying the questions to
-    # change one of them is exactly the complaint the review menu exists to answer.
-    # Straight there instead; the linear pass is for a system with nothing yet.
-    $ask = $isFirst -or $Fresh
-
+    # ---- state, from the config or empty ------------------------------------
+    #
+    # There is no separate first-run questionnaire. A fresh install is this same menu
+    # with nothing filled in yet and the cursor on the first thing that needs an
+    # answer; a configured one is the same menu with the answers in it. Two flows
+    # meant two places for a change to have to be made, and meant that finishing a
+    # section on a fresh install dropped you into the NEXT section rather than back
+    # to the menu -- which is not what "done" means anywhere else in this program.
     $carry = @{}
     $ranDisplays = $null
     $ranTriggers = $null
 
-    if ($ask) {
-        # ---- machines, BEFORE the monitors ----------------------------------
-        # Every panel then offers the same names, and a computer is described once
-        # rather than once per screen.
-        $m = Read-Computers -This (Get-DefaultComputerName -Seed $seed) `
-                            -Others (Get-KnownComputers -Cfg $seed) `
-                            -Existing:([bool](Get-KnownComputers -Cfg $seed))
-        $this = $m.This
-        $computers = $m.All
+    $this      = Get-DefaultComputerName -Seed $seed
+    $computers = @(Get-KnownComputers -Cfg $seed)
+    if ($computers.Count -gt 0) { $computers = @(@($this) + @($computers | Where-Object { $_ -ne $this })) }
+    $answers   = @(Get-ConfiguredAnswers -Found $found -Existing $seed -Computers $computers)
 
-        # ---- monitors --------------------------------------------------------
-        $answers = @(Get-AllDisplayAnswers -Found $found -Existing $seed -Computers $computers -This $this -Carry $carry)
-        if ($answers.Count -eq 0) {
-            Write-Log 'no monitors selected -- nothing to do.'
-            $global:LASTEXITCODE = 2
-            return
-        }
-
-        # Check each panel while it is fresh in mind, rather than only at the end.
-        # The review menu still offers it, for when something changes later.
-        Write-Host ''
-        if (Read-YesNo '  Check the monitors now? (each one leaves and comes straight back)' $true) {
-            $ranDisplays = Invoke-DisplayTest -Answers $answers -This $this
-            foreach ($a in $answers) { $carry[$a.Key] = $a }
-        }
-    } else {
-        $this     = Get-DefaultComputerName -Seed $seed
-        $computers = @(@($this) + @(Get-KnownComputers -Cfg $seed | Where-Object { $_ -ne $this }))
-        $answers  = @(Get-ConfiguredAnswers -Found $found -Existing $seed -Computers $computers)
-        if ($answers.Count -eq 0) {
-            Write-Log 'the config names no display that is attached -- starting setup.'
-            $m = Read-Computers -This $this -Others @($computers | Where-Object { $_ -ne $this })
-            $this = $m.This; $computers = $m.All
-            $answers = @(Get-AllDisplayAnswers -Found $found -Existing $seed -Computers $computers -This $this)
-            if ($answers.Count -eq 0) { $global:LASTEXITCODE = 2; return }
-        }
-    }
-
-    # ---- triggers ----------------------------------------------------------
-    $cands = @(Get-TriggerCandidates)
-    $cur = @()
+    $devices = @()
     if ($seed.ContainsKey('trigger.device')) {
-        $cur = @(($seed['trigger.device'] -replace '\s','') -split ',' | Where-Object { $_ } | ForEach-Object {
+        $devices = @(($seed['trigger.device'] -replace '\s','') -split ',' | Where-Object { $_ } | ForEach-Object {
             if ($_ -match '^(usb:|bt:)') { $_.ToLower() } else { 'usb:' + $_.ToLower() } })
     }
+    $cands = @(Get-TriggerCandidates)
+
     # Empty, not 'user', when nothing is configured: Read-Tier reads that as "no
     # existing choice" and offers from-boot as the default. Passing 'user' here would
     # have quietly made the old default win under a menu that says otherwise.
-    $wasTier = $(if ($seed.ContainsKey('install.autostart')) {
+    $newTier = $(if ($seed.ContainsKey('install.autostart')) {
                      $(switch ($seed['install.autostart']) {
                          'boot' { 's4u' } 'no' { 'manual' } default { 'user' } })
-                 } else { '' })
-    $onPath = @((Get-UserPath -split ';')) -contains $BINDIR
-    $wantPath = $false
+                 } else { 's4u' })
 
-    if ($ask) {
-        $devices = @(Read-Triggers -Cands $cands -Current $cur)
-        $newTier = Read-Tier $wasTier
+    $onPath   = @((Get-UserPath -split ';')) -contains $BINDIR
+    $wantPath = -not $onPath
 
-        # ---- PATH ------------------------------------------------------------
-        if (-not $onPath) {
-            Write-Host ''
-            Write-Host '--- PATH ---'
-            # Single quotes: in a DOUBLE-quoted PowerShell string a backtick is the
-            # escape character, so "`trigger-kvm`" renders as TAB + "rigger-kvm".
-            Write-Host ('  Add {0} to your PATH, so `trigger-kvm` works from anywhere?' -f $BINDIR)
-            Write-Host '  Only that directory is added, and it holds only the launcher.'
-            $wantPath = Read-YesNo '  Add it?' $true
-        }
-    } else {
-        $devices = @($cur)
-        $newTier = $(if ($wasTier) { $wasTier } else { 'user' })
-    }
-
-    # ---- review, then write ------------------------------------------------
-    # The same menu as everywhere else, so the review is not a new thing to learn:
-    # the settings ARE the rows, and choosing one re-enters that section. A menu
-    # rather than a linear "go back one step" because the answer you got wrong is
-    # rarely the last one you gave.
+    # ---- the menu ------------------------------------------------------------
+    # The settings ARE the rows, and choosing one enters that section and comes
+    # straight back here. There is no separate first-run pass: an empty install is
+    # this menu with "not set" in it, and the cursor already on the first thing that
+    # needs an answer.
     #
     # Three groups, separated by blank rows the cursor skips: what you set, what you
     # can check, and what ends the walkthrough. Flat, they read as equal choices.
     while ($true) {
-        Write-Host ''
-        Write-Host '--- review configuration ---'
-        Write-Host ''
-
         # One punctuation rule across every row, because they are read as a column:
         #   ", " separates items      ": " separates a label from its value
         #   "/"  joins things sharing one label
@@ -1505,9 +1463,11 @@ function Invoke-Configure {
         # not wrap at all while it used spaces, and a busy desk overran the line.
         $items  = @('Computers', 'Monitors', 'Trigger devices', 'Autostart?')
         $detail = @(
-            (($computers | ForEach-Object { if ($_ -eq $this) { "$_ (this)" } else { $_ } }) -join ', ')
-            (($answers | ForEach-Object { '{0}: {1}' -f $_.Label, (@($_.Map.Keys) -join '/') }) -join ', ')
-            ($devices -join ', ')
+            $(if ($computers.Count -eq 0) { 'not set' } else {
+                ($computers | ForEach-Object { if ($_ -eq $this) { "$_ (this)" } else { $_ } }) -join ', ' })
+            $(if ($answers.Count -eq 0) { 'not set' } else {
+                ($answers | ForEach-Object { '{0}: {1}' -f $_.Label, (@($_.Map.Keys) -join '/') }) -join ', ' })
+            $(if ($devices.Count -eq 0) { 'not set' } else { $devices -join ', ' })
             $(switch ($newTier) { 's4u' { 'from boot' } 'manual' { 'no' } default { 'from login' } })
         )
         if (-not $onPath) {
@@ -1526,39 +1486,72 @@ function Invoke-Configure {
         $items += 'Save configuration and run'; $detail += ''
         $items += 'Cancel (discard changes)';   $detail += ''
 
-        # Where the cursor lands is the recommendation, and it walks the checks in
-        # order: trigger, then monitors, then save. A failure sends the cursor to the
-        # setting that failed rather than onward.
+        # Where the cursor lands is the recommendation, and it is just "the next
+        # thing that is not done": the unanswered sections in order, then the checks,
+        # then save. A failed check sends the cursor to the setting that failed
+        # rather than onward.
         $land =
-            if     (-not $ranTriggers)    { $save - 3 }
-            elseif (-not $ranTriggers.Ok) { 2 }
-            elseif (-not $ranDisplays)    { $save - 2 }
-            elseif (-not $ranDisplays.Ok) { 1 }
-            else                          { $save }
+            if     ($computers.Count -eq 0) { 0 }
+            elseif ($answers.Count   -eq 0) { 1 }
+            elseif ($devices.Count   -eq 0) { 2 }
+            elseif (-not $ranTriggers)      { $save - 3 }
+            elseif (-not $ranTriggers.Ok)   { 2 }
+            elseif (-not $ranDisplays)      { $save - 2 }
+            elseif (-not $ranDisplays.Ok)   { 1 }
+            else                            { $save }
 
+        Write-Host ''
+        Write-Host $(if ($answers.Count -and $devices.Count) { '--- review configuration ---' }
+                     else { '--- configuration ---' })
+        Write-Host ''
         $pick = Select-One -Items $items -Detail $detail -Default $land
-        if ($pick -eq $save) { break }
+
         if ($pick -eq $save + 1) {
             Write-Log 'cancelled; nothing was changed.'
             $global:LASTEXITCODE = 1
             return
         }
+        if ($pick -eq $save) {
+            # Saving half a setup would write a config the switcher then refuses to
+            # act on, which is a worse way to find out.
+            $missing = @()
+            if ($computers.Count -eq 0) { $missing += 'Computers' }
+            if ($answers.Count   -eq 0) { $missing += 'Monitors' }
+            if ($devices.Count   -eq 0) { $missing += 'Trigger devices' }
+            if ($missing.Count -eq 0) { break }
+            Write-Host ''
+            Write-Host ('  Still needed: {0}.' -f (Join-Names $missing))
+            continue
+        }
+
         switch ($items[$pick]) {
             'Computers' {
-                # Renaming or adding a computer invalidates every panel's map, so the
-                # monitors are asked again rather than left holding names that no
-                # longer exist.
-                $m = Read-Computers -This $this -Others @($computers | Where-Object { $_ -ne $this }) -Existing
+                $m = Read-Computers -This $this -Others @($computers | Where-Object { $_ -ne $this }) `
+                                    -Existing:([bool]$computers.Count)
                 $this = $m.This
                 $computers = $m.All
-                $carry = @{}
-                $answers = @(Get-AllDisplayAnswers -Found $found -Existing $seed -Computers $computers -This $this)
-                $ranDisplays = $null
+
+                # A rename is a rename: carry it into every panel rather than making
+                # someone answer the monitors again. Removing a computer takes it out
+                # of the maps; adding one leaves them alone, and the Monitors row then
+                # shows which panels do not know about it yet.
+                foreach ($a in $answers) {
+                    $map = [ordered]@{}
+                    foreach ($c in @($a.Map.Keys)) {
+                        if ($m.Removed -contains $c) { continue }
+                        $map[$(if ($m.Renames.ContainsKey($c)) { $m.Renames[$c] } else { $c })] = $a.Map[$c]
+                    }
+                    $a.Map = $map
+                    $carry[$a.Key] = $a
+                }
+                if ($m.Renames.Count -or $m.Removed.Count) { $ranDisplays = $null }
             }
             'Monitors' {
                 $again = @(Get-AllDisplayAnswers -Found $found -Existing $seed -Computers $computers -This $this -Carry $carry)
-                if ($again.Count -gt 0) { $answers = $again }
-                else { Write-Host '  No monitors selected -- keeping the previous answers.' }
+                if ($again.Count -gt 0) {
+                    $answers = $again
+                    foreach ($a in $answers) { $carry[$a.Key] = $a }
+                } else { Write-Host '  No monitors selected -- keeping the previous answers.' }
                 # A pass belongs to the values that passed. Carrying it across an edit
                 # would show "all responded" beside numbers nothing tried.
                 $ranDisplays = $null
@@ -1569,8 +1562,8 @@ function Invoke-Configure {
             }
             'Autostart?'      { $newTier = Read-Tier $newTier }
             # Binary, so the row is the control: selecting it flips it. A yes/no
-            # prompt for something already shown as "add it"/"leave it alone" would
-            # just be a second way to say the same thing.
+            # prompt for something already shown as yes/no would just be a second way
+            # to say the same thing.
             'Add to PATH?'    { $wantPath = -not $wantPath }
             'Test the trigger'  { $ranTriggers = Invoke-TriggerTest -Devices $devices }
             { $_ -like 'Test the monitor*' } {

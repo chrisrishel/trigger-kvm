@@ -117,8 +117,11 @@ thing to check rather than the way out.) Every menu falls back to a typed number
 keys — redirected stdin, some remote sessions — which is also what makes the flow
 testable end to end.
 
-Four sections — monitors, trigger devices, when it starts, PATH — then a review
-that is the same kind of menu, with the settings themselves as the rows:
+**The menu is the whole flow.** There is no separate first-run questionnaire: an
+empty install is this same menu with `not set` in it and the cursor already on the
+first thing that needs an answer. Finishing a section comes straight back here, with
+the cursor on the next unanswered one — so "done" means the same thing everywhere,
+and there is one place a change has to be made rather than two.
 
 ```
 --- review configuration ---
@@ -146,10 +149,27 @@ Three groups: what you set, what you can check, and what ends the walkthrough.
 Seven flat rows read as seven equal choices, so the separators do the work that
 renaming the rows to imply grouping would have done badly.
 
-Choosing a setting re-enters that section — a menu rather than a linear "go back
-one step", because the answer you got wrong is rarely the last one you gave.
-Nothing is written until you pick save, so an interrupted run leaves a working
-setup untouched.
+```
+--- configuration ---
+
+  > Computers                    not set
+    Monitors                     not set
+    Trigger devices              not set
+    Autostart?                   from boot
+    Add to PATH?                 yes
+```
+
+Choosing a setting enters that section and returns here — a menu rather than a
+linear pass, because the answer you got wrong is rarely the last one you gave.
+Nothing is written until you pick save, and save refuses while a required section is
+still `not set`, naming what is missing: writing half a setup produces a config the
+switcher then declines to act on, which is a worse way to find out.
+
+**A rename is carried, not re-asked.** Renaming a computer used to drop you into the
+monitor questions, on the theory that every panel's map now named something that did
+not exist. It does not have to: the rename is applied to every map, a removal takes
+that computer out of them, and an addition leaves them alone — the Monitors row then
+simply shows which panels do not know about it yet.
 
 **Where the cursor lands is the recommendation**, and it walks the checks in order:
 trigger, then monitors, then save. A failure sends the cursor to the setting that
