@@ -88,71 +88,41 @@ is what `install.ps1` registers. There is deliberately no plugin system or trigg
 registry — the process boundary already is one, and a second abstraction on top
 would earn nothing.
 
-**Its mechanism is not USB-specific, but that does not mean every transport fits
-it.** `Win32_PnPEntity` enumerates Bluetooth, PCI and Thunderbolt too — measured
-here, USB is only 44 of ~300 PnP entities. So the *query* is generic and USB is only
-the ID pattern matched.
-
-**Bluetooth, however, would not work by changing that pattern**, and it is worth
-recording why, because the reasoning looks sound right up until you check it. The
-watcher's model is "a PnP node exists only while the device is attached", so
-presence == connected and an absent→present edge means arrival. For USB that holds.
-For Bluetooth it does not: a *paired* device keeps its node whether or not it is
-connected. Measured on this machine —
+**Two transports, one list.** USB device presence and Bluetooth *connection* are
+both sources in the same process. The config takes one device list and the transport
+rides on each value:
 
 ```
-BTHENUM\DEV_0011223344FF   Present=True   DEVPKEY_Bluetooth_LastConnectedTime = 2025-11-07
-BTHENUM\DEV_<iphone>       Present=True   DEVPKEY_Bluetooth_LastConnectedTime = 2023-07-07
+trigger.device = usb:046d:0843, usb:1235:820a, bt:0011223344ff
 ```
 
-— a pair of AirPods last connected ten months ago and an iPhone last connected three
-years ago both still report `Present=True`. There is even a
-`DEVPKEY_DeviceContainer_AlwaysShowDeviceAsConnected = True` on them. The presence
-map would never change, so no edge would ever fire and the trigger would silently
-never work.
+`usb:VVVV:PPPP` is a vendor+product pair; a **bare** `VVVV:PPPP` also means usb, so
+configs written before Bluetooth existed keep working. `bt:AAAAAAAAAAAA` is a
+12-hex-digit Bluetooth address. Anything else is rejected loudly at startup rather
+than ignored.
 
-What *does* track connection is the downstream function nodes — the AirPods'
-`SWD\MMDEVAPI\...` audio endpoints are `Present=False` right now while the parent is
-`True`. But those are opaque GUIDs, differ by device class, and on this machine the
-same service GUIDs exist twice (a stale `LOCALMFG&0002` set alongside a live
-`VID&0001004C_PID&2027` set), so matching them is guesswork.
+The transport is in the value rather than in separate keys because the installer
+presents **one** device list — you think "the stuff that moves when I switch", not
+"my USB things and separately my Bluetooth things" — and the transport is metadata
+it detects for you.
 
-The correct route is **another presence source inside the same watcher**, not a
-second watcher process. The debounce is in-memory and per-process, so two watchers
-would each hold their own window and both fire when a USB device and a Bluetooth
-device arrive together -- the exact double-fire the `Global\` mutex prevents, and
-which that mutex would in fact block by stopping the second watcher from starting.
-Only "is it present" and "tell me when that changes" are transport-specific; the
-edge, debounce, settle and fire logic is shared and must stay that way.
+**Bluetooth matches on CONNECTED, never on paired**, and that distinction is the
+whole reason it needs its own code path. A paired device keeps its PnP node for
+*years* after it last connected — measured here, AirPods reading `Present=True` ten
+months after the fact — so a PnP-presence check would never see an edge and the
+trigger would silently never fire. The connection state comes from the classic
+Win32 `bthprops.cpl` API by P/Invoke, whose `BLUETOOTH_DEVICE_INFO.fConnected` is
+distinct from `fRemembered`.
 
-That is the line between the two kinds of boundary here: the watcher and the
-switcher are separate *processes* because they share no mutable state; two presence
-sources share the debounce clock and the presence map, so they belong in one.
+It needs no new event plumbing: `Win32_DeviceChangeEvent` fires on Bluetooth
+connect and disconnect (verified, both edges), so a Bluetooth device is evaluated on
+the subscription that already exists. Note the volume difference if you ever tune
+timings — a USB plug produces ~32 events, a Bluetooth connect about 3.
 
-**The route to it is settled, after three dead ends.** Widening the match pattern
-fails (presence means paired). `Register-ObjectEvent` on a WinRT `DeviceWatcher`
-fails outright -- *"Windows PowerShell cannot subscribe to Windows RT events"*. And
-`Add-Type` cannot reference `.winmd`, so an inline WinRT shim fails too. What works
-is P/Invoke to the classic `bthprops.cpl` API, whose `BLUETOOTH_DEVICE_INFO` carries
-`fConnected` separately from `fRemembered` -- verified against real hardware, where
-AirPods and an iPhone both read `fRemembered=True, fConnected=False` while PnP
-claimed `Present=True` for both.
-
-That is the same P/Invoke idiom the NVAPI transport already uses, so a Bluetooth
-source stays in-process: no separate binary, no new dependency, and the watcher
-remains `powershell.exe`. It also simplifies the shape — the classic API is a query
-rather than an event, so Bluetooth is not a new *event source* but a second
-*presence evaluator* woken by the `Win32_DeviceChangeEvent` subscription that
-already exists.
-
-**And the last gate is cleared.** `Win32_DeviceChangeEvent` does fire on Bluetooth
-connect -- measured, both edges, 3 events within the same second each way. So a
-Bluetooth evaluator needs no new event plumbing and no polling; it hangs off the
-subscription already in place. Worth knowing for tuning: a USB plug produces ~32
-events, a Bluetooth connect only 3.
-
-The one thing still untested is whether the classic Bluetooth API works from
-session 0, which matters only for the `s4u` tier.
+The Bluetooth list is enumerated once per presence sweep rather than once per
+device, because the API walks the whole paired set on each call and a single USB
+plug triggers dozens of sweeps. If the radio is missing or disabled, Bluetooth reads
+as "nothing connected" and the USB half carries on — an absence never fires.
 
 The config keys stay flat anyway — `trigger.device`, `trigger.debounce`,
 `trigger.settle`. Nesting them under a transport was tried and reverted: it
@@ -182,12 +152,16 @@ to parameterise it.
 .\trigger-kvm.ps1 list       # just the displays
 ```
 
-`-Discover` lists connected displays with their EDID ids, and USB devices attached
-**right now** — which is the filter doing most of the work, since you install on the
+`-Discover` lists connected displays with their EDID ids, and devices attached or
+connected **right now** — which is the filter doing most of the work, since you install on the
 machine currently holding the peripherals, so whatever moves is by definition
 present. Hubs and host controllers are dropped, and the several PnP nodes one
 physical device produces are collapsed to one row per `VID:PID`, keeping the
 best-named entry.
+
+Bluetooth rows list only devices **connected** at that moment, not merely paired --
+a paired-but-disconnected device could never produce an arrival to fire on, so
+offering it would be offering a trigger that cannot work.
 
 It deliberately still shows your keyboard and mouse. They share a vendor id with the
 webcam on this desk, and seeing that is how you avoid the vendor-only match that
@@ -207,8 +181,8 @@ display.lg.name    = LG 45GX950A
 display.lg.method  = lg-alt     # standard | lg-alt
 display.lg.self    = 0xD0       # the input where THIS machine is. Required.
 
-trigger.device   = 046d:0843,1235:820a
-trigger.debounce = 3.0
+trigger.device   = usb:046d:0843, usb:1235:820a, bt:0011223344ff
+trigger.debounce = 3.0          # applies to every trigger, not per transport
 trigger.settle   = 0.75
 
 scene.mac.lg   = 0xD1           # manual only -- the trigger never reads scenes

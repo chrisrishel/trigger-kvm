@@ -56,18 +56,30 @@ hardware this machine cannot observe, so a stale one must never be reachable fro
 anything automatic.
 #>
 
-[CmdletBinding()]
+[CmdletBinding(DefaultParameterSetName = 'Watch')]
 param(
-    [Parameter(Mandatory = $true)]
+    [Parameter(Mandatory = $true, ParameterSetName = 'Watch')]
     [string]$Exec,
 
+    [Parameter(ParameterSetName = 'Watch')]
     [string]$Arg = 'windows',
 
-    # VVVV:PPPP, comma-separated. Keep in sync with ..\displays.toml.
-    [Parameter(Mandatory = $true)]
+    # Comma-separated. usb:VVVV:PPPP, bare VVVV:PPPP (= usb), or bt:AAAAAAAAAAAA.
+    # Generated from the config by install.ps1.
+    [Parameter(Mandatory = $true, ParameterSetName = 'Watch')]
     [string[]]$Device,
 
+    # Print "address|connected|name" for every paired Bluetooth device and exit.
+    # This script owns the Bluetooth binding, so it is the thing that answers
+    # questions about Bluetooth -- install.ps1 calls this for -Discover rather than
+    # carrying a second copy of the P/Invoke that could drift out of step. Same
+    # shape as `trigger-kvm.ps1 list` answering for displays.
+    [Parameter(Mandatory = $true, ParameterSetName = 'ListBluetooth')]
+    [switch]$ListBluetooth,
+
+    [Parameter(ParameterSetName = 'Watch')]
     [double]$Debounce = 3.0,
+    [Parameter(ParameterSetName = 'Watch')]
     [double]$Settle   = 0.75,
 
     # Append to this file as well as writing to the host. The watcher owns its own
@@ -116,28 +128,200 @@ function Write-Log {
     }
 }
 
-# --- parse -Device into WQL prefixes ---------------------------------------
+# --- Bluetooth presence -----------------------------------------------------
+#
+# The classic Win32 Bluetooth API, by P/Invoke -- the same idiom the NVAPI transport
+# uses. WinRT would be the modern route and is unusable here: PowerShell refuses to
+# subscribe to WinRT events, and Add-Type will not reference the .winmd files a C#
+# shim would need. See ..\AGENTS.md.
+#
+# BLUETOOTH_DEVICE_INFO.fConnected is the field that matters, and it is distinct
+# from fRemembered. PnP presence cannot substitute: a PAIRED device keeps its PnP
+# node for years after it last connected, so an edge would never fire.
 
+$BtSource = @'
+using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+
+public static class BtPresence {
+    [StructLayout(LayoutKind.Sequential)]
+    public struct SYSTEMTIME { public ushort y, m, dow, d, h, min, s, ms; }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    public struct BLUETOOTH_DEVICE_INFO {
+        public uint dwSize;
+        public ulong Address;
+        public uint ulClassofDevice;
+        [MarshalAs(UnmanagedType.Bool)] public bool fConnected;
+        [MarshalAs(UnmanagedType.Bool)] public bool fRemembered;
+        [MarshalAs(UnmanagedType.Bool)] public bool fAuthenticated;
+        public SYSTEMTIME stLastSeen;
+        public SYSTEMTIME stLastUsed;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 248)] public string szName;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct BLUETOOTH_DEVICE_SEARCH_PARAMS {
+        public uint dwSize;
+        [MarshalAs(UnmanagedType.Bool)] public bool fReturnAuthenticated;
+        [MarshalAs(UnmanagedType.Bool)] public bool fReturnRemembered;
+        [MarshalAs(UnmanagedType.Bool)] public bool fReturnUnknown;
+        [MarshalAs(UnmanagedType.Bool)] public bool fReturnConnected;
+        [MarshalAs(UnmanagedType.Bool)] public bool fIssueInquiry;
+        public byte cTimeoutMultiplier;
+        public IntPtr hRadio;
+    }
+
+    [DllImport("bthprops.cpl", SetLastError = true, CharSet = CharSet.Unicode)]
+    static extern IntPtr BluetoothFindFirstDevice(ref BLUETOOTH_DEVICE_SEARCH_PARAMS p, ref BLUETOOTH_DEVICE_INFO i);
+    [DllImport("bthprops.cpl", SetLastError = true, CharSet = CharSet.Unicode)]
+    static extern bool BluetoothFindNextDevice(IntPtr h, ref BLUETOOTH_DEVICE_INFO i);
+    [DllImport("bthprops.cpl", SetLastError = true)]
+    static extern bool BluetoothFindDeviceClose(IntPtr h);
+
+    static BLUETOOTH_DEVICE_SEARCH_PARAMS Params() {
+        var p = new BLUETOOTH_DEVICE_SEARCH_PARAMS();
+        p.dwSize = (uint)Marshal.SizeOf(typeof(BLUETOOTH_DEVICE_SEARCH_PARAMS));
+        p.fReturnAuthenticated = true;
+        p.fReturnRemembered    = true;
+        p.fReturnUnknown       = false;
+        p.fReturnConnected     = true;
+        p.fIssueInquiry        = false;   // never scan: slow, and intrusive
+        p.cTimeoutMultiplier   = 0;
+        p.hRadio               = IntPtr.Zero;
+        return p;
+    }
+
+    static BLUETOOTH_DEVICE_INFO Info() {
+        var i = new BLUETOOTH_DEVICE_INFO();
+        i.dwSize = (uint)Marshal.SizeOf(typeof(BLUETOOTH_DEVICE_INFO));
+        return i;
+    }
+
+    // address (12 lowercase hex) -> is it CONNECTED right now.
+    //
+    // Walks the whole paired list, so callers must do this ONCE per presence sweep
+    // rather than once per watched device: a single USB plug produces ~32 change
+    // events and each one triggers a sweep.
+    public static Dictionary<string, bool> Connected() {
+        var map = new Dictionary<string, bool>();
+        var p = Params();
+        var info = Info();
+        IntPtr h = BluetoothFindFirstDevice(ref p, ref info);
+        if (h == IntPtr.Zero) return map;   // no radio, or nothing paired
+        try {
+            do {
+                map[info.Address.ToString("x12")] = info.fConnected;
+                info = Info();
+            } while (BluetoothFindNextDevice(h, ref info));
+        } finally {
+            BluetoothFindDeviceClose(h);
+        }
+        return map;
+    }
+
+    // "address|connected|name" rows, for the installer's device list.
+    public static List<string> Describe() {
+        var rows = new List<string>();
+        var p = Params();
+        var info = Info();
+        IntPtr h = BluetoothFindFirstDevice(ref p, ref info);
+        if (h == IntPtr.Zero) return rows;
+        try {
+            do {
+                rows.Add(info.Address.ToString("x12") + "|" + info.fConnected + "|" + info.szName);
+                info = Info();
+            } while (BluetoothFindNextDevice(h, ref info));
+        } finally {
+            BluetoothFindDeviceClose(h);
+        }
+        return rows;
+    }
+}
+'@
+
+# Loaded once per process, stamped with a hash of its own source. .NET cannot
+# replace a loaded type, and silently reusing a stale one would mean running code
+# that is not the code on disk -- the same guard, for the same reason, as in
+# trigger-kvm.ps1.
+$btStampKey = 'trigger-kvm:BtPresenceStamp'
+$btStamp    = $BtSource.GetHashCode()
+if ('BtPresence' -as [type]) {
+    if ([AppDomain]::CurrentDomain.GetData($btStampKey) -ne $btStamp) {
+        throw ('This PowerShell session already loaded BtPresence from a DIFFERENT ' +
+               'version of this script. Open a new PowerShell window and re-run.')
+    }
+} else {
+    Add-Type -ErrorAction Stop -TypeDefinition $BtSource
+    [AppDomain]::CurrentDomain.SetData($btStampKey, $btStamp)
+}
+
+# Answer the Bluetooth question and stop. Placed here, after the binding is loaded
+# but before anything else, so listing takes no lock, registers no events, writes no
+# log, and cannot disturb a running watcher.
+if ($ListBluetooth) {
+    try {
+        foreach ($row in [BtPresence]::Describe()) { Write-Output $row }
+        exit 0
+    } catch {
+        Write-Error ("Bluetooth enumeration failed: {0}" -f $_.Exception.Message)
+        exit 1
+    }
+}
+
+# --- parse -Device ----------------------------------------------------------
+
+# Accepted forms, one per comma-separated entry:
+#
+#   usb:VVVV:PPPP    a USB vendor+product pair
+#   VVVV:PPPP        the same thing -- bare means usb, so configs written before
+#                    Bluetooth existed keep working unchanged
+#   bt:AAAAAAAAAAAA  a Bluetooth device address, 12 hex digits
+#
+# The transport lives in the VALUE rather than in separate keys because the
+# installer presents ONE device list: you think "the stuff that moves when I
+# switch", not "my USB things and separately my Bluetooth things". The transport is
+# metadata the installer detects for you, not a choice to impose.
+#
 # Split on commas as well as taking a real array: launched via `powershell.exe
 # -File` (which is how the Scheduled Task runs it) every argument arrives as one
 # literal string, so -Device 046d:0843,1235:820a is a single element there.
 $watch = @()
 foreach ($d in ($Device -split ',')) {
-    if ($d -notmatch '^\s*([0-9A-Fa-f]{4})\s*:\s*([0-9A-Fa-f]{4})\s*$') {
-        throw "bad -Device '$d'; expected VVVV:PPPP, e.g. 046d:0843"
+    $t = $d.Trim()
+    if (-not $t) { continue }
+
+    if ($t -match '^(?:[Uu][Ss][Bb]:)?([0-9A-Fa-f]{4})\s*:\s*([0-9A-Fa-f]{4})$') {
+        # Not $pid: that is a read-only automatic variable (this process's id).
+        $vid  = $Matches[1].ToUpper()
+        $prod = $Matches[2].ToUpper()
+        $watch += [PSCustomObject]@{
+            Kind = 'usb'
+            Key  = "usb:$vid`:$prod"
+            # Backslash is the WQL LIKE escape character, hence the doubling.
+            Wql  = "DeviceID LIKE 'USB\\VID_$vid&PID_$prod%'"
+            Addr = $null
+        }
     }
-    # Not $pid: that is a read-only automatic variable (this process's id).
-    $vid  = $Matches[1].ToUpper()
-    $prod = $Matches[2].ToUpper()
-    $watch += [PSCustomObject]@{
-        Key = "$vid`:$prod"
-        # Backslash is the WQL LIKE escape character, hence the doubling.
-        Wql = "DeviceID LIKE 'USB\\VID_$vid&PID_$prod%'"
+    elseif ($t -match '^[Bb][Tt]:([0-9A-Fa-f]{12})$') {
+        $addr = $Matches[1].ToLower()
+        $watch += [PSCustomObject]@{
+            Kind = 'bt'
+            Key  = "bt:$addr"
+            Wql  = $null
+            Addr = $addr
+        }
+    }
+    else {
+        throw "bad -Device '$t'; expected usb:VVVV:PPPP (or bare VVVV:PPPP) or bt:AAAAAAAAAAAA"
     }
 }
 
-# Is this specific device attached right now?
-function Test-DevicePresent {
+# --- presence ---------------------------------------------------------------
+
+# Is this USB device attached right now?
+function Test-UsbPresent {
     param([string]$Wql)
     # -Verbose:$false so our own -Verbose does not drown the log in CIM's
     # per-query chatter; we want the watcher's decisions, not its WQL.
@@ -146,9 +330,37 @@ function Test-DevicePresent {
     return ($hits.Count -gt 0)
 }
 
+# One sweep across every watched device, whatever its transport.
+#
+# The Bluetooth list is enumerated ONCE here rather than per device: the API walks
+# the whole paired set on every call, and a single USB plug produces ~32 change
+# events, each of which triggers a sweep. Skipped entirely when nothing Bluetooth
+# is watched, so the common single-transport setup pays nothing for this.
 function Get-PresenceMap {
     $map = @{}
-    foreach ($w in $watch) { $map[$w.Key] = (Test-DevicePresent -Wql $w.Wql) }
+
+    $bt = $null
+    if ($watch | Where-Object { $_.Kind -eq 'bt' }) {
+        try {
+            $bt = [BtPresence]::Connected()
+        } catch {
+            # A missing or disabled radio must not take the watcher down -- the USB
+            # half has to keep working. Treat Bluetooth as "nothing connected",
+            # which is an absence, and absences never fire.
+            Write-Verbose ("Bluetooth enumeration failed ({0}); treating as none connected" -f $_.Exception.Message)
+            $bt = @{}
+        }
+    }
+
+    foreach ($w in $watch) {
+        if ($w.Kind -eq 'bt') {
+            # CONNECTED, not paired. A paired-but-disconnected device keeps its PnP
+            # node for years, which is exactly why this cannot use the USB path.
+            $map[$w.Key] = ($null -ne $bt -and $bt.ContainsKey($w.Addr) -and $bt[$w.Addr])
+        } else {
+            $map[$w.Key] = Test-UsbPresent -Wql $w.Wql
+        }
+    }
     return $map
 }
 

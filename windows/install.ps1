@@ -169,9 +169,16 @@ function New-DefaultConfig {
         '# names inputs on hardware this machine cannot see, and a stale one would'
         '# then be able to cause an AUTOMATIC switch to a dead input.'
         '#'
-        '# device:   VVVV:PPPP pairs. Match the FULL vendor+product -- a vendor-only'
-        '#           match fires constantly, because the keyboard and mouse share a'
-        '#           vendor id with the webcam and never move.'
+        '# device:   comma-separated. Each entry is one of:'
+        '#             usb:VVVV:PPPP    a USB vendor+product pair'
+        '#             VVVV:PPPP        the same thing; bare means usb'
+        '#             bt:AAAAAAAAAAAA  a Bluetooth address, 12 hex digits'
+        '#           Match the FULL USB vendor+product -- a vendor-only match fires'
+        '#           constantly, because the keyboard and mouse share a vendor id'
+        '#           with the webcam and never move.'
+        '#           Bluetooth matches on CONNECTED, not paired: a paired device'
+        '#           keeps its PnP node for years, so paired-ness never has an edge.'
+        '#           Find both with:  .\install.ps1 -Discover'
         '# debounce: applies to every trigger. One window has to cover all of them,'
         '#           since two could not dedupe against each other.'
         ''
@@ -248,35 +255,36 @@ function Remove-LegacyInstall {
 
 # --- discovery ---------------------------------------------------------------
 
-# Candidate trigger devices: USB devices that are attached RIGHT NOW.
+# Candidate trigger devices: things attached or connected RIGHT NOW.
 #
-# "Attached right now" is the filter that does most of the work, and it comes from
-# how installing actually happens -- you run this on the machine that currently
-# holds the peripherals, so the devices that move are by definition present. That is
-# far more discriminating than any heuristic about device class.
+# "Right now" is the filter doing most of the work, and it comes from how installing
+# actually happens -- you run this on the machine currently holding the peripherals,
+# so whatever moves is by definition present. Far more discriminating than any
+# heuristic about device class.
 #
-# The rest is noise removal. Hubs and host controllers never move through a USB
-# switch, and one physical device usually enumerates several PnP nodes sharing a
-# VID:PID (a webcam appears as a composite parent plus camera and audio children),
-# so entries are grouped by VID:PID and the most specific name in each group wins.
+# ONE list across transports, with a column saying which. You think "the stuff that
+# moves when I switch", not "my USB things and separately my Bluetooth things", so
+# the transport is metadata detected for you rather than a question to answer.
 function Get-TriggerCandidates {
     $rows = @()
+
+    # --- USB: present PnP nodes, minus infrastructure -----------------------
     foreach ($d in (Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue)) {
         if ($d.InstanceId -notmatch '^USB\\VID_([0-9A-Fa-f]{4})&PID_([0-9A-Fa-f]{4})') { continue }
-        $key  = ('{0}:{1}' -f $Matches[1], $Matches[2]).ToLower()
+        $key  = ('usb:{0}:{1}' -f $Matches[1], $Matches[2]).ToLower()
         $name = $d.FriendlyName
         if (-not $name) { continue }
 
-        # Infrastructure, not peripherals. These are attached permanently and would
-        # only pad the list.
+        # Hubs and controllers are attached permanently and never move.
         if ($name -match 'Hub|Host Controller|Root Complex') { continue }
 
         $rows += [PSCustomObject]@{
             Key   = $key
+            Bus   = 'USB'
             Name  = $name
             Class = $d.Class
-            # Rank by how specific the class is. 'USB' is the generic fallback node;
-            # a real Camera/AudioEndpoint/Image entry names the device far better.
+            # Rank by how specific the class is: 'USB' is the generic fallback node,
+            # while a Camera/AudioEndpoint/Image entry names the device far better.
             Rank  = $(switch -Regex ($d.Class) {
                         'Camera|Image'            { 0 }
                         'AudioEndpoint|MEDIA'     { 1 }
@@ -287,11 +295,41 @@ function Get-TriggerCandidates {
         }
     }
 
-    # One row per VID:PID, keeping the best-named entry.
-    return @($rows | Group-Object Key | ForEach-Object {
+    # One row per VID:PID -- a single physical device enumerates several PnP nodes
+    # sharing one id (a webcam appears as a composite parent plus camera and audio
+    # children), so keep the best-named entry of each group.
+    $usb = @($rows | Group-Object Key | ForEach-Object {
         $best = $_.Group | Sort-Object Rank | Select-Object -First 1
-        [PSCustomObject]@{ Key = $_.Name; Name = $best.Name; Class = $best.Class; Rank = $best.Rank }
-    } | Sort-Object Rank, Name)
+        [PSCustomObject]@{ Key = $_.Name; Bus = 'USB'; Name = $best.Name; Class = $best.Class; Rank = $best.Rank }
+    })
+
+    # --- Bluetooth: CONNECTED, not merely paired ----------------------------
+    #
+    # PnP cannot answer this. A paired device keeps its node for years after it last
+    # connected, so listing paired devices would offer triggers that can never fire.
+    # Only currently-connected ones are candidates, for the same reason USB lists
+    # only attached ones.
+    # event-watch.ps1 owns the Bluetooth binding, so ask it rather than keeping a
+    # second copy of the P/Invoke here. Two copies would drift, and a drifted struct
+    # layout is a marshalling bug that presents as WRONG DATA rather than an error.
+    # Same shape as asking trigger-kvm.ps1 for the display list.
+    $bt = @()
+    try {
+        $rows = & (Join-Path $PSScriptRoot 'event-watch.ps1') -ListBluetooth 2>$null
+        foreach ($row in $rows) {
+            $parts = "$row" -split '\|', 3
+            if ($parts.Count -lt 3) { continue }
+            if ($parts[1] -ne 'True') { continue }   # paired but not connected
+            $bt += [PSCustomObject]@{
+                Key = 'bt:' + $parts[0]; Bus = 'BT'; Name = $parts[2]; Class = 'Bluetooth'; Rank = 1
+            }
+        }
+    } catch {
+        # No radio, or the API is unavailable. Not a reason to fail discovery.
+        Write-Log "note: Bluetooth enumeration unavailable ($($_.Exception.Message))"
+    }
+
+    return @(@($usb) + @($bt) | Sort-Object Rank, Name)
 }
 
 if ($Discover) {
@@ -303,19 +341,32 @@ if ($Discover) {
     Write-Host '=== USB devices attached right now ==='
     Write-Host ''
     Write-Host 'The trigger is whatever MOVES when you flip the switch. Everything below is'
-    Write-Host 'attached to this machine at this moment; pick the ones that travel.'
+    Write-Host 'attached or connected to this machine at this moment; pick the ones that travel.'
     Write-Host ''
 
     $cur = @()
     if (Test-Path -LiteralPath $CONFIG) {
         $c = Read-Config -Path $CONFIG
-        if ($c.ContainsKey('trigger.device')) { $cur = @(($c['trigger.device'] -replace '\s','') -split ',') }
+        if ($c.ContainsKey('trigger.device')) {
+            # Normalise to the same form the candidate keys use. A config entry may
+            # be bare (VVVV:PPPP), which means usb -- without this the "currently a
+            # trigger" markers silently stop appearing for every pre-Bluetooth
+            # config, which reads as "none of these are configured" and is worse
+            # than no marker at all.
+            $cur = @(($c['trigger.device'] -replace '\s','') -split ',' | Where-Object { $_ } | ForEach-Object {
+                if ($_ -match '^(usb:|bt:)') { $_.ToLower() } else { 'usb:' + $_.ToLower() }
+            })
+        }
     }
 
     foreach ($d in (Get-TriggerCandidates)) {
         $mark = $(if ($cur -contains $d.Key) { ' <- currently a trigger' } else { '' })
-        Write-Host ('  {0,-12} {1,-18} {2}{3}' -f $d.Key, $d.Class, $d.Name, $mark)
+        Write-Host ('  {0,-20} {1,-4} {2,-18} {3}{4}' -f $d.Key, $d.Bus, $d.Class, $d.Name, $mark)
     }
+
+    Write-Host ''
+    Write-Host 'Bluetooth entries list only devices CONNECTED right now, not merely paired --'
+    Write-Host 'a paired-but-disconnected device would never produce an arrival to fire on.'
 
     Write-Host ''
     Write-Host 'TRAP: match the FULL vendor+product pair. A keyboard and mouse often share a'

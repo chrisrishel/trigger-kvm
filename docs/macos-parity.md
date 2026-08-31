@@ -142,8 +142,12 @@ Add sources to that run loop rather than adding processes, and do not tell users
 run a separate hotkey app -- the same reasoning as Windows. Two persistent watchers
 would each hold their own debounce and both fire on one physical event.
 
-**Bluetooth on macOS.** The connection-aware API is `IOBluetooth`, not IOKit USB
-matching: `+[IOBluetoothDevice registerForConnectNotifications:selector:]` fires when
+**Bluetooth on macOS.** Windows has this built now, so mirror its shape: entries are
+`bt:AAAAAAAAAAAA` in the same one device list as USB, matched on CONNECTED rather
+than paired, enumerated once per presence sweep, and a missing radio degrades to
+"nothing connected" instead of taking the watcher down.
+
+The connection-aware API is `IOBluetooth`, not IOKit USB matching: `+[IOBluetoothDevice registerForConnectNotifications:selector:]` fires when
 any device connects, and `-registerForDisconnectNotification:selector:` covers the
 other edge. Both are run-loop based, so they compose with what is already there.
 Two consequences worth knowing before you start: `IOBluetooth` is an Objective-C

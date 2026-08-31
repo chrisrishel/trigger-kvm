@@ -135,46 +135,35 @@ single-instance lock, and the fire.
 hardware this machine cannot observe, so a stale one must never be reachable from
 anything automatic.
 
-**Route for a Bluetooth source on Windows, with three dead ends already ruled out.**
-Measured 2026-08-30, in this order, each one killing the previous plan:
+**Bluetooth is BUILT, and matches on CONNECTED, never on paired.** `event-watch.ps1`
+takes `bt:AAAAAAAAAAAA` entries alongside `usb:VVVV:PPPP` (and bare `VVVV:PPPP`,
+which still means usb). Connection state comes from the classic Win32
+`bthprops.cpl` API by P/Invoke -- `BLUETOOTH_DEVICE_INFO.fConnected`, distinct from
+`fRemembered`.
+
+Do not "simplify" it onto the PnP path. Three routes were tried and ruled out first,
+and the reasoning is not obvious:
 
 ```
-widen the match pattern        NO -- PnP presence is "paired", not "connected"
+widen the PnP match pattern    NO -- PnP presence means "paired", and a paired
+                                     device keeps its node for YEARS
 Register-ObjectEvent on WinRT  NO -- "Windows PowerShell cannot subscribe to
                                      Windows RT events"
-Add-Type referencing .winmd    NO -- "Could not load ... Windows.Devices.winmd ...
-                                     assembly name or codebase was invalid" 0x80131047
-P/Invoke the classic Win32 API YES
+Add-Type referencing .winmd    NO -- 0x80131047, cannot load winmd
+P/Invoke the classic API       YES
 ```
 
-The classic `bthprops.cpl` API works from `Add-Type` and reports what is needed:
-`BluetoothFindFirstDevice` / `BluetoothFindNextDevice` fill `BLUETOOTH_DEVICE_INFO`,
-whose `fConnected` is distinct from `fRemembered`. Verified with real hardware --
-a pair of AirPods and an iPhone both read `fRemembered=True, fConnected=False` while
-PnP claimed `Present=True` for both. That is the same P/Invoke idiom the NVAPI
-transport already uses, so it stays IN-PROCESS: no separate binary, no new
-dependency, and the watcher is still `powershell.exe`.
+Two implementation constraints that are easy to undo by accident:
 
-Note what that does to the shape. The classic API is a QUERY, not an event, so a
-Bluetooth source is not a new event source at all -- it is a second *presence
-evaluator* woken by the `Win32_DeviceChangeEvent` subscription that already exists.
-One event source, N presence evaluators, which is simpler than N event sources.
+- **Enumerate Bluetooth ONCE per presence sweep**, not once per watched device. The
+  API walks the whole paired set every call, and a single USB plug produces ~32
+  change events, each triggering a sweep.
+- **A missing or disabled radio must not take the watcher down.** It is caught and
+  treated as "nothing connected", which is an absence, and absences never fire. The
+  USB half has to keep working.
 
-**The gate is cleared: `Win32_DeviceChangeEvent` DOES fire on Bluetooth connect.**
-Measured 2026-08-30 -- AirPods connecting produced `fConnected False -> True` with
-3 WMI events within the same second, and disconnecting produced the reverse with 3
-more. Both edges, both accompanied. So a Bluetooth evaluator needs no new event
-plumbing and no polling: it hangs off the subscription event-watch.ps1 already has.
-
-Note the contrast in volume, which matters for tuning: one physical USB plug
-produces ~32 events, a Bluetooth connect only 3. Do not calibrate anything on the
-USB number alone.
-
-**Still unverified for Bluetooth, and it only matters for the s4u tier:** whether
-`BluetoothFindFirstDevice` works from session 0. The WMI event reaches there
-(measured), but the classic Bluetooth API has not been tried without a desktop --
-and on this machine session 0 has already behaved differently from prediction once,
-with the phantom monitor. Test before claiming Bluetooth works pre-login.
+Volume differs by an order of magnitude between transports, which matters if timings
+are ever tuned: a USB plug produces ~32 events, a Bluetooth connect about 3.
 
 **WMI device notifications DO reach session 0.** Measured 2026-08-30 from an
 unelevated S4U task: 45 indications in 90s, and `Win32_PnPEntity` presence queries
