@@ -110,13 +110,15 @@ with a live count of what it will use:
     [ ] bt:0011223344ff  BT    AirPods Pro  (paired, not connected)
     [x] usb:1235:820a    USB   Clarett+ 2Pre
 
-    [ Done -- use the 2 checked ]
+        Done                     2 selected
 ```
 
 (The first version had "space toggles, enter accepts" and lost people immediately:
-enter is what you press, so the first thing it did was accept an empty list. The
-one after that put `Done` in the list as a fourth row, where it read as a fourth
-thing to check rather than the way out.) Every menu falls back to a typed number when the host cannot read individual
+enter is what you press, so the first thing it did was accept an empty list. The one
+after that drew `Done` as a bracketed button, to stop it reading as a fourth thing to
+check — but the blank line above it and the missing checkbox already say that, and
+every other menu here ends with a bare `Done`. The count moved to the detail column,
+where every other menu puts a value.) Every menu falls back to a typed number when the host cannot read individual
 keys — redirected stdin, some remote sessions — which is also what makes the flow
 testable end to end.
 

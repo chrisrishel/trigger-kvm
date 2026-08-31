@@ -735,14 +735,16 @@ function Select-Many {
                                             $(if ($state[$i]) { '[x]' } else { '[ ]' }),
                                             $Items[$i], $Detail[$i]
         }
-        # Drawn as a button, not as another list row: the last version read as a
-        # fourth thing to check, and people did not see that it was the way out.
-        # The count is live so the button also answers "what will this use?".
+        # A plain row, aligned with the item text, and the live count sitting in the
+        # detail column where every other menu puts a value. It was a bracketed
+        # button for a while, to stop it reading as a fourth thing to check -- but
+        # the blank line above it and the missing checkbox already say that, and
+        # every other menu in this program ends with a bare Done.
         $n = @($state | Where-Object { $_ }).Count
-        $button = $(if ($n -gt 0) { '[ {0} -- use the {1} checked ]' -f $DoneLabel, $n }
-                   else           { '[ {0} -- nothing checked yet ]' -f $DoneLabel })
         $lines += ''
-        $lines += '{0} {1}' -f $(if ($cursor -eq $done) { '  >' } else { '   ' }), $button
+        $lines += '{0}     {1}  {2}' -f $(if ($cursor -eq $done) { '  >' } else { '   ' }),
+                                       $DoneLabel.PadRight(25),
+                                       $(if ($n -gt 0) { "$n selected" } else { 'nothing selected' })
         $lines += $helpBody
         $lines += ''
         $lines += '  up/down move   enter toggles the highlighted row'

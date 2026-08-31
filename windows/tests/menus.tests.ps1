@@ -43,7 +43,8 @@ Assert-Equal '1' ($got -join ',') 'pre-checked rows survive, and space still tog
 
 Reset-Drawn; Set-Keys @('DownArrow','DownArrow','Enter')
 $null = Select-Many -Items @('a','b') -Detail @('one','two') -Checked @(0)
-Assert-Match (Get-Drawn) '\[ Done -- use the 1 checked \]' 'the button carries a live count'
+Assert-Match (Get-Drawn) 'Done\s+1 selected' 'the count sits in the detail column, as every other menu does'
+Assert-NoMatch (Get-Drawn) '\[ Done' 'and it is a plain row, like every other menu''s Done'
 
 # ---- Select-One: default, wrap, separators -----------------------------------
 
