@@ -63,7 +63,22 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $SOURCE = 'DisplaySwitchDeviceChange'
-$MUTEX  = 'Local\display-switch-usb-watch'
+
+# Machine-wide, not per-session. `Local\` is scoped to one session, so a watcher in
+# session 1 and one in session 0 would each take their own and BOTH fire on the same
+# arrival -- and the debounce is per-process, so it cannot dedupe across them. That
+# is exactly the shape the install tiers can produce (a logon watcher in the user's
+# session, an at-startup one in session 0), so the name has to be global.
+#
+# Measured 2026-08-30: an unelevated interactive process can create a `Global\`
+# mutex on this machine, and a second process sees it held. SeCreateGlobalPrivilege
+# is not universal though, so `Local\` remains a fallback.
+#
+# Note this file does NOT know which tier it is running under, and must not: the
+# tier is a property of the host and lives in install.ps1. This is a question about
+# what the OS permits and what is already running, not about who launched us.
+$MUTEX_GLOBAL = 'Global\display-switch-usb-watch'
+$MUTEX_LOCAL  = 'Local\display-switch-usb-watch'
 
 function Write-Log {
     param([string]$Message)
@@ -148,9 +163,26 @@ $Exec = (Resolve-Path -LiteralPath $Exec).Path
 # would both see the same arrival and each fire the switcher, and the debounce is
 # per-process so it cannot dedupe across them. This also makes the installer's
 # 5-minute self-heal trigger free: a redundant start just exits.
-$mutex = New-Object System.Threading.Mutex($false, $MUTEX)
+$mutex = $null
+$scope = 'Global'
+try {
+    $mutex = New-Object System.Threading.Mutex($false, $MUTEX_GLOBAL)
+} catch [System.UnauthorizedAccessException] {
+    # The name exists but this token cannot open it, which means something else owns
+    # it under a different identity -- in practice a watcher from another tier. Stand
+    # down rather than falling back, because falling back to a per-session name here
+    # would produce exactly the two-watchers-one-arrival case the global name exists
+    # to prevent.
+    Write-Log 'a usb-watch owned by another account already holds the global lock; exiting'
+    exit 0
+} catch {
+    # No SeCreateGlobalPrivilege. Per-session exclusion is still better than none.
+    $scope = 'Local'
+    $mutex = New-Object System.Threading.Mutex($false, $MUTEX_LOCAL)
+}
+
 if (-not $mutex.WaitOne(0)) {
-    Write-Log 'another usb-watch is already running; exiting'
+    Write-Log "another usb-watch is already running ($scope scope); exiting"
     exit 0
 }
 
@@ -185,6 +217,9 @@ $lastFire   = [DateTime]::MinValue
 
 Write-Log ("watching {0} device(s); exec={1} arg={2} debounce={3}s settle={4}s" -f `
            $watch.Count, $Exec, $Arg, $Debounce, $Settle)
+Write-Log ("context: user={0} sessionId={1} interactive={2} lock={3}" -f `
+           [System.Security.Principal.WindowsIdentity]::GetCurrent().Name,
+           (Get-Process -Id $PID).SessionId, [Environment]::UserInteractive, $scope)
 Write-Log ("armed ({0} already present, not firing){1}" -f `
            $alreadyOn.Count, $(if ($alreadyOn) { ': ' + ($alreadyOn -join ', ') } else { '' }))
 

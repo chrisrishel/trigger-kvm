@@ -331,14 +331,27 @@ once with `another usb-watch is already running`.
   as ANSI, so a UTF-8 em dash in a comment surfaces as a parse error at an
   unrelated line. Prose files are unaffected; use ASCII punctuation in scripts.
 - Send DDC writes more than once. They are idempotent and the bus is lossy.
-- Post-login only, both platforms, as shipped. Do not add pre-login support without
-  asking — that is a permissions decision, not a technical one, and it is no longer
-  blocked by anything. The old reasoning (session 0 has no `HMONITOR`) was true of
-  the `dxva2` path, which no longer exists. Measured 2026-08-30: NVAPI both
-  enumerates **and writes** from session 0, an unelevated S4U task moved the LG in
-  both directions with no desktop, and the switcher has no desktop dependency left.
-  What still stands in the way is that registering such a task needs admin, which
-  changes this project's "no admin needed" posture. macOS is unchanged and blocked.
+- **The install tier is a property of the HOST, not the switcher.** All tier logic
+  lives in `windows/install.ps1`. Nothing in `switch-displays.ps1` or
+  `usb-watch.ps1` knows or asks which tier it runs under, and if either ever needs
+  to, the abstraction is wrong — stop and rethink rather than adding the branch.
+  Tiers are mutually exclusive by construction: they share one task name, so
+  installing either replaces the other. Two live watchers in different sessions
+  would both fire on the same arrival and the debounce is per-process, so it cannot
+  dedupe across them. `usb-watch.ps1` takes a `Global\` (machine-wide) mutex as
+  defence in depth behind that, never a `Local\` one, which is per-session.
+- Post-login is the DEFAULT, not the only option, since 2026-08-30. `install.ps1`
+  defaults to the no-admin user tier; `-Tier s4u` adds before-first-login and
+  after-logoff at the cost of admin *to register* (it still runs unelevated). Do not
+  change which is the default without asking — no-admin is a deliberate posture.
+  macOS remains post-login only.
+
+  The old reasoning against pre-login (session 0 has no `HMONITOR`) was true of the
+  `dxva2` path, which no longer exists. Measured 2026-08-30: NVAPI both enumerates
+  **and writes** from session 0 — an unelevated S4U task moved the LG in both
+  directions with no desktop — and the switcher has no desktop dependency left.
+  Note also that **locking is already covered by the user tier**: the session and
+  its watcher stay alive, so the displays still follow.
 - **Enumerating is not writing. Do not generalise from one to the other.** Phase 1
   proved NVAPI enumerates in session 0 and it was tempting to call pre-login solved;
   it was not, and the write had to be tested separately before anything could be

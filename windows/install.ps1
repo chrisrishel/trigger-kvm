@@ -1,20 +1,44 @@
 <#
 .SYNOPSIS
-Install the Windows half of display-switch as a Scheduled Task at logon.
+Install the Windows half of display-switch as a Scheduled Task.
 
 .DESCRIPTION
-    .\install.ps1              install and start
-    .\install.ps1 -Status      is the task registered and running?
+    .\install.ps1              install and start (user tier -- no admin needed)
+    .\install.ps1 -Tier s4u    pre-login tier -- NEEDS ADMIN to register
+    .\install.ps1 -Status      which tier is installed, and what it can do
     .\install.ps1 -Logs        tail the log
     .\install.ps1 -Uninstall   stop, unregister, remove installed files
 
-Mirrors macos/Makefile. Installs to %LOCALAPPDATA%\Programs\display-switch and
-registers a Scheduled Task that runs usb-watch.ps1 in the interactive session at
-logon.
+Mirrors macos/Makefile. Installs to %LOCALAPPDATA%\Programs\display-switch.
 
-Post-login by design, matching macOS. A Windows Service runs in session 0, which
-has no desktop: GetPhysicalMonitorsFromHMONITOR would have no HMONITOR to work
-from -- still true of the ASUS path. See ..\ARCHITECTURE.md.
+TWO TIERS, and you pick by what you are willing to grant:
+
+  user (default)  Runs at logon, in your interactive session, unelevated.
+                  NO ADMIN, at install or at run time.
+                  Covers everything from logon onward -- including while the
+                  screen is LOCKED, since the session and watcher stay alive.
+                  Does not cover: before the first login after a boot, or after
+                  a full logoff.
+
+  s4u             Runs at startup, in session 0, as you, still UNELEVATED.
+                  ADMIN ONCE, to register the task. Nothing elevated runs on
+                  the switch path afterwards.
+                  Adds: before-first-login and after-logoff.
+
+The tiers are mutually exclusive by construction -- they share one task name, so
+installing either replaces the other. Two live watchers in different sessions
+would both fire on the same arrival, and the debounce is per-process, so it
+cannot dedupe across them. usb-watch.ps1 also takes a machine-wide mutex as
+defence in depth.
+
+The tier is a property of the HOST, not of the switcher. Nothing in
+switch-displays.ps1 or usb-watch.ps1 knows or asks which tier it runs under. If
+either ever needs to, the abstraction is wrong -- stop and rethink.
+
+Why s4u is possible at all: measured 2026-08-30, NVAPI both enumerates and
+WRITES from session 0 with no desktop -- an unelevated S4U task moved the LG in
+both directions, confirmed visually. The old blocker was dxva2 needing an
+HMONITOR, and that path no longer exists. See ..\ARCHITECTURE.md.
 
 No third-party binary and no network access: both monitors are driven by code in
 this repo. The LG used to need lg-input-switch.exe, a 16MB GPL-3.0 download; it is
@@ -25,6 +49,12 @@ stale copy left by an older install is removed below.
 
 [CmdletBinding(DefaultParameterSetName = 'Install')]
 param(
+    # user: logon task, your session, no admin. s4u: at-startup task, session 0,
+    # still runs as you and still unelevated, but needs admin ONCE to register.
+    [Parameter(ParameterSetName = 'Install')]
+    [ValidateSet('user', 's4u')]
+    [string]$Tier = 'user',
+
     [Parameter(ParameterSetName = 'Uninstall')] [switch]$Uninstall,
     [Parameter(ParameterSetName = 'Status')]    [switch]$Status,
     [Parameter(ParameterSetName = 'Logs')]      [switch]$Logs
@@ -74,6 +104,27 @@ if ($Status) {
     $t = Get-ScheduledTask -TaskName $TASK -ErrorAction SilentlyContinue
     if (-not $t) { Write-Host 'not installed'; exit 1 }
     $i = Get-ScheduledTaskInfo -TaskName $TASK
+
+    # Report the tier AND what it therefore covers. A tier name alone invites the
+    # reader to guess the capability, and the whole point of having tiers is that
+    # they differ in exactly that.
+    $logon = $t.Principal.LogonType
+    $tier  = if ($logon -eq 'S4U') { 's4u' } elseif ($logon -eq 'Interactive') { 'user' } else { "unknown ($logon)" }
+    Write-Host ("tier     : {0}  (principal={1} logon={2} runlevel={3})" -f `
+                $tier, $t.Principal.UserId, $logon, $t.Principal.RunLevel)
+
+    switch ($tier) {
+        'user' {
+            Write-Host '           covers: from logon onward, including while LOCKED'
+            Write-Host '           NOT covered: before the first login after a boot; after a logoff'
+        }
+        's4u' {
+            Write-Host '           covers: from boot onward -- before first login, while locked, after logoff'
+        }
+        default {
+            Write-Host '           <- unrecognised principal; capability unknown'
+        }
+    }
     Write-Host ("task     : {0}" -f $t.State)
 
     # 0x800710E0 is "an instance of this task is already running". The 5-minute
@@ -116,6 +167,29 @@ if ($Uninstall) {
 }
 
 # --- install ----------------------------------------------------------------
+
+# Constraint: never install a tier that will silently fail. The s4u tier cannot be
+# registered without elevation -- measured, S4U registration returns "Access is
+# denied" for an ordinary user -- so check up front and say so, rather than letting
+# Register-ScheduledTask fail halfway through with the files already copied.
+$elevated = ([Security.Principal.WindowsPrincipal] `
+             [Security.Principal.WindowsIdentity]::GetCurrent()
+            ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+
+if ($Tier -eq 's4u' -and -not $elevated) {
+    Write-Host ''
+    Write-Host 'The s4u tier needs admin to REGISTER the task (it then runs unelevated).'
+    Write-Host 'Re-run this from an elevated PowerShell:'
+    Write-Host ''
+    Write-Host '    .\install.ps1 -Tier s4u'
+    Write-Host ''
+    Write-Host 'Or install the no-admin tier instead, which covers everything from logon'
+    Write-Host 'onward including while locked:'
+    Write-Host ''
+    Write-Host '    .\install.ps1'
+    Write-Host ''
+    throw 'elevation required for -Tier s4u'
+}
 
 New-Item -ItemType Directory -Force -Path $DEST              | Out-Null
 New-Item -ItemType Directory -Force -Path (Split-Path $LOG)  | Out-Null
@@ -171,9 +245,23 @@ $vbsCmd = $psCmd -replace '"', '""'
 
 $action = New-ScheduledTaskAction -Execute 'wscript.exe' -Argument "`"$VBS`""
 
-$triggers = @(
-    (New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME)
-)
+# The tier differs in exactly two things: when it starts, and as whom. Everything
+# below this point -- the self-heal trigger, the settings, the action -- is shared,
+# because the tier is not supposed to change what the watcher does.
+if ($Tier -eq 's4u') {
+    # At startup, so it is running before anyone logs in. S4U means "run as this
+    # user without their password": no stored credential (which is rejected
+    # outright), and RunLevel Limited means ordinary user rights at run time even
+    # though registering it needed admin.
+    $triggers = @( (New-ScheduledTaskTrigger -AtStartup) )
+    $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" `
+        -LogonType S4U -RunLevel Limited
+} else {
+    # Interactive session, normal user rights, and deliberately no admin anywhere.
+    $triggers = @( (New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME) )
+    $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" `
+        -LogonType Interactive -RunLevel Limited
+}
 
 # Self-heal. AtLogOn alone means that if the watcher is ever killed -- Task Manager,
 # a crash, a stray Stop-Process -- it stays dead until the next logon, and you would
@@ -194,11 +282,6 @@ $heal = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) `
 $heal.Repetition.StopAtDurationEnd = $false
 $triggers += $heal
 
-# Interactive session, normal user rights: this needs a desktop for HMONITOR and
-# deliberately does not need admin.
-$principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" `
-    -LogonType Interactive -RunLevel Limited
-
 $settings = New-ScheduledTaskSettingsSet `
     -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
     -MultipleInstances IgnoreNew `
@@ -218,8 +301,22 @@ Stop-Watchers
 
 Register-ScheduledTask -TaskName $TASK -Action $action -Trigger $triggers `
     -Principal $principal -Settings $settings `
-    -Description 'display-switch: pull both monitors to this PC when the shared USB peripherals arrive.' | Out-Null
+    -Description "display-switch ($Tier tier): pull both monitors to this PC when the shared USB peripherals arrive." | Out-Null
 
 Start-ScheduledTask -TaskName $TASK
-Write-Log "registered and started task '$TASK'"
+Write-Log "registered and started task '$TASK' ($Tier tier)"
 Write-Log "log: $LOG"
+
+if ($Tier -eq 's4u') {
+    Write-Log ''
+    Write-Log 'Installed the pre-login tier. It runs at startup in session 0, as you,'
+    Write-Log 'unelevated. Nothing elevated runs on the switch path.'
+    Write-Log ''
+    Write-Log 'UNVERIFIED until you test it: log out (or reboot) and flip the USB switch'
+    Write-Log 'to this PC. The displays should follow with no one logged in. The SWITCHER'
+    Write-Log 'is proven in session 0; what that test exercises is whether the WMI device'
+    Write-Log 'notification reaches a session-0 watcher.'
+} else {
+    Write-Log 'Installed the no-admin tier: covers logon onward, including while locked.'
+    Write-Log 'For before-first-login and after-logoff, see: .\install.ps1 -Tier s4u'
+}

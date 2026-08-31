@@ -33,11 +33,41 @@ exists precisely so these two implementations can't drift.
 ## Install
 
 ```powershell
-.\install.ps1              # install to %LOCALAPPDATA%, register the task, start it
-.\install.ps1 -Status      # is the task registered and running?
+.\install.ps1              # user tier -- no admin. Install, register, start.
+.\install.ps1 -Tier s4u    # pre-login tier -- NEEDS ADMIN to register
+.\install.ps1 -Status      # which tier is installed, and what it therefore covers
 .\install.ps1 -Logs        # tail the log
 .\install.ps1 -Uninstall
 ```
+
+### Two tiers
+
+Pick by what you are willing to grant. They are mutually exclusive by construction
+-- one task name, so installing either replaces the other.
+
+| | user (default) | s4u |
+|---|---|---|
+| Admin to install | **no** | **yes**, once |
+| Elevated at run time | no | **no** |
+| Runs | at logon, your session | at startup, session 0, as you |
+| From logon onward | yes | yes |
+| While **locked** | **yes** | yes |
+| Before first login after boot | no | **yes** |
+| After a full logoff | no | **yes** |
+
+The locked row is the one that surprises people, and it is why the default tier is
+enough for most days: locking does not end your session, so the watcher is still
+alive and the displays still follow. The s4u tier buys the two genuinely
+uncovered cases. The one that stings is a rebooted PC sitting at a login screen you
+cannot see, because the monitors are still showing the other machine.
+
+`-Status` reports the tier *and* what it covers, deliberately -- a tier name on its
+own invites you to guess the capability, and the capability is the entire point of
+having tiers.
+
+**The tier is a property of the host, not of the switcher.** All tier logic lives in
+`install.ps1`. Neither `switch-displays.ps1` nor `usb-watch.ps1` knows or asks which
+tier it is running under. If either ever needs to, the abstraction is wrong.
 
 `install.ps1` copies the two scripts and registers the task. It needs no network
 access. Earlier versions downloaded a 16MB `lg-input-switch.exe` from a pinned
@@ -139,6 +169,17 @@ anything:
 ```powershell
 .\switch-displays.ps1 windows -Only lg -WhatIf
 ```
+
+**Single instance is enforced machine-wide, not per session.** `usb-watch.ps1` takes
+`Global\display-switch-usb-watch`. `Local\` would be scoped to one session, so a
+logon watcher in session 1 and an at-startup watcher in session 0 would each take
+their own, both arm, and both fire on the same arrival -- and the debounce is
+per-process, so it cannot dedupe across them. Measured 2026-08-30: an unelevated
+interactive process can create a `Global\` mutex here, and a second process sees it
+held. `Local\` remains a fallback for a token without `SeCreateGlobalPrivilege`. If
+the global name exists but cannot be opened, the watcher stands down rather than
+falling back -- something owns it under another identity, and falling back would
+recreate the exact double-fire this prevents.
 
 **`usb-watch.ps1`** -- `Register-CimIndicationEvent` on `Win32_DeviceChangeEvent`,
 an extrinsic WMI event, so there is no polling interval. That event does not say
