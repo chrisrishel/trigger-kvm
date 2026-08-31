@@ -146,9 +146,9 @@ display.lg.name    = LG 45GX950A
 display.lg.method  = lg-alt     # standard | lg-alt
 display.lg.self    = 0xD0       # the input where THIS machine is. Required.
 
-trigger.device   = 046d:0843,1235:820a
-trigger.debounce = 3.0
-trigger.settle   = 0.75
+trigger.device.usb      = 046d:0843,1235:820a
+trigger.device.debounce = 3.0
+trigger.device.settle   = 0.75
 
 scene.mac.lg   = 0xD1           # manual only -- the trigger never reads scenes
 ```
