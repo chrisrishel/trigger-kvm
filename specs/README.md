@@ -78,12 +78,23 @@ the point:
 1. **Change the spec first.** If you cannot describe the new behaviour here, it
    is not ready to implement.
 2. **Implement it on the platform you are working on**, with tests.
-3. **Write a handoff entry** in that platform's `HANDOFF.md` saying what changed,
-   which spec section, why, and what the other platform owes.
+3. **Append an entry to the OTHER platform's `HANDOFF.md`** saying what changed,
+   which spec section, why, and what it now owes.
 
-You do **not** edit the other platform. You cannot run its tests or see its
-hardware, and a half-made change there is worse than none. The handoff is how
-the work gets there.
+`<platform>/HANDOFF.md` is an **inbox** — what that platform owes. Anyone may
+append; only that platform works through it and deletes from it, so crossing a
+finished item off always happens in your own directory, and an agent finds its
+own work without being told where to look.
+
+You do **not** change anything else in the other platform's directory. You cannot
+run its tests or see its hardware, and a half-made change there is worse than
+none. Appending to its queue is a different verb from editing it: prose cannot
+break their build.
+
+The same route carries a **defect you noticed in their code**, not just a spec
+change. Mark which it is, and say what you could and could not verify from where
+you were — a defect report written by someone who cannot run that platform is a
+reading, not a finding.
 
 ## Normative wording, and how it is enforced
 

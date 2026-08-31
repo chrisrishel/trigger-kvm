@@ -6,8 +6,10 @@ At parity with the Windows side. The shared behaviour is specified in
 Almost everything in them was arrived at by getting it wrong first, on real
 hardware.
 
-**Change the spec first**, then this implementation, then add an entry to
-[`HANDOFF.md`](HANDOFF.md) saying what Windows owes.
+**Change the spec first**, then this implementation, then append an entry to
+[`../windows/HANDOFF.md`](../windows/HANDOFF.md) saying what Windows owes.
+[`HANDOFF.md`](HANDOFF.md) here is the other direction — read it before starting
+work, because it is what *this* side owes.
 
 A LaunchAgent runs `trigger-kvm watch`, which reads the config and execs the
 watcher; the watcher fires `trigger-kvm pull` when a watched device arrives.

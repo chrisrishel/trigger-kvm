@@ -436,7 +436,7 @@ code**, update whichever of these the change affects:
 | `macos/README.md`, `windows/README.md` | That platform's install, components, or behaviour changes |
 | `AGENTS.md` | A new constraint or hazard is discovered that future work must respect |
 | `specs/*.md` | Any behaviour BOTH platforms must share changes -- and this happens FIRST, before the implementation |
-| `<platform>/HANDOFF.md` | You changed something the other platform now owes. Delete the entry when it lands there. |
+| `<platform>/HANDOFF.md` | That platform's INBOX. Append when it owes something -- a spec change, or a defect you found in its code. Only that platform deletes from it. |
 
 Two specific obligations:
 
@@ -464,14 +464,31 @@ the point:**
 1. **Change the spec first.** If you cannot describe the new behaviour there, it
    is not ready to implement.
 2. **Implement it on the platform you are working on**, with tests.
-3. **Write a handoff entry** in that platform's `HANDOFF.md` -- what changed,
-   which spec section, why, and what the other platform owes.
+3. **Append an entry to the OTHER platform's `HANDOFF.md`** -- what changed,
+   which spec section, why, and what it now owes.
 
-**DO NOT EDIT THE OTHER PLATFORM.** You cannot run its tests or see its
-hardware, and a half-made change there is worse than none. `macos/HANDOFF.md`
-and `windows/HANDOFF.md` are how the work gets there. They are QUEUES, not logs:
-delete an entry once the other side lands it, because git already keeps the
-history.
+**DO NOT CHANGE ANYTHING IN THE OTHER PLATFORM'S DIRECTORY** -- not its code,
+not its tests, not its docs. You cannot run its tests or see its hardware, and a
+half-made change there is worse than none.
+
+**Appending an entry to its `HANDOFF.md` is the one exception**, and it is a
+different verb from editing: prose cannot break their build. That is how work
+crosses the boundary, including a defect you noticed in their code.
+
+`<platform>/HANDOFF.md` is an **INBOX** -- what THAT platform owes. Anyone may
+append; only that platform works through it, and only that platform deletes from
+it. So the common operation, crossing a finished item off, always happens in
+your own directory. **Read your own platform's HANDOFF.md before starting work
+there.**
+
+They are QUEUES, not logs: delete an entry once it lands, because git already
+keeps the history.
+
+Mark each entry `Kind: spec change` or `Kind: defect report`, and say in
+`Verified:` what you could and could not check from where you were. The two have
+different standing -- a spec change is required and the conformance check
+already fails until it lands; a defect report is a reading, often by someone who
+could not run the code they are reporting on.
 
 This is enforced, not merely asked for. Each platform's suite runs a conformance
 check asserting that every string the spec marks normative is present in that
