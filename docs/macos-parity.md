@@ -1,294 +1,634 @@
-# macOS parity — brief for whoever picks up the Mac side
+# macOS: what to build, and what it has to match
 
-**Status:** the Windows half was substantially rebuilt on 2026-08-30. macOS still
-works, but it is now behind on naming, configuration, CLI shape, install tiers and
-robustness. This is the catch-up brief.
+The Windows side is finished and in daily use. The Mac side is a 87-line script with
+two monitors and their input values hardcoded in it. This document is the
+specification for closing that gap.
 
-Read [`../AGENTS.md`](../AGENTS.md) first — the hard safety rules are unchanged and
-non-negotiable. Read [`../displays.toml`](../displays.toml) for the values. Nothing
-below overrides either.
+**Read this as a contract, not a suggestion.** Almost everything below was arrived at
+by getting it wrong first, on real hardware, and the comments in
+`windows/install.ps1` and `windows/trigger-kvm.ps1` record which. Where this document
+says "must", it is because the alternative has already been tried.
 
----
+Two files are the source of truth and this one only points at them:
 
-## 1. The rename happened
+- `displays.toml` — the measured values, shared by both platforms.
+- `AGENTS.md` — the hard rules. They are not Windows rules; they are hardware rules.
 
-The project is **`trigger-kvm`**, renamed from `display-switch` because that name
-collides exactly with [haimgel/display-switch](https://github.com/haimgel/display-switch)
-(3,430 stars, actively maintained). The mechanical substitution across the macOS
-files is already committed (`a5cd7eb`) but **has never been run on a Mac** — treat
-it as edited-unverified and check it before trusting it:
-
-| Was | Is |
-|---|---|
-| `macos/switch-displays.sh` | `macos/trigger-kvm.sh` |
-| `com.chrisrishel.displayswitch` | `com.chrisrishel.trigger-kvm` |
-| `~/Library/Logs/displayswitch.log` | `~/Library/Logs/trigger-kvm.log` |
-| log prefix `display-switch:` | `trigger-kvm:` |
-
-**`make install` must remove the pre-rename install**, or you get two LaunchAgents
-and two watchers both firing on the same arrival. Windows does this in
-`Remove-LegacyInstall`; mirror it: `launchctl bootout` the old label, delete the old
-plist and binaries, and move the old log aside rather than deleting it. References
-to `haimgel/display-switch` in prose are deliberately *not* renamed — they point at
-the other project.
-
-## 2. Adopt the config file
-
-Machine-local facts no longer live in the scripts. Windows generates
-`%LOCALAPPDATA%\trigger-kvm\config`; the macOS equivalent should be
-`~/Library/Application Support/trigger-kvm/config` (or `~/.config/trigger-kvm/config`
-— pick one and document it).
+## 0. What exists today
 
 ```
-display.lg.vendor  = 0x1E6D     # EDID manufacturer id
-display.lg.product = 0x9E9F     # NOTE: per-input on this panel. See below.
-display.lg.name    = LG 45GX950A
-display.lg.method  = lg-alt     # standard | lg-alt
-display.lg.self    = 0xD1       # the input where THIS machine is. Required.
+macos/
+  trigger-kvm.sh    two monitors and four input values, hardcoded. No config, no
+                    verbs but `mac` and `windows`, no installer, no discovery.
+  usb-watch.c       a presence watcher, still USB-only
+  Makefile, README.md
+```
+
+`macos/trigger-kvm.sh` **cannot read a config this repo writes**. It looks for values
+that no longer exist. Treat it as a proof that the transport works, not as a base to
+extend.
+
+## 1. The hard rules
+
+Copied here because a macOS implementation will be tempted by each of them.
+
+1. **Never probe a manufacturer sidechannel.** The LG's input lives on I2C source
+   `0x50`, VCP `0xF4` — a service channel. `ddcutil` carries an issue titled "Bricked
+   LG Monitor". Values for a sidechannel come from the dialect table or from a value
+   the user typed. Never from a search, a sweep, or a range.
+1b. **A manufacturer dialect is OFFERED, never probed, and only after standard DDC/CI
+   has been shown not to work.** Every panel starts on standard.
+2. **Never verify a switch by reading a VCP value back.** Reads lie on both panels
+   here — the PG42UQ returns `0` for everything always, the LG returns `-7` on an
+   unsettled link. Writes are fire-and-forget. No verify-then-retry loops.
+3. **A switch is confirmed by a human looking at it.** Never report success because a
+   call returned 0.
+4. **Never leave the user without a working display.** One panel at a time; never the
+   last one.
+5. **Refuse rather than send an unresolved value.** Resolve every display before
+   sending anything. This one bit hardest: a missing value became `0x00` on the wire,
+   an input no monitor has, so every switch silently did nothing. The null check was
+   present and did not fire. Assert the property — *nothing is sent* — not the check.
+
+## 2. The config format — normative
+
+Flat `key = value`, `#` comments, deliberately not TOML or JSON: it is read on every
+device arrival and must not need a parser. Keys are lower-cased on read; values are
+returned verbatim and trimmed. In shell that is one `sed`.
+
+```
+install.autostart = boot          # boot | login | no
+
+computer.this = mac               # what THIS computer is called below
+
+display.lg.vendor  = 0x1E6D       # EDID manufacturer id
+display.lg.product = 0x9E9D       # EDID product id
+display.lg.name    = LG ULTRAGEAR+
+display.lg.method  = lg-alt       # standard | lg-alt
+display.lg.input.0xD0 = pc        # which computer is on which input
+display.lg.input.0xD1 = mac
 
 trigger.device   = usb:046d:0843, bt:0011223344ff
 trigger.debounce = 3.0
 trigger.settle   = 0.75
-
-install.autostart    = login        # boot | login -- a configured value like any other
-
-computer.this            = mac   # what this computer is called below
-display.lg.input.0xD0   = windows
-display.lg.input.0xD1   = mac   # the WHOLE map: pull looks up computer.this,
-                                # `to windows` looks up windows
 ```
 
-Flat `key = value`, `#` comments, deliberately not TOML/JSON — it is read on every
-device arrival and must not need a parser. In shell that is one function:
+**`display.<label>.input.<value> = <computer>` is the whole map.** There is no
+second table. `pull` looks up `computer.this` in it; `to mac` looks up `mac`. The
+same lookup, the same code path, one name apart — so the two can never disagree
+about where a computer is.
 
-```sh
-cfg() { sed -n "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*//p" "$CONFIG" | sed 's/[[:space:]]*#.*//;s/[[:space:]]*$//' | head -1; }
-```
+Windows previously had `display.<label>.self` *and* `scene.<name>.<label>`, which
+were two shapes for one fact ("computer C is on input V of display D"). They could
+drift, and did. **Do not reintroduce a second table.**
 
-**Why the trigger keys are flat.** They were briefly nested under a transport and
-reverted: nesting advertised a capability that does not exist, and a malformed id
-already fails loudly, so nothing was failing silently for it to prevent. The one
-structural rule that does matter: **`debounce` and `settle` must be global to
-triggers**, never per-transport, because two independent debounce windows could not
-dedupe against each other. Keep them at `trigger.*`.
+Rules the reader must enforce:
 
-Worth knowing before assuming the Mac watcher is inherently USB-bound: on Windows
-the detection *query* turned out not to be — `Win32_PnPEntity` reaches Bluetooth,
-PCI and Thunderbolt, and USB is only the ID pattern matched.
+- A value that does not parse as a byte is dropped, not zeroed.
+- Two inputs naming the same computer on one panel is a **refusal**, not a coin toss.
+- A computer named on no input of a panel means that panel cannot go there — and a
+  `to` naming it must move **nothing at all**, not the panels that could.
 
-**But a generic query is not the same as a generic model,** and this is the trap.
-The watcher assumes a node exists only while the device is attached, so presence ==
-connected. That holds for USB and fails for Bluetooth: on Windows a *paired* device
-keeps its node forever — AirPods last connected ten months ago and an iPhone three
-years ago both still report `Present=True`. The edge would never fire and the
-trigger would silently never work. Adding Bluetooth needs connection-aware APIs, not a wider
-match pattern -- and it belongs as another presence source INSIDE the existing
-watcher, never as a second watcher process, because the debounce is per-process
-and two of them would both fire when a USB and a Bluetooth device arrive together. Expect IOKit to have the same
-distinction between paired and connected, and check it before assuming otherwise.
+## 3. The CLI — the verbs are the contract
 
-**The Mac's `self` values are different from the PC's, and that is the whole point.**
-Each machine configures only its own inputs. On this desk the Mac sits on the LG's
-USB-C (`0xD1`) and the ASUS's DisplayPort (`0x0F`); Windows sits on `0xD0` and `0x11`.
-Neither machine records the other's — see §4.
-
-**Trap, and it will bite here specifically:** the LG's EDID *product id is per-input*
-— `0x9e9d` on DP (what Windows sees), `0x9e9f` on USB-C (what the Mac sees), `0x9ea0`
-through the old KVM. So the Mac's config must carry **its own** measured value. Do
-not copy `0x9e9d` from the Windows config; it will match nothing. The ASUS reports
-`0x42e0` everywhere, which makes this trap easy to walk into.
-
-## 3. Adopt the CLI shape — the VERBS are the contract
-
-Windows now installs a single `trigger-kvm` command. Match the verbs exactly; they
-are the cross-platform surface:
+One command. Flags stay idiomatic per platform (`-Only` on Windows,
+`--only` on macOS is fine); the **verbs must be identical**, because they are typed
+daily on both machines.
 
 ```
-trigger-kvm pull                 pull every configured monitor to THIS machine
-trigger-kvm to windows           point them at the machine called "windows"
+trigger-kvm pull                 point every configured monitor at THIS computer
+trigger-kvm to <computer>        point them at another, by name. MANUAL ONLY
 trigger-kvm list                 connected displays, with their identifiers
-trigger-kvm status               when it starts, what that covers, version
+trigger-kvm configure            the walkthrough (§5)
+trigger-kvm configure --fresh    ...pre-filling nothing
+trigger-kvm status               autostart, what that covers, version, config
 trigger-kvm discover             what is attached, in the form the config wants
-trigger-kvm logs
-trigger-kvm pause                stand the watcher down to test one by hand
-trigger-kvm configure            interactive; applies what changed
-trigger-kvm restart              make a hand-edited config take effect
+trigger-kvm restart              make a hand-edited config take effect now
+trigger-kvm logs                 tail the log
+trigger-kvm pause                stand the watcher down to test by hand
 trigger-kvm uninstall
 ```
 
-Replaces `trigger-kvm.sh mac|windows`.
+**There is no `install` verb**, deliberately: installing is what produced the
+command. Upgrading and repairing both mean "fetch the source and run its installer",
+which works because the install is self-contained — the installer copies itself, so
+managing and removing keep working after the source tree is gone.
 
-**Flags stay idiomatic per platform** — `--only lg --dry-run` here, `-Only lg
--WhatIf` on Windows. Verbs are typed constantly and are worth unifying; flags are
-rare, and forcing PowerShell to accept `--only` would cost parameter binding,
-validation and completion for a cosmetic gain.
+**There is no `apply` step.** Everything is read at the point it is used. Display
+edits take effect on the next switch; trigger edits when the watcher next starts, and
+`restart` does that.
 
-`make` stays the **build** tool, not the user interface: `make install` compiles and
-then does the install, running `configure` if there is no config yet.
+`set --only <label> --value <byte>` exists as an internal verb for the walkthrough's
+guided discovery. Keep it off the public verb surface: a general "write any value"
+command invites poking at monitors, which is the habit rule 1 exists to discourage.
 
-**There is no `install` or `apply` verb**, and the reason is worth copying. Applying
-was only ever needed on Windows because trigger settings were baked into the
-scheduled task's arguments, so config edits needed re-registration. Have the watcher
-read the config itself and that whole concept disappears -- the LaunchAgent's
-arguments should carry no configuration either.
+### Why `pull` and `to` are separate verbs
 
-**`pull` is the only thing a trigger may ever run.** Keep a dry-run mode — it is
-what makes the installer's guided discovery safe, and it caught real mistakes on the
-Windows side before anything reached a monitor.
+Not style. `computer.this` describes inputs on hardware this computer is plugged into
+and can be sure of. Any other name describes inputs on hardware it **cannot observe**,
+which go stale the moment someone moves a cable over there. **The trigger may only
+ever run `pull`** — so a stale name can spoil a command you typed and are watching,
+never an automatic switch.
 
-**Put only a `bin` directory on PATH, holding only the launcher.** On Windows,
-putting the whole install directory there published `launcher.vbs` as a global
-`launcher` command, because `PATHEXT` includes `.VBS`. macOS has no PATHEXT, but the
-same principle applies for a different reason: everything in a PATH directory is a
-candidate command, so a directory of implementation files is a directory of
-accidental commands. `~/.local/bin/trigger-kvm` with the rest elsewhere.
+## 4. The switcher
 
-**Install self-contained.** The Windows installer copies itself into the install
-directory, so `status` and `uninstall` keep working after the source tree is gone —
-the difference between something you clone and something you install. Do the same.
-Updating is "fetch the new source, run its installer"; there is deliberately
-no auto-updater, and a version stamp shown by `status` covers the question that
-actually matters (is what is installed what I think it is?).
+Identity comes from the EDID the GPU read off the output, never from an index.
+`\\.\DISPLAYn` numbers are not stable on Windows and have swapped; m1ddc's index
+numbers shift when a display drops. **Resolve by EDID vendor+product**, and note that
+the LG reports a *different product id per input* (`0x9E9D` on DP, `0x9E9F` on USB-C)
+— so a product id is a local key, never something to copy between hosts.
 
-**Watch for the elevation trap in whatever form launchd has it.** On Windows,
-running the installer from an elevated shell leaves the scheduled-task definition
-admin-owned, so every later unelevated install or `uninstall` fails with access
-denied. Check whether a LaunchDaemon installed with `sudo` leaves an equivalent
-mess for a later user-level `launchctl` operation, and if so, detect and explain it
-rather than letting it throw.
+Two methods, one transport concept:
 
-## 4. The invariants — do not break these
+| method | I2C source | VCP | when |
+|---|---|---|---|
+| `standard` | `0x51` | `0x60` | nearly every panel |
+| `lg-alt` | `0x50` | `0xF4` | LG panels whose standard input control is stubbed |
 
-- **One map, two verbs.** A monitor's inputs are named after the computers on them,
-  and `pull` is `to <computer.this>` -- the same lookup with a different name. Do not
-  add a second table (the Windows side had `self` values and `scene.*` blocks, and
-  deleted both: two representations of "computer C is on input V of display D" can
-  disagree, and one cannot).
-- **`to` is unreachable from the trigger path.** A name other than `computer.this`
-  describes inputs on hardware this machine cannot observe, which go stale the
-  moment someone moves a cable over there. If the LaunchAgent can ever invoke one, a
-  stale name becomes able to cause an automatic switch to a dead input. Keep the
-  verbs separate.
-- **Fail closed on partial data.** Resolve every value before sending anything. A
-  machine that two displays know about and a third does not moves none of them.
-- **Never treat an unparsed value as zero.** In shell an empty `cfg` result is an
-  empty string, and `$((0x))` or an unquoted expansion can quietly become `0` — a
-  write aimed at the wrong input, or a match against vendor `0x0000`. Refuse.
-- **The `0x50` sidechannel may only ever reach a GSM (`0x1e6d`) panel.** On Windows
-  this is enforced *at the transport*: one function can emit `0x50`, the source byte
-  is not a parameter, and it throws on a non-GSM target, so `method = lg-alt` in
-  config grants nothing. Mirror that structure — do not enforce it at the call site.
-- **The install tier is a property of the host.** All tier logic belongs in the
-  Makefile/installer. Neither the watcher nor the switcher may branch on which tier
-  it runs under.
-- **Single instance must be machine-wide, not per-user-session**, for the same
-  reason Windows moved from `Local\` to `Global\`: a login-time watcher and a
-  boot-time watcher would each take their own lock and both fire, and the debounce
-  is per-process.
+On macOS `m1ddc` exposes these as `set input` and `set input-alt`. If you move to
+IOAVService directly, the packet is
+`[source, 0x84, 0x03, vcp, 0x00, value, checksum]` with checksum = `0x6E` XOR every
+preceding byte — the same bytes `displays.toml` documents.
 
-## 4b. The watcher is one process with N event sources
+**The sidechannel must be unreachable by construction.** On Windows the source byte
+`0x50` appears in exactly one function, which refuses any target whose EDID
+manufacturer is not GSM, and is not a parameter of any public method. Setting
+`method = lg-alt` on a non-LG panel makes the write *throw*; it does not make the
+write happen. Build the macOS equivalent the same way — a gate a caller cannot pass
+around, not a check a caller is asked to perform.
 
-`usb-watch.c` is already the right shape and only the name undersells it: it runs a
-`CFRunLoop` with an `IONotificationPort` source and a settle timer source already
-multiplexed. Rename it `event-watch.c` when you add a second source, matching the
-Windows side.
+Resolve-before-send, and DDC is lossy so a repeat write is free (Windows sends once
+and logs; macOS currently sends twice — either is fine, but do not *read* to decide).
 
-Add sources to that run loop rather than adding processes, and do not tell users to
-run a separate hotkey app -- the same reasoning as Windows. Two persistent watchers
-would each hold their own debounce and both fire on one physical event.
+## 5. The installer and walkthrough — the part to match closely
 
-**Bluetooth on macOS.** Windows has this built now, so mirror its shape: entries are
-`bt:AAAAAAAAAAAA` in the same one device list as USB, matched on CONNECTED rather
-than paired, enumerated once per presence sweep, and a missing radio degrades to
-"nothing connected" instead of taking the watcher down.
+This is what the user asked to be "almost identical", and it is the bulk of the work.
+Windows arrived at this shape over many iterations; the reasoning for each is in the
+comments at the point of use.
 
-The connection-aware API is `IOBluetooth`, not IOKit USB matching: `+[IOBluetoothDevice registerForConnectNotifications:selector:]` fires when
-any device connects, and `-registerForDisconnectNotification:selector:` covers the
-other edge. Both are run-loop based, so they compose with what is already there.
-Two consequences worth knowing before you start: `IOBluetooth` is an Objective-C
-framework, so the file becomes `.m` and the Makefile links `-framework IOBluetooth`;
-and expect the same paired-vs-connected distinction Windows has -- verify that
-`isConnected` means connected and not merely paired before trusting it.
+### 5.1 The menu primitives
 
-For a hotkey, `RegisterEventHotKey` (Carbon, still supported) or a `CGEventTap` are
-both run-loop sources and drop into the same place.
+Everything is one of two menus, and **enter does what the highlighted row says**.
 
-## 5. Install tiers, and the pre-login problem
+`Select-One` — one choice, returns an index:
 
-Windows now ships two tiers: a default needing no admin (logon task, covers
-everything from login onward **including while locked**), and boot-start needing
-admin once to register, which runs at boot in session 0 and adds before-first-login
-and after-logoff.
+```
+   1) DisplayPort 1                0x0F
+   2) DisplayPort 2                0x10
+   -- HDMI 1                       0x11   assigned to pc
+   4) HDMI 2                       0x12
+ > 5) Type a value...
 
-**macOS is genuinely harder, and the reason is not the same as it was on Windows.**
-Windows' old blocker was `dxva2` needing an `HMONITOR`; that path is deleted, and
-NVAPI was measured to both enumerate *and write* with no desktop. macOS's blocker is
-that `m1ddc` links CoreGraphics and enumerates via `CGGetOnlineDisplayList`, which
-needs a window server connection a LaunchDaemon does not have.
+  up/down move   enter choose   esc back
+```
 
-The known CoreGraphics-free path: enumerate `DCPAVServiceProxy` entries where
-`Location = External` directly from IORegistry, then `IOAVServiceCreateWithService`
-+ `IOAVServiceWriteI2C`. SimpleKVM confirms the sketch is right.
+- **Detail column.** Item on the left, its value on the right. The item column is 28
+  wide, or the longest item + 1, capped at 44.
+- **Wrapping, never truncation.** A long detail wraps at the `", "` between items onto
+  continuation lines aligned under the column. Truncating hid the very values the
+  review screen exists to let someone check. An unbreakable single item overruns
+  rather than being cut.
+- **Separators.** An empty item draws a blank line, is skipped by the cursor and
+  cannot be chosen. Used to group a long menu.
+- **Disabled rows.** Drawn, annotated, skipped by the cursor, unpickable — an input
+  already assigned to another computer. Hiding it would make the list change shape as
+  you answer; renaming it would lose the only label the monitor's own menu agrees
+  with.
+- **`(current)`** marks whatever is configured now. Starting the cursor there is not
+  enough: the cursor also means "where you are", so a re-run gave no way to tell an
+  unchanged default from a deliberate choice.
+- **Esc goes back**, opt-in per menu, meaning "back, and change nothing". Not offered
+  on the top menu (it has Cancel, and a setup should not be discarded by a stray
+  keypress) nor on a question that must be answered.
 
-**The unsolved part is identity, not access.** SimpleKVM pairs displays *by
-enumeration order*, and its own notes call EDID/location matching a known follow-up.
-With two external monitors, order-based pairing can send the LG's `0xF4` packet to
-the ASUS. That is a research problem and it is a hard blocker on a macOS pre-login
-tier — **do not ship order-based pairing to work around it.** Better to have no
-pre-login tier on macOS than one that can aim a service-channel write at the wrong
-panel.
+`Select-Many` — several choices:
 
-Before doing any of that, answer the cheap question first: **does the Mac already
-switch correctly from the lock screen?** On Windows the answer was yes, which
-narrowed the pre-login tier's value considerably — locking doesn't end the session,
-so the watcher is still alive. If the same holds on macOS, a LaunchDaemon buys only
-before-first-login and after-logout, and may not be worth the identity problem.
+```
+  > [x] usb:046d:0843    USB   Logitech Webcam C930e
+    [ ] bt:0011223344ff  BT    AirPods Pro  (paired, not connected)
+    [x] usb:1235:820a    USB   Clarett+ 2Pre
 
-## 6. Robustness items Windows has and macOS does not
+        Done                     2 selected
 
-- **Log rotation.** `~/Library/Logs/trigger-kvm.log` is still unbounded. Windows
-  rotates at watcher startup, past 1MB, keeping one `.1`. Placement matters:
-  *after* the single-instance lock, so a redundant start does not rotate, and once
-  per start rather than per write, so the switcher — a separate process appending to
-  the same file — cannot race a rename mid-switch.
-- **Log the no-edge branch.** Windows' watcher used to drop a device event yielding
-  no arrival with a bare `continue`, so a quiet log could not distinguish "no event
-  arrived" from "an event arrived and was correctly rejected". Same outcome,
-  different claim. Check whether `usb-watch.c` has the same silent branch.
-- **Worth knowing before you tune anything:** one physical USB plug produces
-  **~32** device-change events on Windows, an unplug ~13. If IOKit behaves similarly,
-  the debounce is load-bearing for ordinary operation, not just for flaky hardware.
+  up/down move   enter toggles the highlighted row   esc back
+```
 
-## 7. The installer, once Windows has it
+- **Enter toggles the highlighted row.** There is no accept key — there is a `Done`
+  row you move to. "Space toggles, enter accepts" lost people immediately: enter is
+  what you press, so the first thing it did was accept an empty list.
+- Space toggles too, for anyone who reaches for it.
+- Enter on `Done` with nothing checked **refuses** and says so.
+- `Done` is a plain row aligned with the item text, with a live count in the detail
+  column. It was a bracketed button for a while; every other menu ends with a bare
+  `Done`, so the brackets read as inconsistency.
 
-Windows is heading toward an interactive installer: display discovery by
-enumeration, trigger discovery from a filtered list of currently-present removable
-devices, guided input discovery, when-it-starts, and a re-runnable review. Build
-the macOS equivalent **after** the Windows one settles, and mirror its flow rather
-than inventing a second one.
+**Both must fall back to typed input** when the host cannot read individual keys — a
+redirected stdin, a non-console host, a remote session that does not forward keys.
+This is not a nicety: it is what makes the whole flow testable end to end (§6), and
+`q` is the fallback's `esc`.
 
-Two rules from that design that are already settled and apply to both platforms:
+### 5.2 The menu IS the flow
 
-- **Guided input discovery is allowed only on standard DDC/CI** (`0x51`/`0x60`),
-  using published MCCS values, offered as a labelled list the user picks from one at
-  a time, each confirmed visually. Never auto-advance through values — that is a
-  sweep. Never do guided discovery on a manufacturer sidechannel; those values come
-  only from the known-monitor knowledge in `displays.toml`, or from a value the user
-  types themselves.
-- **Verify by switching away, holding ~8s, returning automatically, and asking
-  afterwards.** The question then always arrives on a display that has already come
-  back, so the installer never needs to know which monitor its own window is on, and
-  a wrong guess costs eight seconds of black rather than a stranded session.
+There is no separate first-run questionnaire. An empty install is the same menu with
+`not set` in it and the cursor already on the first thing that needs an answer.
+Finishing a section returns here with the cursor on the next unanswered one.
 
-## 8. Suggested order
+```
+--- configuration ---
 
-1. Verify the rename actually works on a Mac (`make`, `make plist`, `make install`).
-2. Add legacy-install removal to `make install`.
-3. Config file + `pull` / `to` verbs + dry-run.
-4. Log rotation and the no-edge log line.
-5. Answer the lock-screen question.
-6. Interactive installer, mirroring Windows.
-7. Pre-login, only if the identity problem is genuinely solved.
+ > 1) Computers                    not set
+   2) Monitors                     not set
+   3) Triggers                     not set
+   4) Autostart?                   not set
+   5) Add to PATH?                 not set
 
-Steps 1–4 are mechanical parity. Step 5 is one experiment and may change how much
-of 7 is worth doing.
+   7) Test the monitor inputs      untested
+   8) Test the triggers            untested
+
+  10) Save configuration and run
+  11) Cancel (discard changes)
+```
+
+- **Nothing is preset.** Autostart and PATH have obvious answers, but the suggestion
+  belongs on the highlighted row *inside* their menu, not in the value column of a
+  menu nobody has opened. One of those answers asks for admin; the other edits a PATH.
+- **Nothing is written until Save**, so an interrupted run leaves a working setup
+  untouched. Save **refuses** while a required section is `not set`, naming what is
+  missing: writing half a setup produces a config the switcher then declines to act
+  on, which is a worse way to find out.
+- Where the cursor lands is the recommendation: unanswered sections in order, then
+  the checks in order, then Save. A failed check sends the cursor to the setting that
+  failed, not onward.
+- The header reads `--- configuration ---` until monitors and triggers are set, then
+  `--- review configuration ---`.
+
+**One punctuation rule down the value column**, because it is read as a column:
+`", "` separates items, `": "` separates a label from its value, `"/"` joins things
+sharing one label. Not cosmetic — the wrapper breaks at `", "`, so a row using
+anything else cannot wrap.
+
+### 5.3 Computers — asked before the monitors
+
+Asked first so a computer is described once rather than once per screen, and so every
+panel then offers the same names.
+
+```
+--- computers ---
+These monitors are shared between this computer and some others.
+Each one gets a name, and the name is how you switch to it:
+    trigger-kvm to mac
+
+  What should I call THIS computer? [mac-studio]
+  How many OTHER computers are plugged into these monitors? [1]
+  What is the other one called?
+
+   1) mac                          this computer
+   2) pc
+
+   4) Add another computer
+   5) Done
+```
+
+- First run asks for a **count**, then that many names. "One per line, blank line
+  when there are no more" made people guess both how to finish and whether a blank
+  meant cancel.
+- Then, always, the list: picking a name **renames** it; entering nothing **removes**
+  it; `Add another computer`; `Done`. A re-run goes straight to this list.
+- **One name per computer**, not a slug plus a display name. The name is a config
+  value, an argument you type, and a label in every prompt; a second field would be a
+  second thing to keep in step for the sake of capital letters.
+- **Character rule: lowercase letters, digits and dashes.** Spaces and dots become
+  dashes; anything else is dropped. It must **suggest and ask**, never silently
+  mangle — the first version stripped what it did not like, so "My Mac" quietly
+  became "mymac".
+- **A rename is carried into every panel's map**, a removal takes that computer out of
+  them, an addition leaves them alone. Do not re-ask the monitors: that was tried and
+  it threw away answers nobody asked to change.
+
+### 5.4 Monitors — a list you pick from
+
+```
+--- monitors ---
+
+  > LG ULTRAGEAR+                lg: mac/pc
+    PG42UQ                       not managed
+
+    Done
+```
+
+Picking one asks: manage it? → a short name → **for each computer, which input it is
+on**. Machines-major, not inputs-major: a panel has eight possible inputs and two
+real ones.
+
+- The panel's own name comes from the **EDID monitor-name descriptor (tag `0xFC`)** —
+  `PG42UQ`, `LG ULTRAGEAR+`. Asking the hardware beats a table, which only ever knows
+  the monitors its author owned.
+- The input list is the channel's own values **in the channel's own order**. A value
+  someone typed that the channel does not list is *appended* so it can be shown, never
+  inserted.
+- An input already assigned is **disabled and annotated** (§5.1), because two
+  computers cannot share a socket.
+- `Not on this monitor` for every computer except this one; `Type a value...` always.
+
+### 5.5 Autostart
+
+```
+--- should it start on its own? ---
+
+ > 1) From boot (requires admin)
+   2) From login
+   3) No -- I will start it myself
+```
+
+From boot is offered **first and is the default**, because a computer sitting at a
+login screen should still follow the switch; the cost is one admin prompt during
+setup. An existing config still wins. A **headless** install falls back to login,
+because it cannot ask — nothing elevates without someone choosing it.
+
+macOS mapping, to be settled by whoever builds it:
+
+| answer | Windows | macOS candidate |
+|---|---|---|
+| boot | Scheduled Task, S4U principal, RunLevel Limited | LaunchDaemon (root) — **but the switcher must not run as root**; see below |
+| login | Scheduled Task, Interactive | LaunchAgent in `~/Library/LaunchAgents` |
+| no | task registered with **no triggers**, started once | agent installed but not loaded; `restart` loads it |
+
+The Windows boot tier runs **as the user, unelevated**, in session 0 — admin is
+needed once to register, and nothing elevated runs on the switch path. Preserve that
+property. A LaunchDaemon runs as root, which is not the same thing; if macOS has no
+equivalent of "start before login as this user without their password", say so
+plainly in `status` rather than pretending the tiers match.
+
+### 5.6 PATH
+
+Yes/no, with a suggestion. On Windows only a `bin/` directory holding a single
+launcher goes on PATH — putting the whole install directory there would publish every
+file in it as a command. Do the equivalent: one symlink, not a directory of scripts.
+
+The row is **always drawn**, showing `already on PATH` and disabled when there is
+nothing to decide. Omitting it moved every row below it and left the cursor
+apparently skipping a step.
+
+### 5.7 Checking the monitor inputs
+
+What is under test is the claim that **input V of panel P is computer C** — a panel
+that answers every command perfectly while its inputs are mapped to the wrong
+computers fails this and is not broken. Hence "test the monitor **inputs**".
+
+```
+  Which monitor do you want to check?
+ > 1) All of them
+   2) LG ULTRAGEAR+
+   3) PG42UQ
+```
+
+Then, **batched across panels, never across machines**. Monitors sit side by side, so
+several are confirmed in one glance; a *sequence* over half a minute has to be held in
+memory and reported afterwards, and memory is the weak link.
+
+```
+  Sending PG42UQ to pc for 8s, then back automatically.
+  If pc is asleep or off you will see No Signal, which still proves the switch worked.
+
+  LG ULTRAGEAR+ stays here, so you can read this.
+  If this window is on PG42UQ, drag it to LG ULTRAGEAR+ first: if the switch back
+  fails, the window goes dark with it and there is no way to answer.
+
+  Enter when ready
+```
+
+- **Hard rule 4**: one panel always stays on this computer, so the question arrives on
+  a screen that can be read. When every panel claims the target, that is two rounds.
+- The warning is **said every round**, not asked once. An earlier version asked which
+  monitor the window was on so it could schedule that panel last; that is a question
+  about the tool's convenience, and people could not answer it confidently.
+- "What stays" is measured against **every managed panel**, not just this round's — a
+  panel nobody asked about is still somewhere to put a window.
+
+One question per round, then narrowing only on failure:
+
+```
+  Did all of them show pc, then come back?  [Y/n]
+  → n:  Which ones did not?   (multi-select)
+```
+
+Then, per failed panel, **two questions in the order it happened**:
+
+```
+  Did the LG ULTRAGEAR+ change to pc, and back to mac?
+   1) Yes, and it changed back to mac         everything works
+   2) Yes, but it did not change back to mac  the input for mac is wrong
+   3) No
+
+  (only on "No")
+  Did the LG ULTRAGEAR+ change at all?
+   1) Yes, but it was not pc      that input is not pc
+   2) No, nothing happened        this panel does not answer on this channel
+```
+
+Four outcomes, four different repairs:
+
+| outcome | meaning | repair |
+|---|---|---|
+| 0 | correct | next |
+| 1 | showed the wrong computer | re-ask **that computer's** input, retry |
+| 2 | did not come back | re-ask **this computer's** input, or walk for it, retry |
+| 3 | nothing happened | offer the **manufacturer dialect**, or say nothing known reaches this panel |
+
+One retry per fix, then take the answer. Do not loop.
+
+**Blind value-walking is the last resort**: standard DDC only, MCCS values one at a
+time, offered with its cost stated ("every wrong value moves that panel; if none is
+right it stays there"), and **refused outright when it would take the last display**.
+
+**One monitor is a special case and must be handled explicitly.** Nothing can be held
+back, so if the switch back fails the person is looking at a black screen. That is
+unavoidable; being stranded *without having been told how to get back* is not, and the
+telling has to happen while there is still a screen to read it on:
+
+```
+  READ THIS FIRST -- this is your only monitor.
+  You will not be able to read anything while it is away.
+
+  IF IT DOES NOT COME BACK there is nothing this tool can do for you --
+  it cannot draw on a screen that is showing another computer. The way
+  back is the monitor itself: press its input (or source) button and
+  choose HDMI 1, value 0x11. No software can take that button away from you.
+
+  Ready? [Y/n]
+```
+
+Note the input is named **in the monitor's own words** — the OSD has never heard of
+`pc`. Declining reads as **not checked**, never as a pass.
+
+### 5.8 Checking the triggers
+
+Checked **after** the monitor inputs, and that ordering is the point: once the input
+values are confirmed, the flip *back* can pull the monitors for real, so it stops
+being "an event was observed" and becomes the whole thing working end to end.
+
+```
+--- test the trigger ---
+  Flip your switch AWAY from this computer, then back again. The way
+  back is what a trigger is: the devices ARRIVING here.
+
+  When they do, the monitors will be pulled here for real, using the
+  values you just checked.
+```
+
+- The watcher gets a one-shot mode (`--test-trigger`) that prints current presence,
+  waits for one **arrival**, reports it and exits. It takes **no lock and runs
+  nothing**, so a real watcher may run alongside.
+- On success, the installer runs `pull` **against a throwaway config** — the answers
+  are not written yet, and the saved config would move the panels to whatever was
+  configured before.
+- Then: `Did the monitors come back to this computer?` A "no" there is a *monitors*
+  fault with the trigger passing, which is a different diagnosis from "nothing
+  arrived".
+- Until the inputs are checked it reports the arrival and **moves nothing**, saying so.
+
+### 5.9 The closing message
+
+Short. It runs, here is how to see that, here are four commands.
+
+```
+  Done. trigger-kvm is running, and will start automatically each time you log in.
+
+  Flip your switch to this computer -- the monitors should follow.
+
+    trigger-kvm status      is it running?
+    trigger-kvm pull        bring the displays here now
+    trigger-kvm logs        what has it been doing
+    trigger-kvm configure   change any of this
+```
+
+Everything else — how it starts, sessions, the transport — is in the docs for the day
+someone needs it and is noise on the day they do not.
+
+## 6. Authority -- decide these yourself, stop for those
+
+You are expected to run this end to end without checking in. To make that possible,
+here is where the line is.
+
+**Decide yourself, and record the decision in a comment at the point of use:**
+
+- Language and structure of the macOS side (shell, Swift, a mix). The verbs and the
+  config are the contract; the implementation is not.
+- Every wording choice not quoted verbatim in this document.
+- File layout under `macos/`, function names, how the menus are drawn.
+- Whether to shell out to `m1ddc` or bind IOAVService directly.
+- How far to chase a trap that does not reproduce on macOS -- note it and move on.
+
+**Stop and ask, every time:**
+
+- Anything that would relax one of the five hard rules in §1. If a rule seems to block
+  a feature, the feature is wrong until a human says otherwise.
+- A change to the config format or the verb list. Both are cross-platform contracts,
+  and changing one silently breaks the other machine.
+- Sending any value to a monitor that is not in `displays.toml`, not in the dialect
+  table, and not typed by the user in that moment.
+- Anything needing `sudo` on the switch path, as opposed to once, at install.
+
+**Never without being asked:** push to a remote, create branches, force-push, amend,
+or install anything system-wide outside the documented install.
+
+## 7. Definition of done
+
+Each phase in §11 is finished when its line here passes. These are the acceptance
+criteria; do not move on without them.
+
+1. **Config + verbs.** With a config this repo writes (copy one from the Windows
+   machine), `pull` and `to <computer>` build the exact packets in `displays.toml`,
+   and a dry run prints them without sending. `to nosuch`, a panel with no inputs, an
+   unparseable value and a missing `computer.this` each **refuse and send nothing**.
+2. **`discover`.** Every attached display with EDID vendor, product and the panel's
+   own name; USB devices attached now; **every paired** Bluetooth device with its
+   connected state shown but not filtered on.
+3. **Watcher.** Survives ~32 events per plug without double-firing; refuses to start
+   twice; returns within a minute of being killed; rotates its log; and its one-shot
+   mode reports an arrival and exits without taking the lock.
+4. **Menus.** Covered by tests: enter toggles, `Done` accepts and refuses when empty,
+   separators and disabled rows are skipped, `(current)` marks the configured row,
+   `esc` changes nothing, long details wrap and are never truncated. Every assertion
+   mutation-checked.
+5. **Walkthrough.** From no config, the menu alone produces a config identical in
+   shape to the Windows one; a re-run opens with nothing to fill in; `--fresh` asks
+   everything again; save refuses while a section is unset.
+6. **Checks.** The input check batches across panels, always keeps one panel here,
+   handles the single-monitor case with its recovery text, and the trigger check pulls
+   for real only after the inputs pass.
+
+A phase that cannot meet its line stops there and reports why -- see §6.
+
+## 8. Testing — required, not optional
+
+Windows has `windows/tests/`, seven files, run by `run.ps1`, no framework: a test is a
+script that throws. Build the equivalent (`bats` is reasonable on macOS, or plain
+`sh` + `set -e`), and hold to three properties that were each learned the hard way:
+
+1. **Run with the same strictness as the scripts.** The PowerShell harness sets
+   `Set-StrictMode -Version Latest` because the scripts do; without it, four crashes
+   were invisible in tests and hit the user instead. The shell equivalent is
+   `set -euo pipefail` plus `shellcheck`.
+2. **Stub the one function that emits a packet**, so the suite cannot move a
+   developer's monitors. Windows funnels every write through `Send-Input` for exactly
+   this.
+3. **Mutation-check.** A passing test proves nothing until it can fail. Reintroduce
+   the bug and confirm the test catches it. One truncation test passed under mutation
+   and had to be strengthened before it earned its place.
+
+The walkthrough is driven by scripting the answers through the typed fallback — which
+is the reason the fallback exists.
+
+## 9. Decisions already made for you
+
+These were open questions. They are not any more, because stopping on each would
+defeat the point of this document. **Take the default; the fallback is what to do if
+the default turns out not to hold on the hardware.**
+
+| question | do this | if that fails |
+|---|---|---|
+| transport | shell out to `m1ddc` (`set input`, `set input-alt`) -- already proven on this hardware | bind IOAVService directly and build the §4 gate around the source byte |
+| identity | read the EDID via IOKit (`IODisplayEDID`) for vendor+product | key on m1ddc's display **UUID**, and record in the config that the key is m1ddc-specific and not portable |
+| the LG's per-input product id | match on **vendor + product**, and if the LG resolves under a different product id from the Mac, write THAT id into this Mac's config | never copy a product id between hosts; it is a local key |
+| USB presence | IOKit `IOServiceMatching("IOUSBDevice")` with a notification port | poll every second; a fallback, not a design |
+| Bluetooth presence | IOBluetooth paired devices, firing on `isConnected` | drop Bluetooth triggers for now and say so in `status` |
+| autostart: login | a LaunchAgent in `~/Library/LaunchAgents`, `RunAtLoad` + `KeepAlive` | -- |
+| autostart: boot | a LaunchDaemon runs as **root**, which is not the Windows property. If you cannot start before login **as the user**, make the row read `From boot (not available on macOS)` and disable it | never run the switcher as root to obtain the tier |
+| autostart: no | install the agent but do not `launchctl load` it; `restart` loads it | -- |
+| PATH | one symlink in `/usr/local/bin`, or `~/.local/bin` if that needs no sudo | -- |
+| single instance | `flock` on a file under `~/Library/Application Support/trigger-kvm/` | a launchd label that cannot load twice |
+| test framework | plain `sh`; a test is a script that exits non-zero | `bats`, if it is already present |
+
+## 10. Traps the Windows build hit
+
+Worth reading before repeating them:
+
+- **A stale install is worse than no install.** Migrating a config to a shape the
+  installed scripts cannot read made every switch send `0x00` — a real input on no
+  monitor — so nothing moved and nothing said why. Never change the config format
+  without reinstalling in the same breath.
+- **`~32 USB events per plug.** Debounce is mandatory, and one window must cover every
+  trigger: two independent windows cannot dedupe against each other.
+- **The self-heal matters.** If the watcher is killed it stays dead until the next
+  login unless something restarts it. Windows uses a 1-minute repeating trigger;
+  launchd's `KeepAlive` does this properly and in about a second.
+- **Do not "simplify" the Bluetooth path onto the USB one.** Three routes were tried
+  and ruled out before P/Invoke to the classic API worked.
+- **An abandoned lock is not an error.** A killed watcher leaves the lock held; the
+  next one must take it over and say so, not exit.
+
+## 11. Order of work
+
+1. **Config reader + `pull`/`to`/`list`.** Make `trigger-kvm.sh` read a real config
+   and drop the hardcoded values. This alone makes the Mac usable with a config this
+   repo writes.
+2. **`discover`** — displays by EDID, USB and Bluetooth candidates.
+3. **The watcher**: config-driven, both transports, debounce, single-instance,
+   self-heal, log rotation, `--test-trigger`.
+4. **The menu primitives** (§5.1) plus their typed fallback, and the test harness
+   around them. Everything after this depends on them.
+5. **The walkthrough** (§5.2–5.6).
+6. **The checks** (§5.7–5.8) — last, because they are the part that moves hardware.
+
+Steps 1–3 make the Mac work. Steps 4–6 make it match.

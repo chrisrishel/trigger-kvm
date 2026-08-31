@@ -17,16 +17,17 @@
 #   display.<label>.product  EDID product id
 #   display.<label>.name     human name, for logs
 #   display.<label>.method   standard | lg-alt
-#   display.<label>.input.<value>  which machine is on that input, e.g.
+#   display.<label>.input.<value>  which computer is on that input, e.g.
 #                            display.lg.input.0xd1 = mac. This is the WHOLE map:
 #                            `pull` looks up computer.this in it, `to mac` looks up
 #                            mac, and there is no second table to disagree with it
-#   computer.this             what this computer is called in those input maps
+#   computer.this            what this computer is called in those input maps
 #   trigger.device           usb:VVVV:PPPP / VVVV:PPPP / bt:AAAAAAAAAAAA, comma-sep
 #   trigger.debounce         seconds
 #   trigger.settle           seconds
-#   install.start            boot | login  (install.tier = s4u|user is the old
-#                            spelling, still read by install.ps1)
+#   install.autostart        boot | login | no   (install.start, and before it
+#                            install.tier = s4u|user, are older spellings that
+#                            install.ps1 still reads)
 #
 # Keys are lower-cased; values are returned verbatim, trimmed. Callers parse and
 # VALIDATE their own values -- see the converters in trigger-kvm.ps1, which return
