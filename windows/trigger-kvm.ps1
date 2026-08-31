@@ -3,10 +3,10 @@
 Switch both monitors' inputs from this Windows PC.
 
 .DESCRIPTION
-    switch-displays.ps1 windows      pull both monitors here   (the normal case)
-    switch-displays.ps1 mac          push both to the Mac
-    switch-displays.ps1 windows -Only asus     move one monitor only
-    switch-displays.ps1 windows -WhatIf        resolve and build the packets, send nothing
+    trigger-kvm.ps1 windows      pull both monitors here   (the normal case)
+    trigger-kvm.ps1 mac          push both to the Mac
+    trigger-kvm.ps1 windows -Only asus     move one monitor only
+    trigger-kvm.ps1 windows -WhatIf        resolve and build the packets, send nothing
 
 Values are documented in ..\displays.toml, which is the source of truth. They are
 duplicated here as literals rather than parsed, because this script runs from a
@@ -93,7 +93,7 @@ $LG_MAC = 0xD1                   # USB-C
 
 function Write-Log {
     param([string]$Message)
-    $line = '{0} display-switch: {1}' -f (Get-Date -Format 'HH:mm:ss'), $Message
+    $line = '{0} trigger-kvm: {1}' -f (Get-Date -Format 'HH:mm:ss'), $Message
     Write-Host $line
     if ($LogFile) {
         # The watcher appends to the same file, so a write can briefly collide.
@@ -471,12 +471,12 @@ public static class NvDdc {
 # loudly if this session already holds a different version. Re-running the SAME
 # version in one session is fine and reuses what is loaded. The installed path never
 # reaches any of this -- the task starts a fresh powershell.exe per switch.
-$stampKey = 'display-switch:NvDdcSourceStamp'
+$stampKey = 'trigger-kvm:NvDdcSourceStamp'
 $stamp    = $NvDdcSource.GetHashCode()
 
 if ('NvDdc' -as [type]) {
     if ([AppDomain]::CurrentDomain.GetData($stampKey) -ne $stamp) {
-        throw ("This PowerShell session already loaded display-switch's types from a " +
+        throw ("This PowerShell session already loaded trigger-kvm's types from a " +
                "DIFFERENT version of this script, and .NET cannot replace a loaded type. " +
                "Open a new PowerShell window and re-run: continuing here would test the " +
                "old code while appearing to test the new.")

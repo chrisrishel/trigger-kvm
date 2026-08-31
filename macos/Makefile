@@ -1,4 +1,4 @@
-LABEL   := com.chrisrishel.displayswitch
+LABEL   := com.chrisrishel.trigger-kvm
 PREFIX  ?= $(HOME)/.local
 BINDIR  := $(PREFIX)/bin
 LADIR   := $(HOME)/Library/LaunchAgents
@@ -37,7 +37,7 @@ plist:
 	  '  <key>Label</key><string>$(LABEL)</string>' \
 	  '  <key>ProgramArguments</key><array>' \
 	  '    <string>$(BINDIR)/usb-watch</string>' \
-	  '    <string>--exec</string><string>$(BINDIR)/switch-displays.sh</string>' \
+	  '    <string>--exec</string><string>$(BINDIR)/trigger-kvm.sh</string>' \
 	  '    <string>--arg</string><string>mac</string>' \
 	  '    <string>--debounce</string><string>$(DEBOUNCE)</string>' \
 	  '    <string>--settle</string><string>$(SETTLE)</string>' \
@@ -46,26 +46,26 @@ plist:
 	  '  <key>RunAtLoad</key><true/>' \
 	  '  <key>KeepAlive</key><true/>' \
 	  '  <key>ProcessType</key><string>Background</string>' \
-	  '  <key>StandardOutPath</key><string>$(LOGDIR)/displayswitch.log</string>' \
-	  '  <key>StandardErrorPath</key><string>$(LOGDIR)/displayswitch.log</string>' \
+	  '  <key>StandardOutPath</key><string>$(LOGDIR)/trigger-kvm.log</string>' \
+	  '  <key>StandardErrorPath</key><string>$(LOGDIR)/trigger-kvm.log</string>' \
 	  '</dict></plist>' > $(PLIST)
 	@plutil -lint $(PLIST)
 
 install: usb-watch plist
 	@mkdir -p $(BINDIR) $(LOGDIR)
 	install -m 755 usb-watch          $(BINDIR)/usb-watch
-	install -m 755 switch-displays.sh $(BINDIR)/switch-displays.sh
+	install -m 755 trigger-kvm.sh $(BINDIR)/trigger-kvm.sh
 	@launchctl bootout gui/$(UID)/$(LABEL) 2>/dev/null || true
 	launchctl bootstrap gui/$(UID) $(PLIST)
-	@echo "installed and loaded. logs: $(LOGDIR)/displayswitch.log"
+	@echo "installed and loaded. logs: $(LOGDIR)/trigger-kvm.log"
 
 uninstall:
 	@launchctl bootout gui/$(UID)/$(LABEL) 2>/dev/null || true
-	rm -f $(PLIST) $(BINDIR)/usb-watch $(BINDIR)/switch-displays.sh
+	rm -f $(PLIST) $(BINDIR)/usb-watch $(BINDIR)/trigger-kvm.sh
 	@echo "uninstalled."
 
 status:
 	@launchctl print gui/$(UID)/$(LABEL) 2>/dev/null | head -20 || echo "not loaded"
 
 logs:
-	@tail -f $(LOGDIR)/displayswitch.log
+	@tail -f $(LOGDIR)/trigger-kvm.log

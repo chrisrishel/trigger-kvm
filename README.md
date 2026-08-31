@@ -1,7 +1,15 @@
-# display-switch
+# trigger-kvm
+
+**Flip your USB switch and the monitors follow. A KVM with no box in the video path.**
 
 Make two monitors follow a USB switch between a Mac Studio and a Windows PC, with
 **no KVM in the video path**.
+
+> **Renamed 2026-08-30**, from `display-switch`. That name collides with
+> [haimgel/display-switch](https://github.com/haimgel/display-switch), an
+> established project doing something similar, and the collision was going to
+> confuse anyone searching for either. Nothing about the design changed with the
+> name; `install.ps1` removes a pre-rename install automatically.
 
 Each machine connects to both monitors on its own input. A USB switch moves the
 shared peripherals. Whichever machine receives those peripherals commands both
@@ -28,8 +36,8 @@ USB switch ──> peripherals ──> whichever machine gets them pulls both di
 | [`AGENTS.md`](AGENTS.md) | Instructions for anyone (human or agent) changing this repo, including the hard safety rules |
 | `docs/decisions/` | Architectural trade-offs and why they went the way they did, so they don't get relitigated |
 | `ideas/` | Exploratory design notes, including `ideas/rejected/` for options deliberately declined |
-| `macos/` | Working implementation: `usb-watch` (IOKit) + `switch-displays.sh` (m1ddc) + LaunchAgent |
-| `windows/` | Working implementation: `usb-watch.ps1` (WMI) + `switch-displays.ps1` (aimed NVAPI I2C, both panels) + Scheduled Task |
+| `macos/` | Working implementation: `usb-watch` (IOKit) + `trigger-kvm.sh` (m1ddc) + LaunchAgent |
+| `windows/` | Working implementation: `usb-watch.ps1` (WMI) + `trigger-kvm.ps1` (aimed NVAPI I2C, both panels) + Scheduled Task |
 
 Code is not shared between platforms — macOS goes through `IOAVService`, Windows
 through NVAPI, with no common runtime.
@@ -166,8 +174,8 @@ device firing and the other absent is correct, not a fault: they arrive together
 and the second lands inside the debounce window.
 
 ```sh
-tail -f ~/Library/Logs/displayswitch.log                      # macOS
-Get-Content -Wait "$env:LOCALAPPDATA\display-switch\displayswitch.log"   # Windows
+tail -f ~/Library/Logs/trigger-kvm.log                      # macOS
+Get-Content -Wait "$env:LOCALAPPDATA\trigger-kvm\trigger-kvm.log"   # Windows
 ```
 
 Confirm by looking at the screens. Never by reading a VCP value back — see the
@@ -175,10 +183,30 @@ gotchas above.
 
 ## Scope
 
-Post-login only, on both platforms — a LaunchAgent on macOS, a Scheduled Task at
-logon on Windows. Pre-login is a much larger job than it looks: `m1ddc` links
-CoreGraphics and enumerates displays via `CGGetOnlineDisplayList`, which needs a
-window server connection that a LaunchDaemon in session 0 does not have. Windows
-hits the same wall for the same reason — session 0 has no desktop, so there is no
-`HMONITOR`. See `windows/README.md` for the sketch of a CoreGraphics-free path if
-this ever becomes worth building.
+**Windows** ships two install tiers. The default needs no admin and covers
+everything from logon onward — **including while the screen is locked**, since
+locking doesn't end your session. `install.ps1 -Tier s4u` needs admin once to
+register, then runs unelevated at startup in session 0, adding before-first-login
+and after-logoff. Measured 2026-08-30: NVAPI both enumerates *and writes* with no
+desktop, so no relay or token duplication is involved. See
+[`windows/README.md`](windows/README.md).
+
+**macOS** is post-login only. `m1ddc` links CoreGraphics and enumerates displays
+via `CGGetOnlineDisplayList`, which needs a window server connection a LaunchDaemon
+in session 0 does not have. The Windows argument used to be the same — session 0
+has no desktop, so no `HMONITOR` — and that was true of the `dxva2` path, which no
+longer exists. A CoreGraphics-free path for macOS is sketched in
+[`ARCHITECTURE.md`](ARCHITECTURE.md); the unsolved part is identity matching, not
+access.
+
+## Related work
+
+- [haimgel/display-switch](https://github.com/haimgel/display-switch) — the
+  established project in this space, and the reason for this one's rename. Switches
+  a monitor input on USB device connection. This project differs in driving
+  *multiple* monitors with per-display aiming, supporting a manufacturer sidechannel
+  for panels whose standard input control is stubbed, and running pre-login.
+- [SzozdaK/DDC-Trigger](https://github.com/SzozdaK/DDC-Trigger) — closest in concept:
+  a USB switch as the trigger, DDC to move the input, no video switching. It uses a
+  Raspberry Pi as a separate DDC console; this runs on the hosts themselves, so
+  there is no extra hardware.

@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-Install the Windows half of display-switch as a Scheduled Task.
+Install the Windows half of trigger-kvm as a Scheduled Task.
 
 .DESCRIPTION
     .\install.ps1              install and start (user tier -- no admin needed)
@@ -9,7 +9,7 @@ Install the Windows half of display-switch as a Scheduled Task.
     .\install.ps1 -Logs        tail the log
     .\install.ps1 -Uninstall   stop, unregister, remove installed files
 
-Mirrors macos/Makefile. Installs to %LOCALAPPDATA%\Programs\display-switch.
+Mirrors macos/Makefile. Installs to %LOCALAPPDATA%\Programs\trigger-kvm.
 
 TWO TIERS, and you pick by what you are willing to grant:
 
@@ -32,7 +32,7 @@ cannot dedupe across them. usb-watch.ps1 also takes a machine-wide mutex as
 defence in depth.
 
 The tier is a property of the HOST, not of the switcher. Nothing in
-switch-displays.ps1 or usb-watch.ps1 knows or asks which tier it runs under. If
+trigger-kvm.ps1 or usb-watch.ps1 knows or asks which tier it runs under. If
 either ever needs to, the abstraction is wrong -- stop and rethink.
 
 Why s4u is possible at all: measured 2026-08-30, NVAPI both enumerates and
@@ -42,7 +42,7 @@ HMONITOR, and that path no longer exists. See ..\ARCHITECTURE.md.
 
 No third-party binary and no network access: both monitors are driven by code in
 this repo. The LG used to need lg-input-switch.exe, a 16MB GPL-3.0 download; it is
-now driven by an aimed NVAPI I2C write from switch-displays.ps1, so the download,
+now driven by an aimed NVAPI I2C write from trigger-kvm.ps1, so the download,
 its pinned SHA256 check and the install-time network dependency are all gone. A
 stale copy left by an older install is removed below.
 #>
@@ -63,13 +63,23 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$TASK    = 'display-switch'
-$DEST    = Join-Path $env:LOCALAPPDATA 'Programs\display-switch'
-$LOG     = Join-Path $env:LOCALAPPDATA 'display-switch\displayswitch.log'
+$TASK    = 'trigger-kvm'
+$DEST    = Join-Path $env:LOCALAPPDATA 'Programs\trigger-kvm'
+$LOG     = Join-Path $env:LOCALAPPDATA 'trigger-kvm\trigger-kvm.log'
 $WATCH   = Join-Path $DEST 'usb-watch.ps1'
-$SWITCH  = Join-Path $DEST 'switch-displays.ps1'
+$SWITCH  = Join-Path $DEST 'trigger-kvm.ps1'
 $LGEXE   = Join-Path $DEST 'lg-input-switch.exe'   # legacy; removed on install/uninstall
 $VBS     = Join-Path $DEST 'launcher.vbs'
+
+# This project was called display-switch until 2026-08-30, and was renamed to avoid
+# collision with haimgel/display-switch, a well-established project of that exact
+# name. An install predating the rename left a task, a program directory and a log
+# under the old name, and its watcher holds the OLD mutex -- so leaving it in place
+# would mean two watchers both firing on every arrival. Removed on install and on
+# uninstall. Delete this block once no machine can plausibly still have one.
+$OLD_TASK = 'display-switch'
+$OLD_DEST = Join-Path $env:LOCALAPPDATA 'Programs\display-switch'
+$OLD_LOG  = Join-Path $env:LOCALAPPDATA 'display-switch\displayswitch.log'
 
 # Watched USB devices -- the peripherals that actually move through the USB
 # switch. Keyboard and mouse are wired directly to this PC and never move, so
@@ -95,6 +105,35 @@ function Stop-Watchers {
     foreach ($p in $procs) {
         Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue
         Write-Log ("stopped stale {0} (pid {1})" -f $p.Name, $p.ProcessId)
+    }
+}
+
+# Remove what a pre-rename install left behind. Stop-Watchers above already kills
+# the old watcher process (it matched on usb-watch.ps1, whose name did not change),
+# which is what releases the old mutex.
+function Remove-LegacyInstall {
+    if (Get-ScheduledTask -TaskName $OLD_TASK -ErrorAction SilentlyContinue) {
+        Stop-ScheduledTask -TaskName $OLD_TASK -ErrorAction SilentlyContinue
+        try {
+            Unregister-ScheduledTask -TaskName $OLD_TASK -Confirm:$false -ErrorAction Stop
+            Write-Log "removed the pre-rename task '$OLD_TASK'"
+        } catch {
+            # An s4u/system-principal task registered by an admin needs an admin to
+            # remove. Say so rather than leaving a second watcher running unexplained.
+            Write-Log ("WARNING: could not remove the old task '{0}': {1}" -f $OLD_TASK, $_.Exception.Message)
+            Write-Log 'Re-run this elevated, or two watchers may both fire on each arrival.'
+        }
+    }
+    if (Test-Path -LiteralPath $OLD_DEST) {
+        Remove-Item -LiteralPath $OLD_DEST -Recurse -Force -ErrorAction SilentlyContinue
+        Write-Log "removed the pre-rename program directory $OLD_DEST"
+    }
+    # The old log is the only record of what happened before the rename, so it is
+    # moved rather than deleted -- the same reason uninstall leaves logs alone.
+    if ((Test-Path -LiteralPath $OLD_LOG) -and -not (Test-Path -LiteralPath "$LOG.pre-rename")) {
+        New-Item -ItemType Directory -Force -Path (Split-Path $LOG) | Out-Null
+        Move-Item -LiteralPath $OLD_LOG -Destination "$LOG.pre-rename" -Force -ErrorAction SilentlyContinue
+        Write-Log "kept the pre-rename log as $LOG.pre-rename"
     }
 }
 
@@ -158,6 +197,7 @@ if ($Uninstall) {
         Write-Log "unregistered task '$TASK'"
     }
     Stop-Watchers
+    Remove-LegacyInstall
     # Leave the log in place; it is the only record of what happened.
     foreach ($f in @($WATCH, $SWITCH, $LGEXE, $VBS)) {
         if (Test-Path -LiteralPath $f) { Remove-Item -LiteralPath $f -Force; Write-Log "removed $f" }
@@ -195,11 +235,11 @@ New-Item -ItemType Directory -Force -Path $DEST              | Out-Null
 New-Item -ItemType Directory -Force -Path (Split-Path $LOG)  | Out-Null
 
 Copy-Item (Join-Path $PSScriptRoot 'usb-watch.ps1')       $WATCH  -Force
-Copy-Item (Join-Path $PSScriptRoot 'switch-displays.ps1') $SWITCH -Force
+Copy-Item (Join-Path $PSScriptRoot 'trigger-kvm.ps1') $SWITCH -Force
 Write-Log "installed scripts to $DEST"
 
 # Migration: older installs downloaded lg-input-switch.exe here. The LG is now
-# driven by an aimed NVAPI write inside switch-displays.ps1, so the binary is dead
+# driven by an aimed NVAPI write inside trigger-kvm.ps1, so the binary is dead
 # weight -- and leaving a 16MB GPL-3.0 executable lying around after it stopped
 # being used would be its own small surprise.
 if (Test-Path -LiteralPath $LGEXE) {
@@ -298,10 +338,11 @@ if (Get-ScheduledTask -TaskName $TASK -ErrorAction SilentlyContinue) {
     Unregister-ScheduledTask -TaskName $TASK -Confirm:$false
 }
 Stop-Watchers
+Remove-LegacyInstall
 
 Register-ScheduledTask -TaskName $TASK -Action $action -Trigger $triggers `
     -Principal $principal -Settings $settings `
-    -Description "display-switch ($Tier tier): pull both monitors to this PC when the shared USB peripherals arrive." | Out-Null
+    -Description "trigger-kvm ($Tier tier): pull both monitors to this PC when the shared USB peripherals arrive." | Out-Null
 
 Start-ScheduledTask -TaskName $TASK
 Write-Log "registered and started task '$TASK' ($Tier tier)"

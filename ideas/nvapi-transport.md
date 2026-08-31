@@ -1,7 +1,7 @@
 # Idea: an NVAPI transport to replace lg-input-switch
 
 **Status:** enumeration half proven on this machine 2026-08-30 in four contexts (see
-Measured, below). Write half **built** and living in `windows/switch-displays.ps1`;
+Measured, below). Write half **built** and living in `windows/trigger-kvm.ps1`;
 see "The write path, as built". This note stays as the reference for the ids, the
 struct traps and the framing fork.
 
@@ -150,7 +150,7 @@ order*. Order-based fallback is exactly what this repo's conventions forbid.
 
 ## The write path, as built
 
-`NvDdc` in `windows/switch-displays.ps1`. Three decisions worth keeping:
+`NvDdc` in `windows/trigger-kvm.ps1`. Three decisions worth keeping:
 
 **`NV_I2C_INFO_V3` must marshal to 64 bytes on x64**, i.e. version `0x00030040`.
 `Init()` computes it and refuses with an explicit message rather than handing NvAPI
@@ -189,7 +189,7 @@ SimpleKVM's alternative below is recorded for the next hardware, not for this on
 verified visually the same day, both directions, including its pull-back from an
 inactive link over HDMI. That collapsed the dual code path: the `dxva2`/`user32`
 bindings and the PnP-interface-path matcher are deleted, both panels resolve by EDID
-through NVAPI, and `windows/switch-displays.ps1` now touches no desktop API at all.
+through NVAPI, and `windows/trigger-kvm.ps1` now touches no desktop API at all.
 Why no vendor-neutral fallback was kept:
 `../docs/decisions/001-nvapi-as-the-only-windows-transport.md`.
 
@@ -224,4 +224,4 @@ corroboration of three function ids and the packet framing choice, both facts
 rather than code. It is no longer a dependency.
 
 Related: [[autologin-tier]] (rejected). The implementation lives in
-`windows/switch-displays.ps1` (`NvDdc`) and `windows/nvapi-probe.ps1`.
+`windows/trigger-kvm.ps1` (`NvDdc`) and `windows/nvapi-probe.ps1`.

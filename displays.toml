@@ -1,4 +1,4 @@
-# display-switch — the shared contract
+# trigger-kvm — the shared contract
 #
 # This file is the single source of truth for both platforms. Code is not shared
 # between macOS and Windows (IOAVService vs NVAPI), but this map is. Keep it here

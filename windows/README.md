@@ -1,6 +1,6 @@
 # Windows side
 
-A Scheduled Task runs `usb-watch.ps1`, which fires `switch-displays.ps1 windows`
+A Scheduled Task runs `usb-watch.ps1`, which fires `trigger-kvm.ps1 windows`
 when a watched USB device arrives. No compiled code and no third-party binary:
 PowerShell throughout, with the NVAPI bindings inline.
 
@@ -66,22 +66,22 @@ own invites you to guess the capability, and the capability is the entire point 
 having tiers.
 
 **The tier is a property of the host, not of the switcher.** All tier logic lives in
-`install.ps1`. Neither `switch-displays.ps1` nor `usb-watch.ps1` knows or asks which
+`install.ps1`. Neither `trigger-kvm.ps1` nor `usb-watch.ps1` knows or asks which
 tier it is running under. If either ever needs to, the abstraction is wrong.
 
 `install.ps1` copies the two scripts and registers the task. It needs no network
 access. Earlier versions downloaded a 16MB `lg-input-switch.exe` from a pinned
 release; installing now deletes that binary if a previous install left one behind.
 
-Log: `%LOCALAPPDATA%\display-switch\displayswitch.log`, rotated by the watcher at
+Log: `%LOCALAPPDATA%\trigger-kvm\trigger-kvm.log`, rotated by the watcher at
 startup once it passes 1MB (`-MaxLogBytes`), keeping one generation as `.log.1`.
 
 ## Manual use
 
 ```powershell
-.\switch-displays.ps1 windows            # pull both monitors here
-.\switch-displays.ps1 mac                # push both to the Mac
-.\switch-displays.ps1 windows -Only asus # move one monitor only
+.\trigger-kvm.ps1 windows            # pull both monitors here
+.\trigger-kvm.ps1 mac                # push both to the Mac
+.\trigger-kvm.ps1 windows -Only asus # move one monitor only
 ```
 
 `-Only lg|asus|both` exists because moving both at once can take away the display
@@ -125,7 +125,7 @@ all: it is aimed at the LG's output alone.
 
 ## Components
 
-**`switch-displays.ps1`** -- sends both writes, through one transport. Each write is
+**`trigger-kvm.ps1`** -- sends both writes, through one transport. Each write is
 sent twice: DDC is lossy and the writes are idempotent. There are deliberately no
 reads anywhere in it.
 
@@ -167,11 +167,11 @@ Use `-WhatIf` to resolve the panels and print the exact packet bytes without sen
 anything:
 
 ```powershell
-.\switch-displays.ps1 windows -Only lg -WhatIf
+.\trigger-kvm.ps1 windows -Only lg -WhatIf
 ```
 
 **Single instance is enforced machine-wide, not per session.** `usb-watch.ps1` takes
-`Global\display-switch-usb-watch`. `Local\` would be scoped to one session, so a
+`Global\trigger-kvm-usb-watch`. `Local\` would be scoped to one session, so a
 logon watcher in session 1 and an at-startup watcher in session 0 would each take
 their own, both arm, and both fire on the same arrival -- and the debounce is
 per-process, so it cannot dedupe across them. Measured 2026-08-30: an unelevated
@@ -245,7 +245,7 @@ relaunching a watcher that exits immediately on the mutex. A minute of downtime
 after an unobserved failure is the better trade.
 
 **Only one ever runs.** `usb-watch.ps1` holds a named mutex
-(`Local\display-switch-usb-watch`) and exits immediately if another instance has
+(`Local\trigger-kvm-usb-watch`) and exits immediately if another instance has
 it. This matters more than it looks: the watcher is a *grandchild* of the task, so
 stopping the task kills the launcher but leaves the watcher running. Without the
 mutex, every reinstall and every self-heal tick would stack another watcher, and
@@ -264,7 +264,7 @@ To stop it deliberately:
 
 ```powershell
 .\install.ps1 -Uninstall     # unregister the task and clear any running watcher
-Stop-ScheduledTask -TaskName display-switch   # just this session; self-heal will restart it
+Stop-ScheduledTask -TaskName trigger-kvm   # just this session; self-heal will restart it
 ```
 
 ## Watched devices
@@ -288,7 +288,7 @@ vendor-only match would fire continuously.
 **Do not address monitors by index or by description. The indices are not stable.**
 They were `\\.\DISPLAY1` = ASUS and `\\.\DISPLAY2` = LG for all of this project's
 early testing, and then on 2026-08-30 they **swapped**: the same
-`switch-displays.ps1 windows` that had been logging `on \\.\DISPLAY1` for the ASUS
+`trigger-kvm.ps1 windows` that had been logging `on \\.\DISPLAY1` for the ASUS
 began logging `on \\.\DISPLAY2`, across a hard reboot and a hibernate cycle.
 Nothing broke, because the script never uses the index. Getting this wrong would
 send LG service-channel writes to the ASUS.
@@ -332,7 +332,7 @@ same reason. See [`../ARCHITECTURE.md`](../ARCHITECTURE.md).
 
 ```powershell
 .\nvapi-probe.ps1                              # print what NVAPI can see
-.\nvapi-probe.ps1 -LogFile C:\ProgramData\display-switch\nvapi-probe.log
+.\nvapi-probe.ps1 -LogFile C:\ProgramData\trigger-kvm\nvapi-probe.log
 ```
 
 Enumerates GPUs, connected displays and each display's EDID **through NVAPI only**,

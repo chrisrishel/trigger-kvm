@@ -1,9 +1,9 @@
 // usb-watch — fire a command when a watched USB device is plugged in.
 //
-// Built for display-switch: when the USB switch hands this Mac the shared
+// Built for trigger-kvm: when the USB switch hands this Mac the shared
 // peripherals, pull both monitors to this machine.
 //
-//   usb-watch --exec /path/to/switch-displays.sh --arg mac \
+//   usb-watch --exec /path/to/trigger-kvm.sh --arg mac \
 //             --device 046d:0843 --device 1235:820a \
 //             [--debounce 3.0] [--settle 0.75] [--verbose]
 //

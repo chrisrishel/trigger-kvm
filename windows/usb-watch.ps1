@@ -3,11 +3,11 @@
 Fire a command when a watched USB device is plugged in.
 
 .DESCRIPTION
-Built for display-switch: when the USB switch hands this PC the shared
+Built for trigger-kvm: when the USB switch hands this PC the shared
 peripherals, pull both monitors to this machine. This is the Windows port of
 macos/usb-watch.c and deliberately keeps the same semantics.
 
-    usb-watch.ps1 -Exec .\switch-displays.ps1 -Arg windows `
+    usb-watch.ps1 -Exec .\trigger-kvm.ps1 -Arg windows `
                   -Device 046d:0843,1235:820a `
                   [-Debounce 3.0] [-Settle 0.75] [-Verbose]
 
@@ -62,7 +62,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$SOURCE = 'DisplaySwitchDeviceChange'
+$SOURCE = 'TriggerKvmDeviceChange'
 
 # Machine-wide, not per-session. `Local\` is scoped to one session, so a watcher in
 # session 1 and one in session 0 would each take their own and BOTH fire on the same
@@ -77,8 +77,8 @@ $SOURCE = 'DisplaySwitchDeviceChange'
 # Note this file does NOT know which tier it is running under, and must not: the
 # tier is a property of the host and lives in install.ps1. This is a question about
 # what the OS permits and what is already running, not about who launched us.
-$MUTEX_GLOBAL = 'Global\display-switch-usb-watch'
-$MUTEX_LOCAL  = 'Local\display-switch-usb-watch'
+$MUTEX_GLOBAL = 'Global\trigger-kvm-usb-watch'
+$MUTEX_LOCAL  = 'Local\trigger-kvm-usb-watch'
 
 function Write-Log {
     param([string]$Message)

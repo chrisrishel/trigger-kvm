@@ -16,7 +16,7 @@ scheduled task) sees zero monitors. NVAPI talks to the driver rather than to a
 window station, so it may not have that limitation. Nobody has tested it.
 
     .\nvapi-probe.ps1
-    .\nvapi-probe.ps1 -LogFile C:\ProgramData\display-switch\nvapi-probe.log
+    .\nvapi-probe.ps1 -LogFile C:\ProgramData\trigger-kvm\nvapi-probe.log
 
 SAFETY. This script performs NO writes of any kind:
 
@@ -38,7 +38,7 @@ NvAPI_Initialize / NvAPI_EnumPhysicalGPUs independently corroborated by
 meer-cha/lg-input-switch. See ..\ideas\nvapi-transport.md for provenance, the
 struct traps and the measured results.
 
-This file duplicates the enumeration bindings that switch-displays.ps1 also
+This file duplicates the enumeration bindings that trigger-kvm.ps1 also
 carries, deliberately. Sharing them would mean the probe loading a module that
 resolves NvAPI_I2CWrite, which would cost it the property stated above -- that the
 write function is absent from the file and cannot be called. A read-only probe is

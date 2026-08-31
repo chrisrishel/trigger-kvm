@@ -83,10 +83,10 @@ reaches the joystick.
 displays.toml          the contract — shared by both platforms
 ├── macos/
 │   ├── usb-watch.c          detects arrival  →  execs the switcher
-│   └── switch-displays.sh   drives m1ddc     →  sends the DDC writes
+│   └── trigger-kvm.sh   drives m1ddc     →  sends the DDC writes
 └── windows/
     ├── usb-watch.ps1        detects arrival  →  execs the switcher
-    ├── switch-displays.ps1  aimed NVAPI I2C, both panels → sends the DDC writes
+    ├── trigger-kvm.ps1  aimed NVAPI I2C, both panels → sends the DDC writes
     ├── nvapi-probe.ps1      read-only display enumeration probe (diagnostic)
     └── install.ps1          Scheduled Task at logon (generates launcher.vbs)
 ```
@@ -215,7 +215,7 @@ session 0 blocked Windows too, because it has no desktop and therefore no
 also predicted NVAPI would fail "for the same reason". That prediction was wrong:
 measured 2026-08-30, NVAPI enumerates and identifies both panels from session 0, as
 SYSTEM and as an unelevated S4U task, and again from an at-startup task after a cold
-boot. Both monitors are now driven over NVAPI, so `windows/switch-displays.ps1`
+boot. Both monitors are now driven over NVAPI, so `windows/trigger-kvm.ps1`
 touches no desktop API at all.
 
 The trap that finding exposed: in session 0 `user32` reports **one phantom monitor,

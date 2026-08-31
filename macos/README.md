@@ -1,6 +1,6 @@
 # macOS side
 
-A LaunchAgent runs `usb-watch`, which fires `switch-displays.sh mac` when a watched
+A LaunchAgent runs `usb-watch`, which fires `trigger-kvm.sh mac` when a watched
 USB device is plugged in.
 
 ## Requirements
@@ -16,7 +16,7 @@ Xcode command line tools for `clang` (you almost certainly already have them).
 ```sh
 make install     # build, install to ~/.local/bin, write the plist, load the agent
 make status      # is the agent loaded?
-make logs        # tail ~/Library/Logs/displayswitch.log
+make logs        # tail ~/Library/Logs/trigger-kvm.log
 make uninstall
 ```
 
@@ -38,13 +38,13 @@ one instance per label, so a second copy cannot be started by reinstalling.
 ## Manual use
 
 ```sh
-./switch-displays.sh mac       # pull both monitors here
-./switch-displays.sh windows   # push both to the PC
+./trigger-kvm.sh mac       # pull both monitors here
+./trigger-kvm.sh windows   # push both to the PC
 ```
 
 ## Components
 
-**`switch-displays.sh`** — sends the DDC writes via `m1ddc`. Resolves display UUIDs
+**`trigger-kvm.sh`** — sends the DDC writes via `m1ddc`. Resolves display UUIDs
 at runtime by name rather than hardcoding them: m1ddc's index numbers shift when a
 display drops, and index `1` silently becoming the *other* monitor would send LG
 service-channel writes to the ASUS. Sends each write twice — DDC is lossy and the

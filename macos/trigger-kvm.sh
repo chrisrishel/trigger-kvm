@@ -2,8 +2,8 @@
 #
 # Switch both monitors' inputs from this Mac.
 #
-#   switch-displays.sh mac       pull both monitors here   (the normal case)
-#   switch-displays.sh windows   push both monitors to the PC
+#   trigger-kvm.sh mac       pull both monitors here   (the normal case)
+#   trigger-kvm.sh windows   push both monitors to the PC
 #
 # Values are documented in ../displays.toml, which is the source of truth. They are
 # duplicated here as literals rather than parsed, because this script runs from a
@@ -35,7 +35,7 @@ ASUS_WIN=17       # 0x11  HDMI 1
 
 TRIES=${TRIES:-2}   # DDC is lossy and writes are idempotent; a repeat is free
 
-log() { printf '%s display-switch: %s\n' "$(date '+%H:%M:%S')" "$*"; }
+log() { printf '%s trigger-kvm: %s\n' "$(date '+%H:%M:%S')" "$*"; }
 
 if [[ ! -x "$M1DDC" ]]; then
   log "ERROR: m1ddc not found at $M1DDC (override with M1DDC=/path)"

@@ -51,7 +51,7 @@ one first.
 **5. The LG service channel may only ever be aimed at the LG.**
 I2C source `0x50` carries VCP `0xF4`, and what that means on a non-LG panel is
 unknown. The rule is enforced in code, at the transport, not by caller discipline:
-`NvDdc.WriteLgInput` in `windows/switch-displays.ps1` is the only function that can
+`NvDdc.WriteLgInput` in `windows/trigger-kvm.ps1` is the only function that can
 emit source `0x50`, the source byte is not a parameter, and it **throws** unless the
 target's EDID manufacturer is GSM (`0x1E6D`). There is no generic "write to source
 N" entry point, so no caller can aim it at another vendor's panel, including by
@@ -225,9 +225,9 @@ here. `isConnected` (bit 6) was stable across every run and every context. Use t
 See `ideas/nvapi-transport.md`.
 
 **Windows rotates its log; macOS still does not.**
-`%LOCALAPPDATA%\display-switch\displayswitch.log` is rotated by `usb-watch.ps1` at
+`%LOCALAPPDATA%\trigger-kvm\trigger-kvm.log` is rotated by `usb-watch.ps1` at
 startup once it passes `-MaxLogBytes` (default 1MB), keeping one generation as
-`.1`. `~/Library/Logs/displayswitch.log` on macOS is still appended to forever.
+`.1`. `~/Library/Logs/trigger-kvm.log` on macOS is still appended to forever.
 Output is a few lines per switch so the macOS growth is slow, but it is unbounded.
 
 Rotation happens at watcher startup and nowhere else, for two reasons worth not
@@ -285,7 +285,7 @@ make                                      # build usb-watch
 make plist PLIST=/tmp/t.plist             # generate + lint the LaunchAgent, loads nothing
 make install                              # build, install to ~/.local/bin, load the agent
 make status / make logs / make uninstall
-./switch-displays.sh mac | windows        # manual switch
+./trigger-kvm.sh mac | windows        # manual switch
 ```
 
 `usb-watch` must compile clean under `-Wall -Wextra`. Verify the plist with
@@ -307,22 +307,22 @@ devices that were already plugged in.
 cd windows
 .\install.ps1                              # install, register the logon task, start
 .\install.ps1 -Status / -Logs / -Uninstall
-.\switch-displays.ps1 windows | mac        # manual switch
-.\switch-displays.ps1 windows -Only asus   # one monitor only -- use when testing
+.\trigger-kvm.ps1 windows | mac        # manual switch
+.\trigger-kvm.ps1 windows -Only asus   # one monitor only -- use when testing
 ```
 
 Both scripts must parse clean before they are run against hardware:
 
 ```powershell
 $e = $null
-[System.Management.Automation.Language.Parser]::ParseFile('.\switch-displays.ps1', [ref]$null, [ref]$e)
+[System.Management.Automation.Language.Parser]::ParseFile('.\trigger-kvm.ps1', [ref]$null, [ref]$e)
 $e
 ```
 
 The equivalent watcher smoke test, which fires nothing:
 
 ```powershell
-Stop-ScheduledTask -TaskName display-switch    # the installed watcher holds the mutex
+Stop-ScheduledTask -TaskName trigger-kvm    # the installed watcher holds the mutex
 .\usb-watch.ps1 -Exec .\some-harmless-script.ps1 -Arg TEST -Device 046d:c547 -Verbose
 ```
 
@@ -353,7 +353,7 @@ once with `another usb-watch is already running`.
   unrelated line. Prose files are unaffected; use ASCII punctuation in scripts.
 - Send DDC writes more than once. They are idempotent and the bus is lossy.
 - **The install tier is a property of the HOST, not the switcher.** All tier logic
-  lives in `windows/install.ps1`. Nothing in `switch-displays.ps1` or
+  lives in `windows/install.ps1`. Nothing in `trigger-kvm.ps1` or
   `usb-watch.ps1` knows or asks which tier it runs under, and if either ever needs
   to, the abstraction is wrong — stop and rethink rather than adding the branch.
   Tiers are mutually exclusive by construction: they share one task name, so
