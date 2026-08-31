@@ -98,7 +98,7 @@ margin, which is why its log line is `Write-Verbose` and not `Write-Log`; promot
 it would bury the log in noise on every plug.
 
 **PnP presence means "attached" for USB and "PAIRED" for Bluetooth. Do not extend
-the watcher to Bluetooth by widening its match pattern.** `usb-watch.ps1` assumes a
+the watcher to Bluetooth by widening its match pattern.** `event-watch.ps1` assumes a
 node exists only while the device is attached, so an absent -> present edge means
 arrival. Measured 2026-08-30: a pair of AirPods whose
 `DEVPKEY_Bluetooth_LastConnectedTime` reads **2025-11-07**, and an iPhone reading
@@ -112,18 +112,28 @@ audio endpoints read `Present=False` while the parent reads `True`), but they ar
 opaque GUIDs, differ by device class, and appeared twice on this machine under two
 different service-id forms. Matching them is guesswork.
 
-**A second transport belongs in the SAME watcher process, as another presence
-source -- never as a second watcher.** The debounce is in-memory and per-process, so
-two watcher processes would each hold their own window and both fire when a USB
-device and a Bluetooth device arrive together. That is the exact double-fire the
-`Global\` mutex exists to prevent, and the mutex would in fact stop the second
-watcher starting at all. Only "is this device present right now" and "tell me when
-that changes" are transport-specific; the edge, debounce, settle and fire logic is
-shared and must stay shared.
+**The watcher is ONE process with N event sources. Do not add a second persistent
+process, and do not tell users to run one.** Two watcher processes would each hold
+their own in-memory debounce and both fire when a USB device and a Bluetooth device
+arrive together -- the double-fire the `Global\` mutex exists to prevent, and which
+that mutex would in fact block by stopping the second watcher.
 
-The line that decides process-vs-in-process: the watcher and the switcher are
-separate processes because they share no mutable state. Two presence sources DO
-share state -- the debounce clock and the presence map -- so they belong together.
+The same applies to non-device triggers, for a different reason. "A hotkey can just
+run `trigger-kvm.ps1 pull`" is true architecturally and a poor answer practically:
+it makes the user install and supervise a SECOND background app to do a job this
+process could do. Every extra always-running thing is another install step and
+another way for the setup to end up half working. Sources belong here; the command
+interface stays as the integration point for things not implemented here.
+
+Sources differ in what constitutes a fire, and that is per-source, not a reason to
+split. Device presence fires on an absent -> present EDGE and needs debounce and
+settle, because a spurious arrival would yank the displays. A hotkey is deliberate
+and discrete and needs neither. What sources share is the process lifetime, the
+single-instance lock, and the fire.
+
+**Whatever the source, it runs `pull` -- never a scene.** A scene names inputs on
+hardware this machine cannot observe, so a stale one must never be reachable from
+anything automatic.
 
 **Measured obstacle, Windows-specific:** the connection-aware APIs
 (`Windows.Devices.Enumeration.DeviceWatcher` with `System.Devices.Aep.IsConnected`)
@@ -177,7 +187,7 @@ move in between: flipping the USB switch to this PC *while it is hibernating* do
 fire on resume, which is correct — the peripherals really did move here.
 
 **A quiet log is still not proof the edge guard rejected anything — but `-Verbose`
-now is.** `usb-watch.ps1` used to drop a no-edge device-change event with a bare
+now is.** `event-watch.ps1` used to drop a no-edge device-change event with a bare
 `continue` and no line at all, so "no arrival logged" could not distinguish "no
 event was delivered" from "an event was delivered and correctly rejected". It now
 emits `device-change event yielded no arrival edge (...)` naming whether a watched
@@ -263,7 +273,7 @@ here. `isConnected` (bit 6) was stable across every run and every context. Use t
 See `ideas/nvapi-transport.md`.
 
 **Windows rotates its log; macOS still does not.**
-`%LOCALAPPDATA%\trigger-kvm\trigger-kvm.log` is rotated by `usb-watch.ps1` at
+`%LOCALAPPDATA%\trigger-kvm\trigger-kvm.log` is rotated by `event-watch.ps1` at
 startup once it passes `-MaxLogBytes` (default 1MB), keeping one generation as
 `.1`. `~/Library/Logs/trigger-kvm.log` on macOS is still appended to forever.
 Output is a few lines per switch so the macOS growth is slow, but it is unbounded.
@@ -363,12 +373,12 @@ The equivalent watcher smoke test, which fires nothing:
 
 ```powershell
 Stop-ScheduledTask -TaskName trigger-kvm    # the installed watcher holds the mutex
-.\usb-watch.ps1 -Exec .\some-harmless-script.ps1 -Arg TEST -Device 046d:c547 -Verbose
+.\event-watch.ps1 -Exec .\some-harmless-script.ps1 -Arg TEST -Device 046d:c547 -Verbose
 ```
 
 `046d:c547` is the keyboard, which is always present, so this is the direct check
 that already-present devices do not fire. The `Stop-ScheduledTask` matters:
-`usb-watch.ps1` is single-instance via a named mutex and will otherwise exit at
+`event-watch.ps1` is single-instance via a named mutex and will otherwise exit at
 once with `another usb-watch is already running`.
 
 ## Conventions
@@ -407,12 +417,12 @@ once with `another usb-watch is already running`.
   to a dead input.
 - **The install tier is a property of the HOST, not the switcher.** All tier logic
   lives in `windows/install.ps1`. Nothing in `trigger-kvm.ps1` or
-  `usb-watch.ps1` knows or asks which tier it runs under, and if either ever needs
+  `event-watch.ps1` knows or asks which tier it runs under, and if either ever needs
   to, the abstraction is wrong — stop and rethink rather than adding the branch.
   Tiers are mutually exclusive by construction: they share one task name, so
   installing either replaces the other. Two live watchers in different sessions
   would both fire on the same arrival and the debounce is per-process, so it cannot
-  dedupe across them. `usb-watch.ps1` takes a `Global\` (machine-wide) mutex as
+  dedupe across them. `event-watch.ps1` takes a `Global\` (machine-wide) mutex as
   defence in depth behind that, never a `Local\` one, which is per-session.
 - Post-login is the DEFAULT, not the only option, since 2026-08-30. `install.ps1`
   defaults to the no-admin user tier; `-Tier s4u` adds before-first-login and

@@ -131,6 +131,29 @@ monitor.
   boot-time watcher would each take their own lock and both fire, and the debounce
   is per-process.
 
+## 4b. The watcher is one process with N event sources
+
+`usb-watch.c` is already the right shape and only the name undersells it: it runs a
+`CFRunLoop` with an `IONotificationPort` source and a settle timer source already
+multiplexed. Rename it `event-watch.c` when you add a second source, matching the
+Windows side.
+
+Add sources to that run loop rather than adding processes, and do not tell users to
+run a separate hotkey app -- the same reasoning as Windows. Two persistent watchers
+would each hold their own debounce and both fire on one physical event.
+
+**Bluetooth on macOS.** The connection-aware API is `IOBluetooth`, not IOKit USB
+matching: `+[IOBluetoothDevice registerForConnectNotifications:selector:]` fires when
+any device connects, and `-registerForDisconnectNotification:selector:` covers the
+other edge. Both are run-loop based, so they compose with what is already there.
+Two consequences worth knowing before you start: `IOBluetooth` is an Objective-C
+framework, so the file becomes `.m` and the Makefile links `-framework IOBluetooth`;
+and expect the same paired-vs-connected distinction Windows has -- verify that
+`isConnected` means connected and not merely paired before trusting it.
+
+For a hotkey, `RegisterEventHotKey` (Carbon, still supported) or a `CGEventTap` are
+both run-loop sources and drop into the same place.
+
 ## 5. Install tiers, and the pre-login problem
 
 Windows now ships two tiers: a default needing no admin (logon task, covers

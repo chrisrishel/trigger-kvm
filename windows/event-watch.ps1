@@ -1,18 +1,32 @@
 <#
 .SYNOPSIS
-Fire a command when a watched USB device is plugged in.
+Fire trigger-kvm when something happens that means "this machine owns the desk now".
 
 .DESCRIPTION
-Built for trigger-kvm: when the USB switch hands this PC the shared
-peripherals, pull both monitors to this machine. This is the Windows port of
-macos/usb-watch.c and deliberately keeps the same semantics.
+The single persistent process on this machine. It watches for events that should
+pull the displays here and runs `trigger-kvm.ps1 pull` when one occurs.
 
-    usb-watch.ps1 -Exec .\trigger-kvm.ps1 -Arg windows `
-                  -Device 046d:0843,1235:820a `
-                  [-Debounce 3.0] [-Settle 0.75] [-Verbose]
+    event-watch.ps1 -Exec .	rigger-kvm.ps1 -Arg pull `
+                    -Device 046d:0843,1235:820a `
+                    [-Debounce 3.0] [-Settle 0.75] [-Verbose]
 
-Three deliberate safety behaviours, all there because a spurious device arrival
-would yank both displays out from under whatever you are doing:
+ONE process, N event sources. Today there is one source -- USB device presence --
+but the shape is deliberate: every additional persistent listener a user has to run
+is another install step and another way for the system to end up half working. A
+hotkey, a Bluetooth connection or a dock event belongs HERE, not in a second
+background app the user has to set up themselves.
+
+Sources differ in what constitutes a fire, and that is a per-source concern:
+
+  device presence   arrival is an absent -> present EDGE, and needs debounce and
+                    settle because a spurious arrival would yank the displays
+  hotkey (future)   a keypress is deliberate and discrete; no presence, no settle
+
+So debounce and settle belong to the sources that need them, not to the loop.
+What IS shared is the process lifetime, the single-instance lock, and the fire.
+
+Three deliberate safety behaviours on the device source, all there because a
+spurious arrival would yank both displays out from under whatever you are doing:
 
   debounce  ignore any arrival within N seconds of the last fire. Stops two
             watched devices arriving together from firing twice, and stops a
@@ -23,15 +37,23 @@ would yank both displays out from under whatever you are doing:
   edge      fire only on a transition from absent to present. Devices already
             plugged in at startup never fire.
 
-Detection uses Win32_DeviceChangeEvent, which is an extrinsic WMI event: the OS
-pushes it, so there is no polling interval. It does not say WHICH device changed,
-so each event is followed by a targeted query to establish identity. That
-combination gives push latency with exact identity, and needs no elevation.
+Detection uses Win32_DeviceChangeEvent, an extrinsic WMI event: the OS pushes it,
+so there is no polling interval. It does not say WHICH device changed, so each
+event is followed by a targeted query to establish identity. That combination
+gives push latency with exact identity, and needs no elevation.
 
 TRAP: the keyboard and mouse are Logitech too (VID_046D, PID_C547) and are always
 present, because they are wired directly to this PC's motherboard and do not pass
 through the USB switch. Matching on vendor id alone would fire constantly. Always
 match the full VID+PID pair.
+
+TRAP: this presence model works for USB and NOT for Bluetooth, where a PAIRED
+device keeps its PnP node whether or not it is connected. Adding Bluetooth needs a
+connection-aware source, not a wider match pattern. See ..\AGENTS.md.
+
+Whatever the source, it runs `pull` -- never a scene. A scene names inputs on
+hardware this machine cannot observe, so a stale one must never be reachable from
+anything automatic.
 #>
 
 [CmdletBinding()]
@@ -82,7 +104,7 @@ $MUTEX_LOCAL  = 'Local\trigger-kvm-usb-watch'
 
 function Write-Log {
     param([string]$Message)
-    $line = '{0} usb-watch: {1}' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $Message
+    $line = '{0} event-watch: {1}' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $Message
     Write-Host $line
     if ($LogFile) {
         # The switcher appends to the same file, so a write can briefly collide.
@@ -173,7 +195,7 @@ try {
     # down rather than falling back, because falling back to a per-session name here
     # would produce exactly the two-watchers-one-arrival case the global name exists
     # to prevent.
-    Write-Log 'a usb-watch owned by another account already holds the global lock; exiting'
+    Write-Log 'a watcher owned by another account already holds the global lock; exiting'
     exit 0
 } catch {
     # No SeCreateGlobalPrivilege. Per-session exclusion is still better than none.
@@ -182,7 +204,7 @@ try {
 }
 
 if (-not $mutex.WaitOne(0)) {
-    Write-Log "another usb-watch is already running ($scope scope); exiting"
+    Write-Log "another watcher is already running ($scope scope); exiting"
     exit 0
 }
 

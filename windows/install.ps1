@@ -28,11 +28,11 @@ TWO TIERS, and you pick by what you are willing to grant:
 The tiers are mutually exclusive by construction -- they share one task name, so
 installing either replaces the other. Two live watchers in different sessions
 would both fire on the same arrival, and the debounce is per-process, so it
-cannot dedupe across them. usb-watch.ps1 also takes a machine-wide mutex as
+cannot dedupe across them. event-watch.ps1 also takes a machine-wide mutex as
 defence in depth.
 
 The tier is a property of the HOST, not of the switcher. Nothing in
-trigger-kvm.ps1 or usb-watch.ps1 knows or asks which tier it runs under. If
+trigger-kvm.ps1 or event-watch.ps1 knows or asks which tier it runs under. If
 either ever needs to, the abstraction is wrong -- stop and rethink.
 
 Why s4u is possible at all: measured 2026-08-30, NVAPI both enumerates and
@@ -69,7 +69,7 @@ $ErrorActionPreference = 'Stop'
 $TASK    = 'trigger-kvm'
 $DEST    = Join-Path $env:LOCALAPPDATA 'Programs\trigger-kvm'
 $LOG     = Join-Path $env:LOCALAPPDATA 'trigger-kvm\trigger-kvm.log'
-$WATCH   = Join-Path $DEST 'usb-watch.ps1'
+$WATCH   = Join-Path $DEST 'event-watch.ps1'
 $SWITCH  = Join-Path $DEST 'trigger-kvm.ps1'
 $LGEXE   = Join-Path $DEST 'lg-input-switch.exe'   # legacy; removed on install/uninstall
 $VBS     = Join-Path $DEST 'launcher.vbs'
@@ -194,6 +194,11 @@ function New-DefaultConfig {
     Write-Log "wrote starter config: $Path"
 }
 
+# Matches BOTH event-watch.ps1 and the pre-rename usb-watch.ps1 on purpose: a
+# surviving old watcher would hold its own debounce clock and fire alongside the new
+# one on every arrival. Drop the 'usb' alternative once no machine can still be
+# running one.
+#
 # Stopping the task kills its launcher but NOT the powershell watcher underneath,
 # which is a grandchild and outlives it. Left behind, a stale watcher keeps holding
 # the single-instance mutex and the newly installed one exits immediately -- so an
@@ -203,7 +208,7 @@ function Stop-Watchers {
         Where-Object {
             $_.CommandLine -and (
                 ($_.Name -eq 'wscript.exe'    -and $_.CommandLine -match 'launcher\.vbs') -or
-                ($_.Name -eq 'powershell.exe' -and $_.CommandLine -match 'usb-watch\.ps1')
+                ($_.Name -eq 'powershell.exe' -and $_.CommandLine -match '(usb|event)-watch\.ps1')
             )
         }
     foreach ($p in $procs) {
@@ -213,7 +218,7 @@ function Stop-Watchers {
 }
 
 # Remove what a pre-rename install left behind. Stop-Watchers above already kills
-# the old watcher process (it matched on usb-watch.ps1, whose name did not change),
+# the old watcher process (its regex matches both watcher names),
 # which is what releases the old mutex.
 function Remove-LegacyInstall {
     if (Get-ScheduledTask -TaskName $OLD_TASK -ErrorAction SilentlyContinue) {
@@ -361,7 +366,7 @@ if ($Status) {
     Write-Host ("last run : {0} (result 0x{1:X8}){2}" -f $i.LastRunTime, $i.LastTaskResult, $note)
 
     $n = @(Get-CimInstance Win32_Process -Property ProcessId,Name,CommandLine -Verbose:$false |
-           Where-Object { $_.CommandLine -and $_.Name -eq 'powershell.exe' -and $_.CommandLine -match 'usb-watch\.ps1' }).Count
+           Where-Object { $_.CommandLine -and $_.Name -eq 'powershell.exe' -and $_.CommandLine -match '(usb|event)-watch\.ps1' }).Count
     Write-Host ("watchers : {0}{1}" -f $n, $(if ($n -eq 1) { '' } else { '  <- expected exactly 1' }))
     Write-Host ("log      : {0}" -f $LOG)
     Write-Host ("config   : {0}{1}" -f $CONFIG, $(if (Test-Path -LiteralPath $CONFIG) { '' } else { '  <- MISSING; run install.ps1' }))
@@ -466,7 +471,7 @@ Write-Log "watching: $devices  (debounce ${debounce}s, settle ${settle}s)"
 New-Item -ItemType Directory -Force -Path $DEST              | Out-Null
 New-Item -ItemType Directory -Force -Path (Split-Path $LOG)  | Out-Null
 
-Copy-Item (Join-Path $PSScriptRoot 'usb-watch.ps1')       $WATCH  -Force
+Copy-Item (Join-Path $PSScriptRoot 'event-watch.ps1')     $WATCH  -Force
 Copy-Item (Join-Path $PSScriptRoot 'trigger-kvm.ps1') $SWITCH -Force
 Write-Log "installed scripts to $DEST"
 

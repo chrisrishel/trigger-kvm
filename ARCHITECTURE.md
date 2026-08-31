@@ -82,10 +82,10 @@ reaches the joystick.
 ```
 displays.toml          researched model knowledge — shared by both platforms
 ├── macos/
-│   ├── usb-watch.c       detects arrival  →  execs the switcher
-│   └── trigger-kvm.sh    drives m1ddc     →  sends the DDC writes
+│   ├── usb-watch.c       watches for events →  execs the switcher
+│   └── trigger-kvm.sh    drives m1ddc       →  sends the DDC writes
 └── windows/
-    ├── usb-watch.ps1     detects arrival  →  execs the switcher
+    ├── event-watch.ps1   watches for events →  execs the switcher
     ├── trigger-kvm.ps1   aimed NVAPI I2C, both panels → sends the DDC writes
     ├── nvapi-probe.ps1   read-only display enumeration probe (diagnostic)
     └── install.ps1       tiers, config generation, discovery, task registration
@@ -94,7 +94,7 @@ displays.toml          researched model knowledge — shared by both platforms
 On Windows the watcher is a *grandchild* of the scheduled task — the task runs a
 generated `wscript.exe` shim, which is what keeps any console from being allocated,
 and the shim runs the watcher. Stopping the task therefore does not stop the
-watcher, so `usb-watch.ps1` enforces single-instance itself with a named mutex.
+watcher, so `event-watch.ps1` enforces single-instance itself with a named mutex.
 `windows/README.md` covers the reasoning.
 
 Every platform implementation is the same two roles: **a detector** and **a
@@ -102,17 +102,48 @@ switcher**. The detector answers "do I own the peripherals now?"; the switcher
 answers "make the monitors show me." They are separate processes so the switcher
 stays usable by hand and testable in isolation.
 
-That process boundary *is* the trigger abstraction, and it is why there is no
-plugin system. The whole interface is one command — `trigger-kvm pull` — so a
-hotkey, a Stream Deck button or a scheduled task is already a valid trigger with no
-support from this project. A USB watcher is simply the one that ships.
+The detector is **one process with N event sources**, not one process per source.
+Today it has a single source — USB device presence — but the shape is deliberate,
+and the reasoning is worth keeping because the obvious alternative is wrong in two
+different ways.
 
-Keeping that interface narrow is also a safety property. A trigger runs `pull` and
-nothing else, so it can only ever select *this* machine's own inputs. A general
-trigger framework would invite letting a trigger apply a **scene** instead — and a
-scene names inputs on hardware this machine cannot observe, so a stale one could
-then drive an automatic switch to a dead input. There is no mechanism to forbid;
-there is simply nothing to configure.
+*Not* a second watcher process per source: the debounce is in-memory, so two
+watchers would each hold their own window and both fire when a USB device and a
+Bluetooth device arrive together. That is the double-fire the machine-wide mutex
+exists to prevent, and the mutex would in fact stop the second watcher starting.
+
+*Not* "other trigger types just run the command themselves" either. That is true
+architecturally and a poor answer practically: it makes the user install and
+supervise a **second persistent background process** — AutoHotkey, or similar — to
+do a job the process we already run could do. Every extra always-running thing is
+another install step and another way for the setup to end up half working. A hotkey
+belongs in here, configured in the same file as everything else.
+
+Sources differ in what constitutes a fire, and that is a per-source concern rather
+than a reason to split:
+
+| Source | Fires on | Needs debounce/settle |
+|---|---|---|
+| device presence | an absent → present **edge** | yes — a spurious arrival would yank the displays |
+| hotkey | a keypress | no — deliberate and discrete |
+
+What all sources share is the process lifetime, the single-instance lock, and the
+fire itself. That is what makes them one process.
+
+The **command interface remains** the integration point for anything not
+implemented here — a Stream Deck macro, a remote script, a scheduled task can all
+run `trigger-kvm pull` and always could. It stops being the *only* answer for things
+a user would reasonably expect built in.
+
+One rule holds across every source: **a trigger runs `pull`, never a scene.** A
+scene names inputs on hardware this machine cannot observe, so a stale one must
+never be reachable from anything automatic. Nothing in the trigger path takes a
+scene name, which is why that holds by construction rather than by discipline.
+
+macOS is already built this way and its name undersells it: `usb-watch.c` runs a
+`CFRunLoop` with an `IONotificationPort` source and a settle timer source already
+multiplexed. Adding an `IOBluetooth` connect notification or a hotkey is another
+`CFRunLoopAddSource`, in the same process, by design.
 
 ## Two kinds of knowledge, two homes
 

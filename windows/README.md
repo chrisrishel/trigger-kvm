@@ -1,6 +1,6 @@
 # Windows side
 
-A Scheduled Task runs `usb-watch.ps1`, which fires `trigger-kvm.ps1 pull`
+A Scheduled Task runs `event-watch.ps1`, which fires `trigger-kvm.ps1 pull`
 when a watched USB device arrives. No compiled code and no third-party binary:
 PowerShell throughout, with the NVAPI bindings inline.
 
@@ -66,7 +66,7 @@ own invites you to guess the capability, and the capability is the entire point 
 having tiers.
 
 **The tier is a property of the host, not of the switcher.** All tier logic lives in
-`install.ps1`. Neither `trigger-kvm.ps1` nor `usb-watch.ps1` knows or asks which
+`install.ps1`. Neither `trigger-kvm.ps1` nor `event-watch.ps1` knows or asks which
 tier it is running under. If either ever needs to, the abstraction is wrong.
 
 `install.ps1` copies the two scripts and registers the task. It needs no network
@@ -83,7 +83,7 @@ switcher are separate processes and that command line is the entire interface
 between them, so a hotkey binding, a Stream Deck button, a scheduled task, or an
 SSH command all work today with no support from this tool.
 
-What ships is one trigger: `usb-watch.ps1`, which fires on **device presence** and
+What ships is one trigger: `event-watch.ps1`, which fires on **device presence** and
 is what `install.ps1` registers. There is deliberately no plugin system or trigger
 registry — the process boundary already is one, and a second abstraction on top
 would earn nothing.
@@ -323,7 +323,7 @@ anything:
 .\trigger-kvm.ps1 pull -Only lg -WhatIf
 ```
 
-**Single instance is enforced machine-wide, not per session.** `usb-watch.ps1` takes
+**Single instance is enforced machine-wide, not per session.** `event-watch.ps1` takes
 `Global\trigger-kvm-usb-watch`. `Local\` would be scoped to one session, so a
 logon watcher in session 1 and an at-startup watcher in session 0 would each take
 their own, both arm, and both fire on the same arrival -- and the debounce is
@@ -334,7 +334,7 @@ the global name exists but cannot be opened, the watcher stands down rather than
 falling back -- something owns it under another identity, and falling back would
 recreate the exact double-fire this prevents.
 
-**`usb-watch.ps1`** -- `Register-CimIndicationEvent` on `Win32_DeviceChangeEvent`,
+**`event-watch.ps1`** -- `Register-CimIndicationEvent` on `Win32_DeviceChangeEvent`,
 an extrinsic WMI event, so there is no polling interval. That event does not say
 *which* device changed, so each one is followed by a targeted `Win32_PnPEntity`
 query (~40ms) to establish identity. Push latency, exact identity, no elevation.
@@ -397,7 +397,7 @@ task kills the launcher but leaves the watcher (see below), so a loop would spin
 relaunching a watcher that exits immediately on the mutex. A minute of downtime
 after an unobserved failure is the better trade.
 
-**Only one ever runs.** `usb-watch.ps1` holds a named mutex
+**Only one ever runs.** `event-watch.ps1` holds a named mutex
 (`Local\trigger-kvm-usb-watch`) and exits immediately if another instance has
 it. This matters more than it looks: the watcher is a *grandchild* of the task, so
 stopping the task kills the launcher but leaves the watcher running. Without the
@@ -406,7 +406,7 @@ each one would fire the switcher on the same arrival -- the debounce is per-proc
 and cannot dedupe across them. `install.ps1` also explicitly clears stale watchers,
 so an upgrade cannot leave the old code holding the mutex.
 
-A consequence worth knowing when testing by hand: running `usb-watch.ps1` yourself
+A consequence worth knowing when testing by hand: running `event-watch.ps1` yourself
 while the task is running will exit at once with `another usb-watch is already
 running`. Stop the task first.
 

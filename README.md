@@ -39,7 +39,7 @@ USB switch ──> peripherals ──> whichever machine gets them pulls both di
 | [`docs/macos-parity.md`](docs/macos-parity.md) | What the macOS side still needs to catch up on, and the invariants it must not break |
 | `ideas/` | Exploratory design notes, including `ideas/rejected/` for options deliberately declined |
 | `macos/` | Working implementation: `usb-watch` (IOKit) + `trigger-kvm.sh` (m1ddc) + LaunchAgent |
-| `windows/` | Working implementation: `usb-watch.ps1` (WMI) + `trigger-kvm.ps1` (aimed NVAPI I2C, both panels) + Scheduled Task |
+| `windows/` | Working implementation: `event-watch.ps1` (WMI) + `trigger-kvm.ps1` (aimed NVAPI I2C, both panels) + Scheduled Task |
 
 Code is not shared between platforms — macOS goes through `IOAVService`, Windows
 through NVAPI, with no common runtime.
