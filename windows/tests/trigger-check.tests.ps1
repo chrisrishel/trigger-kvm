@@ -15,8 +15,8 @@ Import-Subject -Script 'install.ps1' -Functions @(
 $global:CONFIG = Join-Path $env:TEMP 'trigger-kvm-trigcheck.cfg'
 $global:SWITCH = Join-Path (Split-Path -Parent $PSScriptRoot) 'trigger-kvm.ps1'
 $global:WATCH  = Join-Path (Split-Path -Parent $PSScriptRoot) 'event-watch.ps1'
-$global:SEED_DEBOUNCE = '3.0'
-$global:SEED_SETTLE   = '0.75'
+$global:DEFAULT_DEBOUNCE = '3.0'
+$global:DEFAULT_SETTLE   = '0.75'
 
 # The watcher talks while it waits, and the switcher talks while it switches. Both
 # go through Invoke-Sibling, which is exactly what made the bug.

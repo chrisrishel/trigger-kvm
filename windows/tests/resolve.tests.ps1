@@ -94,5 +94,45 @@ Assert-NoMatch $r.Text 'WHATIF: would send' 'and must not resolve the half it co
 $r = Invoke-Switcher @('to', 'mac', '-WhatIf', '-Config', $cfg)
 Assert-Match $r.Text 'more than one input' 'ambiguity must be reported, not guessed at'
 
+# ---- a value it could not resolve is never sent -------------------------------
+
+# The rule this exists for, and the one the pre-machines code broke in the field: a
+# config missing the value for THIS computer wrote 0x00 to both panels on every
+# switch -- an input no monitor has, so nothing moved and nothing said why. Its null
+# check was there and did not fire. Assert the property, not the check.
+
+@(
+ 'computer.this = pc'
+ 'display.lg.vendor  = 0x1E6D'
+ 'display.lg.product = 0x9E9D'
+ 'display.lg.method  = lg-alt'
+) | Set-Content -LiteralPath $cfg -Encoding ASCII        # a panel with no inputs at all
+$r = Invoke-Switcher @('pull', '-WhatIf', '-Config', $cfg)
+Assert-Match   $r.Text 'REFUSING'
+Assert-NoMatch $r.Text 'WHATIF: would send' 'a panel with no inputs must send nothing'
+Assert-NoMatch $r.Text '= 0x00'             'and above all not zero'
+
+@(
+ 'computer.this = pc'
+ 'display.lg.vendor  = 0x1E6D'
+ 'display.lg.product = 0x9E9D'
+ 'display.lg.method  = lg-alt'
+ 'display.lg.input.zzz = pc'                             # not a byte
+) | Set-Content -LiteralPath $cfg -Encoding ASCII
+$r = Invoke-Switcher @('pull', '-WhatIf', '-Config', $cfg)
+Assert-Match   $r.Text 'REFUSING'
+Assert-NoMatch $r.Text '= 0x00' 'an unparseable value is not a zero'
+
+@(
+ 'computer.this ='                                       # named nothing
+ 'display.lg.vendor  = 0x1E6D'
+ 'display.lg.product = 0x9E9D'
+ 'display.lg.method  = lg-alt'
+ 'display.lg.input.0xd0 = pc'
+) | Set-Content -LiteralPath $cfg -Encoding ASCII
+$r = Invoke-Switcher @('pull', '-WhatIf', '-Config', $cfg)
+Assert-Match   $r.Text 'REFUSING'
+Assert-NoMatch $r.Text 'WHATIF: would send' 'and neither is a missing computer.this'
+
 Remove-Item -LiteralPath $cfg -Force -ErrorAction SilentlyContinue
 exit 0

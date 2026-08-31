@@ -12,3 +12,10 @@
   either). It is step 4 of the ladder in `ideas/unknown-monitor-discovery.md` and the only
   part of that note with no home yet. Trigger: when someone reports a monitor that answers
   neither standard DDC nor a known manufacturer dialect.
+
+- **The macOS side is now well behind Windows.** `macos/trigger-kvm.sh` still speaks the
+  pre-machines config (`display.<label>.self`, `scene.*`), which no longer exists, and knows
+  nothing about `computer.this`, the input map, `install.autostart`, or Bluetooth triggers.
+  `docs/macos-parity.md` has been kept current as the handoff brief. Trigger: before using
+  the Mac side again, or before publishing — whichever comes first. Until then the Mac
+  cannot read a config this repo writes.

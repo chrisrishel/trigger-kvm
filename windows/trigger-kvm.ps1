@@ -857,8 +857,11 @@ foreach ($d in $displays) {
             exit 2
         }
         if (-not $d.Inputs.ContainsKey($who)) {
-            Write-Log ("REFUSING: '{0}' has no input named '{1}' (it knows: {2}). Nothing was sent." -f `
-                       $d.Label, $who, (@($d.Inputs.Keys | Sort-Object) -join ', '))
+            $known = @($d.Inputs.Keys | Sort-Object)
+            Write-Log ("REFUSING: '{0}' has no input named '{1}' ({2}). Nothing was sent." -f `
+                       $d.Label, $who,
+                       $(if ($known) { 'it knows: ' + ($known -join ', ') }
+                         else        { 'it names no computers at all' }))
             exit 2
         }
         $value = $d.Inputs[$who]

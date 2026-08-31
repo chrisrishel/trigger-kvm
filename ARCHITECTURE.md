@@ -88,7 +88,7 @@ displays.toml          researched model knowledge — shared by both platforms
     ├── event-watch.ps1   watches for events →  execs the switcher
     ├── trigger-kvm.ps1   aimed NVAPI I2C, both panels → sends the DDC writes
     ├── nvapi-probe.ps1   read-only display enumeration probe (diagnostic)
-    └── install.ps1       tiers, config generation, discovery, task registration
+    └── install.ps1       the walkthrough, discovery, task registration
 ```
 
 On Windows the watcher is a *grandchild* of the scheduled task — the task runs a

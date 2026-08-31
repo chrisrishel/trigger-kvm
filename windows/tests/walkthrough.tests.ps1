@@ -29,8 +29,8 @@ Import-Subject -Script 'install.ps1' -Variables @('DIALECTS','MCCS_INPUTS','COMP
 $script:CONFIG = Join-Path $env:TEMP 'trigger-kvm-tests.cfg'
 $global:CONFIG = $script:CONFIG
 $global:BINDIR = 'C:\fake\bin'
-$global:SEED_DEBOUNCE = '3.0'
-$global:SEED_SETTLE   = '0.75'
+$global:DEFAULT_DEBOUNCE = '3.0'
+$global:DEFAULT_SETTLE   = '0.75'
 $global:SWITCH = Join-Path (Split-Path -Parent $PSScriptRoot) 'trigger-kvm.ps1'
 $global:Relaunched = $false
 

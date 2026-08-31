@@ -13,8 +13,8 @@ Import-Subject -Script 'install.ps1' -Variables @('DIALECTS','MCCS_INPUTS') -Fun
     'Invoke-DisplayTest','Invoke-TestRound','Invoke-TestRoundBody','Test-OneComputer',
     'Test-DisplayInput','Write-ConfigFile')
 
-$global:SEED_DEBOUNCE = '3.0'
-$global:SEED_SETTLE   = '0.75'
+$global:DEFAULT_DEBOUNCE = '3.0'
+$global:DEFAULT_SETTLE   = '0.75'
 
 $script:outcomes = @()
 function Set-Outcomes { param([int[]]$O) $script:outcomes = @($O) }
