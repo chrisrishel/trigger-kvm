@@ -88,24 +88,25 @@ is what `install.ps1` registers. There is deliberately no plugin system or trigg
 registry — the process boundary already is one, and a second abstraction on top
 would earn nothing.
 
-**Its mechanism is not USB-specific.** `Win32_PnPEntity` enumerates Bluetooth, PCI
-and Thunderbolt devices too — measured on this machine, USB is only 44 of ~300 PnP
-entities, and the same query returns `BTHENUM`, `BTHLE`, `PCI` and `SWD` entries.
-USB is the *ID pattern* the watcher matches, not the mechanism, so watching a
-Bluetooth device would be a match-pattern change rather than a new watcher.
+**Its mechanism is not USB-specific, though the schema doesn't pretend otherwise.**
+`Win32_PnPEntity` enumerates Bluetooth, PCI and Thunderbolt too — measured here, USB
+is only 44 of ~300 PnP entities, and the same query returns `BTHENUM`, `BTHLE`,
+`PCI` and `SWD`. USB is the *ID pattern* matched, not the mechanism, so a second
+transport would be a match-pattern change rather than a new watcher.
 
-That is why the config keys split where they do:
+The config keys stay flat anyway — `trigger.device`, `trigger.debounce`,
+`trigger.settle`. Nesting them under a transport was tried and reverted: it
+advertised a capability that does not exist, and a malformed id already fails loudly
+(`expected VVVV:PPPP`), so there was no silent failure for the extra structure to
+prevent. When a second transport actually lands, that is the moment to decide how
+ids get qualified — and the installer already warns rather than silently reverting
+when it meets a key name it doesn't know.
 
-```
-trigger.device.usb      = 046d:0843,1235:820a   # transport-specific: a USB VID:PID
-trigger.device.debounce = 3.0                   # device detection as a whole
-trigger.device.settle   = 0.75                  # likewise
-```
-
-A second transport adds `trigger.device.bluetooth` and **shares** the timings. That
-sharing is the point rather than a convenience: two independent debounce windows
-could not dedupe against each other, which is the same failure that forced the
-single-instance mutex to become machine-wide.
+The timings sit at `trigger.*` rather than under any transport for a reason that
+does matter: **one debounce has to cover every trigger.** Two independent windows
+could not dedupe against each other — the same failure that forced the
+single-instance mutex to become machine-wide. At this level that holds by
+construction, with no level at which a second one could be written.
 
 **A trigger runs `pull`, and only `pull`.** Never wire one to a scene. A scene names
 inputs on hardware this machine cannot observe, which go stale the moment a cable
@@ -146,9 +147,9 @@ display.lg.name    = LG 45GX950A
 display.lg.method  = lg-alt     # standard | lg-alt
 display.lg.self    = 0xD0       # the input where THIS machine is. Required.
 
-trigger.device.usb      = 046d:0843,1235:820a
-trigger.device.debounce = 3.0
-trigger.device.settle   = 0.75
+trigger.device   = 046d:0843,1235:820a
+trigger.debounce = 3.0
+trigger.settle   = 0.75
 
 scene.mac.lg   = 0xD1           # manual only -- the trigger never reads scenes
 ```
