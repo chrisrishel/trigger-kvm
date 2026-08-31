@@ -75,18 +75,23 @@ since conformance tests presence only.
 ## 2. Work through the revision gap
 
 Kind:     spec change
-Spec:     specs/CHANGELOG.md revisions 1, 2 and 3
-Why:      three rounds of spec changes have landed since this platform was current
-Owed:     implement them, then set windows/SPEC-REVISION to 3
+Spec:     specs/CHANGELOG.md -- every entry above this platform's revision
+Why:      several rounds of spec changes have landed since it was current
+Owed:     implement them, then set windows/SPEC-REVISION to the changelog's newest
 Verified: read from the specs; nothing on this platform was executed
 
-```
-windows/SPEC-REVISION = 0
-specs/CHANGELOG.md    = 3
+Deliberately **not** naming the numbers here. An earlier draft of this entry said
+"revisions 1 to 3" and was stale within a day. Read them instead:
+
+```sh
+sed -n 's/^revision *= *//p' windows/SPEC-REVISION
+sed -n 's/^## Revision \([0-9]*\).*/\1/p' specs/CHANGELOG.md | head -1
 ```
 
-Read revisions 1 through 3 in [`../specs/CHANGELOG.md`](../specs/CHANGELOG.md).
-Each says what changed, which sections, and what to act on.
+Work every [`../specs/CHANGELOG.md`](../specs/CHANGELOG.md) entry above the
+first number. Each says what changed, which sections, and what to act on. Once
+the checks in item 1 exist, this platform's own suite reports the gap and names
+the entries, and this item stops needing to be written down at all.
 
 **For the exact list of missing strings, run the checker — do not trust a list
 pasted here.** A pasted list is a snapshot of a mechanism's output and goes stale;
