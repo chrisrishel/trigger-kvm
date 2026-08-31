@@ -32,14 +32,16 @@ USB switch ──> peripherals ──> whichever machine gets them pulls both di
 | Path | Purpose |
 |---|---|
 | `displays.toml` | **Researched knowledge.** Which method and VCP code a given monitor model needs, which values are known safe. True of that model everywhere, and expensive to rediscover. |
-| *(generated config)* | **Machine-local facts.** Which panels are on this desk and the input where this machine sits. Written by the installer, hand-editable. Not in the repo. |
+| *(generated config)* | **Machine-local facts.** Which panels are on this desk, and which computer is on which of their inputs. Written by `configure`, hand-editable. Not in the repo. |
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | The design and its rationale — why pull-to-self, why two DDC dialects, why post-login |
 | [`AGENTS.md`](AGENTS.md) | Instructions for anyone (human or agent) changing this repo, including the hard safety rules |
 | `docs/decisions/` | Architectural trade-offs and why they went the way they did, so they don't get relitigated |
-| [`docs/macos-parity.md`](docs/macos-parity.md) | What the macOS side still needs to catch up on, and the invariants it must not break |
+| [`docs/macos-parity.md`](docs/macos-parity.md) | The specification for the macOS side: what to build, what it must match, and what it must never do |
+| [`TODO.md`](TODO.md) | Deferred work, each with the trigger that should resurface it |
 | `ideas/` | Exploratory design notes, including `ideas/rejected/` for options deliberately declined |
-| `macos/` | Working implementation: `usb-watch` (IOKit) + `trigger-kvm.sh` (m1ddc) + LaunchAgent |
-| `windows/` | Working implementation: `event-watch.ps1` (WMI) + `trigger-kvm.ps1` (aimed NVAPI I2C, both panels) + Scheduled Task |
+| `macos/` | **Behind.** `usb-watch` (IOKit) + `trigger-kvm.sh` (m1ddc), still hardcoded to one desk and unable to read a config this repo writes — see `docs/macos-parity.md` |
+| `windows/` | The reference implementation: `event-watch.ps1` (WMI + Bluetooth) + `trigger-kvm.ps1` (aimed NVAPI I2C) + `install.ps1` (the walkthrough) + Scheduled Task |
+| `windows/tests/` | The test suite. `.un.ps1` — no framework, no dependencies |
 
 Code is not shared between platforms — macOS goes through `IOAVService`, Windows
 through NVAPI, with no common runtime.
@@ -137,7 +139,7 @@ produces a system that installs cleanly and then behaves strangely.
 | | Needs |
 |---|---|
 | macOS | `brew install m1ddc`; Xcode command line tools for `clang` |
-| Windows | **An NVIDIA GPU** — the LG's sidechannel is reached through NVAPI and has no vendor-neutral equivalent ([`docs/decisions/001`](docs/decisions/001-nvapi-as-the-only-windows-transport.md)). Windows PowerShell 5.1 (stock). No admin rights for the default tier. Other monitors on the same GPU are irrelevant: each write is aimed at one EDID-identified output. |
+| Windows | **An NVIDIA GPU** — the LG's sidechannel is reached through NVAPI and has no vendor-neutral equivalent ([`docs/decisions/001`](docs/decisions/001-nvapi-as-the-only-windows-transport.md)). Windows PowerShell 5.1 (stock). Admin once at setup if you answer "from boot" (the suggested answer); none at all if you answer "from login", and never on the switch path either way. Other monitors on the same GPU are irrelevant: each write is aimed at one EDID-identified output. |
 
 ### 1. Cable each machine to each monitor
 
@@ -168,8 +170,9 @@ macOS: [`macos/README.md`](macos/README.md) — `make install`
 
 Windows: [`windows/README.md`](windows/README.md) — `.\install.ps1`
 
-Both install a background watcher that starts at login and is restarted if it dies.
-Both are post-login by design; see [Scope](#scope).
+Both install a background watcher that is restarted if it dies. The Windows
+installer asks when it should start — from boot, from login, or not at all — and
+suggests from boot; macOS is post-login only. See [Scope](#scope).
 
 ### 5. Verify
 
@@ -185,15 +188,48 @@ Get-Content -Wait "$env:LOCALAPPDATA\trigger-kvm\trigger-kvm.log"   # Windows
 Confirm by looking at the screens. Never by reading a VCP value back — see the
 gotchas above.
 
+## Using it
+
+```
+trigger-kvm pull                 bring every configured monitor to THIS computer
+trigger-kvm to mac               point them at another computer, by name
+trigger-kvm status               is it running, when does it start, what is configured
+trigger-kvm configure            change any of it (an arrow-key walkthrough)
+trigger-kvm logs                 what it has been doing
+```
+
+The switch does this for you: flipping the USB switch to a computer makes that
+computer run `pull`. The verbs are the same on both platforms, on purpose — they are
+what you type daily on both machines.
+
+**A trigger only ever runs `pull`.** `to <computer>` names inputs on hardware this
+machine cannot observe, and a name that has gone stale can therefore spoil a command
+you typed and are watching, never an automatic switch.
+
+Configuration lives in one flat file per machine, generated by `configure` and safe
+to edit by hand:
+
+```
+computer.this = pc
+display.lg.input.0xD0 = pc        which computer is on which input --
+display.lg.input.0xD1 = mac       one map, and both verbs read it
+trigger.device = usb:046d:0843, bt:0011223344ff
+```
+
 ## Scope
 
-**Windows** ships two install tiers. The default needs no admin and covers
-everything from logon onward — **including while the screen is locked**, since
-locking doesn't end your session. Choosing "from boot" needs admin once to
-register, then runs unelevated at startup in session 0, adding before-first-login
-and after-logoff. Measured 2026-08-30: NVAPI both enumerates *and writes* with no
-desktop, so no relay or token duplication is involved. See
-[`windows/README.md`](windows/README.md).
+**Windows** asks when the watcher should start, and offers three answers:
+
+| answer | admin | covers |
+|---|---|---|
+| **from boot** (suggested) | once, at setup | everything, including before the first login and after a logoff |
+| from login | never | everything from logon onward, **including while the screen is locked** — locking doesn't end your session |
+| no | never | this session only; you start it with `trigger-kvm restart` |
+
+From boot registers an S4U task and then runs **unelevated** at startup in session 0
+— admin is needed to register it, and nothing elevated runs on the switch path.
+Measured 2026-08-30: NVAPI both enumerates *and writes* with no desktop, so no relay
+or token duplication is involved. See [`windows/README.md`](windows/README.md).
 
 **macOS** is post-login only. `m1ddc` links CoreGraphics and enumerates displays
 via `CGGetOnlineDisplayList`, which needs a window server connection a LaunchDaemon

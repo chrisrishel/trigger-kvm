@@ -135,10 +135,11 @@ implemented here — a Stream Deck macro, a remote script, a scheduled task can 
 run `trigger-kvm pull` and always could. It stops being the *only* answer for things
 a user would reasonably expect built in.
 
-One rule holds across every source: **a trigger runs `pull`, never a scene.** A
-scene names inputs on hardware this machine cannot observe, so a stale one must
-never be reachable from anything automatic. Nothing in the trigger path takes a
-scene name, which is why that holds by construction rather than by discipline.
+One rule holds across every source: **a trigger runs `pull`, and only `pull`.** Any
+other computer's name describes inputs on hardware this machine cannot observe, so a
+stale one must never be reachable from anything automatic. Nothing in the trigger
+path takes a name at all — `pull` looks up `computer.this` — which is why that holds
+by construction rather than by discipline.
 
 macOS is already built this way and its name undersells it: `usb-watch.c` runs a
 `CFRunLoop` with an `IONotificationPort` source and a settle timer source already
@@ -296,7 +297,7 @@ What remains is the permission trade, which is real and is the user's to make:
   rather than an oversight.
 - **Locking is already covered without any of this.** Confirmed 2026-08-30: with the
   screen locked, flipping the USB switch still pulls the displays back, because the
-  session and its watcher are still alive. A pre-login tier therefore buys the two
+  session and its watcher are still alive. Starting from boot therefore buys the two
   narrower cases: **before the first login after a boot**, and **after a full
   logoff**. The first is the one that stings — a rebooted PC sitting at a login
   screen you cannot see, because the monitors are still showing the other machine.

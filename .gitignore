@@ -12,3 +12,7 @@ macos/usb-watch
 # Windows build output
 windows/**/bin/
 windows/**/obj/
+
+# Stray probe output. `nvapi-probe.ps1 TEST` writes one of these when it is used
+# as the pause-and-fire target, and one got committed once.
+windows/TEST

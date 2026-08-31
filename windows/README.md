@@ -431,11 +431,11 @@ switcher and everything else to the installer: two scripts behind one command,
 because `trigger-kvm.ps1` runs on **every** device arrival and is kept lean while
 `install.ps1` is large and rare.
 
-**s4u prompts for UAC.** Choosing the pre-login tier raises the elevation prompt and
-carries on, rather than sending you to find an admin terminal — and `uninstall` does
-the same, because registering an S4U task leaves the definition admin-owned, so
-removing it needs elevation too. A prompt on the way in without one on the way out
-would trap you in a tier you could not remove.
+**Answering "from boot" prompts for UAC.** It raises the elevation prompt and carries
+on, rather than sending you to find an admin terminal — and `uninstall` does the same,
+because registering an S4U task leaves the definition admin-owned, so removing it
+needs elevation too. A prompt on the way in without one on the way out would trap you
+in a setup you could not remove.
 
 **A trap worth knowing.** Running the installer from an *elevated* shell — easy if
 you have one open — leaves the task definition Administrators-owned, so later
@@ -458,15 +458,20 @@ Pick by what you are willing to grant. They are mutually exclusive by constructi
 | Before first login after boot | no | **yes** |
 | After a full logoff | no | **yes** |
 
-The locked row is the one that surprises people, and it is why the default tier is
+The locked row is the one that surprises people, and it is why **from login** is
 enough for most days: locking does not end your session, so the watcher is still
-alive and the displays still follow. The s4u tier buys the two genuinely
-uncovered cases. The one that stings is a rebooted PC sitting at a login screen you
-cannot see, because the monitors are still showing the other machine.
+alive and the displays still follow. **From boot** buys the two genuinely uncovered
+cases. The one that stings is a rebooted PC sitting at a login screen you cannot see,
+because the monitors are still showing the other computer — which is why it is the
+suggested answer.
 
-`status` reports the tier *and* what it covers, deliberately -- a tier name on its
-own invites you to guess the capability, and the capability is the entire point of
-having tiers.
+`status` reports when it starts *and* what that covers, deliberately: a name on its
+own invites you to guess the capability, and the capability is the entire point.
+
+```
+autostart: at boot  (principal=user logon=S4U runlevel=Limited)
+           covers: from boot onward -- before first login, while locked, after logoff
+```
 
 **The tier is a property of the host, not of the switcher.** All tier logic lives in
 `install.ps1`. Neither `trigger-kvm.ps1` nor `event-watch.ps1` knows or asks which
