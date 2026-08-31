@@ -100,6 +100,11 @@ EOS
 
 pty_run() { python3 "$FAKE_DIR/ptydrive.py" "$1" "$2"; }
 
+# The driver hard-codes a width; COLUMNS lets a test ask for a narrow terminal,
+# which is where overflow shows up.
+sed -i '' 's/os.environ\["COLUMNS"\] = "100"/os.environ["COLUMNS"] = os.environ.get("TK_COLS", "100")/' "$FAKE_DIR/ptydrive.py"
+export TK_COLS=80
+
 # =============================================================================
 
 it 'enter on a real terminal chooses the highlighted row'
@@ -148,6 +153,64 @@ assert_match "$out" 'PICKED=0 ' "$out"
 it 'esc backs out of select_many on a real terminal'
 out=$(pty_run "$FAKE_DIR/many-demo.sh" ESC)
 assert_match "$out" 'ESC=1' "$out"
+
+# =============================================================================
+# Nothing a menu writes may exceed the width it laid out to
+# =============================================================================
+#
+# This is the invariant behind a redraw that stays clean. A line longer than the
+# width WRAPS; a wrapped line's tail is not cleared by the next frame, so the
+# previous frame shows through at the right edge; and a line landing exactly on
+# the terminal's fold is counted one row short, so the frame stacks downward and
+# repeats itself. Both were reported from a real 80-column terminal, and both
+# came from select_many concatenating its detail instead of wrapping it.
+#
+# The stale tail lives in the terminal's SCREEN BUFFER, not in the byte stream,
+# so it cannot be seen by reading the output. The cause can: keep every line
+# inside the width and neither symptom is reachable.
+
+it 'select_many keeps every line inside the layout width'
+cat >"$FAKE_DIR/wide-many.sh" <<EOS
+#!/bin/bash
+set -uo pipefail
+. "$MAC_DIR/lib/common.sh"
+. "$MAC_DIR/lib/menu.sh"
+menu_reset
+menu_add "\$(printf '%-20s %-4s' 'usb:046d:0843' 'USB')"  'Logitech Webcam C930e  (attached now)'
+menu_add "\$(printf '%-20s %-4s' 'bt:0011223344ff' 'BT')" "Terry\u2019s AirPods Pro  (paired, not connected)"
+menu_add "\$(printf '%-20s %-4s' 'bt:0011223344fe' 'BT')" "Terry\u2019s MacBook Pro (3)  (paired, not connected)"
+select_many --checked '0' --escapable \
+  --help '  Keyboards and mice often share a vendor id with something that never
+  moves. The full vendor+product is matched, so pick the exact rows.'
+printf 'PICKED=%s\n' "\$MENU_PICKED"
+EOS
+chmod +x "$FAKE_DIR/wide-many.sh"
+out=$(pty_run "$FAKE_DIR/wide-many.sh" DOWN,DOWN,ENTER)
+over=$(printf '%s\n' "$out" | sed 's/\x1b\[[0-9]*[A-Za-z]//g' | awk 'length($0) > 79' | head -3)
+assert_equal '' "$over" 'these lines overflow an 80-column terminal and will corrupt the redraw'
+
+it 'and wraps the detail rather than truncating it'
+# Every part of the name must survive the wrap, aligned under the column.
+assert_match "$out" 'AirPods Pro'
+assert_match "$out" 'not connected)'
+assert_no_match "$out" '...'
+
+it 'select_one keeps every line inside the width too'
+cat >"$FAKE_DIR/wide-one.sh" <<EOS
+#!/bin/bash
+set -uo pipefail
+. "$MAC_DIR/lib/common.sh"
+. "$MAC_DIR/lib/menu.sh"
+menu_reset
+menu_add 'Triggers' 'usb:046d:0843, usb:1235:820a, bt:0011223344ff, usb:04d9:0024, bt:0011223344fd'
+menu_add 'Done' ''
+select_one --default 0
+printf 'PICK=%s\n' "\$MENU_PICK"
+EOS
+chmod +x "$FAKE_DIR/wide-one.sh"
+out=$(pty_run "$FAKE_DIR/wide-one.sh" ENTER)
+over=$(printf '%s\n' "$out" | sed 's/\x1b\[[0-9]*[A-Za-z]//g' | awk 'length($0) > 79' | head -3)
+assert_equal '' "$over" 'a wrapped detail must still fit'
 
 it 'gives the terminal back when it is done'
 # A menu that returns leaving the terminal in raw mode leaves the shell it was

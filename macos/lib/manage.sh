@@ -129,7 +129,7 @@ cmd_logs() {
 # --- status --------------------------------------------------------------------
 
 cmd_status() {
-  local _n _note _labels _this _machines _c
+  local _n _note _labels _this _machines _c _v _when _rev _commit
   if [ ! -f "$TK_PLIST" ]; then
     printf 'autostart: not installed\n'
   elif tk_agent_loaded; then
@@ -161,7 +161,20 @@ cmd_status() {
   printf 'log      : %s\n' "$TK_LOG"
   if [ -f "$CONFIG" ]; then _note=''; else _note='  <- MISSING; run: trigger-kvm configure'; fi
   printf 'config   : %s%s\n' "$CONFIG" "$_note"
-  printf 'version  : %s\n' "$TK_VERSION"
+  # From the INSTALLED stamp, not from the constant compiled into whichever copy
+  # happens to be running -- the whole point is to show what is deployed.
+  if [ -f "$TK_PREFIX/version.txt" ]; then
+    _v=$(sed -n 's/^version[[:space:]]*=[[:space:]]*//p'       "$TK_PREFIX/version.txt" | tail -1)
+    _when=$(sed -n 's/^installed[[:space:]]*=[[:space:]]*//p'  "$TK_PREFIX/version.txt" | tail -1)
+    _rev=$(sed -n 's/^spec-revision[[:space:]]*=[[:space:]]*//p' "$TK_PREFIX/version.txt" | tail -1)
+    _commit=$(sed -n 's/^commit[[:space:]]*=[[:space:]]*//p'   "$TK_PREFIX/version.txt" | tail -1)
+    printf 'version  : %s   spec revision %s\n' "${_v:-?}" "${_rev:-?}"
+    printf 'installed: %s   from commit %s\n' "${_when:-?}" "${_commit:-?}"
+  else
+    printf 'version  : %s   <- installed before version stamping\n' "$TK_VERSION"
+  fi
+  printf 'program  : %s%s\n' "$TK_ROOT" \
+    "$([ "$TK_ROOT" = "$TK_PREFIX" ] || printf '  <- NOT the installed copy')"
 
   case ":$PATH:" in
     *":$TK_BINDIR:"*) printf 'path     : %s (on PATH)\n' "$TK_BINDIR" ;;

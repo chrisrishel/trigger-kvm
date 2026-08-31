@@ -259,6 +259,13 @@ mutate 'esc: the top menu ignores esc again' lib/menu.sh menu.tests.sh \
 mutate 'esc: the top menu ACTIVATES the way out instead of moving to it' lib/menu.sh menu.tests.sh \
   's%        if \[ "$_escapable" = "1" \]; then printf ..n. >&2; MENU_PICK=-1; return 0; fi%        if [ "$_escapable" = "1" ] || [ "$_escapeto" -ge 0 ]; then printf "\\n" >\&2; MENU_PICK=$_escapeto; return 0; fi%'
 
+# --- redraw: the reported 80-column corruption -------------------------------
+
+mutate 'redraw: select_many concatenates its detail instead of wrapping' lib/menu.sh keys.tests.sh \
+  's@      _buf="$_buf$(menu_build_row "$_i" "$_m" "$_width" "$_itemw" -1 "$_b")@      _buf="$_buf$(printf "%s %s %s  %s" "$_m" "$_b" "${MENU_ITEMS[$_i]}" "${MENU_DETAIL[$_i]}")@'
+mutate 'redraw: the frame pads to width instead of erasing the line' lib/menu.sh keys.tests.sh \
+  "s@    printf '%s.033\[K.n' \"\$_l\" >&2@    printf '%-*s\\n' \"\$_width\" \"\$_l\" >\&2@"
+
 echo
 if [ "$survived" = "0" ]; then
   echo "all $checked mutations were caught"

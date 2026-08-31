@@ -43,6 +43,37 @@ it does not have. It is blind to two things, and this closes them:
 
 ---
 
+## Revision 3 — 2026-08-31
+
+**A multi-select must obey the same layout rules as every other menu.**
+
+Sections: [`configure.md`](configure.md) §3.1, §3.4.
+
+**Act on:** `Select-Many` / `select_many` must lay its rows out the way
+`Select-One` does — the item column, and the detail wrapped at `", "` onto
+aligned continuation lines. Both implementations concatenated instead, which is
+fine until the content is long, and Bluetooth device names are.
+
+Reported from a real 80-column terminal: the trigger list overflowed, wrapped,
+and the redraw corrupted — stale text from the previous frame showing at the
+right edge, and the help block repeated down the screen.
+
+Two distinct defects, one cause:
+
+- a wrapped line's tail is **not cleared** by the next frame, so what was there
+  before shows through
+- a line landing exactly on the terminal's fold occupies **two** rows while the
+  naive count says one, so the frame stacks downward
+
+Also: redraw by **erasing each line to its end**, not by padding it to the
+width. Padding must measure the line, and `printf`'s field width counts bytes
+while a terminal column is a character — so a name containing a typographic
+apostrophe (macOS puts one in every "Terry’s iPhone") pads two columns short and
+leaves the previous frame showing.
+
+Windows has the same concatenation in `Select-Many` and the same padding in
+`Write-MenuFrame`; it is at revision 0 and owes this along with revisions 1–2.
+
 ## Revision 2 — 2026-08-31
 
 **Offer a manufacturer's alternative method up front, and make esc on the top

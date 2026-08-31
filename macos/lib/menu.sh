@@ -51,13 +51,25 @@ menu_is_disabled() {
 
 # --- drawing -----------------------------------------------------------------
 
+# The width rows are LAID OUT to. Capped, because a very wide terminal should
+# not stretch a menu across it.
 menu_width() {
   local _w
-  _w=${COLUMNS:-0}
-  [ "$_w" -gt 0 ] 2>/dev/null || _w=$(tput cols 2>/dev/null || echo 100)
+  _w=$(menu_term_width)
   _w=$(( _w - 1 ))
   [ "$_w" -lt 40 ] && _w=40
   [ "$_w" -gt 110 ] && _w=110
+  printf '%s\n' "$_w"
+}
+
+# The width the terminal actually WRAPS at, which is a different number and must
+# not be confused with the layout width: the row arithmetic in menu_frame is
+# about where the terminal folds a line, not about where we chose to lay it out.
+menu_term_width() {
+  local _w
+  _w=${COLUMNS:-0}
+  [ "$_w" -gt 0 ] 2>/dev/null || _w=$(tput cols 2>/dev/null || echo 100)
+  [ "$_w" -lt 20 ] && _w=20
   printf '%s\n' "$_w"
 }
 
@@ -110,8 +122,12 @@ menu_itemw() {
 # One row of text, possibly several lines when the detail does not fit.
 # Emits to stdout; the caller collects.
 menu_build_row() {
-  local _i _marker _width _itemw _current _d _avail _first _chunk
-  _i=$1 _marker=$2 _width=$3 _itemw=$4 _current=$5
+  local _i _marker _width _itemw _current _box _pad _d _avail _first _chunk
+  _i=$1 _marker=$2 _width=$3 _itemw=$4 _current=$5 _box=${6:-}
+  # A checkbox sits between the marker and the item. Continuation lines indent
+  # past it so the detail column stays a column.
+  [ -n "$_box" ] && _box="$_box "
+  _pad=$(printf '%*s' ${#_box} '')
 
   _d=${MENU_DETAIL[$_i]}
   # (current) marks whatever is configured NOW. Starting the cursor there is not
@@ -122,20 +138,20 @@ menu_build_row() {
   fi
 
   if [ -z "$_d" ]; then
-    printf '%s %s\n' "$_marker" "${MENU_ITEMS[$_i]}" | sed 's/[[:space:]]*$//'
+    printf '%s %s%s\n' "$_marker" "$_box" "${MENU_ITEMS[$_i]}" | sed 's/[[:space:]]*$//'
     return
   fi
 
-  _avail=$(( _width - 4 - _itemw - 1 ))
+  _avail=$(( _width - 4 - ${#_box} - _itemw - 1 ))
   [ "$_avail" -lt 12 ] && _avail=12
 
   _first=1
   menu_split_detail "$_d" "$_avail" | while IFS= read -r _chunk; do
     if [ "$_first" = "1" ]; then
-      printf '%s %-*s %s\n' "$_marker" "$_itemw" "${MENU_ITEMS[$_i]}" "$_chunk"
+      printf '%s %s%-*s %s\n' "$_marker" "$_box" "$_itemw" "${MENU_ITEMS[$_i]}" "$_chunk"
       _first=0
     else
-      printf '%s %-*s %s\n' "$(printf '%*s' ${#_marker} '')" "$_itemw" '' "$_chunk"
+      printf '%s %s%-*s %s\n' "$(printf '%*s' ${#_marker} '')" "$_pad" "$_itemw" '' "$_chunk"
     fi
   done
 }
@@ -146,15 +162,24 @@ menu_build_row() {
 # out the moment a caller changed the block's shape.
 MENU_DRAWN=0
 menu_frame() {
-  local _lines _width _n _l _len _rows
+  local _lines _width _term _n _l _rows
   _lines=$1 _width=$2
+  _term=$(menu_term_width)
   if [ "$MENU_DRAWN" -gt 0 ]; then printf '\033[%dA' "$MENU_DRAWN" >&2; fi
   _n=0
   while IFS= read -r _l; do
-    printf '%-*s\n' "$_width" "$_l" >&2
-    _len=$(( ${#_l} + 1 ))
-    _rows=$(( (_len + _width - 1) / _width ))
-    [ "$_rows" -lt 1 ] && _rows=1
+    # ERASE TO END OF LINE rather than padding to width. Padding was done with
+    # printf's %-*s, which counts BYTES, while a terminal column is a
+    # CHARACTER -- so a device name containing a typographic apostrophe padded
+    # two columns short and left the tail of the previous frame showing at the
+    # right edge. \033[K clears the rest of the row whatever is in it.
+    printf '%s\033[K\n' "$_l" >&2
+    # Rows this line actually occupies, against the width the TERMINAL folds at.
+    # A line landing exactly on that boundary takes two rows, not one: the
+    # characters fill the row, the cursor moves to the next, and the newline
+    # then moves it again. Counting that as one made the frame stack downward
+    # and repeat itself.
+    _rows=$(( 1 + ${#_l} / _term ))
     _n=$(( _n + _rows ))
   done <<EOF
 $_lines
@@ -451,7 +476,7 @@ select_one_typed() {
 # is distinct from any list of indices and from the empty list this refuses to
 # return.
 select_many() {
-  local _checked _help _escapable _donelabel _state _i _c _done _cursor _note
+  local _checked _help _escapable _donelabel _state _i _c _done _cursor _note _itemw
   local _width _buf _m _b _n _s _count _key _out
   _checked='' _help='' _escapable=0 _donelabel='Done'
   while [ $# -gt 0 ]; do
@@ -481,6 +506,7 @@ select_many() {
   _cursor=0
   _note=''
   _width=$(menu_width)
+  _itemw=$(menu_itemw)
   MENU_DRAWN=0
 
   while :; do
@@ -489,7 +515,11 @@ select_many() {
     while [ "$_i" -lt "${#MENU_ITEMS[@]}" ]; do
       if [ "$_i" = "$_cursor" ]; then _m='  >'; else _m='   '; fi
       if [ "${_state[$_i]}" = "1" ]; then _b='[x]'; else _b='[ ]'; fi
-      _buf="$_buf$(printf '%s %s %s  %s' "$_m" "$_b" "${MENU_ITEMS[$_i]}" "${MENU_DETAIL[$_i]}" | sed 's/[[:space:]]*$//')
+      # The same builder select_one uses, so the detail WRAPS at ", " instead of
+      # running off the edge. It used to concatenate blindly, which is why a
+      # trigger list of Bluetooth names overflowed an 80-column terminal and
+      # corrupted the redraw.
+      _buf="$_buf$(menu_build_row "$_i" "$_m" "$_width" "$_itemw" -1 "$_b")
 "
       _i=$(( _i + 1 ))
     done
@@ -504,7 +534,7 @@ select_many() {
     if [ "$_cursor" = "$_done" ]; then _m='  >'; else _m='   '; fi
     if [ "$_n" -gt 0 ]; then _count="$_n selected"; else _count='nothing selected'; fi
     _buf="$_buf
-$(printf '%s     %-25s  %s' "$_m" "$_donelabel" "$_count")
+$(printf '%s     %-*s %s' "$_m" "$_itemw" "$_donelabel" "$_count")
 "
     [ -n "$_help" ] && _buf="$_buf
 $_help

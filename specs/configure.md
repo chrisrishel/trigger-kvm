@@ -68,6 +68,16 @@ Item on the left, its value on the right.
   onto continuation lines aligned under the column. Truncating hid the very
   values the review screen exists to let someone check. An unbreakable single
   item overruns rather than being cut.
+- **Nothing a menu writes may exceed that width**, and this is load-bearing
+  rather than cosmetic. A longer line wraps; a wrapped line's tail is not
+  cleared when the frame is redrawn, so the previous frame shows through; and a
+  line landing exactly on the terminal's fold occupies two rows while a naive
+  count says one, so the frame stacks downward and repeats itself. Both were
+  reported from a real 80-column terminal.
+- Redrawing **erases each line to its end** rather than padding it to the width.
+  Padding has to measure the line, and a measurement in bytes is not a
+  measurement in columns — a name containing a typographic apostrophe pads short
+  and leaves the previous frame showing.
 - **One punctuation rule down the value column**, because it is read as a column:
   `", "` separates items, `": "` separates a label from its value, `"/"` joins
   things sharing one label. Not cosmetic — the wrapper breaks at `", "`, so a row
@@ -128,6 +138,13 @@ The hint line says what is available and nothing more:
 
   up/down move   enter toggles the highlighted row   esc back
 ```
+
+**The layout rules in §3.1 apply here too** — the same item column, the same
+wrapping of the detail at `", "`, the same "never truncate". A multi-select is
+where they matter most, because device names are long and arrive from the
+system rather than being chosen: a row that overflows wraps, and a wrapped row's
+tail is not cleared by the next frame, so the previous frame shows through at
+the right edge and the redraw corrupts.
 
 - `Done` is a **plain row aligned with the item text**, with a live count in the
   detail column where every other menu puts a value. It was a bracketed button

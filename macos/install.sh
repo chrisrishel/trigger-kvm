@@ -92,8 +92,20 @@ install -m 755 "$SRC/display-probe" "$TK_PREFIX/display-probe"
 install -m 644 "$SRC"/lib/*.sh      "$TK_PREFIX/lib/"
 # Itself, so uninstalling works after the source tree is gone.
 install -m 755 "$0"                 "$TK_PREFIX/install.sh"
-printf 'version = %s\ninstalled = %s\n' "$TK_VERSION" "$(date '+%Y-%m-%d %H:%M:%S')" \
-  > "$TK_PREFIX/version.txt"
+
+# What is running, and how old it is. `status` prints this, because "am I
+# running what I think I am running?" is otherwise unanswerable -- the installed
+# copy is what `trigger-kvm` resolves to, NOT the source tree you just edited,
+# and a stale install looks exactly like a missing feature.
+{
+  printf 'version = %s\n' "$TK_VERSION"
+  printf 'installed = %s\n' "$(date '+%Y-%m-%d %H:%M:%S')"
+  printf 'spec-revision = %s\n' \
+    "$(sed -n 's/^revision[[:space:]]*=[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$SRC/SPEC-REVISION" 2>/dev/null | tail -1)"
+  printf 'commit = %s\n' \
+    "$(git -C "$SRC" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+  printf 'source = %s\n' "$SRC"
+} > "$TK_PREFIX/version.txt"
 say "installed to $TK_PREFIX"
 
 # ONLY a directory holding the launcher goes on PATH -- one symlink, never the
