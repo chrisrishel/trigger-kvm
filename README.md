@@ -1,258 +1,242 @@
 # trigger-kvm
 
-**Flip your USB switch and the monitors follow. A KVM with no box in the video path.**
+**Flip a USB switch and the monitors follow. No KVM in the video path.**
 
-Make two monitors follow a USB switch between a Mac Studio and a Windows PC, with
-**no KVM in the video path**.
-
-> **Renamed 2026-08-30**, from `display-switch`. That name collides with
-> [haimgel/display-switch](https://github.com/haimgel/display-switch), an
-> established project doing something similar, and the collision was going to
-> confuse anyone searching for either. Nothing about the design changed with the
-> name; the installer removes a pre-rename install automatically.
-
-Each machine connects to both monitors on its own input. A USB switch moves the
-shared peripherals. Whichever machine receives those peripherals commands both
-monitors, over DDC, to select its own inputs — "pull-to-self". The KVM is gone from
-the video path entirely, which is where its signal-integrity problems lived.
+Two or more computers share the same monitors. Each computer is cabled directly
+to every monitor, on its own input. A USB switch moves the keyboard, mouse and
+whatever else you share. When those devices arrive at a computer, it commands each
+monitor over DDC/CI to select that computer's input. Nothing switches video, so
+the link never drops and your window layout survives every switch.
 
 ```
              ┌── USB-C ──────────────┐
-Mac Studio ──┤                       ├── LG 45GX950A   (USB-C | DisplayPort)
+Mac ─────────┤                       ├── LG 45GX950A   (USB-C | DisplayPort)
              └── USB-C→DP ───────┐   │
                                  ├───┼── ASUS PG42UQ   (DisplayPort | HDMI 1)
 Windows PC ──── DisplayPort ─────┘   │
            └─── HDMI 1 ──────────────┘
 
-USB switch ──> peripherals ──> whichever machine gets them pulls both displays
+USB switch ──> peripherals ──> whichever computer gets them pulls the monitors to itself
 ```
 
-## Layout
+Developed and tested against exactly this: an LG 45GX950A and an ASUS PG42UQ,
+from one Mac and one Windows PC. Anything else is untested, and the maintainers
+cannot test hardware they do not own. Read [Safety](#safety) before you run it.
 
-| Path | Purpose |
-|---|---|
-| `displays.toml` | **Researched knowledge.** Which method and VCP code a given monitor model needs, which values are known safe. True of that model everywhere, and expensive to rediscover. |
-| *(generated config)* | **Machine-local facts.** Which panels are on this desk, and which computer is on which of their inputs. Written by `configure`, hand-editable. Not in the repo. |
-| [`ARCHITECTURE.md`](ARCHITECTURE.md) | The design and its rationale — why pull-to-self, why two DDC dialects, why post-login |
-| [`AGENTS.md`](AGENTS.md) | Instructions for anyone (human or agent) changing this repo, including the hard safety rules. `CLAUDE.md` imports it, so both Claude Code and Codex read the same file |
-| `macos/AGENTS.md`, `windows/AGENTS.md` | That platform's hazards and toolchain notes, loaded when working in that directory |
-| [`docs/measurements.md`](docs/measurements.md) | The dated observations on real hardware that the rules above rest on |
-| `docs/decisions/` | Architectural trade-offs and why they went the way they did, so they don't get relitigated |
-| [`specs/`](specs/) | **The normative corpus** — what both implementations are built FROM. Start at [`specs/README.md`](specs/README.md) |
-| [`TODO.md`](TODO.md) | Deferred work, each with the trigger that should resurface it |
-| `ideas/` | Exploratory design notes, including `ideas/rejected/` for options deliberately declined |
-| `macos/` | `trigger-kvm` (m1ddc) + `event-watch` (IOKit, USB and Bluetooth) + `display-probe` (CoreGraphics/IOKit), with the same verbs, the same config and the same walkthrough as Windows — see `specs/` |
-| `windows/` | The reference implementation: `event-watch.ps1` (WMI + Bluetooth) + `trigger-kvm.ps1` (aimed NVAPI I2C) + `install.ps1` (the walkthrough) + Scheduled Task |
-| `windows/tests/` | The test suite. `.
-un.ps1` — no framework, no dependencies |
+## Does it apply to your hardware?
 
-Code is not shared between platforms — macOS goes through `IOAVService`, Windows
-through NVAPI, with no common runtime.
-`displays.toml` holds the model knowledge both implementations depend on, so it
-can't silently drift apart between them. Per-desk facts live in each machine's own
-generated config instead -- each machine only ever selects its *own* inputs, so two
-hosts' configs never have to agree.
+**Monitors.** Each monitor must accept input selection over DDC/CI. Most do.
+Some LG models ignore the standard command and only answer LG's own method; that
+method is supported, for LG panels only. A monitor that answers neither is
+unsupported, and the setup walkthrough tells you so rather than guessing.
 
-## The two things that will waste your time if you forget them
+**Cabling.** Every computer needs its own cable to every monitor, each on a
+different input.
 
-**1. The LG ignores standard DDC input control.**
-`VCP 0x60` writes are accepted and silently discarded, and reads always return
-`0x0F` no matter what is actually displayed. Input control lives on LG's
-manufacturer sidechannel: **I2C source address `0x50`, VCP `0xF4`** (`m1ddc
-set input-alt`). The ASUS uses standard `VCP 0x60` normally.
+**A trigger.** Something that *arrives* at a computer when you switch: a USB
+switch carrying at least one device that enumerates on connection, or a
+Bluetooth device that reconnects. A device wired directly to one computer
+cannot be a trigger.
 
-**2. Never verify a switch by reading a value back.**
-Reads are unreliable on *both* monitors and produced false negatives during testing:
-
-- **PG42UQ** returns `0` for luminance, contrast, volume *and* `max luminance` —
-  always, active input or not. Writes still work perfectly.
-- **LG** returns real values on a settled active link, but `-7` while the link is
-  inactive or renegotiating. It read `-7` immediately after a switch that had in
-  fact succeeded, then recovered to `100` once settled.
-
-Writes are fire-and-forget. Confirm visually. Corollary: don't probe immediately
-after switching, or a verify-then-retry loop will fire spurious retries.
-
-## Verified behaviour
-
-All four cases tested from **both** machines and confirmed visually on 2026-08-30,
-plus the end-to-end USB trigger driven by the real switch on the Windows side:
-
-| Case | From the Mac | From Windows |
+| | macOS | Windows |
 |---|---|---|
-| ASUS → DisplayPort (show the Mac) | `input 15` ✅ | NVAPI I2C `0x51`/`0x60=0x0F`, aimed ✅ |
-| ASUS → HDMI 1 (show Windows) | `input 17` ✅ | NVAPI I2C `0x51`/`0x60=0x11`, aimed ✅ |
-| LG → USB-C (show the Mac) | `input-alt 209` ✅ | NVAPI I2C `0x50`/`0xF4=0xD1`, aimed ✅ |
-| LG → DisplayPort (show Windows) | `input-alt 208` ✅ | NVAPI I2C `0x50`/`0xF4=0xD0`, aimed ✅ |
+| Hardware | Apple Silicon. `m1ddc`, the DDC tool used, does not support Intel Macs. | An **NVIDIA GPU**. DDC is sent through NVAPI, the only transport; AMD and Intel GPUs are unsupported. |
+| Software | Homebrew `m1ddc` (`brew install m1ddc`); Xcode command line tools (`xcode-select --install`) | Windows PowerShell 5.1, as shipped. Nothing to install. |
+| Permissions | None. Choosing "start from boot" asks for your password once, to install a system launchd job that then runs as you. | None for "start from login". Choosing "start from boot" raises one UAC prompt to register the task, which then runs as you; your account must itself be an administrator for that option. |
+| Bluetooth triggers | Yes. No permission prompt is involved. | Yes. |
 
-All four Windows rows were re-verified on the aimed NVAPI transport, both monitors,
-both directions, confirmed visually. They previously read `SetVCPFeature` (via
-`dxva2`) and `lg-input-switch`; the bytes on the wire are unchanged, but each now
-reaches one output instead of a desktop-bound handle or every output at once.
+The other computer's operating system does not matter to this one. Each
+computer runs its own copy and only ever selects its own inputs.
 
-Each machine's *pull-to-self* direction was exercised with the monitor actually
-displaying the other machine — the case that matters, since the machine issuing the
-command is by definition not the one being displayed. Both hosts keep their link
-enumerated while the panel shows the other machine, so there is always a path to
-command it home.
+## Before you install
 
-**In service since 2026-08-30.** Switching back and forth repeatedly between the
-two machines with the real USB switch moves both monitors correctly every time, in
-both directions, with no spurious switches observed.
-
-## Monitor prerequisite: turn Auto Input Switch OFF
-
-**On every monitor in the setup, before installing anything.** This is not
-optional, and nothing in the software can compensate for it.
-
-A monitor with this enabled moves itself to whichever input still has a signal the
-moment the current one goes quiet. That directly fights a design whose entire
-premise is that input selection is explicit and commanded. Sleeping either machine
-makes its signal go quiet, so an enabled monitor defects to the other machine every
-time you sleep.
-
-The setting is named differently per vendor, and both were confirmed on 2026-08-30:
-
-| Monitor | OSD setting | Required |
-|---|---|---|
-| LG 45GX950A | **Auto Input Switch** | Off |
-| ASUS PG42UQ | **Auto Input Detection** | Off |
-
-Verified on both monitors in both states, across real sleep cycles: **on**, the
-monitor defects to the other machine when the machine driving it sleeps; **off**,
-it stays where it was told. The ASUS's differently-named setting does cover
-switching on signal loss, not just detection at power-on.
-
-Nothing brings a defected monitor back on its own, because **wake is not a
-trigger** — the watchers fire on USB arrival, and sleeping produces no USB event.
-The monitor stays defected until the USB switch next moves.
-
-**The trade this makes:** auto-detection is also a recovery mechanism. With it off,
-a monitor that powers on to a remembered input that has no signal shows black until
-you reach the OSD joystick. That is the accepted cost of deterministic switching —
-know where the joystick is.
+1. **Turn off automatic input switching on every monitor.** The setting has a
+   different name per vendor -- *Auto Input Switch* on the LG, *Auto Input
+   Detection* on the ASUS. With it on, a monitor jumps to the other computer the
+   moment this one sleeps, and nothing brings it back until you next flip the
+   switch. Nothing in software compensates for this.
+2. **Cable every computer to every monitor**, and note which input each is on.
+   The walkthrough asks.
+3. **Decide what goes through the USB switch.** A webcam is a good trigger: it
+   enumerates when connected and rarely otherwise. Audio interfaces can
+   re-enumerate on their own and are weaker. You pick the devices from a list
+   during setup.
 
 ## Install
 
-**Order matters.** Steps 1–3 are physical or hardware settings, and skipping them
-produces a system that installs cleanly and then behaves strangely.
-
-### Prerequisites
-
-| | Needs |
-|---|---|
-| macOS | `brew install m1ddc`; Xcode command line tools for `clang` |
-| Windows | **An NVIDIA GPU** — the LG's sidechannel is reached through NVAPI and has no vendor-neutral equivalent ([`docs/decisions/001`](docs/decisions/001-nvapi-as-the-only-windows-transport.md)). Windows PowerShell 5.1 (stock). Admin once at setup if you answer "from boot" (the suggested answer); none at all if you answer "from login", and never on the switch path either way. Other monitors on the same GPU are irrelevant: each write is aimed at one EDID-identified output. |
-
-### 1. Cable each machine to each monitor
-
-Every machine needs its **own** direct connection to **every** monitor, each on a
-different input. Nothing switches video, so there is no shared cable to contend
-for. This project only tells the monitors which of those inputs to show.
-
-### 2. Put the shared peripherals through the USB switch
-
-Whatever passes through the switch is what signals "this machine is now active."
-Pick devices that enumerate on physical connection and little else — a webcam is a
-good anchor, an audio interface is a weaker one. Anything wired *directly* to one
-machine cannot be a trigger; here the keyboard and mouse are wired to the Windows
-PC, which is why the webcam and audio interface do the signalling.
-
-Record whatever you choose in [`displays.toml`](displays.toml), then set the same
-IDs in each platform's config.
-
-### 3. Turn auto-input off on every monitor
-
-See [the prerequisite above](#monitor-prerequisite-turn-auto-input-switch-off). Do
-this before installing, not after — with it on, the system appears to work until
-the first time a machine sleeps.
-
-### 4. Install on each machine
-
-macOS: [`macos/README.md`](macos/README.md) — `cd macos && make install`
-
-Windows: [`windows/README.md`](windows/README.md) — `.\install.ps1`
-
-Both install a background watcher that is restarted if it dies. The Windows
-installer asks when it should start — from boot, from login, or not at all — and
-suggests from boot, and macOS offers it too — a LaunchDaemon with `UserName`
-set, which runs as the user unelevated. See [Scope](#scope).
-
-### 5. Verify
-
-Move the USB switch and watch **both** monitors follow. Then check the log — one
-device firing and the other absent is correct, not a fault: they arrive together
-and the second lands inside the debounce window.
+Run the installer on each computer, from a checkout of this repository. It
+builds or copies what it needs, then starts the setup walkthrough.
 
 ```sh
-tail -f ~/Library/Logs/trigger-kvm.log                      # macOS
-Get-Content -Wait "$env:LOCALAPPDATA\trigger-kvm\trigger-kvm.log"   # Windows
+cd macos && ./install.sh            # macOS
 ```
 
-Confirm by looking at the screens. Never by reading a VCP value back — see the
-gotchas above.
+```powershell
+cd windows; .\install.ps1           # Windows  (add -AddToPath to put trigger-kvm on PATH)
+```
+
+The walkthrough is one menu: **Computers** (named once; the names are what you
+type to switch by hand), **Monitors** (each reports its own name; you say which
+computer is on which input, and where the manufacturer has a documented
+alternative to standard DDC/CI you are offered it up front), **Triggers** (a
+checklist of what is attached or paired right now), **Autostart?** (from boot,
+from login, or no), **Add to PATH?**, then two optional checks, then Save.
+**Nothing is written until you choose Save**; Cancel or an interrupted run
+leaves an existing setup untouched.
+
+**Test the monitor inputs** moves the monitors to each computer for about eight
+seconds, brings them back, and asks what you saw. One monitor always stays on
+this computer so you can read the question, and the walkthrough names it before
+anything moves. With a single monitor it tells you how to get back with the
+monitor's own input button before it sends anything, and lets you decline.
+**Test the triggers** asks you to flip the switch away and back; once the inputs
+have passed, that flip pulls the monitors for real.
+
+Where things land:
+
+| | macOS | Windows |
+|---|---|---|
+| Config | `~/Library/Application Support/trigger-kvm/config` | `%LOCALAPPDATA%\trigger-kvm\config` |
+| Log | `~/Library/Logs/trigger-kvm.log` | `%LOCALAPPDATA%\trigger-kvm\trigger-kvm.log` |
+| Program | `~/.local/share/trigger-kvm/` | `%LOCALAPPDATA%\Programs\trigger-kvm\` |
+| On PATH | `~/.local/bin/trigger-kvm` (one symlink) | `%LOCALAPPDATA%\Programs\trigger-kvm\bin\` (one `.cmd`) |
+
+The config is a flat `key = value` file, safe to edit by hand; display edits
+apply on the next switch, trigger edits after `trigger-kvm restart`.
+Uninstalling keeps the config and the log. Platform detail:
+[`macos/README.md`](macos/README.md), [`windows/README.md`](windows/README.md).
 
 ## Using it
 
+Normally you do nothing: flipping the switch runs `pull` on the computer that
+receives the devices. The verbs are the same on both platforms; flags follow
+each platform's convention (`--only` / `-Only`, `--dry-run` / `-WhatIf`,
+`--fresh` / `-Fresh`).
+
 ```
-trigger-kvm pull                 bring every configured monitor to THIS computer
-trigger-kvm to mac               point them at another computer, by name
-trigger-kvm status               is it running, when does it start, what is configured
-trigger-kvm configure            change any of it (an arrow-key walkthrough)
-trigger-kvm logs                 what it has been doing
+trigger-kvm pull                 point every configured monitor at THIS computer
+trigger-kvm to <computer>        point them at another computer, by name. Manual only
+trigger-kvm pull --only lg       one monitor only -- use when testing
+trigger-kvm pull --dry-run       resolve and print the packets, send nothing
+trigger-kvm list                 connected displays, with their identifiers
+trigger-kvm discover             what is attached, in the form the config wants
+trigger-kvm configure            change any of it (the same walkthrough)
+trigger-kvm configure --fresh    ...pre-filling nothing
+trigger-kvm status               is it running, when it starts, what that covers
+trigger-kvm logs                 tail the log
+trigger-kvm restart              make a hand-edited config take effect now
+trigger-kvm pause                stand the watcher down; restart brings it back
+trigger-kvm uninstall            remove the program, keeping the config and the log
 ```
 
-The switch does this for you: flipping the USB switch to a computer makes that
-computer run `pull`. The verbs are the same on both platforms, on purpose — they are
-what you type daily on both machines.
+There is no `install` verb: installing is what produced the command. To upgrade
+or repair, fetch the source and run its installer again.
 
-**A trigger only ever runs `pull`.** `to <computer>` names inputs on hardware this
-machine cannot observe, and a name that has gone stale can therefore spoil a command
-you typed and are watching, never an automatic switch.
-
-Configuration lives in one flat file per machine, generated by `configure` and safe
-to edit by hand:
+`to <computer>` is manual only. It names inputs on hardware this computer
+cannot see, so a stale name can spoil a command you typed and are watching,
+never an automatic switch. A trigger only ever runs `pull`. The config behind
+both verbs is one map:
 
 ```
 computer.this = pc
-display.lg.input.0xD0 = pc        which computer is on which input --
-display.lg.input.0xD1 = mac       one map, and both verbs read it
+display.lg.input.0xD0 = pc          which computer is on which input
+display.lg.input.0xD1 = mac
 trigger.device = usb:046d:0843, bt:0011223344ff
 ```
 
-## Scope
+## Safety
 
-**Windows** asks when the watcher should start, and offers three answers:
+You use this at your own risk. It writes to your monitors' control channels.
 
-| answer | admin | covers |
-|---|---|---|
-| **from boot** (suggested) | once, at setup | everything, including before the first login and after a logoff |
-| from login | never | everything from logon onward, **including while the screen is locked** — locking doesn't end your session |
-| no | never | this session only; you start it with `trigger-kvm restart` |
+- **A switch cannot be verified in software.** Both monitors this was developed
+  against return wrong values when read back. The tool never reads a value to
+  decide anything, and the walkthrough asks you to look at the screen instead.
+- **LG's input method uses a service channel** (I2C address `0x50`). Only
+  values from documentation, or a value you type, are ever sent to it -- never a
+  sweep or a guess. An LG monitor has been bricked by sweeping that channel
+  (ddcutil issue #419, "Bricked LG Monitor"). Do not experiment there, and do
+  not type a value onto it that you did not get from documentation. The code
+  refuses to send on that channel to any monitor whose EDID vendor is not LG.
+- **Your last display is never taken silently.** Every check names which
+  monitor stays before it moves the others, and the one-monitor case tells you
+  how to get back before it starts. Blind value-walking is refused outright when
+  it would take the only display.
+- Use `--only` / `-Only` when testing by hand, so the monitor your terminal is
+  on stays put.
 
-From boot registers an S4U task and then runs **unelevated** at startup in session 0
-— admin is needed to register it, and nothing elevated runs on the switch path.
-Measured 2026-08-30: NVAPI both enumerates *and writes* with no desktop, so no relay
-or token duplication is involved. See [`windows/README.md`](windows/README.md).
+## When it does not work
 
-**macOS** offers the same tier, and holds the same property. From boot is a
-LaunchDaemon in `/Library/LaunchDaemons` with `UserName` set: your password
-installs it into the system domain, and it then runs **as you, unelevated**.
+**A monitor jumps to the other computer when this one sleeps.** Its automatic
+input switching is still on. Turn it off in the monitor's menu.
 
-This was documented as impossible until 2026-08-31, on the reasoning that
-`m1ddc` links CoreGraphics and `CGGetOnlineDisplayList` needs a window server a
-daemon has not got. Measured from a LaunchDaemon with no session, all of it
-works — IOKit identity with no CoreGraphics at all, `m1ddc display list`, and a
-full `pull` as uid 501. The reasoning was sound and the conclusion was wrong.
+**A monitor shows black or "No Signal" after power-on.** With automatic input
+switching off, a monitor that powers on to an input with no signal stays there.
+Use the input or source button on the monitor. This is the cost of the setting
+above.
+
+**The LG flickers on every switch, even to the input it is already on.** Normal.
+It is renegotiating the link, and each write is sent twice on purpose.
+
+**Usually only one device appears in the log per flip.** Normal. Watched devices
+arrive together; the first fires, the second lands inside the debounce window.
+If the second arrives later than that window, `pull` runs a second time, which
+is harmless.
+
+**Switching does nothing.** Run `trigger-kvm status` (is a watcher running,
+what does it cover) and `trigger-kvm logs`. Then `trigger-kvm pull` by hand:
+if that moves the monitors, the trigger is wrong; if not, the inputs are. Both
+are re-checked with `trigger-kvm configure`.
+
+**You moved a cable to a different input, or copied a config from another
+computer.** Run `trigger-kvm configure` again. Some panels report a different
+EDID product id per input -- the LG 45GX950A does -- so an id measured on one
+input, or on another host, matches nothing here.
+
+**Windows: `status` shows a last-run result of `0x800710E0`.** Normal while the
+watcher is healthy. A repeating task trigger restarts a dead watcher within a
+minute; that code is Task Scheduler noting one was already running.
+
+**It does not switch at the login screen after a reboot.** Autostart is *from
+login*. Switching works while the screen is locked on either setting; only
+*from boot* covers the login screen and the time after a logoff. Change it with
+`trigger-kvm configure` (admin once on Windows; your password once on macOS,
+where the boot tier also makes `restart` and `pause` ask for it).
+
+## How it works
+
+Each computer runs one background watcher and one switcher. The watcher listens
+for a configured device to go from absent to present, waits a moment to confirm
+it is still there, and runs `trigger-kvm pull`. The switcher resolves each
+configured monitor by the EDID vendor and product it reads at that moment, never
+by an index, and sends the input-select write, twice, to that one output. A
+computer only ever pulls monitors toward itself, so there is no shared state and
+nothing to coordinate. The design rests on one measured property: a computer's
+link to a monitor stays enumerated while the monitor displays another input, so
+there is always a path to command it back. The reasoning is in
+[`ARCHITECTURE.md`](ARCHITECTURE.md).
+
+## Repository layout
+
+| Path | What it is |
+|---|---|
+| [`macos/`](macos/README.md), [`windows/`](windows/README.md) | The two implementations. Same verbs, same config, same walkthrough; no shared code. |
+| [`ARCHITECTURE.md`](ARCHITECTURE.md) | The design and why it is shaped this way |
+| [`specs/`](specs/README.md) | What both implementations are built from: the config format and the walkthrough |
+| [`displays.toml`](displays.toml) | Reference values for the two monitors this was developed against: methods, input codes, known-safe values |
+| [`docs/`](docs/) | Decision records and the dated hardware measurements the rules rest on |
+| [`AGENTS.md`](AGENTS.md) | Instructions for anyone changing this repo, including AI agents: the safety rules for the monitors' control channels and the order a change to shared behaviour lands in. Read it before contributing. |
 
 ## Related work
 
-- [haimgel/display-switch](https://github.com/haimgel/display-switch) — the
-  established project in this space, and the reason for this one's rename. Switches
-  a monitor input on USB device connection. This project differs in driving
-  *multiple* monitors with per-display aiming, supporting a manufacturer sidechannel
-  for panels whose standard input control is stubbed, and running pre-login.
-- [SzozdaK/DDC-Trigger](https://github.com/SzozdaK/DDC-Trigger) — closest in concept:
-  a USB switch as the trigger, DDC to move the input, no video switching. It uses a
-  Raspberry Pi as a separate DDC console; this runs on the hosts themselves, so
-  there is no extra hardware.
+- [haimgel/display-switch](https://github.com/haimgel/display-switch) -- switches
+  monitor inputs over DDC/CI when a USB device connects; macOS, Windows and
+  Linux. This project adds LG's manufacturer method for panels that ignore
+  standard input control, per-output aiming on Windows, and a start-from-boot
+  option; it does not support Linux.
+- [SzozdaK/DDC-Trigger](https://github.com/SzozdaK/DDC-Trigger) -- the same idea
+  with a Raspberry Pi as the DDC console and an industrial USB switch as the
+  trigger. This project runs on the computers themselves, with no extra hardware.
+
+## License
+
+License: see LICENSE
