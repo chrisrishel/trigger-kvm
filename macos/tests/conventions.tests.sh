@@ -16,13 +16,32 @@ fake_setup
 # The LG service channel is reachable from exactly one place
 # =============================================================================
 
+# The scan, as a function, so it can be pointed at a throwaway file and shown to
+# work. ../AGENTS.md hard rule 5 asks BOTH suites to assert this self-testedly;
+# Windows landed its half in commit 980ce3b, and this is the other.
+alt_doors() {
+  grep -rn 'input-alt' "$@" | grep -vc '^[^:]*:[0-9]*: *#' || true
+}
+
 it "the string 'input-alt' appears in exactly one non-comment line"
 # `input-alt` is what m1ddc calls I2C source 0x50, LG's service channel.
 # Sweeping that channel has bricked LG monitors. If it appears anywhere but
 # inside ddc_send there is a second way to reach it, and the vendor gate that
 # lives in ddc_send is no longer a gate.
-hits=$(grep -rn 'input-alt' "$MAC_DIR/lib" "$TK" | grep -vc '^[^:]*:[0-9]*: *#' || true)
+hits=$(alt_doors "$MAC_DIR/lib" "$TK")
 assert_equal 1 "$hits" 'source 0x50 must have exactly one door'
+
+it 'and the scan that says so can count a second door, and ignores a comment'
+# Without this the assertion above passes for as long as the string is spelled
+# the way the grep expects, and stops meaning anything the moment it is not.
+probe=$(mktemp "$FAKE_DIR/probe.XXXXXX")
+printf '%s\n' \
+  'ddc_send() { m1ddc set input-alt "$v"; }' \
+  '# input-alt in a comment is documentation, not a door' \
+  '  # and so is an indented one' >"$probe"
+assert_equal 1 "$(alt_doors "$probe")" 'a commented mention is not a door'
+printf '%s\n' 'sneak() { m1ddc set input-alt 0xF4; }' >>"$probe"
+assert_equal 2 "$(alt_doors "$probe")" 'a second emitter must be counted'
 
 it 'and that line is in ddc_send, the function holding the vendor check'
 owner=$(grep -rln 'DDC_VENDOR_GSM' "$MAC_DIR/lib")

@@ -378,6 +378,12 @@ mutate 'switch: a bare trigger-kvm pulls instead of printing usage' trigger-kvm 
 mutate 'watch: an oversized Bluetooth entry is clamped after the write, not skipped' event-watch.c watcher.tests.sh \
   's|        if (nk < 1 \|\| nk > 8) continue;|        if (nk < 1) continue; if (nk > 8) nk = 8;|'
 
+# --- the rule 5 gate check is itself testable ---------------------------------
+
+mutate 'sidechannel: the scan counts commented mentions as doors' \
+  tests/conventions.tests.sh conventions.tests.sh \
+  's|grep -vc|grep -c|'
+
 # --- a skip is never a pass ---------------------------------------------------
 #
 # The bug these reintroduce shipped: run.sh printed a file's output only on FAIL,
