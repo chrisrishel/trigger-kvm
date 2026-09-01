@@ -378,6 +378,31 @@ mutate 'switch: a bare trigger-kvm pulls instead of printing usage' trigger-kvm 
 mutate 'watch: an oversized Bluetooth entry is clamped after the write, not skipped' event-watch.c watcher.tests.sh \
   's|        if (nk < 1 \|\| nk > 8) continue;|        if (nk < 1) continue; if (nk > 8) nk = 8;|'
 
+# --- a refused bootstrap is caught, never thrown -------------------------------
+#
+# The bootout runs first, so between the two calls nothing is watching. These
+# reintroduce each way that window used to go unreported.
+
+mutate 'bootstrap: the boot-tier load is unchecked, so a refusal aborts mid-window' lib/manage.sh install.tests.sh \
+  's@    elif ! tk_bootstrap system "\$TK_DAEMON_PLIST"; then@    elif ! { tk_bootstrap system "$TK_DAEMON_PLIST" || true; }; then@'
+# Falling back to login is what clears a daemon launchd refused. If that removal
+# goes, `status` reads the plist off disk and promises coverage from boot with
+# nothing running -- which is the failure the whole seam exists to prevent.
+mutate 'bootstrap: a daemon launchd refused is left on disk for status to report' lib/manage.sh install.tests.sh \
+  's@^      sudo rm -f "\$TK_DAEMON_PLIST" || true$@      :@'
+mutate 'bootstrap: restart claims success whatever launchd did' lib/manage.sh install.tests.sh \
+  's@^  if ! tk_bootstrap "\$(tk_domain)" "\$TK_PLIST"; then@  if false; then@'
+mutate 'bootstrap: the boot-tier restart claims success whatever launchd did' lib/manage.sh install.tests.sh \
+  's@^    if ! tk_bootstrap system "\$TK_DAEMON_PLIST"; then@    if false; then@'
+mutate 'bootstrap: the reason launchd gave is thrown away' lib/manage.sh install.tests.sh \
+  's@TK_BOOTSTRAP_ERR=\$(sudo "\$TK_LAUNCHCTL" bootstrap system "\$_plist" 2>&1) || _rc=\$?@sudo "$TK_LAUNCHCTL" bootstrap system "$_plist" >/dev/null 2>\&1 || _rc=$?@'
+mutate 'bootstrap: the trigger check restores the watcher silently, or not at all' lib/checks.sh checks.tests.sh \
+  's@^  if ! tk_bootstrap "\$(tk_domain)" "\$TK_PLIST"; then@  if false; then@'
+mutate 'bootstrap: a second door into launchd, outside the seam' lib/manage.sh conventions.tests.sh \
+  's@^cmd_restart() {@cmd_restart() {\n  "$TK_LAUNCHCTL" bootstrap "$(tk_domain)" "$TK_PLIST" >/dev/null 2>\&1 || true@'
+mutate 'bootstrap: a caller ignores whether the load worked' lib/manage.sh conventions.tests.sh \
+  's@^  if ! tk_bootstrap "\$(tk_domain)" "\$TK_PLIST"; then@  tk_bootstrap "$(tk_domain)" "$TK_PLIST" || true\n  if false; then@'
+
 # --- the rule 5 gate check is itself testable ---------------------------------
 
 mutate 'sidechannel: the scan counts commented mentions as doors' \

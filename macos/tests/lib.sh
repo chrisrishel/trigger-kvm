@@ -175,9 +175,18 @@ EOS
   # goes through $TK_LAUNCHCTL, and here that is a recorder: it logs what it was
   # asked and touches nothing. Before this, a scripted configure that reached
   # Save unloaded the developer's REAL watcher, and the suite stayed green.
+  # TK_FAKE_LAUNCHCTL_FAIL names a subcommand this recorder must REFUSE, on
+  # stderr and with a non-zero status, the way launchd refuses a bootstrap it
+  # will not accept. Without it the suite could only ever exercise the happy
+  # path -- and the failure path is the one that used to abort an install
+  # mid-window, or claim "restarted" with nothing running.
   cat >"$FAKE_DIR/launchctl" <<'EOS'
 #!/bin/sh
 printf 'launchctl %s\n' "$*" >>"$TK_FAKE_LAUNCHCTL"
+if [ -n "${TK_FAKE_LAUNCHCTL_FAIL:-}" ] && [ "$1" = "$TK_FAKE_LAUNCHCTL_FAIL" ]; then
+  echo "Load failed: 5: Input/output error" >&2
+  exit 5
+fi
 exit 0
 EOS
   chmod +x "$FAKE_DIR/launchctl"

@@ -128,6 +128,105 @@ assert_match "$INST_OUT" 'before anyone logs in'
 it 'and the boot tier leaves no LaunchAgent behind'
 assert_true "$([ ! -f "$TK_PLIST" ] && echo 0 || echo 1)" 'a launchd label is per domain; the agent must go'
 
+# =============================================================================
+# launchd is allowed to refuse, and a refusal must explain itself
+# =============================================================================
+#
+# specs/configure.md 4.4: an interrupted run must leave a working setup
+# untouched, and where it cannot, it has to say what is left. The bootout runs
+# BEFORE the bootstrap, so between them nothing is watching -- and every caller
+# runs under `set -euo pipefail`, so the unchecked `bootstrap system` aborted
+# there, with the daemon installed, the agent booted out, and `status` still
+# reporting "at boot" because it reads the plist off disk.
+#
+# Windows had the same window between Unregister- and Register-ScheduledTask;
+# its fix is commit 9cfa9e0.
+
+it 'a refused bootstrap falls back to the login tier and says why'
+write_config_with_tier 'install.autostart = boot'
+rm -f "$TK_DAEMON_PLIST" "$TK_PLIST"
+: >"$TK_FAKE_LAUNCHCTL"
+TK_FAKE_LAUNCHCTL_FAIL=bootstrap PATH="$FAKE_DIR/bin:$PATH" run_install
+assert_equal 0 "$INST_RC" "the install must not abort mid-window: $INST_OUT"
+# The reason is pinned to ITS OWN message: asserting the string anywhere in the
+# output passed on the fallback's message instead, which is a different call.
+assert_match "$INST_OUT" 'launchd would not load it: Load failed: 5: Input/output error'
+assert_match "$INST_OUT" 'falling back to starting at login'
+
+it 'and leaves NO daemon plist, so status cannot go on claiming "at boot"'
+# tk_installed_tier reads the file's existence, not launchd. A plist left after
+# a refused load is exactly how `status` comes to promise coverage from boot
+# with nothing running at all.
+assert_true "$([ ! -f "$TK_DAEMON_PLIST" ] && echo 0 || echo 1)" \
+  "a daemon launchd refused must not be left on disk: $INST_OUT"
+
+it 'and rewrites the config to the tier that actually happened'
+assert_match "$(cat "$SUPPORT/config")" 'install.autostart = login' \
+  'the config records what happened, not what was asked for'
+
+it 'and never reports the boot tier as installed'
+assert_no_match "$INST_OUT" 'installed the boot-time start'
+assert_no_match "$INST_OUT" 'before anyone logs in'
+
+it 'a refused LaunchAgent load is reported with the reason, and is not fatal'
+# Over SSH there is no gui domain to load into, which is normal and must not
+# fail the install -- but it may not be silent either.
+write_config_with_tier 'install.autostart = login'
+rm -f "$TK_DAEMON_PLIST" "$TK_PLIST"
+: >"$TK_FAKE_LAUNCHCTL"
+TK_FAKE_LAUNCHCTL_FAIL=bootstrap run_install
+assert_equal 0 "$INST_RC" "$INST_OUT"
+assert_match "$INST_OUT" 'could not load the LaunchAgent now: Load failed: 5: Input/output error'
+assert_match "$INST_OUT" 'starts at your next login'
+assert_no_match "$INST_OUT" 'loaded the LaunchAgent'
+assert_true "$([ -f "$TK_PLIST" ] && echo 0 || echo 1)" 'the agent is still written for next login'
+
+# =============================================================================
+# restart says whether anything is actually watching
+# =============================================================================
+
+TK="$MAC_DIR/trigger-kvm"
+RST_OUT=""; RST_RC=0
+run_restart() {
+  set +e
+  RST_OUT=$("$TK" restart </dev/null 2>&1)
+  RST_RC=$?
+  set -e
+}
+
+it 'restart reports a refused LaunchAgent load instead of claiming success'
+# The login branch verified with tk_agent_loaded; the BOOT branch below did not,
+# and said "restarted" whatever happened.
+rm -f "$TK_DAEMON_PLIST"
+: >"$TK_PLIST"
+: >"$TK_FAKE_LAUNCHCTL"
+TK_FAKE_LAUNCHCTL_FAIL=bootstrap run_restart
+assert_equal 1 "$RST_RC" "$RST_OUT"
+assert_match "$RST_OUT" 'could not load the LaunchAgent: Load failed: 5: Input/output error'
+assert_match "$RST_OUT" 'NOTHING IS WATCHING'
+assert_no_match "$RST_OUT" 'has re-read the config'
+
+it 'restart reports a refused boot-time load instead of claiming success'
+: >"$TK_DAEMON_PLIST"
+: >"$TK_FAKE_LAUNCHCTL"
+TK_FAKE_LAUNCHCTL_FAIL=bootstrap PATH="$FAKE_DIR/bin:$PATH" run_restart
+assert_equal 1 "$RST_RC" "$RST_OUT"
+assert_match "$RST_OUT" 'could not start the boot-time watcher: Load failed: 5: Input/output error'
+assert_match "$RST_OUT" 'NOTHING IS WATCHING'
+assert_no_match "$RST_OUT" 'has re-read the config'
+
+it 'and says so when it worked'
+: >"$TK_FAKE_LAUNCHCTL"
+PATH="$FAKE_DIR/bin:$PATH" run_restart
+assert_equal 0 "$RST_RC" "$RST_OUT"
+assert_match "$RST_OUT" 'restarted; the watcher has re-read the config.'
+
+# Put back what this section found: a boot-tier config with its daemon plist in
+# place. The cases below run in sequence against it, and the uninstall at the
+# end asserts that BOTH tiers are torn down.
+write_config_with_tier 'install.autostart = boot'
+: >"$TK_DAEMON_PLIST"
+
 it 'removes an install from before the rename, so two watchers cannot both fire'
 # The old LaunchAgent (com.chrisrishel.displayswitch) ran a watcher called
 # usb-watch. Nothing removed it, and one was found a day after the rename still

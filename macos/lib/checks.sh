@@ -573,7 +573,14 @@ wt_blind_walk() {
 # it covers every way out of the check.
 wt_resume_watcher() {
   [ "$1" = "1" ] || return 0
-  "$TK_LAUNCHCTL" bootstrap "$(tk_domain)" "$TK_PLIST" >/dev/null 2>&1 || true
+  # This check stood the watcher DOWN on purpose, so a failed restore leaves the
+  # machine with nothing watching -- the one outcome that must never be silent.
+  # Called from a RETURN trap, so it reports and still returns 0: aborting here
+  # would take the walkthrough down with it.
+  if ! tk_bootstrap "$(tk_domain)" "$TK_PLIST"; then
+    tk_log "could not restart the watcher this check paused: $TK_BOOTSTRAP_ERR"
+    tk_log 'NOTHING IS WATCHING until you run:  trigger-kvm restart'
+  fi
   return 0
 }
 

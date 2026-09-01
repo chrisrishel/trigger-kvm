@@ -71,6 +71,82 @@ bare=$(grep -n 'launchctl' "$MAC_DIR"/lib/*.sh "$TK" "$MAC_DIR/install.sh" /dev/
        | grep -v '^[^:]*:[0-9]*:TK_LAUNCHCTL=' || true)
 assert_equal '' "$bare" 'these lines reach launchd without going through $TK_LAUNCHCTL'
 
+# =============================================================================
+# A bootstrap is CAUGHT, never thrown -- and only one function may run one
+# =============================================================================
+#
+# The bootout runs before the bootstrap, so between them nothing is watching.
+# Every caller runs under `set -euo pipefail`: an unchecked `bootstrap` aborted
+# inside that window, leaving the daemon installed, the agent booted out and
+# `status` still reporting "at boot" off the plist on disk. The other shape was
+# `|| true` followed by an unconditional "restarted".
+#
+# Structural, for the reason Windows gives for the same check (commit 9cfa9e0):
+# reaching it for real means loading a job into launchd, which outlives
+# anything a suite can sandbox.
+
+# Every `launchctl bootstrap` in <file> that is not inside tk_bootstrap itself.
+bootstrap_doors() {
+  local _f _body _line _text
+  _f=$1
+  _body=$(sed -n '/^tk_bootstrap() {/,/^}/p' "$_f")
+  # `|| true`: most files contain no bootstrap at all, and under pipefail an
+  # empty grep would abort the caller rather than report "no doors here".
+  grep -n 'bootstrap' "$_f" /dev/null \
+    | grep -v '^[^:]*:[0-9]*: *#' \
+    | grep '\$TK_LAUNCHCTL" bootstrap' \
+    | while IFS= read -r _line; do
+        _text=${_line#*:*:}
+        case $_body in
+          *"$_text"*) ;;
+          *) printf '%s\n' "$_line" ;;
+        esac
+      done || true
+}
+
+it 'only tk_bootstrap runs launchctl bootstrap'
+doors=''
+for f in "$MAC_DIR"/lib/*.sh "$TK" "$MAC_DIR/install.sh"; do
+  doors="$doors$(bootstrap_doors "$f")"
+done
+assert_equal '' "$doors" 'these load launchd directly, so their failure is not caught'
+
+it 'and tk_bootstrap really is a door, so the check above cannot pass vacuously'
+# If the function were renamed or emptied, bootstrap_doors would find nothing to
+# complain about and every assertion here would go quiet.
+gate=$(sed -n '/^tk_bootstrap() {/,/^}/p' "$MAC_DIR/lib/manage.sh")
+assert_match "$gate" 'bootstrap system'   'the elevated load lives here'
+assert_match "$gate" 'TK_BOOTSTRAP_ERR'   'and it keeps the reason for the caller'
+# The BOOTOUT is `|| true` on purpose -- it fails when nothing is loaded, which
+# is the ordinary first-install case. The bootstrap is the one whose answer
+# means something, so only its lines are checked.
+swallowed=$(printf '%s\n' "$gate" | grep 'bootstrap' | grep '|| true' || true)
+assert_equal '' "$swallowed" 'the bootstrap itself may not be swallowed'
+
+it 'and the check can SEE an unguarded bootstrap, and does not fire on a guarded one'
+probe=$(mktemp "$FAKE_DIR/probe.XXXXXX")
+cat >"$probe" <<'EOS'
+tk_bootstrap() {
+  "$TK_LAUNCHCTL" bootstrap "$_domain" "$_plist"
+}
+cmd_restart() {
+  "$TK_LAUNCHCTL" bootstrap gui/501 "$TK_PLIST" || true   # a second door
+}
+# "$TK_LAUNCHCTL" bootstrap in a comment is fine
+EOS
+found=$(bootstrap_doors "$probe")
+assert_match "$found" 'a second door' 'an unguarded bootstrap must be reported'
+assert_equal 1 "$(printf '%s\n' "$found" | grep -c .)" \
+  "only the unguarded one may be reported, got: $found"
+
+it 'every caller of tk_bootstrap acts on its answer'
+# Calling it and ignoring the result reinstates exactly the bug: the failure is
+# caught and then thrown away. Each call must be a condition or be negated.
+loose=$(grep -n 'tk_bootstrap ' "$MAC_DIR"/lib/*.sh "$TK" "$MAC_DIR/install.sh" /dev/null \
+        | grep -v '^[^:]*:[0-9]*: *#' \
+        | grep -v 'if ! tk_bootstrap' | grep -v 'elif tk_bootstrap' || true)
+assert_equal '' "$loose" 'these call tk_bootstrap without acting on whether it worked'
+
 it 'and TK_LAUNCHCTL is defined once, in common.sh, and is overridable'
 defs=$(grep -ln '^TK_LAUNCHCTL=' "$MAC_DIR"/lib/*.sh "$TK" "$MAC_DIR/install.sh" || true)
 assert_equal "$MAC_DIR/lib/common.sh" "$defs"

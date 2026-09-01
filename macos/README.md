@@ -165,6 +165,13 @@ The two are mutually exclusive: installing one removes the other, because two
 live watchers would both fire on the same arrival and the debounce is
 per-process.
 
+**If `From boot` cannot be established it falls back to `From login` and says
+why** — whether you declined the password or launchd refused to load the daemon.
+The config is rewritten to record the tier that actually happened, and the
+daemon plist is removed, so `status` never reports coverage it does not have.
+For the same reason `restart` now tells you when nothing came up instead of
+reporting success regardless; it exits non-zero and names what launchd said.
+
 This was documented as impossible for a while, on two claims that were both
 measured wrong — a LaunchDaemon with `UserName` does not run as root, and
 reading the displays does not need a logged-in session. Measured from a
@@ -342,11 +349,18 @@ the caller then sees an empty answer, re-asks, and spins. Measured: one mutation
 run sat on a single `configure` for 28 minutes before the harness grew a
 watchdog and the prompt grew a return status.
 
-Two rules are checked **structurally** rather than behaviourally, because no
+Three rules are checked **structurally** rather than behaviourally, because no
 single mutation reproduces their failure:
 
 - `input-alt` — what m1ddc calls I2C source `0x50` — must appear in exactly one
   non-comment line, inside the function that also holds the vendor gate.
+- `launchctl bootstrap` may be run only by `tk_bootstrap`, and every caller must
+  act on whether it worked. The bootout runs first, so between the two calls
+  nothing is watching; an unchecked bootstrap aborted inside that window and
+  left `status` reporting a tier that was not running. Reaching it for real
+  means loading a job into launchd, which outlives anything the suite can
+  sandbox — the same reason the Windows side checks its `Register-ScheduledTask`
+  this way.
 - Every `_`-prefixed variable a function assigns must be declared `local` in it.
   Shell variables are global otherwise, and a callee's loop index silently
   overwrote its caller's: `select_many`'s `_i` clobbered the monitor check's, and
@@ -363,7 +377,9 @@ because on Windows the check was present, did not fire, and an unresolved value
 went out as `0x00`, an input no monitor has.
 
 Nor can it reach launchd: every `launchctl` the program runs is
-`"$TK_LAUNCHCTL"`, and the harness points that at a recorder too. And it does not assume this desk — the watcher tests take a
+`"$TK_LAUNCHCTL"`, and the harness points that at a recorder too — one that can
+also be told to **refuse**, so the failure paths above are exercised rather than
+only the happy ones. And it does not assume this desk — the watcher tests take a
 present device from the live list and skip, saying so, on a machine with nothing
 attached, and the Bluetooth semantics run against a plist fixture the watcher
 reads in place of `system_profiler` (`TK_BT_PLIST`) — so `make test` means the

@@ -123,12 +123,48 @@ tk_refuse_root() {
 
 tk_agent_loaded() { "$TK_LAUNCHCTL" print "$(tk_domain)/$TK_LABEL" >/dev/null 2>&1; }
 
+# Load a plist into a domain, replacing whatever is loaded there.
+#
+# THE ONE DOOR, and the reason it is one is that this failure must be CAUGHT
+# rather than thrown. The bootout runs first, so between the two calls there is
+# no watcher at all -- and every caller here runs under `set -euo pipefail`, so
+# an unchecked bootstrap aborted mid-window: the daemon installed but not
+# loaded, the agent booted out, nothing running, and `tk_installed_tier` still
+# reading the plist off disk so `status` went on reporting "at boot". The other
+# shape was worse -- `|| true` and then an unconditional "restarted".
+# specs/configure.md 4.4: where an interrupted run cannot leave a working setup,
+# it has to say what is left.
+#
+# Elevation is NOT a parameter: the system domain always needs it and a user
+# domain never does, so it follows from the domain rather than from a caller
+# remembering. The bootout stays best-effort by design -- it fails when nothing
+# is loaded, which is the ordinary first-install case. Only the bootstrap's
+# answer means anything, and its reason is left in TK_BOOTSTRAP_ERR to print.
+TK_BOOTSTRAP_ERR=''
+tk_bootstrap() {
+  local _domain _plist _rc
+  _domain=$1; _plist=$2; _rc=0
+  TK_BOOTSTRAP_ERR=''
+  if [ "$_domain" = "system" ]; then
+    sudo "$TK_LAUNCHCTL" bootout "system/$TK_LABEL" >/dev/null 2>&1 || true
+    TK_BOOTSTRAP_ERR=$(sudo "$TK_LAUNCHCTL" bootstrap system "$_plist" 2>&1) || _rc=$?
+  else
+    "$TK_LAUNCHCTL" bootout "$_domain/$TK_LABEL" >/dev/null 2>&1 || true
+    TK_BOOTSTRAP_ERR=$("$TK_LAUNCHCTL" bootstrap "$_domain" "$_plist" 2>&1) || _rc=$?
+  fi
+  return "$_rc"
+}
+
 cmd_restart() {
   # The boot tier lives in the system domain, which needs a password to bounce.
   if [ -f "$TK_DAEMON_PLIST" ]; then
     tk_log 'restarting the boot-time start needs your password once.'
-    sudo "$TK_LAUNCHCTL" bootout "system/$TK_LABEL" >/dev/null 2>&1 || true
-    sudo "$TK_LAUNCHCTL" bootstrap system "$TK_DAEMON_PLIST" >/dev/null 2>&1 || true
+    if ! tk_bootstrap system "$TK_DAEMON_PLIST"; then
+      tk_log "could not start the boot-time watcher: $TK_BOOTSTRAP_ERR"
+      tk_log 'NOTHING IS WATCHING. The daemon is still installed, so a reboot'
+      tk_log 'will start it; to try again now:  trigger-kvm restart'
+      exit 1
+    fi
     sleep 1
     tk_log 'restarted; the watcher has re-read the config.'
     exit 0
@@ -137,13 +173,18 @@ cmd_restart() {
     tk_log "not installed: $TK_PLIST is missing. Run the installer from the source tree."
     exit 1
   fi
-  "$TK_LAUNCHCTL" bootout "$(tk_domain)/$TK_LABEL" >/dev/null 2>&1 || true
-  "$TK_LAUNCHCTL" bootstrap "$(tk_domain)" "$TK_PLIST" >/dev/null 2>&1 || true
+  if ! tk_bootstrap "$(tk_domain)" "$TK_PLIST"; then
+    tk_log "could not load the LaunchAgent: $TK_BOOTSTRAP_ERR"
+    tk_log 'NOTHING IS WATCHING -- check: trigger-kvm logs'
+    exit 1
+  fi
   sleep 1
   if tk_agent_loaded; then
     tk_log 'restarted; the watcher has re-read the config.'
     exit 0
   fi
+  # launchd accepted the job and it did not come up: a different failure from a
+  # refused bootstrap, and worth telling apart.
   tk_log 'restarted, but no watcher came up -- check: trigger-kvm logs'
   exit 1
 }
@@ -287,7 +328,7 @@ tk_say_done() {
 }
 
 tk_apply_tier() {
-  local CONFIG TMP_DAEMON DOMAIN
+  local CONFIG TMP_DAEMON DOMAIN _why
   tk_refuse_root || return 1
   DOMAIN="$(tk_domain)"
   CONFIG="${1:-$TK_SUPPORT/config}"
@@ -335,22 +376,32 @@ EOF
 
     tk_log 'starting before login needs your password once, to install it.'
     tk_log 'Nothing runs as an administrator afterwards.'
-    if sudo -p 'Password (once, to install the boot-time start): ' \
-            install -o root -g wheel -m 644 "$TMP_DAEMON" "$TK_DAEMON_PLIST" 2>/dev/null; then
-      rm -f "$TMP_DAEMON"
-      sudo "$TK_LAUNCHCTL" bootout "system/$TK_LABEL" >/dev/null 2>&1 || true
-      sudo "$TK_LAUNCHCTL" bootstrap system "$TK_DAEMON_PLIST"
+    # The boot tier can fail to land two ways, and there is ONE answer to both:
+    # fall back to login and SAY SO. Silently downgrading a tier is how someone
+    # discovers months later that switching does nothing until they log in --
+    # and leaving a daemon plist that launchd refused is how `status` comes to
+    # report "at boot" with nothing running, since it reads the file's existence.
+    _why=''
+    if ! sudo -p 'Password (once, to install the boot-time start): ' \
+              install -o root -g wheel -m 644 "$TMP_DAEMON" "$TK_DAEMON_PLIST" 2>/dev/null; then
+      _why='no password given'
+    elif ! tk_bootstrap system "$TK_DAEMON_PLIST"; then
+      _why="launchd would not load it: $TK_BOOTSTRAP_ERR"
+    fi
+    rm -f "$TMP_DAEMON"
+
+    # Falling back is what CLEARS a daemon launchd refused: the branch below
+    # removes the daemon plist for any tier that is not boot, so `status` --
+    # which reads the file off disk, not launchd -- cannot go on promising
+    # coverage from boot with nothing running. Nothing extra to do here.
+    if [ -z "$_why" ]; then
       tk_log "installed the boot-time start, running as $(id -un), unelevated"
       # The boot tier owns launchd. A launchd label is per DOMAIN, so a
       # LaunchAgent left in place comes back at the next login beside the
       # daemon and respawns on the lock every ten seconds, forever.
       rm -f "$TK_PLIST"
     else
-      # Nothing elevates without someone choosing it. Fall back and SAY SO --
-      # silently downgrading a tier is how someone discovers months later that
-      # switching does nothing until they log in.
-      rm -f "$TMP_DAEMON"
-      tk_log 'no password given -- falling back to starting at login.'
+      tk_log "$_why -- falling back to starting at login."
       tk_log 'Re-run this and choose "From boot" to try again.'
       TK_TIER_APPLIED=login
       sed -i '' 's/^\([[:space:]]*install\.autostart[[:space:]]*=[[:space:]]*\).*/\1login/' "$CONFIG"
@@ -370,13 +421,14 @@ EOF
       # come back after a reboot until then, which is what "no" means.
       tk_log 'autostart is off; the agent is installed but not loaded.'
       tk_log 'start it with:  trigger-kvm restart'
-    elif "$TK_LAUNCHCTL" bootstrap "$DOMAIN" "$TK_PLIST" >/dev/null 2>&1; then
+    elif tk_bootstrap "$DOMAIN" "$TK_PLIST"; then
       tk_log 'loaded the LaunchAgent'
     else
       # Over SSH there is no gui domain to load into. The config is written and
       # the agent installed; it starts at the next login. Not an error under
       # set -e, which used to abort here with the config already written.
-      tk_log 'could not load the LaunchAgent now -- this is not a login session.'
+      tk_log "could not load the LaunchAgent now: $TK_BOOTSTRAP_ERR"
+      tk_log 'That is normal over SSH -- there is no login session to load into.'
       tk_log 'It starts at your next login; to start it sooner:  trigger-kvm restart'
     fi
   fi

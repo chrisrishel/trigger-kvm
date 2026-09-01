@@ -70,6 +70,18 @@ LaunchAgent file (booting it out covers this session only -- it would start
 again at login beside the daemon and respawn on the lock every ten seconds),
 and choosing login or no writes it back. Nothing else writes either plist.
 
+**`tk_bootstrap` in `lib/manage.sh` is the ONLY function that may load a job into
+launchd, and its failure is CAUGHT, never thrown.** Its bootout runs first, so
+between the two calls nothing is watching; under `set -euo pipefail` an unchecked
+`bootstrap` aborted inside that window, leaving `status` reporting "at boot" off
+a plist on disk with nothing running. The other shape was `|| true` then an
+unconditional "restarted". Elevation is not a parameter -- it follows from the
+domain; the BOOTOUT stays best-effort, since it fails whenever nothing is loaded.
+The boot tier can fail to land two ways, no password or launchd refusing, and
+both take the ONE answer: fall back to login, say why, rewrite
+`install.autostart` -- which is also what removes the daemon plist.
+`conventions.tests.sh` holds the seam as the only door.
+
 **The boot tier is a LaunchDaemon in `/Library/LaunchDaemons` with `UserName`
 set, so it runs AS THE USER, UNELEVATED.** Root installs it into the system
 domain; root does not run it -- the same property the Windows S4U tier has, and

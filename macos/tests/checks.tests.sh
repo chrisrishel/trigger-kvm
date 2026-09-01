@@ -434,9 +434,29 @@ assert_match "$CK_OUT" 'The running watcher is paused for this check.'
 log=$(cat "$TK_FAKE_LAUNCHCTL")
 assert_match "$log" 'bootout gui/'   'stood down before the flip'
 assert_match "$log" 'bootstrap gui/' 'and restored after'
+# tk_bootstrap does its OWN bootout before every load, so "a bootout appears"
+# stopped proving the check stood the watcher down -- the reload alone puts one
+# in the log. What proves it is a SECOND bootout: the stand-down, before the
+# seam's reload pair. Removing the stand-down leaves exactly one, and this is
+# the assertion that notices.
+assert_true "$([ "$(printf '%s\n' "$log" | grep -c 'bootout gui/')" -ge 2 ] && echo 0 || echo 1)" \
+  "only the seam's own bootout is here; the stand-down is missing: $log"
 assert_true "$([ "$(printf '%s\n' "$log" | grep -n bootout | cut -d: -f1 | head -1)" -lt \
                 "$(printf '%s\n' "$log" | grep -n bootstrap | cut -d: -f1 | head -1)" ] && echo 0 || echo 1)" \
   "bootout must come before bootstrap: $log"
+
+it 'and says so LOUDLY when the watcher it paused could not be restarted'
+# This check stands the watcher down on purpose. A failed restore therefore
+# leaves the machine with nothing watching, caused by the check itself -- the
+# one outcome that must never be silent. It was `|| true`.
+seed_two
+: >"$TK_PLIST"
+rm -f "$TK_DAEMON_PLIST"
+: >"$TK_FAKE_LAUNCHCTL"
+TK_FAKE_LAUNCHCTL_FAIL=bootstrap check_with '8
+11'
+assert_match "$CK_OUT" 'could not restart the watcher this check paused'
+assert_match "$CK_OUT" 'NOTHING IS WATCHING until you run:  trigger-kvm restart'
 
 it 'says so when the boot-tier watcher is left running, rather than asking for a password'
 rm -f "$TK_PLIST"
