@@ -43,14 +43,13 @@ once that panel is being configured, and the check offers it again -- in either
 direction -- if the chosen method turns out not to answer. See
 `specs/configure.md` sections 6.2 and 10.5.
 
-Amended 2026-08-31: this rule used to require standard DDC/CI to fail first. That
-was a conservative default, not a safety mechanism, and it cost more than it
-bought (a check that moves a panel purely in order to fail). "Never probed" is the
-half that stops monitors being bricked and is UNCHANGED: values come only from the
-table or from what the user types in that moment, and the transport gate (rule 5)
-still refuses a manufacturer channel to a panel whose EDID vendor does not match.
-Blind value-walking is standard-DDC-only, one MCCS value at a time, offered with
-its cost stated, and refused when it would take the last display.
+"Never probed" is the half that stops monitors being bricked: values come only
+from the table or from what the user types in that moment, and the transport
+gate (rule 5) refuses a manufacturer channel to a panel whose EDID vendor does
+not match. Blind value-walking is standard-DDC-only, one MCCS value at a time,
+offered with its cost stated, and refused when it would take the last display.
+(This rule once required standard DDC/CI to fail first; why that changed is
+`specs/CHANGELOG.md` revision 2.)
 
 **2. Never verify a switch by reading a VCP value back.**
 Reads are unreliable on both monitors and *have already produced false negatives*:
@@ -83,15 +82,12 @@ on each platform exactly ONE function can emit source `0x50`, the source byte is
 not a parameter, and it refuses unless the target's EDID manufacturer is GSM
 (`0x1E6D`). There is no generic "write to source N" entry point, so no caller can
 aim it at another vendor's panel, including by accident. Do not add one. Each
-platform's `AGENTS.md` names its gate, and each suite asserts the gate is the only
-door.
+platform's `AGENTS.md` names its gate, and each suite must assert the gate is the
+only door (macOS does; Windows owes it -- see its `HANDOFF.md`).
 
 The switcher also refuses the LG switch unless exactly one enumerated output
 identifies as the LG -- zero is a refusal, and so is more than one, because an
 ambiguous target cannot be aimed at safely.
-
-The rule has this shape because the LG was once driven by a tool that sprayed the
-packet to every output; `windows/AGENTS.md` has that history.
 
 **Expect the LG to flicker briefly on every LG switch, including a re-assert to the
 input it is already on.** It is re-negotiating the link, and each write is sent
@@ -102,15 +98,17 @@ once already -- do not go looking for a bug in it.
 
 None of these is a bug to fix on sight. Each has a measurement behind it in
 `docs/measurements.md`; re-measure before changing the detector rather than
-reasoning from a plausible premise -- three claims in this file were once stated
-as measurement and were wrong, each an inference from a real observation.
+reasoning from a plausible premise (that file opens with the three claims that
+were once "measured" here and were wrong).
 
 - **The detector fires on an absent -> present EDGE, debounced and settled, and
   the debounce is load-bearing** -- a single physical plug produces dozens of
-  events on Windows, not one. **Only one device ever appears in the log, and that
-  is correct**: both watched devices arrive together, whichever lands first fires,
-  the other falls inside the debounce window. Do not "fix" it, and do not read a
-  single-device log as the other device being misconfigured.
+  events on Windows, not one. **Usually only one device appears in the log, and
+  that is correct**: both watched devices arrive together, whichever lands first
+  fires, the other falls inside the debounce window. A second `pull` on one flip
+  means the other device arrived outside that window; harmless. Do not "fix"
+  either, and do not read a single-device log as the other device being
+  misconfigured.
 - **The watcher is ONE process with N event sources.** Never add a second
   persistent process, and never tell users to run one: two watchers each hold
   their own debounce and both fire on the same arrival. That includes a hotkey --
@@ -142,8 +140,9 @@ as measurement and were wrong, each an inference from a real observation.
   as the user (admin/root registers it, nothing elevated runs on the switch path).
   Do not change which is the default without asking -- no-admin is a deliberate
   posture. Nothing in a switcher or watcher knows or asks when it was started; if
-  one ever needs to, the abstraction is wrong. Tiers share one job name, so
-  installing either replaces the other.
+  one ever needs to, the abstraction is wrong. Installing either tier removes the
+  other -- by the shared task name on Windows, and explicitly on macOS, where a
+  launchd label is per domain and both can otherwise coexist.
 - **Enumerating is not writing. Do not generalise from one to the other.** Each
   was proved separately before the pre-login tier was claimed.
 
@@ -193,16 +192,13 @@ the point:**
 4. **PUSH IT.** Nothing above reaches another platform until you do.
 
 **Publishing is the push, not the commit.** The other platform's suite reads ITS
-checkout, so an unpushed changelog entry leaves it green and unaware -- the exact
-silent drift the mechanism exists to prevent. So **push anything addressed to
-another platform**: `specs/`, `specs/CHANGELOG.md`, and equally an entry appended
-to another platform's `HANDOFF.md`. This overrides the usual "do not push without
-being asked"; it was agreed as a standing policy. **Push the finished unit** --
-spec, this platform's implementation, changelog entry, this platform's
-`SPEC-REVISION` -- not a bare spec edit, which leaves YOUR suite red too and gives
-whoever pulls two failing platforms with no way to tell whose is whose. Still no
-force-push, amend or rebase without asking; platform-local work is still pushed
-only when asked.
+checkout, so an unpushed changelog entry leaves it green and unaware. **Push
+anything addressed to another platform** -- `specs/`, `specs/CHANGELOG.md`, an
+entry appended to its `HANDOFF.md` -- as a finished unit (spec, this platform's
+implementation, changelog entry, this platform's `SPEC-REVISION`), never a bare
+spec edit. This is a standing policy that overrides "do not push without being
+asked". Still no force-push, amend or rebase without asking; platform-local work
+is pushed only when asked.
 
 **DO NOT CHANGE ANYTHING IN THE OTHER PLATFORM'S DIRECTORY** -- not its code, not
 its tests, not its docs. You cannot run its tests or see its hardware, and a
@@ -212,37 +208,21 @@ half-made change there is worse than none. **Appending an entry to its
 A `HANDOFF.md` is an **INBOX** -- what THAT platform owes -- for what the machinery
 CANNOT tell it, chiefly a DEFECT YOU NOTICED IN ITS CODE by reading it. **A spec
 change does NOT go there**: it is one fact and publishes itself through the
-changelog and the conformance check; fanning it out is N-1 edits per change and
-silent if one is missed. Fan out when the message is N different claims; publish
-once when it is one fact. Anyone may append; only that platform works through it
-and deletes from it. They are QUEUES, not logs: delete an entry once it lands.
-Mark each entry `Kind: spec change` or `Kind: defect report`, and say in
-`Verified:` what you could and could not check from where you were.
+changelog and the conformance check. Fan out when the message is N different
+claims; publish once when it is one fact. Only that platform works through its
+inbox and deletes from it; entries carry `Kind:` and `Verified:`. The entry
+format and the reasoning are in `specs/README.md`.
 
 **Read your own platform's HANDOFF.md before starting work there, AND RUN YOUR
 PLATFORM'S SUITE.** The handoff is only half the inbox: a spec change appears as
 two failing tests -- the conformance check naming the strings you are missing, and
-the revision check naming the changelog entries you owe. A platform that reads an
-empty handoff and concludes it is in step has skipped the half that carries the
-spec.
+the revision check naming the changelog entries you owe.
 
-**This is enforced, not merely asked for.** Each suite runs a conformance check
-asserting every string the spec marks normative is present in that platform's
-sources, plus a revision check against `specs/CHANGELOG.md`. macOS:
-`macos/tests/spec.tests.sh` driving `specs/check-conformance.sh`; Windows:
-`windows/tests/spec.tests.ps1` driving `windows/tests/check-conformance.ps1`.
-**Prove the instrument before trusting it**: both suites self-test their checker
-against throwaway specs BEFORE asserting real conformance, because a checker that
-can never fail passes everything. **The bootstrap gap**: publishing once only
-reaches a platform that has these checks, so the first thing any new
-implementation owes is the checks themselves; until then its `HANDOFF.md` carries
-what the machinery would say, and says it is doing so. A handoff entry points AT
-a mechanism rather than pasting its output -- a pasted list goes stale silently.
-
-Know what the check does not prove: a string is PRESENT, not REACHABLE. A shadowed
-function can still contain it, which is how `windows/install.ps1` once had the
-older wording live and the newer wording dead in one file. Pair it with a
-structural check for duplicate definitions; both suites have one.
+**This is enforced, not merely asked for**: each suite runs a self-tested
+conformance check and a revision check against `specs/CHANGELOG.md`, paired with
+a structural check for duplicate definitions (a string can be PRESENT and
+unreachable). What the checks prove, their blind spots and the bootstrap gap for
+a new implementation are in `specs/README.md`.
 
 **What does NOT go in a spec.** Each fact lives in exactly one file, because two
 representations of one fact can disagree and one cannot. The hard safety rules and
@@ -255,10 +235,8 @@ earn their existence when their job arises, not before.
 
 Two agents work this repo: Claude Code, which loads `CLAUDE.md` and its
 `@AGENTS.md` import, and Codex, which loads the `AGENTS.md` chain from the git
-root down to its working directory. **Codex reads at most 32,768 bytes of that
-chain and truncates the rest silently, mid-line, with no warning anywhere a user
-sees.** Measured 2026-08-31 on the installed build; the reasoning and the
-measurement are in `docs/decisions/002-instruction-files-for-two-agents.md`.
+root down to its working directory and **truncates it silently at 32,768 bytes**
+(measured; `docs/decisions/002-instruction-files-for-two-agents.md`).
 
 So: this file holds what every session needs (cap 20 KB); `macos/AGENTS.md` and
 `windows/AGENTS.md` hold that platform's hazards (10 KB each); dated evidence goes
@@ -278,7 +256,6 @@ cd macos
 make                                      # build event-watch and display-probe
 make test                                 # shellcheck + the suite; no hardware needed
 make mutate                               # reintroduce each bug the suite should catch
-make plist PLIST=/tmp/t.plist             # generate + lint the LaunchAgent, loads nothing
 make install / status / logs / uninstall
 
 trigger-kvm pull                          # pull configured monitors here
@@ -310,9 +287,9 @@ fails. `pause`, never kill/stop -- each platform's `AGENTS.md` says why.
 - Conventional commits: `feat:`, `fix:`, `refactor:`, `docs:`, `chore:`, scoped by
   platform where useful (`feat(macos): ...`).
 - **Do not hardcode display indices or UUIDs in switching code.** Resolve by EDID
-  at runtime -- index numbers shift, and index `1` silently becoming the *other*
-  monitor would send LG service-channel writes to the ASUS. Not theoretical: the
-  two indices **swapped on the Windows machine** on 2026-08-30. **Do not write a
+  at runtime -- index numbers shift (the two indices have swapped on the Windows
+  machine; `docs/measurements.md`), and index `1` silently becoming the *other*
+  monitor would send LG service-channel writes to the ASUS. **Do not write a
   mapping down anywhere and treat it as stable**, including in scratch notes; a
   stale one is worse than none. Neither an index nor a description string is a
   usable key; the EDID manufacturer and product read off the output is.
@@ -326,7 +303,3 @@ fails. `pause`, never kill/stop -- each platform's `AGENTS.md` says why.
   knowledge -- which methods and VCP codes a monitor model needs, and which values
   are safe to send it. Do not push discovered, per-desk facts back into either the
   scripts or `displays.toml`.
-- **`pull` and `to` are one lookup but two verbs, for a safety reason.** `pull`
-  asks for `computer.this`, which describes hardware this computer is plugged into
-  and can be sure of. Any other name describes inputs on hardware it cannot
-  observe. The trigger may only ever run `pull`.
