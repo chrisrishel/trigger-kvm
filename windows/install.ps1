@@ -2549,8 +2549,14 @@ function Test-OneComputer {
         Write-Host '  then tell me which input that is.'
         Write-Host ''
         if (Read-YesNo '  Do you know which input it is?' $true) {
+            # -Taken, like every other input question. Without it this one repair
+            # let someone pick an input another computer already holds, and the
+            # writer then emitted the same key twice while the reader kept one --
+            # specs/configure.md 6.1, "Two computers cannot share one input".
+            $taken = @{}
+            foreach ($m in $Answer.Map.Keys) { if ($m -ne $This) { $taken[$Answer.Map[$m]] = $m } }
             $Answer.Map[$This] = Read-InputValue -Table (Get-InputTable -Method $Answer.Method -Map $Answer.Map) `
-                -Default $Answer.Map[$This] `
+                -Default $Answer.Map[$This] -Taken $taken `
                 -Prompt ("On the {0}, which input is '{1}' on?" -f $Answer.Name, $This)
         } else {
             $found = Invoke-BlindWalk -Answer $Answer -Config $Config -OtherPanels (@($All).Count - 1)

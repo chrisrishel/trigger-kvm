@@ -192,6 +192,30 @@ $r = Invoke-DisplayTest -Answers (New-Solo) -This 'pc'
 Assert-Match (Get-Said) 'did not answer the standard channel, and no manufacturer values'
 Assert-True (-not $r.Ok)
 
+# ---- outcome 2's repair cannot hand this computer another one's input --------
+#
+# specs/configure.md 6.1. Every other input question passes -Taken; this one
+# missed it, so the row for the input `mac` already holds was neither annotated
+# nor disabled nor refused. Accepting it wrote the same key twice and the reader
+# kept one of them.
+#
+# The desk: pc on 0x11, mac on 0x12. The panel changes but does not come back,
+# so this computer's input is re-asked -- and 0x12 must not be available.
+Reset-Said; Reset-Sent; Set-Outcomes @(2, 0)
+Set-Answers @(
+    '','n',         # ready / it did not come back
+    'y',            # do you know which input it is? yes
+    '4',            #   HDMI 2 (0x12) -- mac's, so this must be refused...
+    '3'             #   ...and HDMI 1 (0x11) picked instead
+)
+$panel = New-Panel 'lg' ([ordered]@{ pc = '0x0F'; mac = '0x12' })
+$r = Invoke-DisplayTest -Answers @($panel) -This 'pc'
+$said = Get-Said
+Assert-Match $said '0x12   assigned to mac' 'the input mac holds is annotated here too'
+Assert-Match $said 'Pick a number from the list' 'and picking it is refused, not accepted'
+Assert-Equal '0x11' $panel.Map['pc']  'so the repair had to take a free input'
+Assert-Equal '0x12' $panel.Map['mac'] 'and the other computer did not move'
+
 # ---- declining is not a pass -------------------------------------------------
 
 Reset-Said; Reset-Sent; Set-Outcomes @()

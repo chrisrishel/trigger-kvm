@@ -265,6 +265,11 @@ Invoke-Mutation 'values: EDID ids are compared as hex text' `
     '        if (($Existing["display.$l.vendor"]  -replace ''^0[xX]'','''').ToUpper().PadLeft(4,''0'') -ne $Key.Split('':'')[0]) { continue }
         if (($Existing["display.$l.product"] -replace ''^0[xX]'','''').ToUpper().PadLeft(4,''0'') -ne $Key.Split('':'')[1]) { continue }'
 
+Invoke-Mutation 'values: outcome 2 re-asks without the map, so an input can be taken twice' `
+    'install.ps1' 'monitor-check.tests.ps1' `
+    '                -Default $Answer.Map[$This] -Taken $taken `' `
+    '                -Default $Answer.Map[$This] `'
+
 # --- the monitors list --------------------------------------------------------
 
 Invoke-Mutation 'monitors: the list disables a row it does not own' `
