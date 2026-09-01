@@ -305,7 +305,8 @@ Each one gets a name, and the name is how you switch to it:
    2) pc
 
    4) Add another computer
-   5) Done
+   5) Remove a computer
+   6) Done
 ```
 
 ```normative
@@ -314,6 +315,7 @@ How many OTHER computers are plugged into these monitors?
 What is the other one called?
 Name for computer
 Add another computer
+Remove a computer
 this computer
   Pick a name to change it, or Done.
 ```
@@ -326,11 +328,59 @@ this computer
   A number, please (16 at most).
 ```
 
-- Then, **always**, the list: picking a name **renames** it; entering nothing
-  **removes** it; plus `Add another computer` and `Done`. A re-run goes straight
+- Then, **always**, the list: picking a name **renames** it; plus
+  `Add another computer`, `Remove a computer` and `Done`. A re-run goes straight
   to this list.
 - The default name for THIS computer comes from the host name, lower-cased and
   reduced to the character rule. It is never typed in anger — `pull` is the verb.
+
+### 5.0 Enter keeps what is there
+
+The rename prompt is pre-filled with the current name, and **a blank answer keeps
+it**, exactly as every other prompt in this walkthrough behaves.
+
+It used to **remove the computer**, which made the most innocuous keypress
+available the destructive one. That is the same failure as accepting an empty
+multi-select (§3) — enter is what people press — and it showed up in the code as
+a workaround: the prompt had to withhold its own default, because supplying one
+would have made removal unreachable. A question that cannot follow the tool's own
+convention is the wrong question, not a question needing an exception.
+
+**Removal is a row instead**, for three reasons that all point the same way: it
+is visible in the list rather than being a gesture you have to know; it works in
+the typed fallback (§3.5), which a keypress does not, and which is what each
+platform's suite drives; and a row has a detail column to state the cost in.
+
+### 5.3 Removing a computer
+
+```
+--- remove a computer ---
+
+ > 1) pc                          on lg and asus
+   2) linux                       on lg
+
+   4) Done
+```
+
+```normative
+--- remove a computer ---
+  Removing a computer also clears its input on every monitor it is on.
+```
+
+- **`computer.this` is not offered.** This computer is not optional: its name is
+  what `pull` resolves, and a config without it is one the switcher declines to
+  act on.
+- Each row's detail names the panels that computer is on, so the cost is visible
+  **before** the row is chosen, not only after.
+- Removal is confirmed, and the confirmation is where the consequence is stated
+  in full. It defaults to **no**:
+
+```normative
+  Its input on every monitor is cleared too. Nothing else changes.
+```
+
+- Nothing is written until Save (§4.4), so a removal is still recoverable by
+  Cancel. That is a backstop, not the reason the confirmation can be skipped.
 
 ### 5.1 One name per computer
 
@@ -396,6 +446,23 @@ Short name for it
 - Picking one asks: manage it? → a short name → **for each computer, which input
   it is on**. **Machines-major, not inputs-major**: a panel has eight possible
   inputs and two real ones.
+- Answering **no** stops that panel following the switch and **forgets which
+  computer is on which of its inputs**. That is more than the question implies —
+  "manage" sounds like a flag, and the answer is destructive — so when the panel
+  has assignments to lose, it is confirmed and the loss is named. A panel with
+  nothing configured has nothing to lose and is not asked twice.
+
+```normative
+  Stop managing this monitor?
+  Which computer is on which of its inputs is forgotten. Nothing else
+```
+
+  This is the same rule as removing a computer (§5.3), and deliberately so:
+  **anything that discards configuration says what it discards and asks.** That
+  is the symmetry worth having between the two menus — not a shared keystroke.
+  A monitor is bolted to the desk and cannot be deleted; only its assignments can,
+  which is why this stays a question about managing rather than becoming a
+  `Remove` row.
 - **Standard DDC/CI is the default for every panel, whatever the make.** An
   existing method is a settled answer — it was proven by someone watching a
   screen — and must not be walked back to standard on a re-run.

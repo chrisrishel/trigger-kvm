@@ -31,6 +31,30 @@ tell a platform — chiefly a defect someone found in its code by reading it.
 
 Fan out when the message is N different claims. Publish once when it is one fact.
 
+## What an entry has to carry
+
+**This file is the ONLY context channel for a spec change**, since none is fanned
+out to the platforms. That is a fair trade only while an entry actually carries
+the context a handoff would have. A thin entry — "§5 changed" — breaks the deal,
+and the next person's instinct that they should have been written to directly
+becomes correct.
+
+So every entry carries, and the entries below are the worked examples:
+
+- **What changed, in one bold line** a reader can match against a symptom.
+- **`Sections:`** — the exact spec sections, linked. This is "where it is
+  relevant"; the conformance failure gives strings, not places.
+- **`Act on:`** — what an implementation must DO, as opposed to what the spec now
+  says. Name a platform where they differ: revision 4 is macOS-only, revision 3
+  named the file and function Windows had to change.
+- **Why the old behaviour was wrong.** The reasoning does not survive in the spec
+  — the spec describes what is true now, not what it replaced — so if it is not
+  here it is nowhere, and someone re-proposes the old design in a year.
+
+What does NOT go here: how a platform should implement it. That is the thing the
+other platform is better placed to decide, and the thing you cannot check, since
+you can neither run its tests nor see its hardware.
+
 ## Why this exists alongside the conformance check
 
 The conformance check already tells every platform when the spec adds a string
@@ -42,6 +66,46 @@ it does not have. It is blind to two things, and this closes them:
   keeps old wording forever and stays green.
 
 ---
+
+## Revision 5 — 2026-08-31
+
+**Enter must never destroy. Removing a computer becomes a row, and unmanaging a
+monitor states what it forgets.**
+
+Sections: [`configure.md`](configure.md) §5, §5.0, §5.3, §6.
+
+**Act on (both platforms):**
+
+1. **§5.0 — the rename prompt keeps the name on a blank answer**, pre-filled with
+   the current name like every other prompt. It used to REMOVE the computer.
+
+2. **§5.3 — a `Remove a computer` row**, between `Add another computer` and
+   `Done`, opening a list that excludes `computer.this`, names the panels each
+   computer is on in the detail column, and confirms with a default of no.
+
+3. **§6 — answering no to `Manage this monitor?` confirms** when the panel has
+   assignments, naming what is forgotten. A panel with none is not asked twice.
+
+**Why.** Blank-means-remove made the most innocuous keypress available the
+destructive one — the same failure as accepting an empty multi-select, which §3
+already exists to prevent, for the same reason: enter is what people press.
+
+It was visible in the code as a workaround before it was visible in use. The
+prompt had to withhold its own default, because supplying one would have made
+removal unreachable; the comment saying so was still there. A question that has
+to opt out of the tool's own convention is the wrong question.
+
+**Why a row and not a delete key.** A keypress has no typed-fallback equivalent,
+and §3.5 makes that fallback load-bearing — it is how each platform's suite drives
+`configure` end to end, so a key-only action is one no suite can reach. It also
+breaks the rule the whole UI rests on, that enter does what the highlighted row
+says; a hidden second verb per row is what that rule exists to prevent. A row is
+visible, typed-fallback-native, and has a detail column to state the cost in.
+
+**Why the monitor keeps a question rather than gaining a `Remove` row.** A monitor
+is bolted to the desk; only its assignments can be removed. The symmetry worth
+having between the two menus is not a shared keystroke but a shared rule:
+anything that discards configuration says what it discards and asks.
 
 ## Revision 4 — 2026-08-31
 

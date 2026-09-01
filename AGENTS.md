@@ -523,6 +523,14 @@ it. So the common operation, crossing a finished item off, always happens in
 your own directory. **Read your own platform's HANDOFF.md before starting work
 there.**
 
+**And RUN YOUR PLATFORM'S SUITE before starting work, for the same reason.** The
+handoff is only half the inbox: a spec change does not appear there, it appears
+as two failing tests -- the conformance check naming the strings you are missing,
+and the revision check naming the changelog entries you owe. Publishing once only
+reaches a platform that looks, and the suite is where it looks. A platform that
+reads its handoff, sees it empty, and concludes it is in step has checked the
+half that carries defect reports and skipped the half that carries the spec.
+
 They are QUEUES, not logs: delete an entry once it lands, because git already
 keeps the history.
 

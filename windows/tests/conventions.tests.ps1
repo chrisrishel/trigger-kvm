@@ -71,6 +71,32 @@ foreach ($s in $scripts) {
 
 Assert-Equal 0 $complaints.Count ("duplicate definitions:`n  " + ($complaints -join "`n  "))
 
+# ---- nothing shadows a built-in cmdlet ---------------------------------------
+#
+# A function named after a real cmdlet wins inside the script that defines it and
+# loses everywhere else, which is the worst of both. This is not hypothetical:
+# the computer-removal menu was called Remove-Computer, which is a real cmdlet
+# that removes a machine from a DOMAIN. install.ps1 shadowed it, and the moment a
+# test called it without importing the function, PowerShell resolved the real one
+# and reported "NamedParameterNotFound, RemoveComputerCommand".
+#
+# The shipped scripts only. Test files shadow Write-Host, Read-Host and
+# Start-Sleep deliberately -- that is what stubbing IS -- and the whole harness
+# depends on it.
+
+$shadowed = @()
+foreach ($s in @(Get-ChildItem -LiteralPath $WinDir -Filter '*.ps1' -File)) {
+    foreach ($name in (Get-TopLevelFunction $s.FullName).Keys) {
+        $builtin = Get-Command -Name $name -CommandType Cmdlet -ErrorAction SilentlyContinue
+        if ($builtin) {
+            $shadowed += ("{0} defines {1}, which is a real cmdlet ({2})" -f
+                          $s.Name, $name, $builtin.Source)
+        }
+    }
+}
+
+Assert-Equal 0 $shadowed.Count ("functions shadowing cmdlets:`n  " + ($shadowed -join "`n  "))
+
 # ---- "computer", never "machine", in anything the user can see ---------------
 #
 # specs/configure.md 2. The conformance check cannot ask this: it tests PRESENCE,

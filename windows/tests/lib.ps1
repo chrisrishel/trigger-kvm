@@ -104,6 +104,27 @@ function Assert-Match {
     }
 }
 
+function Assert-MatchCase {
+    <#
+      .SYNOPSIS
+      Assert-Match, but case-sensitively.
+
+      .DESCRIPTION
+      PowerShell's -match is CASE-INSENSITIVE. That is fine for prose and wrong
+      for anything where the case IS the meaning -- a yes/no default is spelled
+      "[y/N]" or "[Y/n]", and a plain -match for one accepts the other, which is
+      the opposite default and the whole point of the assertion.
+
+      Found by a mutation that survived: flipping the removal confirm to default
+      YES left the suite green.
+    #>
+    param([string]$Text, [string]$Pattern, [string]$Because)
+    if ($Text -cnotmatch $Pattern) {
+        throw ("'{0}' does not match /{1}/ case-sensitively{2}" -f $Text, $Pattern,
+               $(if ($Because) { " -- $Because" } else { '' }))
+    }
+}
+
 function Assert-NoMatch {
     param([string]$Text, [string]$Pattern, [string]$Because)
     if ($Text -match $Pattern) {

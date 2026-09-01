@@ -15,7 +15,7 @@ Import-Subject -Script 'install.ps1' -Variables @('DIALECTS','MCCS_INPUTS','COMP
     'Read-Default','Read-YesNo','Get-MenuWidth','Write-MenuFrame','Clear-ToLineEnd',
     'Split-Detail','Get-ItemWidth','Get-MenuRow',
     'Select-One','Select-Many','Join-Names','Get-InputName',
-    'Get-DefaultComputerName','Get-KnownComputers','Read-Computers',
+    'Get-DefaultComputerName','Get-KnownComputers','Read-Computers','Read-ComputerRemovals',
     'Format-ComputerName','Read-ComputerName',
     'Read-InputValue','Get-InputTable','Get-DisplayMap','Read-Method',
     'Get-DisplayAnswers','Get-ConfiguredAnswers','Get-PriorDisplay','Read-Monitors',
@@ -128,7 +128,7 @@ Set-Answers @(
     'pc',           #   what this computer is called
     '1',            #   how many others
     'mac',          #   and its name
-    '5',            #   the list: Done
+    '6',            #   the list: Done (Add is 4, Remove a computer is 5)
     '2',            # back at the menu, and it lands on Monitors
     '1',            #   the list: PG42UQ
     'y','',         #     manage? / label
@@ -216,7 +216,7 @@ Set-Answers @(
     '1',            # menu -> Computers
     '2',            #   rename row 2 (mac)
     'macbook',
-    '5',            #   Done
+    '6',            #   Done
     '5','1',        # menu -> Add to PATH?
     '10'            # straight back to the menu, and Save -- no monitor questions
 )
@@ -231,7 +231,8 @@ Assert-Equal 'pc'      $c['display.lg.input.0xd0']   'without disturbing the res
 # Removing a computer takes it out of the maps rather than leaving a dangling name.
 Set-Config $CONFIGURED
 Set-Outcomes @()
-Set-Answers @('1', '2', '', '4', '5','1', '10')   # Computers -> remove -> Done -> PATH -> Save
+# Computers -> Remove a computer -> mac -> confirm -> Done -> Done -> PATH -> Save
+Set-Answers @('1', '5', '1', 'y', '5', '5','1', '10')
 Invoke-Configure
 Assert-Equal 0 $LASTEXITCODE
 $c = Get-Written
@@ -293,7 +294,7 @@ Assert-Match ((Get-Asked) -join '|') 'Choice' 'q was refused there, and Cancel w
 Set-Config $CONFIGURED
 Set-Outcomes @()
 Set-Answers @(
-    '1','pc','1','mac','5',
+    '1','pc','1','mac','6',
     '2','1','y','','3','1','2','y','','1','9','0xD0','10','0xD1','4',
     '3','1,3',
     '4','1', '5','1',           # autostart and PATH must be answered
@@ -397,16 +398,57 @@ Assert-Equal 'pc'     $c['display.lg.input.0xd0']
 Assert-Equal 'mac'    $c['display.lg.input.0xd1']
 Assert-Equal 'pc'     $c['display.asus.input.0x11'] 'and must not disturb the others'
 
-# Whereas answering "no" still takes it out, which is the outcome esc must not
-# be confused with.
+# Whereas answering "no" still takes it out, which is the outcome esc must not be
+# confused with -- but it now says what it is about to forget, and asks again.
+#
+# specs/configure.md 6. "Manage this monitor?" reads like a flag and the answer is
+# destructive: it discards which computer is on which input. Same rule as removing
+# a computer, which is the symmetry worth having between the two menus.
 Set-Config $CONFIGURED
 Set-Outcomes @()
-Set-Answers @('2', '2', 'n', '4', '5','1', '10')
+Reset-Printed
+Set-Answers @('2', '2', 'n', 'y', '4', '5','1', '10')
 Invoke-Configure
 Assert-Equal 0 $LASTEXITCODE
 $c = Get-Written
-Assert-True (-not $c.ContainsKey('display.lg.method')) '"no" removes the panel'
+Assert-True (-not $c.ContainsKey('display.lg.method')) '"no", confirmed, removes the panel'
 Assert-Equal 'pc' $c['display.asus.input.0x11']       'and only that panel'
+$said = Get-Printed
+Assert-Match $said 'Which computer is on which of its inputs is forgotten\. Nothing else'
+Assert-MatchCase ((Get-Asked) -join '|') 'Stop managing this monitor\? \[y/N\]' `
+    'and the confirm defaults to no'
+
+# Declining the confirm keeps the panel exactly as it was.
+Set-Config $CONFIGURED
+Set-Outcomes @()
+Set-Answers @('2', '2', 'n', 'n', '4', '5','1', '10')
+Invoke-Configure
+Assert-Equal 0 $LASTEXITCODE
+$c = Get-Written
+Assert-Equal 'lg-alt' $c['display.lg.method']       'declining the confirm changes nothing'
+Assert-Equal 'mac'    $c['display.lg.input.0xd1']
+
+# A panel with NOTHING configured has nothing to forget, so it is not asked twice.
+# Asked of Get-DisplayAnswers directly: driving this through Invoke-Configure does
+# not reach it, because a panel dropped from the working set still has its map in
+# the CONFIG until Save, and Read-Monitors falls back to that -- which is right,
+# and is exactly why the guard reads $Existing rather than the working set.
+$LG = [PSCustomObject]@{ EdidVendor = 0x1E6D; EdidProduct = 0x9E9D
+                         Name = 'LG ULTRAGEAR+'; Mfg = 'GSM'; Connector = 'DisplayPort' }
+
+Reset-Printed; Set-Answers @('n')
+$a = Get-DisplayAnswers -Found $LG -Existing $null -Computers @('pc','mac') -This 'pc'
+Assert-Equal $null $a 'a panel with nothing configured is simply not managed'
+Assert-NoMatch ((Get-Asked) -join '|') 'Stop managing this monitor' 'and is not asked twice'
+
+# One that HAS assignments is asked, and declining leaves it alone.
+Reset-Printed; Set-Answers @('n', 'n')
+$a = Get-DisplayAnswers -Found $LG -Computers @('pc','mac') -This 'pc' `
+        -Existing ([PSCustomObject]@{ Label = 'lg'; Method = 'lg-alt'
+                                      Map = [ordered]@{ pc = '0xD0'; mac = '0xD1' } })
+Assert-Equal 'back' $a 'declining the confirm leaves the panel as it was'
+Assert-Match ((Get-Asked) -join '|') 'Stop managing this monitor' 'and it was asked'
+Assert-Match (Get-Printed) 'is forgotten\. Nothing else' 'with the loss named first'
 
 # ---- and it lands between the short name and the inputs ----------------------
 
@@ -467,7 +509,7 @@ Assert-Equal 'pc' (Get-Written)['display.asus.input.0x12'] 'the walk must correc
 Set-Config $null
 Set-Outcomes @()
 Set-Answers @(
-    '1','pc','1','mac','5',
+    '1','pc','1','mac','6',
     '2','1',
     'y','',
     '3',            # pc on HDMI 1
@@ -541,22 +583,67 @@ Assert-Equal '' (Read-ComputerName -Prompt 'name?' -Default '' -AllowBlank) 'bla
 
 # ---- the computers list reports what CHANGED ---------------------------------
 
-Set-Answers @('2', 'macbook', '5')
+# The list is: 1 pc, 2 mac, (3 blank), 4 Add another, 5 Remove a computer, 6 Done.
+
+Set-Answers @('2', 'macbook', '6')
 $r = Read-Computers -This 'pc' -Others @('mac') -Existing
 Assert-Equal 'pc,macbook' ($r.All -join ',')
 Assert-Equal 'macbook'    $r.Renames['mac'] 'a rename has to be reported, so the panels can follow it'
 Assert-Equal 0            @($r.Removed).Count
 Assert-NoMatch ((Get-Asked) -join '|') 'How many OTHER' 'and the count is not re-asked'
 
-Set-Answers @('4', 'linux', '6')
+Set-Answers @('4', 'linux', '7')
 $r = Read-Computers -This 'pc' -Others @('mac') -Existing
 Assert-Equal 'pc,mac,linux' ($r.All -join ',')
 Assert-Equal 0 $r.Renames.Count 'adding renames nothing'
 
-Set-Answers @('2', '', '4')
+# ---- ENTER KEEPS THE NAME. It used to remove the computer --------------------
+#
+# specs/configure.md 5.0. Every other prompt in this walkthrough returns its
+# default on a blank answer, so this one doing something DESTRUCTIVE made the most
+# innocuous keypress available the dangerous one -- the same failure as accepting
+# an empty multi-select, which 3 already exists to prevent.
+
+Reset-Printed; Set-Answers @('2', '', '6')
 $r = Read-Computers -This 'pc' -Others @('mac') -Existing
+Assert-Equal 'pc,mac' ($r.All -join ',') 'enter on the rename prompt keeps the name'
+Assert-Equal 0 @($r.Removed).Count       'and removes nothing'
+Assert-Equal 0 $r.Renames.Count          'and is not even a rename'
+Assert-Match ((Get-Asked) -join '|') "Name for computer 'mac' \[mac\]" `
+    'the prompt is pre-filled, so enter visibly means "keep this"'
+
+# ---- removal is a row, and it confirms with the cost named --------------------
+
+# 5 Remove a computer -> 1 mac -> confirm -> (list again) 2 Done -> 6 Done
+Reset-Printed; Set-Answers @('5', '1', 'y', '5')   # Remove -> mac -> yes -> Done
+# The removal list returns by itself once nothing is left to remove, and the outer
+# list has shrunk with it: pc(1), blank(2), Add(3), Remove(4), Done(5).
+$r = Read-Computers -This 'pc' -Others @('mac') -Existing `
+        -Panels @([PSCustomObject]@{ Label = 'lg';   Map = [ordered]@{ pc='0xD0'; mac='0xD1' } },
+                  [PSCustomObject]@{ Label = 'asus'; Map = [ordered]@{ pc='0x11' } })
 Assert-Equal 'pc'  ($r.All -join ',')
 Assert-Equal 'mac' ($r.Removed -join ',') 'a removal has to be reported too'
+
+$said = Get-Printed
+Assert-Match $said '--- remove a computer ---'
+Assert-Match $said 'Removing a computer also clears its input on every monitor it is on\.'
+Assert-Match $said 'mac\s+on lg' 'the row names the panels it is on, before it is chosen'
+Assert-Match $said 'Its input on every monitor is cleared too\. Nothing else changes\.'
+Assert-MatchCase ((Get-Asked) -join '|') "Remove 'mac'\? \[y/N\]" 'and the confirm defaults to no'
+
+# Declining the confirm keeps it.
+Reset-Printed; Set-Answers @('5', '1', 'n', '3', '6')
+$r = Read-Computers -This 'pc' -Others @('mac') -Existing
+Assert-Equal 'pc,mac' ($r.All -join ',') 'answering no to the confirm removes nothing'
+Assert-Equal 0 @($r.Removed).Count
+
+# THIS computer is never offered for removal: its name is what `pull` resolves.
+Reset-Printed; Set-Answers @('5', '3', '6')
+$r = Read-Computers -This 'pc' -Others @('mac') -Existing
+Assert-Equal 'pc,mac' ($r.All -join ',')
+$rows = @((Get-Printed) -split "`n" | Where-Object { $_ -match '^\s+\d+\) ' })
+Assert-NoMatch (($rows | Select-Object -Last 3) -join "`n") '\bpc\b' `
+    'the removal list offers the OTHER computers only'
 
 # ---- autostart and PATH are suggested, never assumed --------------------------
 

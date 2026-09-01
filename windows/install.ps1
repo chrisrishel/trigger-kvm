@@ -1142,8 +1142,61 @@ function Read-ComputerName {
 # Asked BEFORE the monitors, so a computer is described once and is then an option on
 # every panel. Asking per-monitor meant typing "mac" once per screen, and gave the
 # tool no way to know the two answers were about the same computer.
+# Which computers to take off the list. Returns the survivors.
+#
+# A ROW, NOT A KEYPRESS -- specs/configure.md 5.0. Three reasons that all point
+# the same way: it is visible in the list rather than a gesture you have to know;
+# it works in the typed fallback, which a keypress does not and which 3.5 makes
+# load-bearing, since that fallback is how each platform's suite drives configure;
+# and a row has a detail column to state the cost in BEFORE it is chosen.
+#
+# computer.this is not offered. Its name is what `pull` resolves, so a config
+# without it is one the switcher declines to act on.
+function Read-ComputerRemovals {
+    param([string[]]$Others, $Panels)
+
+    $rest = @($Others)
+    while ($true) {
+        if ($rest.Count -eq 0) { return @() }
+
+        $rows = @()
+        $det  = @()
+        foreach ($c in $rest) {
+            # Which panels lose an input if this one goes. Said here, in the value
+            # column, rather than only in the confirmation -- the point of a row is
+            # that you can see what it costs without choosing it.
+            $on = @($Panels | Where-Object { $_.Map.Contains($c) } | ForEach-Object { $_.Label })
+            $rows += $c
+            $det  += $(if ($on.Count) { 'on ' + (Join-Names $on) } else { 'not on any monitor' })
+        }
+        $rows += '';     $det += ''
+        $done  = $rows.Count
+        $rows += 'Done'; $det += ''
+
+        Write-Host ''
+        Write-Host '--- remove a computer ---'
+        Write-Host '  Removing a computer also clears its input on every monitor it is on.'
+        Write-Host ''
+        $pick = Select-One -Items $rows -Detail $det -Default $done -Escapable
+        if ($pick -lt 0 -or $pick -eq $done) { return $rest }
+
+        $victim = $rows[$pick]
+        Write-Host ''
+        Write-Host '  Its input on every monitor is cleared too. Nothing else changes.'
+        # Defaults to NO. This is the destructive half of this menu, and the whole
+        # reason removal stopped being a blank answer.
+        if (Read-YesNo ("  Remove '{0}'?" -f $victim) $false) {
+            $rest = @($rest | Where-Object { $_ -ne $victim })
+        }
+    }
+}
+
 function Read-Computers {
-    param([string]$This, [string[]]$Others, [switch]$Existing)
+    param([string]$This, [string[]]$Others, [switch]$Existing,
+          # The display answers as they stand, so the removal list can say which
+          # panels a computer is on. Only read, never changed here -- the caller
+          # applies Removed and Renames to the maps.
+          $Panels = @())
 
     Write-Host ''
     Write-Host '--- computers ---'
@@ -1186,12 +1239,13 @@ function Read-Computers {
         $rows += ''; $det += ''
         $add  = $rows.Count
         $rows += 'Add another computer'; $det += ''
+        $rows += 'Remove a computer';    $det += ''
         $rows += 'Done';                 $det += ''
 
         Write-Host ''
-        $pick = Select-One -Items $rows -Detail $det -Default ($add + 1) -Escapable `
+        $pick = Select-One -Items $rows -Detail $det -Default ($add + 2) -Escapable `
                            -Help '  Pick a name to change it, or Done.'
-        if ($pick -eq $add + 1 -or $pick -lt 0) { break }
+        if ($pick -eq $add + 2 -or $pick -lt 0) { break }
 
         if ($pick -eq $add) {
             $rest += Read-ComputerName -Prompt 'Name for the new computer' -Default '' `
@@ -1199,20 +1253,23 @@ function Read-Computers {
             continue
         }
 
+        if ($pick -eq $add + 1) {
+            $rest = @(Read-ComputerRemovals -Others $rest -Panels $Panels)
+            continue
+        }
+
         if ($pick -eq 0) {
             $me = Read-ComputerName -Prompt 'What should I call THIS computer?' `
                                     -Default $me -Taken $rest
         } else {
+            # PRE-FILLED, and a blank answer KEEPS the name -- like every other
+            # prompt here. It used to remove the computer instead, which made the
+            # most innocuous keypress available the destructive one. See
+            # Read-ComputerRemovals for where removal went and why.
             $i = $pick - 1
-            # No default, deliberately. Read-Default substitutes the default when the
-            # answer is empty, so with one supplied "enter nothing to remove it"
-            # could never happen -- pressing enter just re-entered the same name.
-            $victim = $rest[$i]
-            $new = Read-ComputerName -AllowBlank -Default '' `
-                       -Prompt ("New name for '{0}', or enter nothing to remove it" -f $victim) `
-                       -Taken (@($me) + @($rest | Where-Object { $_ -ne $victim }))
-            if ($new) { $rest[$i] = $new }
-            else      { $rest = @($rest | Where-Object { $_ -ne $victim }) }
+            $rest[$i] = Read-ComputerName -Prompt ("Name for computer '{0}'" -f $rest[$i]) `
+                            -Default $rest[$i] `
+                            -Taken (@($me) + @($rest | Where-Object { $_ -ne $rest[$i] }))
         }
     }
 
@@ -1426,7 +1483,22 @@ function Get-DisplayAnswers {
     Write-Host ('  {0}   EDID {1}   {2}' -f $desc, $key, $Found.Connector)
 
     $defaultLabel = if ($Existing) { $Existing.Label } else { ($desc -split ' ')[0].ToLower() }
-    if (-not (Read-YesNo '  Manage this monitor?' $true)) { return $null }
+    if (-not (Read-YesNo '  Manage this monitor?' $true)) {
+        # "No" is DESTRUCTIVE when there is something to lose: it forgets which
+        # computer is on which input. "Manage" reads like a flag, so the loss is
+        # named and confirmed -- the same rule as removing a computer
+        # (specs/configure.md 5.3), and the symmetry worth having between the two
+        # menus. A panel with nothing configured has nothing to lose, so it is not
+        # asked twice.
+        $had = $(if ($Existing -and $Existing.Map) { @($Existing.Map.Keys).Count } else { 0 })
+        if ($had -eq 0) { return $null }
+
+        Write-Host ''
+        Write-Host '  Which computer is on which of its inputs is forgotten. Nothing else'
+        Write-Host '  changes, and nothing is written until you save.'
+        if (Read-YesNo '  Stop managing this monitor?' $false) { return $null }
+        return $BACK
+    }
 
     $label = Read-Default '  Short name for it' $defaultLabel
     $label = ($label -replace '[^A-Za-z0-9_-]', '').ToLower()
@@ -1856,7 +1928,7 @@ function Invoke-Configure {
         switch ($items[$pick]) {
             'Computers' {
                 $m = Read-Computers -This $this -Others @($computers | Where-Object { $_ -ne $this }) `
-                                    -Existing:([bool]$computers.Count)
+                                    -Existing:([bool]$computers.Count) -Panels $answers
                 $this = $m.This
                 $computers = $m.All
 

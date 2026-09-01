@@ -83,7 +83,7 @@ loads a stale copy of the switcher into its runspace.
 | `resolve.tests.ps1` | the real switcher under `-WhatIf`: the exact packets, and every refusal |
 | `types.tests.ps1` | the loaded-type guard still fires, and the installer cannot trip it |
 | `spec.tests.ps1` | conformance to [`../specs`](../specs), and that this side is level with the changelog's revision |
-| `conventions.tests.ps1` | no function defined twice in one file, and "computer" never "machine" in anything the user reads |
+| `conventions.tests.ps1` | no function defined twice in one file, nothing named after a real cmdlet, and "computer" never "machine" in anything the user reads |
 | `stdin.tests.ps1` | the real `configure`, as a real process, driven by a real answer stream |
 
 `Send-Input` is stubbed throughout, so the suite cannot move a monitor. The harness
@@ -162,6 +162,24 @@ That is deliberately *not* the same outcome as answering `Manage this monitor?`
 with **no**, which takes the panel out of the config. Backing out and declining
 are different things, and collapsing them would let a stray esc silently unmanage
 a working monitor.
+
+**Anything that discards configuration says what it discards, and asks.** Two
+places do that, and they are the same rule rather than the same keystroke:
+
+- `Manage this monitor?` → **no** forgets which computer is on which of that
+  panel's inputs, so it confirms and names the loss. A panel with nothing
+  configured has nothing to lose and is not asked twice.
+- `Remove a computer` clears that computer's input on every monitor, so the row
+  names those monitors *before* it is chosen and the confirm restates it.
+
+Both default to **no**.
+
+Renaming a computer is not one of them: the prompt is pre-filled and **enter
+keeps the name**. It used to *remove* the computer on a blank answer, which made
+the most innocuous keypress available the destructive one — the same failure as
+accepting an empty multi-select, which the menu grammar already exists to
+prevent. Removal became a row rather than a delete key because a keypress has no
+typed-fallback equivalent, and the typed fallback is what the suite drives.
 
 **The menu is the whole flow.** There is no separate first-run questionnaire: an
 empty install is this same menu with `not set` in it and the cursor already on the
