@@ -7,10 +7,12 @@ At parity with the Windows side. The shared behaviour is specified in
 Almost everything in them was arrived at by getting it wrong first, on real
 hardware.
 
-**Change the spec first**, then this implementation, then append an entry to
-[`../windows/HANDOFF.md`](../windows/HANDOFF.md) saying what Windows owes.
-[`HANDOFF.md`](HANDOFF.md) here is the other direction — read it before starting
-work, because it is what *this* side owes.
+**Change the spec first**, then this implementation, then add a
+`specs/CHANGELOG.md` entry and bump `SPEC-REVISION` here — the Windows suite
+learns what it owes from its own checkout, so a spec change is never written
+into its inbox. [`../windows/HANDOFF.md`](../windows/HANDOFF.md) is for a defect
+you find in *its* code; [`HANDOFF.md`](HANDOFF.md) here is the other direction —
+read it before starting work, because it is what *this* side owes.
 
 A LaunchAgent runs `trigger-kvm watch`, which reads the config and execs the
 watcher; the watcher fires `trigger-kvm pull` when a watched device arrives.
@@ -373,22 +375,13 @@ suite is supposed to catch and fails if any survives.
 
 ## Watched devices
 
-Currently in the `Makefile` (`DEVICES`), and moving into the config as the
-walkthrough lands. Kept in sync with `../displays.toml`:
-
-| Device | ID | Note |
-|---|---|---|
-| Logitech Webcam C930e | `046d:0843` | Preferred anchor — a UVC camera rarely re-enumerates spuriously |
-| Focusrite Clarett+ 2Pre | `1235:820a` | Weaker anchor — audio interfaces re-enumerate on driver reloads and power events |
-
-The keyboard and mouse are wired directly to the Windows PC's motherboard and
-never pass through the switch, so they can't be the trigger.
-
-To re-check the ids:
-
-```sh
-ioreg -p IOUSB -l | grep -E 'idVendor|idProduct'
-```
+They live in the config (`trigger.device = usb:VVVV:PPPP, bt:AAAAAAAAAAAA`),
+chosen in the walkthrough from what `trigger-kvm discover` lists. A webcam is a
+good anchor — a UVC camera enumerates on connection and rarely otherwise; an
+audio interface is a weaker one, since it can re-enumerate on driver reloads and
+power events. Anything wired directly to one computer cannot be a trigger, and
+the full vendor+product pair is matched, because a keyboard often shares a
+vendor id with something that never moves.
 
 ## Persistence, measured
 
