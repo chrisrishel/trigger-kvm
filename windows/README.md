@@ -28,7 +28,9 @@ exists precisely so these two implementations can't drift.
   standard-DDC panel *could* be driven on any GPU through `dxva2`; supporting that
   is a generalisation question, taken up in
   [`../docs/decisions/001-nvapi-as-the-only-windows-transport.md`](../docs/decisions/001-nvapi-as-the-only-windows-transport.md).
-- Windows PowerShell 5.1 (stock). No admin rights needed, at install or at run time.
+- Windows PowerShell 5.1 (stock). Nothing elevated ever runs on the switch path.
+  The login tier needs no admin at all; the boot tier needs it ONCE, to register
+  the scheduled task — and the task it registers still runs as you, unelevated.
 
 ## Install
 
@@ -85,16 +87,27 @@ loads a stale copy of the switcher into its runspace.
 | `spec.tests.ps1` | conformance to [`../specs`](../specs), and that this side is level with the changelog's revision |
 | `conventions.tests.ps1` | no function defined twice in one file, nothing named after a real cmdlet, and "computer" never "machine" in anything the user reads |
 | `stdin.tests.ps1` | the real `configure`, as a real process, driven by a real answer stream |
+| `config.tests.ps1` | the reader against [`../specs/config-fixture`](../specs/config-fixture), and the converters against its values table |
+| `detector.tests.ps1` | the real watcher, as a real process: every bad device entry and timing refused by name |
+| `install.tests.ps1` | what the task action carries, and whether a `display-switch` directory is ours to delete |
+| `elevation.tests.ps1` | who an install is FOR, and the fallback when elevation does not come |
 
 `Send-Input` is stubbed throughout, so the suite cannot move a monitor. The harness
 runs `Set-StrictMode -Version Latest` because the scripts do — without it a whole
 class of failure is invisible in the tests and lands on the user instead.
-`resolve.tests.ps1` needs the reference panels attached and says so and skips when
-they are not.
+`resolve.tests.ps1` needs the reference panels attached, and `types.tests.ps1`
+needs an NVIDIA driver. Both report **SKIP**, loudly, with their reason, and
+`run.ps1` counts them separately from a pass and says so in its summary — they
+used to exit 0, so on any machine but the reference desk the only tests of the
+exact packets and of every refusal quietly did not run and the suite reported all
+green. The converters those two were the only cover for are unit-tested in
+`config.tests.ps1`, which skips nowhere.
 
-**They are mutation-checked.** Passing tests prove nothing until they can fail, so
-every regression the suite is meant to catch gets reintroduced deliberately and the
-test has to go red. Several did not, first time, and each was a test that looked
+**They are mutation-checked**, by `.\mutate.ps1`. Passing tests prove nothing
+until they can fail, so every regression the suite is meant to catch gets
+reintroduced deliberately and the test has to go red. A mutation whose suite is
+already red is reported UNJUDGED rather than caught, because "the suite went red"
+then proves nothing. Several survived first time, and each was a test that looked
 right and asserted nothing:
 
 - `Write-MenuFrame` truncating again *passed* — `Split-Detail` pre-wraps, so a
@@ -106,6 +119,12 @@ right and asserted nothing:
   because the fixtures sat on the wrong side of the boundary — a "too short to pin"
   fragment that turned up in the sources anyway, and a "whole line" that was over
   the floor being tested.
+- the reader fixture passed with the key lower-casing removed, because
+  PowerShell's `-ne` is case-INSENSITIVE and case is half of what that fixture
+  pins.
+- the I2C source gate passed with its vendor check replaced by `if (false)`,
+  because the assertion looked for the constant's NAME and the name is also in
+  the refusal message.
 
 ### The walkthrough
 
@@ -242,11 +261,18 @@ not exist. It does not have to: the rename is applied to every map, a removal ta
 that computer out of them, and an addition leaves them alone — the Monitors row then
 simply shows which panels do not know about it yet.
 
-**Where the cursor lands is the recommendation**, and it walks the checks in order:
-trigger, then monitors, then save. A failure sends the cursor to the setting that
-failed rather than onward. Neither pass survives editing what it was a pass *for* —
-it belonged to those values, and showing "all responded" beside numbers nothing
-tried would be a claim the user has no way to catch.
+**Where the cursor lands is the recommendation**, and it is just "the next thing
+that is not done": the unanswered sections in order, then the checks — MONITORS
+first, then the trigger — then Save. The order matters: once the input values are
+confirmed, the flip *back* in the trigger check can pull the monitors for real,
+so it stops being "an event was observed" and becomes the whole thing working.
+
+A FAILED check sends the cursor to the setting that failed rather than onward.
+Backing out of one is neither: its row reads `not checked` and the cursor moves
+on, because landing on Monitors would say "you got the monitors wrong" to
+someone who only declined to move them. And neither pass survives editing what
+it was a pass *for* — it belonged to those values, and showing "all responded"
+beside numbers nothing tried would be a claim the user has no way to catch.
 
 **Monitors are a list you pick from**, the same shape as the computers list and for
 the same reason: walking every panel in sequence to change one value meant answering
@@ -319,7 +345,15 @@ vendor and does not care which LG it is.
 **The choice is offered up front, and again if the check fails.** Configuring a
 panel whose vendor has a documented alternative asks which method to use, right
 after its short name and before any input question — the values on offer depend on
-the answer. Standard is the default and stays the default. It used to be reachable
+the answer. Standard is the default and stays the default.
+
+**And the question says what it costs.** Three lines there say what a
+manufacturer method is (a service channel on the monitor), what is sent to it
+(only the values written down for it) and what has happened on one (monitors made
+unusable). Two more say it again before you TYPE a value onto such a channel,
+which is the one thing that reaches it from outside the documented table. The
+hard rules that keep the channel safe live in `AGENTS.md`, which nobody
+configuring their monitors is going to read. It used to be reachable
 only by failing the check first, which made someone who already knew their model
 needed it move a panel and send packets purely in order to fail, and gave someone
 who did not know it existed no reason to think the tool had heard of it.
@@ -357,11 +391,17 @@ the cost stated first (every wrong value moves that panel; if none is right it s
 there), and **refused outright when it would take the last display** — hard rule 4,
 and the question would otherwise be printed on the screen it just blacked out.
 
-**You name your own inputs.** After a monitor comes back, it asks what was on the
-input it visited. Your answer is stored as `display.lg.input.0xd1 = Mac` — value
-first, so the name survives exactly as typed — and offered ahead of the standard
-names on every later run. "Mac" is a better label than "HDMI 2", and it is the only
-one that is true about your room.
+**Your inputs are named after your computers.** The map is
+`display.lg.input.0xd1 = mac` — value first, computer second — and that one map
+answers both verbs: `pull` looks up `computer.this` in it, `to mac` looks up
+`mac`. There is no second table, so the two can never disagree about where a
+computer is.
+
+The names are the ones you gave your computers, lower-cased and reduced to the
+character rule (lowercase letters, digits and dashes) — suggested and asked,
+never silently mangled. The LIST you pick an input from keeps the *monitor's*
+own labels: its menu says `HDMI 1`, and that is the only label the monitor
+itself agrees with.
 
 **Checking the monitors batches across panels, never across computers.** Monitors sit
 side by side, so several can be confirmed in one glance; a *sequence* of switches
@@ -477,8 +517,8 @@ global commands. A `bin` directory with one file in it cannot do any of that.
 What ends up on your machine:
 
 ```
-%LOCALAPPDATA%\Programs	rigger-kvm\        the program
-    bin	rigger-kvm.cmd                     <- the only thing on PATH
+%LOCALAPPDATA%\Programs\trigger-kvm\       the program
+    bin\trigger-kvm.cmd                     <- the only thing on PATH
     trigger-kvm.ps1                         the switcher
     event-watch.ps1                         the watcher
     config.ps1                              shared config reader
@@ -486,7 +526,7 @@ What ends up on your machine:
     launcher.vbs                            console-free shim for the scheduled task
     version.txt
 
-%LOCALAPPDATA%	rigger-kvm\                 your data -- survives uninstall
+%LOCALAPPDATA%\trigger-kvm\                your data -- survives uninstall
     config
     trigger-kvm.log
 ```
@@ -505,12 +545,22 @@ because registering an S4U task leaves the definition admin-owned, so removing i
 needs elevation too. A prompt on the way in without one on the way out would trap you
 in a setup you could not remove.
 
-**If you are not an administrator, someone else can approve that prompt.** Windows
-then elevates *their* account, not yours, so the installer tells the elevated half
-who the install is for: your account name and your `%LOCALAPPDATA%`. The task is
-registered to run as **you**, the files land in **your** profile, and only the
-unelevated half — the one running as you — touches your `PATH`. Nothing about the
-switch path changes: it still runs as you, unelevated.
+**If your account is not an administrator, the `From boot` row is drawn disabled**
+and says `needs an administrator account`, before anything is asked for. Offering
+it would send you into a prompt for somebody else's credentials, and whatever
+that installs belongs to that other account.
+
+**If someone else does approve such a prompt**, Windows elevates *their* account,
+not yours — so the installer tells the elevated half who the install is for: your
+account name and your `%LOCALAPPDATA%`. The task is registered to run as **you**,
+the files land in **your** profile, and only the unelevated half — the one running
+as you — touches your `PATH`. Nothing about the switch path changes: it still runs
+as you, unelevated.
+
+**And if the prompt is declined, it falls back to login and says so.** The config
+records `login`, the login task is registered, and the watcher restarts. Silently
+keeping `boot` with nothing registered is how someone finds out months later that
+switching does nothing until they log in.
 
 **A trap worth knowing.** Running the installer from an *elevated* shell — easy if
 you have one open — leaves the task definition Administrators-owned, so later
@@ -523,7 +573,7 @@ install again normally.
 Pick by what you are willing to grant. They are mutually exclusive by construction
 -- one task name, so installing either replaces the other.
 
-| | user (default) | s4u |
+| | from login | from boot |
 |---|---|---|
 | Admin to install | **no** | **yes**, once |
 | Elevated at run time | no | **no** |
@@ -540,12 +590,22 @@ cases. The one that stings is a rebooted PC sitting at a login screen you cannot
 because the monitors are still showing the other computer — which is why it is the
 suggested answer.
 
-`status` reports when it starts *and* what that covers, deliberately: a name on its
-own invites you to guess the capability, and the capability is the entire point.
+`status` reports when it starts *and* what that covers, deliberately: a name on
+its own invites you to guess the capability, and the capability is the entire
+point. It says everything it can whether or not a task is registered — a
+computer with no task is exactly where "what does this think is configured?" is
+the question being asked.
 
 ```
 autostart: at boot  (principal=user logon=S4U runlevel=Limited)
            covers: from boot onward -- before first login, while locked, after logoff
+task     : Ready
+watchers : 1
+config   : C:\Users\Example\AppData\Local\trigger-kvm\config
+version  : 0.2.0  (installed 2026-09-01 12:00:00, commit abc1234, spec revision 7)
+displays : lg, asus
+computers: pc (this one), mac   (trigger-kvm to <name>; only pull is automatic)
+triggers : usb:046d:0843, bt:0011223344ff
 ```
 
 **The tier is a property of the host, not of the switcher.** All tier logic lives in
@@ -577,7 +637,7 @@ would have got wrong -- and connecting them produced:
 
 ```
 arrival bt:0011223344ff; settling 0.75s
-fired: nvapi-probe.ps1 TEST (pid 17016)
+fired: ...\trigger-kvm.ps1 pull (pid 17016)
 ```
 
 Connection detected, edge recognised, settle honoured, switcher invoked.
@@ -590,10 +650,13 @@ rides on each value:
 trigger.device = usb:046d:0843, usb:1235:820a, bt:0011223344ff
 ```
 
-`usb:VVVV:PPPP` is a vendor+product pair; a **bare** `VVVV:PPPP` also means usb, so
-configs written before Bluetooth existed keep working. `bt:AAAAAAAAAAAA` is a
-12-hex-digit Bluetooth address. Anything else is rejected loudly at startup rather
-than ignored.
+`usb:VVVV:PPPP` is exactly four hex digits, a colon and four more; a **bare**
+`VVVV:PPPP` also means usb, so configs written before Bluetooth existed keep
+working. `bt:AAAAAAAAAAAA` is exactly twelve hex digits, no separators. Anything
+else stops the watcher starting, loudly, naming the entry as written — it is never
+prefixed into a `usb:` entry that can match nothing, because a watcher that runs
+and never fires is the worst failure shape available. The grammar is written down
+once for both platforms in [`../specs/detector.md`](../specs/detector.md).
 
 The transport is in the value rather than in separate keys because the installer
 presents **one** device list — you think "the stuff that moves when I switch", not
@@ -694,10 +757,23 @@ Flat `key = value` with `#` comments, deliberately not TOML or JSON: this is rea
 every device arrival and must not depend on a parser being present. The whole reader
 is a dozen lines, and the macOS side can do the same job with one `sed`.
 
-**Which edits take effect when.** Display changes apply at the next
-switch, because the switcher reads the file each time. Trigger changes need
-`install.ps1` re-run — those are baked into the scheduled task at registration, and
-the installer reads them back out of the config rather than from its own defaults.
+**Which edits take effect when.** Display changes apply at the next switch,
+because the switcher reads the file each time. Trigger changes apply when the
+watcher next starts, and `trigger-kvm restart` does that — nothing is baked into
+the scheduled task but the paths, which is why there is no `apply` step.
+
+**Hand edits survive `configure`.** It rewrites this file from its answers, but
+every key it does not itself write is carried across — `trigger.debounce` and
+`trigger.settle`, and any key it has never heard of, which is either your edit or
+a newer version's setting. The exception is a panel you answer `Manage this
+monitor?` with **no**: unmanaging is the one answer that means "forget", and it
+forgets that panel's keys whole.
+
+**Values may be written any way the format allows.** An input is `0x11`, `0X11`
+or `17`; an EDID id is `0x1E6D` or `7789`; a leading zero is decimal, not octal.
+The walkthrough and the switcher use the same converters, so a value one accepts
+is one the other accepts — and `configure` rewrites a typed value in the canonical
+`0xNN` form, so one input never appears twice under two spellings.
 
 **It fails closed, in ways worth knowing:**
 
@@ -712,6 +788,12 @@ the installer reads them back out of the config rather than from its own default
 - `method = lg-alt` grants nothing. `NvDdc.WriteLgInput` still refuses any panel
   whose EDID manufacturer is not GSM, so putting `lg-alt` on a Dell makes the write
   throw — it does not make it happen. Verified by test.
+- A malformed `trigger.debounce` or `trigger.settle` — `three`, `3 s` — stops the
+  watcher starting, loudly, naming the key in the log. It is not read as zero: a
+  debounce of zero fires on every event in a plug's burst, and a watcher that runs
+  while doing the wrong thing is the worst failure shape here. The same goes for a
+  `trigger.device` entry that is not `usb:VVVV:PPPP`, a bare `VVVV:PPPP` or
+  `bt:` plus twelve hex digits.
 
 ## Manual use
 
@@ -754,9 +836,9 @@ end-to-end USB trigger:
 | LG -> USB-C (push to Mac) | NVAPI I2C, src `0x50` VCP `0xF4 = 0xD1`, aimed | n/a (was active) |
 
 Both "pull here" cases were exercised with the monitor **displaying the Mac**, which
-is the case the whole design depends on: the machine issuing the command is by
+is the case the whole design depends on: the computer issuing the command is by
 definition not the one being shown. Windows keeps its link enumerated while the
-panel shows the other machine, exactly as macOS does.
+panel shows the other computer, exactly as macOS does.
 
 All four rows were re-verified on the aimed NVAPI transport on 2026-08-30, both
 monitors, both directions, confirmed visually -- including both pull-backs from an
@@ -770,7 +852,7 @@ Only its DP input had been exercised from the Mac side; HDMI 1 is now confirmed.
 **Hibernate (S4) disturbs neither monitor and fires no spurious switch.** Verified
 2026-08-30 across a real `shutdown -h` / resume cycle, with both panels confirmed
 visually. **S3 standby hangs this machine and must not be tested** -- that, and why
-the watcher is safe across a power transition, is in [`../AGENTS.md`](../AGENTS.md).
+the watcher is safe across a power transition, is in [`AGENTS.md`](AGENTS.md).
 
 **The LG flickers briefly on every LG switch, including a no-op re-assert to the
 input it is already on.** It is re-negotiating the link, and each write is sent
@@ -787,12 +869,14 @@ reads anywhere in it.
 the one whose vendor and product identify the wanted panel. It refuses on zero
 matches and on more than one, because an ambiguous target cannot be aimed at, and
 picking the first would reintroduce the order-dependence this repo's conventions
-forbid. `Switch-Asus` and `Switch-Lg` are four lines each: resolve, describe, hand a
-write to the shared `Invoke-Switch`.
+forbid. There is one `Switch-Display`: resolve, describe, hand a write to the
+shared `Invoke-Switch`. The configured method chooses which transport entry point
+is used and that is the ONLY thing it changes — resolution, aiming, retry and
+logging are identical either way.
 
 The Windows display list is deliberately not consulted for that identity. In session
 0 `user32` reports a *phantom* monitor rather than none, so correlating against it
-matches a fiction; NVAPI is the sole source. See [`../AGENTS.md`](../AGENTS.md).
+matches a fiction; NVAPI is the sole source. See [`AGENTS.md`](AGENTS.md).
 That is also why there is no `dxva2` or `user32` code here any more, and why this
 script has **no desktop dependency** -- the precondition for a pre-login tier.
 
@@ -840,7 +924,8 @@ an extrinsic WMI event, so there is no polling interval. That event does not say
 *which* device changed, so each one is followed by a targeted `Win32_PnPEntity`
 query (~40ms) to establish identity. Push latency, exact identity, no elevation.
 
-Three safety behaviours, ported from `../macos/usb-watch.c`:
+Three safety behaviours, matching `../macos/event-watch.c`, and now written
+down once for both sides in [`../specs/detector.md`](../specs/detector.md):
 
 - **debounce** (3.0s) -- ignore arrivals within N seconds of the last fire. This is
   not theoretical: on the first live test the Focusrite arrived at `01:49:46` and
@@ -850,8 +935,9 @@ Three safety behaviours, ported from `../macos/usb-watch.c`:
 - **edge-triggered** -- fires only on absent -> present. Devices already plugged in
   at startup never fire.
 
-**`install.ps1`** -- Scheduled Task at logon, interactive session, `RunLevel
-Limited`. Explicitly clears `StopIfGoingOnBatteries`, which defaults on and would
+**`install.ps1`** -- registers the Scheduled Task, at logon or at startup
+depending on `install.autostart`, always at `RunLevel Limited` and always as
+you. Explicitly clears `StopIfGoingOnBatteries`, which defaults on and would
 otherwise kill the watcher on a brief UPS blip.
 
 ## How it runs, and why it is hard to close by accident
@@ -864,8 +950,9 @@ not `powershell.exe`. PowerShell is a console-subsystem binary: Windows gives it
 console *before* `-WindowStyle Hidden` can take effect, so running it straight from
 a logon task can flash a console at every login and leaves a closeable window.
 `wscript.exe` is GUI-subsystem and starts the watcher hidden from the first
-instruction. `launcher.vbs` is generated by `install.ps1`, the same way the macOS
-`Makefile` generates the LaunchAgent plist -- don't edit it, re-run the installer.
+instruction. `launcher.vbs` is generated by `install.ps1`, the same way
+`macos/lib/manage.sh` generates the LaunchAgent plist -- don't edit it, re-run
+the installer.
 
 The launcher waits on the watcher rather than returning, so Task Scheduler still
 reports the task as `Running` and its restart-on-failure settings still apply.
@@ -877,7 +964,7 @@ following the USB switch. A second trigger re-runs the task every minute;
 `MultipleInstances IgnoreNew` makes that a no-op while it is alive, so the
 steady-state cost is a process launch that exits immediately.
 
-That no-op is also why `install.ps1 -Status` shows a last-run result of
+That no-op is also why `trigger-kvm status` shows a last-run result of
 `2147946720` / `0x800710E0` -- "The operator or administrator has refused the
 request" -- during **normal** operation. It is Task Scheduler's code for a trigger
 that fired while an instance was already running, i.e. `IgnoreNew` doing its job.
@@ -890,26 +977,31 @@ rather than failed, and no restart occurred in 180s of watching. Measured
 when the interval was 5 minutes.
 
 This is the one place Windows is meaningfully behind macOS, where launchd's
-`KeepAlive` respawns in **0.01s** -- measured 2026-08-30 by `kill -9` on the
-watcher, not estimated. The gap against this side's 51s is four orders of
-magnitude, though both are recoveries from a failure that should not happen. Closing that fully would mean making
+`KeepAlive` respawns in **0.21s** -- measured 2026-08-30 by `kill -9` on the
+watcher, not estimated. Both are recoveries from a failure that should not
+happen, but two orders of magnitude is two orders of magnitude. Closing that
+fully would mean making
 `launcher.vbs` a supervising loop, which is deliberately not done: stopping the
 task kills the launcher but leaves the watcher (see below), so a loop would spin
 relaunching a watcher that exits immediately on the mutex. A minute of downtime
 after an unobserved failure is the better trade.
 
 **Only one ever runs.** `event-watch.ps1` holds a named mutex
-(`Local\trigger-kvm-usb-watch`) and exits immediately if another instance has
-it. This matters more than it looks: the watcher is a *grandchild* of the task, so
+(`Global\trigger-kvm-usb-watch`, falling back to `Local\` where the OS refuses a
+global name) and exits immediately if another instance has it. Global rather
+than per-session, because the two tiers can put one watcher in your session and
+one in session 0, and a per-session name would let both take their own. This matters more than it looks: the watcher is a *grandchild* of the task, so
 stopping the task kills the launcher but leaves the watcher running. Without the
 mutex, every reinstall and every self-heal tick would stack another watcher, and
 each one would fire the switcher on the same arrival -- the debounce is per-process
 and cannot dedupe across them. `install.ps1` also explicitly clears stale watchers,
 so an upgrade cannot leave the old code holding the mutex.
 
-A consequence worth knowing when testing by hand: running `event-watch.ps1` yourself
-while the task is running will exit at once with `another usb-watch is already
-running`. Stop the task first.
+A consequence worth knowing when testing by hand: running `event-watch.ps1`
+yourself while the task is running will exit at once with `another watcher is
+already running`. Use `trigger-kvm pause` first — stopping the task is not
+enough, because it kills only the launcher and the self-heal trigger restarts it
+within the minute.
 
 Both scripts also take `-LogFile` and append to it themselves, so nothing depends
 on shell redirection -- which is what let the `cmd.exe` wrapper go away.
@@ -917,20 +1009,30 @@ on shell redirection -- which is what let the `cmd.exe` wrapper go away.
 To stop it deliberately:
 
 ```powershell
-.\install.ps1 -Uninstall     # unregister the task and clear any running watcher
-Stop-ScheduledTask -TaskName trigger-kvm   # just this session; self-heal will restart it
+trigger-kvm pause       # disable the task and stop the watcher, to run one by hand
+trigger-kvm restart     # put it back
+trigger-kvm uninstall   # unregister the task and remove the program directory
 ```
+
+`pause`, not `Stop-ScheduledTask`: stopping the task kills the launcher and
+leaves the watcher holding the mutex, and the self-heal trigger starts it again
+within the minute. The task has to be *disabled*.
 
 ## Watched devices
 
-Kept in sync with [`../displays.toml`](../displays.toml):
+Whatever moves when you flip the switch. `trigger-kvm discover` lists what is
+attached in the form the config wants, and `configure` offers the same list to
+pick from, so there is nothing to look up:
 
-| Device | ID | Note |
-|---|---|---|
-| Logitech Webcam C930e | `046d:0843` | Preferred anchor -- a UVC camera rarely re-enumerates spuriously |
-| Focusrite Clarett+ 2Pre | `1235:820a` | Weaker anchor -- audio interfaces re-enumerate on driver reloads and power events |
+```
+trigger.device = usb:046d:0843, bt:0011223344ff
+```
 
-Both confirmed present on this machine when the USB switch is pointed here.
+Pick an anchor that does not re-enumerate on its own. A UVC camera or a keyboard
+is a good one; an audio interface is a weaker one, because they re-enumerate on
+driver reloads and power events. Bluetooth rows are offered on PAIRED and fire on
+CONNECTED — the device that is disconnected right now is precisely the one
+that will produce an arrival.
 
 **Match the full VID+PID, never the vendor alone.** The keyboard and mouse are
 Logitech too (`VID_046D`, `PID_C547`) and are *always* present, because they are
@@ -942,7 +1044,7 @@ vendor-only match would fire continuously.
 **Do not address monitors by index or by description. The indices are not stable.**
 They were `\\.\DISPLAY1` = ASUS and `\\.\DISPLAY2` = LG for all of this project's
 early testing, and then on 2026-08-30 they **swapped**: the same
-`trigger-kvm.ps1 windows` that had been logging `on \\.\DISPLAY1` for the ASUS
+`trigger-kvm.ps1` that had been logging `on \\.\DISPLAY1` for the ASUS
 began logging `on \\.\DISPLAY2`, across a hard reboot and a hibernate cycle.
 Nothing broke, because the script never uses the index. Getting this wrong would
 send LG service-channel writes to the ASUS.
@@ -974,14 +1076,6 @@ now that the write is aimed.
 BOM as ANSI, so a UTF-8 em dash in a comment becomes a parse error tens of lines
 away from anything that looks wrong.
 
-## Scope: post-login only
-
-The task runs at logon in the interactive session, matching macOS. A Windows
-Service would run in session 0, which has no desktop, so
-`GetPhysicalMonitorsFromHMONITOR` would have no `HMONITOR` to work from. NVAPI
-display enumeration in session 0 is untested and expected to be problematic for the
-same reason. See [`../ARCHITECTURE.md`](../ARCHITECTURE.md).
-
 ## `nvapi-probe.ps1` -- a read-only diagnostic
 
 ```powershell
@@ -1004,48 +1098,3 @@ Function ids and struct layouts come from [SimpleKVM](https://github.com/fiddysc
 (MIT), with `NvAPI_Initialize` and `NvAPI_EnumPhysicalGPUs` independently
 corroborated by `lg-input-switch`.
 
-## Still open
-
-- **Does NVAPI work from a context with no desktop? YES, for enumeration.** Measured
-  2026-08-30 in three contexts -- interactive, SYSTEM in session 0, and an unelevated
-  non-interactive S4U task. All three enumerated both panels with correct EDIDs and
-  **per-output ids** (ASUS `0x100`, LG `0x200`) -- the aiming `lg-input-switch` threw
-  away, and what the LG path now uses. Re-confirmed at boot from an at-startup task.
-  In session 0, `user32` meanwhile reported one *phantom* monitor -- see
-  [`../AGENTS.md`](../AGENTS.md).
-- **Does the ASUS answer on the same NVAPI transport (src `0x51`, VCP `0x60`)? YES.**
-  Verified visually 2026-08-30, both directions, including the pull-back from an
-  inactive link. That collapsed the two identity mechanisms into one and removed the
-  last `dxva2` dependency, so the switcher no longer needs a desktop at all.
-- **Does a WRITE work from session 0? YES.** Measured 2026-08-30 from an unelevated
-  on-demand S4U task (`sessionId=0 interactive=False`): it pushed the LG to the Mac,
-  held 12s, and pulled it back, **both moves confirmed visually**. Enumeration
-  working there did not imply this, and the two had to be tested separately -- phase
-  1 deliberately sent no writes. This settles the pre-login design: a plain
-  at-startup task drives the displays directly, with no relay.
-- **Do WMI device notifications reach a session-0 watcher? YES.** Measured
-  2026-08-30 from an unelevated S4U task (`sessionId=0 interactive=False`): 45
-  `Win32_DeviceChangeEvent` indications received in 90s, and `Win32_PnPEntity`
-  presence queries returned correct results there too. This was the last thing that
-  could have made the s4u tier fail *silently* -- the switcher was already proven in
-  session 0, but the detector was not, and a watcher that runs and never fires is
-  the worst failure shape available. The distinction that made it plausible either
-  way: `WM_DEVICECHANGE` is a window message and needs a desktop, while
-  `Win32_DeviceChangeEvent` is a WMI extrinsic event from the Winmgmt service. Only
-  the latter is used here, and it is session-independent.
-- **Does a pre-login tier get built?** Built as opt-in -- `trigger-kvm configure`,
-  `Autostart?`, `From boot`. There is no `-Tier` flag: the tier lives in the config
-  as `install.autostart`, and every part of the installer reads it from there. The remaining
-  step is a reboot acceptance test. It is a permissions question rather than a
-  technical one. It needs admin to register (measured: `S4U` and `SYSTEM`
-  principals both fail with "Access is denied" for an ordinary user, while the
-  `Interactive` task this installer uses does not). That changes the project's
-  current "no admin needed" posture, so it is a deliberate call, not a default.
-  `S4U` is the tier to prefer: admin once to register, then ordinary user rights at
-  runtime, and no elevated code on the switch path.
-- **Note what it would actually add. Locking is already covered.** Confirmed
-  2026-08-30: with the screen locked, flipping the USB switch still pulls the
-  displays back, because the session and its watcher are still alive. A pre-login
-  tier buys the two narrower cases -- **before the first login after a boot** and
-  **after a full logoff**. The first is the one that stings: a rebooted PC sitting at
-  a login screen you cannot see, because the monitors are still showing the Mac.

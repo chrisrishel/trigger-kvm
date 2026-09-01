@@ -13,11 +13,11 @@ The task action carries no SETTINGS -- only -Config, the absolute path of the
 file to read them from, because %LOCALAPPDATA% in session 0 is not necessarily
 the installing user's.
 
-ONE process, N event sources. Today there is one source -- USB device presence --
-but the shape is deliberate: every additional persistent listener a user has to run
-is another install step and another way for the system to end up half working. A
-hotkey, a Bluetooth connection or a dock event belongs HERE, not in a second
-background app the user has to set up themselves.
+ONE process, N event sources. Two today -- USB device presence and Bluetooth
+CONNECTION, both in this file -- and the shape is deliberate: every additional
+persistent listener a user has to run is another install step and another way for
+the system to end up half working. A hotkey or a dock event belongs HERE, not in
+a second background app the user has to set up themselves.
 
 Sources differ in what constitutes a fire, and that is a per-source concern:
 
@@ -50,9 +50,11 @@ present, because they are wired directly to this computer's motherboard and do n
 pass through the USB switch. Matching on vendor id alone would fire constantly.
 Always match the full VID+PID pair.
 
-TRAP: this presence model works for USB and NOT for Bluetooth, where a PAIRED
-device keeps its PnP node whether or not it is connected. Adding Bluetooth needs a
-connection-aware source, not a wider match pattern. See .\AGENTS.md.
+TRAP: the PnP presence model works for USB and NOT for Bluetooth, where a PAIRED
+device keeps its node whether or not it is connected -- for years. That is why
+Bluetooth is a separate source in this file, matching on CONNECTED through the
+classic bthprops.cpl API, rather than a wider PnP match pattern. Do not merge the
+two. See .\AGENTS.md.
 
 Whatever the source, it runs `pull` -- never another computer's name. A name
 other than `computer.this` describes inputs on hardware this computer cannot

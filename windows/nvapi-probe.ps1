@@ -3,8 +3,9 @@
 Read-only NVAPI display enumeration probe. Sends nothing to any monitor.
 
 .DESCRIPTION
-Phase 1 of the pre-login work (see ..\ideas\nvapi-transport.md). Answers one
-question:
+The measurement the pre-login work rested on (see ..\ideas\nvapi-transport.md),
+kept because it is the cheapest way to answer the same question again on another
+computer or after a driver change:
 
     can this computer enumerate and identify its monitors through NVAPI, in a
     context that has no desktop?
@@ -13,7 +14,9 @@ That matters because every display path the Windows switcher uses today is
 desktop-bound -- EnumDisplayMonitors, EnumDisplayDevices, GetPhysicalMonitorsFromHMONITOR
 -- and a process with no desktop (a service in session 0, a non-interactive
 scheduled task) sees zero monitors. NVAPI talks to the driver rather than to a
-window station, so it may not have that limitation. Nobody has tested it.
+window station, and does not have that limitation: measured 2026-08-30, it
+enumerated both panels from session 0 with no desktop, and the switcher has been
+built on that since.
 
     .\nvapi-probe.ps1
     .\nvapi-probe.ps1 -LogFile C:\ProgramData\trigger-kvm\nvapi-probe.log
@@ -30,8 +33,11 @@ It is therefore safe to run repeatedly, in any context, with no monitor at risk
 and nothing to confirm visually.
 
 The probe also runs a user32 EnumDisplayMonitors count as a CONTROL, in the same
-process. Contrasting the two counts in one run is the whole point: "desktop path
-sees 0, NVAPI path sees 2" is the result that makes pre-login switching possible.
+process. Contrasting the two counts in one run is the whole point -- and the
+answer was WORSE than expected: in session 0 user32 reports ONE PHANTOM MONITOR,
+not zero. "No desktop" presents as WRONG monitors rather than none, which is why
+NVAPI is the sole source of display identity and is never correlated against the
+Windows display list. See ..\docs\decisions\001-nvapi-as-the-only-windows-transport.md.
 
 Function ids and struct layouts are taken from fiddyschmitt/SimpleKVM (MIT), with
 NvAPI_Initialize / NvAPI_EnumPhysicalGPUs independently corroborated by
