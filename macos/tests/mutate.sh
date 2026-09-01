@@ -308,6 +308,27 @@ mutate 'revision: this platform falls behind the changelog' SPEC-REVISION spec.t
 mutate 'revision: this platform claims a revision that does not exist' SPEC-REVISION spec.tests.sh \
   's%^revision = [0-9]*%revision = 99%'
 
+# --- revision 6: name the consequence; a panel is one submenu ---------------
+
+mutate 'walkthrough: the method chooser does not name the service channel' lib/walkthrough.sh walkthrough.tests.sh \
+  's|sent only the values written down for it: unknown values on that|mutated|'
+mutate 'walkthrough: a typed value on a manufacturer channel gets no warning' lib/walkthrough.sh walkthrough.tests.sh \
+  's|This is the manufacturer.*s service channel. Type only a value you have|mutated|'
+mutate 'walkthrough: esc at the method question advances instead of backing out' lib/walkthrough.sh walkthrough.tests.sh \
+  's|^    \[ "\$_method" = "BACK" \] && { printf .KEEP.n.; return 0; }$|    :|'
+mutate 'walkthrough: esc at an input question is ignored' lib/walkthrough.sh walkthrough.tests.sh \
+  's|^    \[ "\$WT_INPUT_ESC" = "1" \] && { printf .KEEP.n.; return 0; }$|    :|'
+mutate 'walkthrough: a duplicate short name is accepted' lib/walkthrough.sh walkthrough.tests.sh \
+  's|"\$(wt_labels_except "\$_key")" monitor)|"" monitor)|'
+mutate 'walkthrough: typed input values are compared by spelling, not by value' lib/walkthrough.sh walkthrough.tests.sh \
+  's|^      _v=\$(printf .0x%02X. "\$_n")$|      _v=$_typed|'
+mutate 'tier: From boot is offered to an account that cannot elevate' lib/walkthrough.sh walkthrough.tests.sh \
+  's|  if wt_is_admin; then|  if true; then|'
+mutate 'checks: the trigger check leaves the installed watcher running' lib/checks.sh checks.tests.sh \
+  's@^        "\$TK_LAUNCHCTL" bootout "\$(tk_domain)/\$TK_LABEL" >/dev/null 2>&1 || true$@        :@'
+mutate 'checks: backing out of the scope question counts as a failed check' lib/checks.sh checks.tests.sh \
+  "s|WT_RAN_DISPLAYS='not checked'; WT_DISPLAYS_OK=''; return 0|WT_RAN_DISPLAYS='not checked'; WT_DISPLAYS_OK=0; return 0|"
+
 # --- the tiers own launchd ---------------------------------------------------
 
 mutate 'tier: choosing boot leaves the LaunchAgent behind' lib/manage.sh walkthrough.tests.sh \

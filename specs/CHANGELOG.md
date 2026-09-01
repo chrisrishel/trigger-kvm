@@ -67,6 +67,56 @@ it does not have. It is blind to two things, and this closes them:
 
 ---
 
+## Revision 6 — 2026-09-01
+
+**Name the consequence at the service channel; a panel is one submenu; the
+walkthrough refuses what the switcher would refuse later.**
+
+Sections: [`configure.md`](configure.md) §4.2, §6, §6.1, §6.2, §8, §11.
+
+**Act on (both platforms):**
+
+1. **§6.2 — three lines in the method chooser** say what the manufacturer method
+   is (a service channel), what is sent to it (only the recorded values) and
+   what has happened on it (monitors made unusable). **§6.1 — two lines before
+   the typed-value prompt** when the method is a manufacturer channel. Both are
+   normative wording.
+
+2. **§6 — a panel's questions are one submenu.** Esc at any menu in it returns
+   to the Monitors list with the panel unchanged. Windows already does this;
+   macOS advanced to the input questions instead.
+
+3. **§6 — the short name is unique and follows §5.1's character rule**,
+   suggested and asked. A duplicate is refused: `There is already a monitor
+   called`. Windows strips underscores where the rule turns them into dashes.
+
+4. **§6.1 — typed-value collision is by value**, and a typed value is stored as
+   canonical `0xNN`. `17` and `0x11` were accepted as two sockets on both
+   platforms.
+
+5. **§8 — a declined prompt is "cannot be obtained"**: fall back to login, say
+   `falling back to starting at login`, record login. macOS did; Windows exited
+   with the config still saying boot and the watcher not restarted. And where
+   the account is not an administrator, the `From boot` row is drawn disabled
+   with `needs an administrator account` — on Windows this is the row that sent
+   a standard account into a different account's UAC prompt.
+
+6. **§11 — the trigger check stands the installed watcher down** where that
+   needs no elevation and restores it after; otherwise it says `The running
+   watcher will also fire, using the saved configuration.` before the flip.
+
+7. **§4.2 — backing out of a check is not a failure**; the cursor does not go
+   to Monitors.
+
+**Why.** The review before publication found the bricking hazard stated only in
+`AGENTS.md`, a file a user never opens, while the two moments a person actually
+commits to the service channel said nothing. §2 already required naming the
+consequence; this applies it. The rest are places where the two implementations
+had quietly diverged (esc in the panel flow, the label rule, the declined
+prompt) or where both accepted an answer the switcher would refuse later
+(duplicate labels, `17` vs `0x11`) — the walkthrough exists to refuse those
+while the person can still say what they meant.
+
 ## Revision 5 — 2026-08-31
 
 **Enter must never destroy. Removing a computer becomes a row, and unmanaging a

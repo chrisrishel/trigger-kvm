@@ -124,6 +124,13 @@ it 'and does NOT offer it for a vendor that has none'
 n=$(printf '%s\n' "$WT_OUT" | grep -c 'how to talk to this monitor' || true)
 assert_equal 1 "$n" 'only the LG should be asked; the ASUS has no documented alternative'
 
+it 'names the consequence where the method is chosen'
+# specs/configure.md 6.2: this is the moment a person commits to a service
+# channel, and the rules that keep it safe live in a file they never open.
+assert_match "$WT_OUT" "LG's own method talks to a service channel on the monitor. It is"
+assert_match "$WT_OUT" 'sent only the values written down for it: unknown values on that'
+assert_match "$WT_OUT" 'channel have made monitors unusable.'
+
 it 'choosing it up front writes that method, with no check having run'
 # The whole point: the documented values are reachable without failing first.
 # Written out rather than derived from $FULL -- the two scripts diverge at the
@@ -168,6 +175,185 @@ assert_match "$(cat "$CFG")" 'display.lg.input.0xd0 = pc'
 it 'the values it offers come from the documented table, never from a probe'
 # AGENTS.md hard rule 1b: OFFERED, never probed. Nothing is sent while asking.
 assert_nothing_sent 'choosing a method must not touch a monitor'
+
+it 'warns before a value is typed onto a manufacturer channel'
+# specs/configure.md 6.1: a typed byte is the one thing that reaches the service
+# channel from outside the documented table.
+rm -f "$CFG"
+PATH=$SAVED_PATH configure_with '1
+mac
+
+pc
+6
+2
+1
+
+
+2
+5
+0xD1
+1
+2
+
+asus
+1
+3
+4
+3
+1,2
+4
+2
+5
+2
+10'
+assert_match "$WT_OUT" "This is the manufacturer's service channel. Type only a value you have"
+assert_match "$WT_OUT" 'from documentation; an unknown value here has made monitors unusable.'
+assert_match "$(cat "$CFG")" 'display.lg.input.0xd1 = mac' "$WT_OUT"
+
+it 'and does not say it on the standard channel'
+# The standard channel is not the service channel; the warning would be noise.
+PATH=$SAVED_PATH configure_with "$FULL"
+assert_no_match "$WT_OUT" "This is the manufacturer's service channel"
+
+# =============================================================================
+# a panel's questions are one submenu (specs 6)
+# =============================================================================
+
+it 'esc at the method question backs out of the panel, leaving it as it was'
+# It used to keep the current method and PROCEED to the input questions, with
+# no key that went back until every computer was answered.
+rm -f "$CFG"
+PATH=$SAVED_PATH configure_with '1
+mac
+
+pc
+6
+2
+1
+
+
+q
+4
+11'
+assert_no_match "$WT_OUT" "On the LG ULTRAGEAR+, which input is" 'esc must not advance to the inputs'
+n=$(printf '%s\n' "$WT_OUT" | grep -c 'LG ULTRAGEAR+ *not managed' || true)
+assert_equal 2 "$n" "the list is shown again with the LG still not managed: $WT_OUT"
+assert_true "$([ ! -f "$CFG" ] && echo 0 || echo 1)" 'Cancel: nothing written'
+
+it 'esc at an input question backs out of the panel too'
+rm -f "$CFG"
+PATH=$SAVED_PATH configure_with '1
+mac
+
+pc
+6
+2
+1
+
+
+
+q
+4
+11'
+n=$(printf '%s\n' "$WT_OUT" | grep -c 'LG ULTRAGEAR+ *not managed' || true)
+assert_equal 2 "$n" "half a map is not an answer; the panel stays as it was: $WT_OUT"
+
+# =============================================================================
+# the short name is unique; typed values collide by value (specs 6, 6.1)
+# =============================================================================
+
+it 'refuses a short name another monitor already has, and asks again'
+# Two panels with one label would be written as one and read back as a merge of
+# both, and the switcher would refuse without saying why.
+rm -f "$CFG"
+PATH=$SAVED_PATH configure_with '1
+mac
+
+pc
+6
+2
+1
+
+
+
+9
+0xD1
+10
+0xD0
+2
+
+lg
+asus
+1
+3
+4
+3
+1,2
+4
+2
+5
+2
+10'
+assert_match "$WT_OUT" 'There is already a monitor called lg'
+assert_match "$(cat "$CFG")" 'display.asus.vendor  = 0x06B3' "$WT_OUT"
+
+it 'refuses a typed value that names an assigned input under another spelling'
+# 17 and 0x11 are one socket. Both were accepted as two, and the switcher then
+# sent the same byte for both computers.
+rm -f "$CFG"
+PATH=$SAVED_PATH configure_with '1
+mac
+
+pc
+6
+2
+1
+
+
+
+9
+0xD1
+10
+0xD0
+2
+
+asus
+3
+9
+17
+9
+15
+4
+3
+1,2
+4
+2
+5
+2
+10'
+assert_match "$WT_OUT" '0x11 is already mac on this monitor. Two computers cannot share one input.'
+
+it 'and stores a typed value in the canonical 0xNN spelling'
+c2=$(cat "$CFG")
+assert_match "$c2" 'display.asus.input.0x0f = pc' "$WT_OUT"
+assert_no_match "$c2" 'input.15'
+
+# =============================================================================
+# an account that cannot elevate is not offered From boot (specs 8)
+# =============================================================================
+
+it 'draws From boot disabled, with the reason, for an account that is not an administrator'
+mkdir -p "$FAKE_DIR/nonadmin"
+cat >"$FAKE_DIR/nonadmin/id" <<'EOS'
+#!/bin/sh
+case "$1" in -Gn) echo 'staff everyone' ;; *) exec /usr/bin/id "$@" ;; esac
+EOS
+chmod +x "$FAKE_DIR/nonadmin/id"
+rm -f "$CFG"
+PATH="$FAKE_DIR/nonadmin:$SAVED_PATH" configure_with "$FULL"
+assert_match "$WT_OUT" 'needs an administrator account'
+assert_match "$WT_OUT" '-- From boot' 'the row is drawn but cannot be chosen'
+assert_match "$(cat "$CFG")" 'install.autostart = login' "$WT_OUT"
 
 rm -f "$CFG"
 PATH=$SAVED_PATH configure_with "$FULL"

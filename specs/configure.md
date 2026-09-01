@@ -251,6 +251,11 @@ that is not done":
 **A failed check sends the cursor to the setting that failed**, not onward: a
 failed monitor check lands on Monitors, a failed trigger check on Triggers.
 
+**Backing out of a check is neither a pass nor a failure.** Its row reads
+`not checked` and the cursor moves on to the next unfinished thing, as if the
+check had not been opened. Landing on Monitors would say "you got the monitors
+wrong" to someone who only declined to move them.
+
 ### 4.3 Nothing is preset
 
 Autostart and PATH have obvious answers, but the suggestion belongs on the
@@ -446,6 +451,22 @@ Short name for it
 - Picking one asks: manage it? → a short name → **for each computer, which input
   it is on**. **Machines-major, not inputs-major**: a panel has eight possible
   inputs and two real ones.
+- **A panel's questions are one submenu.** Esc at any menu in it — how to talk
+  to it, any input — abandons that panel and returns to the Monitors list with
+  the panel exactly as it was. Half a map is not an answer, so nothing part-way
+  through is kept. This is deliberately **not** the same as answering
+  `Manage this monitor?` with no: backing out and declining are different
+  things, and collapsing them would let a stray esc unmanage a working monitor.
+- **The short name is unique, and follows the computer-name character rule**
+  (§5.1): lowercase letters, digits and dashes; spaces, dots and underscores
+  become dashes; anything else is dropped — suggested and asked, never silently
+  mangled. Two panels with one name would be written as one panel and read back
+  as a merge of both, and the switcher would refuse without saying why. A
+  second panel offered a name another already has is refused and asked again:
+
+```normative
+There is already a monitor called
+```
 - Answering **no** stops that panel following the switch and **forgets which
   computer is on which of its inputs**. That is more than the question implies —
   "manage" sounds like a flag, and the answer is destructive — so when the panel
@@ -486,6 +507,10 @@ which method is chosen.
   Nearly every monitor takes the standard method, including most LG ones.
   A few LG models ignore it and need LG's own method instead.
 
+  LG's own method talks to a service channel on the monitor. It is
+  sent only the values written down for it: unknown values on that
+  channel have made monitors unusable.
+
   If you are not sure, take the standard one. If it turns out not to
   work, the check further down will offer you this again.
 
@@ -497,6 +522,9 @@ which method is chosen.
 --- how to talk to this monitor ---
   Nearly every monitor takes the standard method, including most {vendor} ones.
   A few {vendor} models ignore it and need {vendor}'s own method instead.
+  {vendor}'s own method talks to a service channel on the monitor. It is
+  sent only the values written down for it: unknown values on that
+  channel have made monitors unusable.
   If you are not sure, take the standard one. If it turns out not to
   work, the check further down will offer you this again.
 Standard
@@ -504,6 +532,13 @@ what nearly every monitor takes
 {vendor}'s own method
 for {vendor} models that ignore the standard one
 ```
+
+**The consequence is named where the choice is made.** This is the moment a
+person commits to a service channel, and §2's rule is to name the consequence,
+not the mechanism. The hard rules that make the channel safe live in
+[`../AGENTS.md`](../AGENTS.md), which a user never opens; three lines here are
+the only warning they get. No exclamation mark, no reassurance: what the channel
+is, what is sent to it, what has happened on it.
 
 **Why up front rather than only on failure.** Someone who already knows their
 model needs the alternative should not have to run a check that moves a panel
@@ -544,10 +579,23 @@ assigned to
 ```
 
 - A typed value that collides is refused with the same reasoning, because
-  marking it in the list is not enough — a typed value can still reach it:
+  marking it in the list is not enough — a typed value can still reach it.
+  **Collision is by value, not by spelling**: `17` and `0x11` are one socket.
+  A typed value is stored in the canonical `0xNN` form, so the same input never
+  appears twice in a map or a list under two spellings:
 
 ```normative
 Two computers cannot share one input.
+```
+
+- **Typing a value onto a manufacturer channel is warned about first.** The
+  channel is what §6.2 named; a typed byte is the one thing that reaches it
+  from outside the documented table, and hard rule 1 permits it only because
+  the person typing it is the one who has to know where it came from:
+
+```normative
+  This is the manufacturer's service channel. Type only a value you have
+  from documentation; an unknown value here has made monitors unusable.
 ```
 
 - `Not on this monitor` is offered for every computer **except this one**.
@@ -620,9 +668,25 @@ The tiers are **mutually exclusive**. Installing one removes the other, because
 two live watchers would both fire on the same arrival and the debounce is
 per-process, so it cannot dedupe across them.
 
-Where elevation cannot be obtained — a headless or non-interactive install —
-the boot tier falls back to login and says so. Nothing elevates without someone
-choosing it.
+Where elevation cannot be obtained — a headless or non-interactive install, or
+a prompt that was declined — the boot tier **falls back to login, says so, and
+the config records login**, not what was asked for. Nothing elevates without
+someone choosing it, and silently keeping `boot` is how someone finds out months
+later that switching does nothing until they log in.
+
+```normative
+falling back to starting at login
+```
+
+Where the account **cannot** elevate at all — it is not an administrator — the
+`From boot` row is drawn disabled, and its detail says so, before anything is
+asked for. Offering it would otherwise send the most common kind of account
+into a prompt for a different account's credentials, and whatever that
+installs belongs to that other account.
+
+```normative
+needs an administrator account
+```
 
 `status` must **say plainly** what the installed tier covers, and where a tier
 is unavailable rather than implying the platforms match.
@@ -871,6 +935,17 @@ stops being "an event was observed" and becomes the whole thing working.
 - The watcher gets a **one-shot mode** that prints current presence, waits for one
   **arrival**, reports it and exits. It takes **no lock and runs nothing**, so a
   real watcher may run alongside it.
+- **The installed watcher is stood down for the check** where that needs no
+  elevation, and restored afterwards. On a re-run it would otherwise see the
+  same flip and pull against the SAVED config, after the one-shot's pull — so a
+  correct new answer would read as the monitors failing. Where standing it down
+  would need a password or a prompt, it is left running and the person is told
+  before they flip:
+
+```normative
+  The running watcher is paused for this check.
+  The running watcher will also fire, using the saved configuration.
+```
 - Until the inputs are checked it reports the arrival and **moves nothing**,
   saying so:
 

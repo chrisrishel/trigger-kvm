@@ -148,8 +148,8 @@ wt_format_name() {
 # not like, so "My Mac" quietly became "mymac" and the person was left wondering
 # where their space went.
 wt_read_name() {
-  local _prompt _default _taken _raw _n
-  _prompt=$1 _default=${2:-} _taken=${3:-}
+  local _prompt _default _taken _what _raw _n
+  _prompt=$1 _default=${2:-} _taken=${3:-} _what=${4:-computer}
   while :; do
     _raw=$(menu_read_line "  $_prompt" "$_default") || menu_eof
     if [ -z "$_raw" ]; then
@@ -166,7 +166,15 @@ wt_read_name() {
       if ! read_yesno "  Use '$_n'?" y; then _default=$_n; continue; fi
     fi
     case " $_taken " in
-      *" $_n "*) printf '  There is already a computer called %s.\n' "$_n" >&2; continue ;;
+      *" $_n "*)
+        # Two literal lines rather than one with a %s: both are normative
+        # wording, and the conformance check looks for each as written.
+        if [ "$_what" = "monitor" ]; then
+          printf '  There is already a monitor called %s.\n' "$_n" >&2
+        else
+          printf '  There is already a computer called %s.\n' "$_n" >&2
+        fi
+        continue ;;
     esac
     printf '%s\n' "$_n"
     return 0
@@ -472,12 +480,19 @@ wt_input_table() {
 # when --allow-none is given and that computer is not on this panel at all.
 WT_INPUT_VALUE=''
 WT_INPUT_NONE=0
+WT_INPUT_ESC=0
 wt_read_input() {
-  local _method _map _prompt _sub _default _forwhom _allownone _now _row _i _v
-  local _holder _typerow _nonerow _pick _typed
-  _method=$1 _map=$2 _prompt=$3 _sub=$4 _default=$5 _forwhom=$6 _allownone=$7
+  local _method _map _prompt _sub _default _forwhom _allownone _escapable _now _row _i _v
+  local _holder _typerow _nonerow _pick _typed _n _esc
+  _method=$1 _map=$2 _prompt=$3 _sub=$4 _default=$5 _forwhom=$6 _allownone=$7 _escapable=${8:-0}
 
   WT_INPUT_NONE=0
+  WT_INPUT_ESC=0
+  # The canonical spelling is 0xNN, so a hand-edited `17` finds its row and
+  # collides with `0x11` (specs 6.1: collision is by value, not by spelling).
+  if _n=$(config_to_byte "$_default" 2>/dev/null); then _default=$(printf '0x%02X' "$_n"); fi
+  _esc=''
+  [ "$_escapable" = "1" ] && _esc=--escapable
   wt_input_table "$_method" "$_map"
 
   printf '\n  %s\n' "$_prompt" >&2
@@ -523,19 +538,29 @@ wt_read_input() {
     fi
     menu_is_disabled "$_row" && _row=$_typerow
 
-    select_one --default "$_row" --current "$_now"
+    # shellcheck disable=SC2086  # $_esc is a flag or empty, and must split
+    select_one --default "$_row" --current "$_now" $_esc
     _pick=$MENU_PICK
 
+    if [ "$_pick" -lt 0 ]; then
+      WT_INPUT_ESC=1; WT_INPUT_VALUE=''; return 0
+    fi
     if [ "$_pick" = "$_nonerow" ] && [ "$_allownone" = "1" ]; then
       WT_INPUT_NONE=1; WT_INPUT_VALUE=''; return 0
     fi
     if [ "$_pick" = "$_typerow" ]; then
+      if [ "$_method" != "standard" ]; then
+        # A typed byte is the one thing that reaches a manufacturer channel from
+        # outside the documented table (specs 6.1). Say what that means first.
+        printf "\n  This is the manufacturer's service channel. Type only a value you have\n" >&2
+        printf '  from documentation; an unknown value here has made monitors unusable.\n' >&2
+      fi
       _typed=$(menu_read_line '  Value (e.g. 0x11)' "$_default") || menu_eof
-      if ! config_to_byte "$_typed" >/dev/null; then
+      if ! _n=$(config_to_byte "$_typed"); then
         printf '  Not a byte.\n' >&2
         continue
       fi
-      _v=$_typed
+      _v=$(printf '0x%02X' "$_n")
     else
       _v=${IT_VALUES[$_pick]}
     fi
@@ -581,6 +606,12 @@ wt_choose_method() {
   printf '\n--- how to talk to this monitor ---\n' >&2
   printf '  Nearly every monitor takes the standard method, including most %s ones.\n' "$_what" >&2
   printf '  A few %s models ignore it and need %s'"'"'s own method instead.\n\n' "$_what" "$_what" >&2
+  # The consequence, named where the choice is made (specs/configure.md 6.2):
+  # this is the moment a person commits to a service channel, and the rules
+  # that keep it safe live in a file they never open.
+  printf '  %s'"'"'s own method talks to a service channel on the monitor. It is\n' "$_what" >&2
+  printf '  sent only the values written down for it: unknown values on that\n' >&2
+  printf '  channel have made monitors unusable.\n\n' >&2
   printf '  If you are not sure, take the standard one. If it turns out not to\n' >&2
   printf '  work, the check further down will offer you this again.\n' >&2
 
@@ -598,8 +629,31 @@ wt_choose_method() {
   case $MENU_PICK in
     0) printf 'standard\n' ;;
     1) printf '%s\n' "$_alt" ;;
-    *) printf '%s\n' "$_current" ;;   # esc: change nothing
+    *) printf 'BACK\n' ;;   # esc: the panel's questions are one submenu; back out of it
   esac
+}
+
+# Whether another managed panel already has this short name. Two panels with one
+# label would be written as one and read back as a merge of both.
+wt_label_taken() {
+  local _i
+  _i=0
+  while [ "$_i" -lt "${#WT_A_KEY[@]}" ]; do
+    if [ "${WT_A_LABEL[$_i]}" = "$1" ] && [ "${WT_A_KEY[$_i]}" != "$2" ]; then return 0; fi
+    _i=$(( _i + 1 ))
+  done
+  return 1
+}
+
+# Every label but this panel's own, for wt_read_name's duplicate check.
+wt_labels_except() {
+  local _i _out
+  _i=0 _out=''
+  while [ "$_i" -lt "${#WT_A_KEY[@]}" ]; do
+    [ "${WT_A_KEY[$_i]}" != "$1" ] && _out="$_out ${WT_A_LABEL[$_i]}"
+    _i=$(( _i + 1 ))
+  done
+  printf '%s\n' "$_out"
 }
 
 # One display: identity is already known; what we need from the human is whether
@@ -647,13 +701,16 @@ wt_display_answers() {
     return 0
   fi
 
-  _label=$(menu_read_line '  Short name for it' "$_defaultlabel") || menu_eof
-  _label=$(wt_format_name "$_label")
-  [ -n "$_label" ] || _label=$_defaultlabel
+  # The same rule, prompt and duplicate check as a computer name (specs 5.1, 6):
+  # suggested and asked, never silently mangled, and unique across panels.
+  _label=$(wt_read_name 'Short name for it' "$_defaultlabel" "$(wt_labels_except "$_key")" monitor)
 
   # BEFORE the inputs, because which values are on offer depends on the answer.
+  # Esc here, or at any input below, backs out of the whole panel unchanged: a
+  # panel's questions are one submenu (specs 6), and half a map is not an answer.
   if _di=$(wt_dialect_for "$(printf '%s' "$_key" | cut -d: -f1)"); then
     _method=$(wt_choose_method "$_di" "$_method")
+    [ "$_method" = "BACK" ] && { printf 'KEEP\n'; return 0; }
   fi
 
   _map=''
@@ -666,7 +723,8 @@ wt_display_answers() {
       _allownone=0
     fi
     wt_read_input "$_method" "$_map" \
-      "On the $_desc, which input is '$_c' on?" "$_sub" "$_was" "$_c" "$_allownone"
+      "On the $_desc, which input is '$_c' on?" "$_sub" "$_was" "$_c" "$_allownone" 1
+    [ "$WT_INPUT_ESC" = "1" ] && { printf 'KEEP\n'; return 0; }
     [ "$WT_INPUT_NONE" = "1" ] || _map=$(map_set "$_map" "$_c" "$WT_INPUT_VALUE")
   done
 
@@ -826,6 +884,10 @@ EOF
 # logged-in session -- IOKit identity, m1ddc and a full `pull` were all measured
 # working from a LaunchDaemon with no session at all. See specs/CHANGELOG.md
 # revision 4.
+# Can this account obtain root? Membership of the admin group is what sudoers
+# grants on a stock Mac; a standard account is refused at the prompt.
+wt_is_admin() { id -Gn 2>/dev/null | tr ' ' '\n' | grep -qx admin; }
+
 wt_tier() {
   local _now _default
   printf '\n--- should it start on its own? ---\n' >&2
@@ -836,7 +898,15 @@ wt_tier() {
   printf '  back after a restart until you run:  trigger-kvm restart\n\n' >&2
 
   menu_reset
-  menu_add 'From boot' 'needs your password once, to install'
+  # Drawn, and disabled with the reason, for an account that cannot elevate:
+  # sudo would refuse it, and the row must not send someone into a prompt for
+  # a different account's password (specs 8).
+  if wt_is_admin; then
+    menu_add 'From boot' 'needs your password once, to install'
+  else
+    menu_add 'From boot' 'needs an administrator account'
+    menu_disable 0
+  fi
   menu_add 'From login' 'no password needed'
   menu_add 'No -- I will start it myself' ''
 
@@ -844,6 +914,7 @@ wt_tier() {
   case $WT_TIER in boot) _now=0 ;; login) _now=1 ;; no) _now=2 ;; esac
   _default=0
   [ "$_now" -ge 0 ] && _default=$_now
+  menu_is_disabled "$_default" && _default=1
 
   select_one --default "$_default" --current "$_now" --escapable
   [ "$MENU_PICK" -lt 0 ] && return 0
