@@ -20,9 +20,9 @@ device in generated 32 `Win32_DeviceChangeEvent` indications in about three
 seconds, and unplugging it another 13. The event carries no device identity, so
 each costs a `Win32_PnPEntity` query. A Bluetooth connect produces about 3.
 
-**2026-08-30, Windows -- PnP presence is "paired" for Bluetooth.** AirPods whose
-`DEVPKEY_Bluetooth_LastConnectedTime` read 2025-11-07, and an iPhone reading
-2023-07-07, both reported `Present=True` and carried
+**2026-08-30, Windows -- PnP presence is "paired" for Bluetooth.** A pair of
+earbuds whose `DEVPKEY_Bluetooth_LastConnectedTime` was ten months earlier, and a
+phone whose was three years earlier, both reported `Present=True` and carried
 `DEVPKEY_DeviceContainer_AlwaysShowDeviceAsConnected = True`. Their downstream
 function nodes (`SWD\MMDEVAPI\` audio endpoints) did read `Present=False`, but
 they are opaque GUIDs, differ by device class, and appeared twice under two

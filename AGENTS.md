@@ -155,7 +155,7 @@ code**, update whichever of these the change affects:
 |---|---|
 | `README.md` | The front door changes -- what it does, install, or the top-level gotchas |
 | `ARCHITECTURE.md` | The *shape* changes -- components, data flow, a design decision or its rationale. Not for detail churn. |
-| `displays.toml` | Any monitor, input value, DDC method, or trigger device changes |
+| `displays.toml` | A documented monitor model, input value or DDC method changes -- and the dialect table on BOTH platforms in the same commit |
 | `macos/README.md`, `windows/README.md` | That platform's install, components, or behaviour changes |
 | `AGENTS.md` | A new constraint every session on either platform must respect |
 | `<platform>/AGENTS.md` | A new constraint or hazard specific to that platform |
@@ -166,10 +166,10 @@ code**, update whichever of these the change affects:
 
 Two specific obligations:
 
-- **`displays.toml` is a contract across two independent implementations.** Changing
-  a value there means changing every implementation to match, in the same commit.
-  A value fixed on one machine and not the other produces a half-switching setup
-  that presents as a hardware fault.
+- **`displays.toml` is the allowlist, and nothing reads it.** The dialect tables
+  in both implementations carry its values; changing a value there means changing
+  both tables in the same commit. A value fixed on one platform and not the other
+  produces a half-switching setup that presents as a hardware fault.
 - **When a doc's claim stops being true, fix it in that commit.** Stale docs here
   are actively dangerous -- this repo's docs encode which values are safe to send to
   a service channel.
