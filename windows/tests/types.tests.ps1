@@ -29,8 +29,7 @@ $old = Join-Path $tmp 'trigger-kvm.ps1'
 
 & $old list *>&1 | Out-Null
 if (-not ('NvDdc' -as [type])) {
-    Write-Host 'SKIPPED: the old build loaded no types (no NVAPI here?), so there is nothing to guard'
-    exit 0
+    Exit-Skipped 'the old build loaded no types (no NVAPI here?), so there was nothing to guard'
 }
 
 # ---- the guard fires for a direct run ---------------------------------------

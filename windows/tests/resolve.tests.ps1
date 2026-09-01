@@ -41,15 +41,13 @@ function Invoke-Switcher {
 
 $probe = Invoke-Switcher @('list', '-Config', $cfg)
 if ($probe.Text -match 'NVAPI unavailable|no connected displays') {
-    Write-Host 'SKIPPED: no NVIDIA display to resolve against'
     Remove-Item -LiteralPath $cfg -Force -ErrorAction SilentlyContinue
-    exit 0
+    Exit-Skipped 'no NVIDIA display to resolve against -- the byte-exact packets and every refusal below went unchecked'
 }
 $attached = ($probe.Text -match '1E6D' -and $probe.Text -match '06B3')
 if (-not $attached) {
-    Write-Host 'SKIPPED: this desk does not have both reference panels attached'
     Remove-Item -LiteralPath $cfg -Force -ErrorAction SilentlyContinue
-    exit 0
+    Exit-Skipped 'this desk does not have both reference panels attached -- the byte-exact packets and every refusal below went unchecked'
 }
 
 # ---- pull is `to computer.this` ----------------------------------------------

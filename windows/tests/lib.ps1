@@ -81,6 +81,23 @@ function Add-Printed {
 function Get-Printed   { return ($script:Printed -join "`n") }
 function Reset-Printed { $script:Printed = @(); $script:Partial = '' }
 
+# ---- skipping ---------------------------------------------------------------
+
+# A SKIP IS NOT A PASS, and the exit code has to say so.
+#
+# Two files need real hardware: resolve.tests.ps1 wants the two reference panels
+# attached, and types.tests.ps1 wants an NVIDIA driver to load a type from. Both
+# used to `exit 0` when they could not run, and run.ps1 counted that as PASS --
+# so on every machine but the reference desk, the only tests of the exact packets
+# and of every refusal quietly did not run and the suite reported all green.
+#
+# 2 rather than 1, so run.ps1 can tell "did not run" from "ran and failed".
+function Exit-Skipped {
+    param([string]$Why)
+    Write-Host "SKIPPED: $Why"
+    exit 2
+}
+
 # ---- assertions -------------------------------------------------------------
 
 function Assert-Equal {
