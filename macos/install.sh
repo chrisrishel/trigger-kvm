@@ -145,41 +145,6 @@ say "installed to $TK_PREFIX"
 ln -sf "$TK_PREFIX/trigger-kvm" "$TK_BINDIR/trigger-kvm"
 say "linked $TK_BINDIR/trigger-kvm"
 
-# --- the LaunchAgent ---------------------------------------------------------
-#
-# It runs `trigger-kvm watch`, which reads the config and execs the watcher. NO
-# configuration is baked in here: which devices to watch and the timings all
-# live in the config, and an edit takes effect on the next `trigger-kvm
-# restart`. That is why there is no apply step.
-#
-# KeepAlive is the self-heal. Windows needs a 1-minute repeating trigger for
-# this; launchd does it properly, in about a fifth of a second -- measured.
-
-mkdir -p "$(dirname "$TK_PLIST")"
-cat > "$TK_PLIST" <<EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict>
-  <key>Label</key><string>$TK_LABEL</string>
-  <key>ProgramArguments</key><array>
-    <string>$TK_PREFIX/trigger-kvm</string>
-    <string>watch</string>
-  </array>
-  <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><true/>
-  <key>ProcessType</key><string>Background</string>
-  <key>StandardOutPath</key><string>$TK_LOG</string>
-  <key>StandardErrorPath</key><string>$TK_LOG</string>
-</dict></plist>
-EOF
-
-# A malformed plist fails SILENTLY at load, so it is verified before anything is
-# asked to load it.
-if ! plutil -lint "$TK_PLIST" >/dev/null; then
-  say "the generated plist is malformed: $TK_PLIST"
-  exit 1
-fi
-
 # --- configure, if there is nothing to install from --------------------------
 #
 # No config means nothing to install FROM: values describe one specific desk and
@@ -200,42 +165,10 @@ fi
 
 # --- start -------------------------------------------------------------------
 #
-# The tier work lives in lib/manage.sh, because `configure` has to do exactly
-# the same thing and there must be one implementation of it. Applying is a
-# CONSEQUENCE of configuring, not something a user invokes -- which is why there
-# is no apply verb on the CLI.
+# The tier work and the closing words live in lib/manage.sh, because
+# `configure` has to do exactly the same things and there must be one
+# implementation of each. Applying is a CONSEQUENCE of configuring, not
+# something a user invokes -- which is why there is no apply verb on the CLI.
 
 tk_apply_tier
-TIER=$TK_TIER_APPLIED
-
-# --- what is left to say -----------------------------------------------------
-#
-# Short. It runs, here is how to see that, here are four commands. Everything
-# else -- how it starts, sessions, the transport -- is in the docs for the day
-# someone needs it, and is noise on the day they do not.
-
-case ":$PATH:" in
-  *":$TK_BINDIR:"*) CMD=trigger-kvm ;;
-  *)                CMD="$TK_BINDIR/trigger-kvm" ;;
-esac
-
-printf '\n'
-case $TIER in
-  no)
-    printf '  Done. trigger-kvm is installed, but will NOT come back after a restart --\n'
-    printf '  start it yourself with:  %s restart\n' "$CMD" ;;
-  boot)
-    printf '  Done. trigger-kvm is running, and will start each time the computer\n'
-    printf '  starts -- before anyone logs in.\n' ;;
-  *)
-    printf '  Done. trigger-kvm is running, and will start automatically each time you\n'
-    printf '  log in.\n' ;;
-esac
-printf '\n'
-printf '  Flip your switch to this computer -- the monitors should follow.\n'
-printf '\n'
-printf '    %s status      is it running?\n'                 "$CMD"
-printf '    %s pull        bring the displays here now\n'    "$CMD"
-printf '    %s logs        what has it been doing\n'         "$CMD"
-printf '    %s configure   change any of this\n'             "$CMD"
-printf '\n'
+tk_say_done

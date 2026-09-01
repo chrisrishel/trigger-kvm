@@ -256,25 +256,10 @@ it 'choosing boot APPLIES it, rather than only recording it'
 # nothing while the config claimed it was on. A test that the config was WRITTEN
 # did not catch it; only a test that it was APPLIED does.
 #
-# sudo is stubbed to run the command unprivileged. It also drops `-o root -g
-# wheel`, because those cannot succeed without real privileges and the point of
-# the stub is to simulate the privileged OUTCOME -- ownership is not what is
-# under test here. launchctl needs no stub of its own: the harness already
-# points $TK_LAUNCHCTL at a recorder for the whole suite, and what it was asked
-# is read back from $TK_FAKE_LAUNCHCTL.
-mkdir -p "$FAKE_DIR/bin"
-cat >"$FAKE_DIR/bin/sudo" <<'EOS'
-#!/bin/sh
-[ "$1" = "-p" ] && shift 2
-if [ "$1" = "install" ]; then
-  shift
-  set -- install "$(echo "$@" | sed 's/-o root -g wheel //')"
-  # shellcheck disable=SC2086
-  exec $1 $2
-fi
-exec "$@"
-EOS
-chmod +x "$FAKE_DIR/bin/sudo"
+# sudo is the harness stub, which runs the command unprivileged. launchctl needs
+# no stub of its own: the harness already points $TK_LAUNCHCTL at a recorder for
+# the whole suite, and what it was asked is read back from $TK_FAKE_LAUNCHCTL.
+fake_sudo_stub
 : >"$TK_FAKE_LAUNCHCTL"
 rm -f "$TK_DAEMON_PLIST" "$CFG"
 PATH="$FAKE_DIR/bin:$SAVED_PATH" configure_with "$BOOT"
@@ -282,6 +267,12 @@ PATH="$FAKE_DIR/bin:$SAVED_PATH" configure_with "$BOOT"
 assert_match "$(cat "$CFG")" 'install.autostart = boot' "$WT_OUT"
 assert_true "$([ -f "$TK_DAEMON_PLIST" ] && echo 0 || echo 1)" \
   "the LaunchDaemon must actually be installed: $WT_OUT"
+
+it 'and removes the LaunchAgent, so both tiers cannot start at the next login'
+# A launchd label is per DOMAIN. Booting the agent out covers this session only;
+# the file left in ~/Library/LaunchAgents would start it again at login, beside
+# the daemon, where it loses the lock and respawns every ten seconds forever.
+assert_true "$([ ! -f "$TK_PLIST" ] && echo 0 || echo 1)" 'the LaunchAgent plist must be removed'
 
 it 'and the daemon it writes runs as the USER, not as root'
 # UserName is the whole property. Without it this is a root daemon acting on a
@@ -306,9 +297,16 @@ rm -f "$CFG"
 PATH="$FAKE_DIR/bin:$SAVED_PATH" configure_with "$FULL"
 assert_true "$([ ! -f "$TK_DAEMON_PLIST" ] && echo 0 || echo 1)" 'the daemon must be removed'
 assert_match "$(cat "$TK_FAKE_LAUNCHCTL")" 'bootstrap gui/'
+assert_true "$([ -f "$TK_PLIST" ] && echo 0 || echo 1)" 'and the LaunchAgent written back'
 
 rm -f "$CFG"
 PATH=$SAVED_PATH configure_with "$FULL"
+
+it 'ends by saying what to do next, from configure as well as from the installer'
+# The closing words lived in install.sh only, so a first install (which hands
+# off to configure) and every later configure ended at "loaded the LaunchAgent".
+assert_match "$WT_OUT" 'Flip your switch to this computer -- the monitors should follow.'
+assert_match "$WT_OUT" 'status      is it running?'
 
 it 'the config it wrote is one the switcher accepts'
 # The real test of "identical in shape": pull resolves against it and sends.

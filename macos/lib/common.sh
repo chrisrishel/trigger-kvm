@@ -12,7 +12,10 @@ TK_LABEL="com.chrisrishel.trigger-kvm"
 TK_SUPPORT="$HOME/Library/Application Support/trigger-kvm"
 TK_LOG="$HOME/Library/Logs/trigger-kvm.log"
 TK_LOCK="$TK_SUPPORT/watcher.lock"
-TK_PLIST="$HOME/Library/LaunchAgents/$TK_LABEL.plist"
+# The login tier's LaunchAgent. Overridable for the same reason the daemon plist
+# below is: tk_apply_tier writes and removes it, and the suite must be able to
+# point that at a temp file.
+TK_PLIST=${TK_PLIST:-$HOME/Library/LaunchAgents/$TK_LABEL.plist}
 # The boot tier. A LaunchDaemon in the system domain, but with UserName set so
 # it runs AS THE USER, unelevated -- root installs it, root does not run it.
 # Overridable so the suite can never touch the real system path. Everything

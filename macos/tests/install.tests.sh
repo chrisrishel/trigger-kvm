@@ -38,8 +38,15 @@ run_install() {
 nothing_installed() {
   assert_true "$([ ! -e "$HOME/.local/share/trigger-kvm" ] && echo 0 || echo 1)" "program directory must not exist: $INST_OUT"
   assert_true "$([ ! -e "$HOME/.local/bin/trigger-kvm" ] && echo 0 || echo 1)" 'launcher must not be linked'
-  assert_true "$([ ! -e "$HOME/Library/LaunchAgents" ] && echo 0 || echo 1)" 'no LaunchAgent may be written'
+  assert_true "$([ ! -e "$TK_PLIST" ] && echo 0 || echo 1)" 'no LaunchAgent may be written'
   assert_true "$([ ! -e "$TK_DAEMON_PLIST" ] && echo 0 || echo 1)" 'no LaunchDaemon may be written'
+}
+
+# A config to install FROM, with a chosen tier.
+SUPPORT="$HOME/Library/Application Support/trigger-kvm"
+write_config_with_tier() {
+  mkdir -p "$SUPPORT"
+  { printf '%s\n' "$1"; printf '%s' "$CONFIG_THIS_DESK"; } >"$SUPPORT/config"
 }
 
 # =============================================================================
@@ -87,6 +94,51 @@ assert_match "$(cat "$HOME/.local/share/trigger-kvm/version.txt")" 'spec-revisio
 it 'the program directory is not on PATH -- only the launcher directory is offered'
 assert_no_match "$INST_OUT" 'export PATH'
 assert_equal "trigger-kvm" "$(ls "$HOME/.local/bin")"
+
+# =============================================================================
+# a re-run over an existing config: the tiers, and what is said at the end
+# =============================================================================
+
+fake_sudo_stub
+
+it 'installs the login tier from an existing config and says what to do next'
+write_config_with_tier 'install.autostart = login'
+: >"$TK_FAKE_LAUNCHCTL"
+run_install
+assert_equal 0 "$INST_RC" "$INST_OUT"
+assert_true "$([ -f "$TK_PLIST" ] && echo 0 || echo 1)" 'the LaunchAgent is written by the tier apply'
+assert_match "$(cat "$TK_FAKE_LAUNCHCTL")" 'bootstrap gui/'
+assert_match "$INST_OUT" 'Flip your switch to this computer -- the monitors should follow.'
+assert_match "$INST_OUT" 'log in.'
+
+it 'reads the tier through the config reader, so a trailing comment does not lose it'
+# The tier used to be read with a private sed that kept the comment and was
+# case-sensitive. The spec's own example line -- `install.autostart = boot   #
+# boot | login | no` -- read as neither tier, so an upgrade REMOVED the boot
+# daemon while the config still said boot.
+write_config_with_tier 'Install.Autostart = Boot   # boot | login | no'
+: >"$TK_FAKE_LAUNCHCTL"
+rm -f "$TK_DAEMON_PLIST"
+PATH="$FAKE_DIR/bin:$PATH" run_install
+assert_equal 0 "$INST_RC" "$INST_OUT"
+assert_true "$([ -f "$TK_DAEMON_PLIST" ] && echo 0 || echo 1)" "the boot daemon must be installed: $INST_OUT"
+assert_match "$(cat "$TK_FAKE_LAUNCHCTL")" 'bootstrap system'
+assert_match "$INST_OUT" 'before anyone logs in'
+
+it 'and the boot tier leaves no LaunchAgent behind'
+assert_true "$([ ! -f "$TK_PLIST" ] && echo 0 || echo 1)" 'a launchd label is per domain; the agent must go'
+
+it 'uninstall removes the program, the launcher and both tiers, and keeps the config and log'
+: >"$TK_FAKE_LAUNCHCTL"
+PATH="$FAKE_DIR/bin:$PATH" run_install uninstall
+assert_equal 0 "$INST_RC" "$INST_OUT"
+assert_true "$([ ! -e "$HOME/.local/share/trigger-kvm" ] && echo 0 || echo 1)" 'program directory removed'
+assert_true "$([ ! -e "$HOME/.local/bin/trigger-kvm" ] && echo 0 || echo 1)" 'launcher removed'
+assert_true "$([ ! -e "$TK_DAEMON_PLIST" ] && echo 0 || echo 1)" 'daemon plist removed'
+assert_true "$([ ! -e "$TK_PLIST" ] && echo 0 || echo 1)" 'agent plist removed'
+assert_match "$(cat "$TK_FAKE_LAUNCHCTL")" 'bootout system/'
+assert_true "$([ -f "$SUPPORT/config" ] && echo 0 || echo 1)" 'the config is kept'
+assert_match "$INST_OUT" 'config and log kept'
 
 # =============================================================================
 # the bare command

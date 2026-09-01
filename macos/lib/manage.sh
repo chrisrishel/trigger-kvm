@@ -198,13 +198,85 @@ tk_warn_if_stale() {
 # silently did nothing, never even asking for the password. The config records
 # what was asked for; this is what makes the system match it.
 TK_TIER_APPLIED=''
+# The login tier's LaunchAgent. It runs `trigger-kvm watch`, which reads the
+# config and execs the watcher; NO configuration is baked in, so an edit takes
+# effect on the next `restart` and there is no apply step. KeepAlive is the
+# self-heal -- launchd does it in about a fifth of a second, measured.
+#
+# Written here, by tk_apply_tier, and nowhere else: the tier that owns launchd
+# owns both plists, so choosing boot can remove this one (see below) and
+# choosing login can write it back.
+tk_write_agent_plist() {
+  mkdir -p "$(dirname "$TK_PLIST")"
+  cat > "$TK_PLIST" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>$TK_LABEL</string>
+  <key>ProgramArguments</key><array>
+    <string>$TK_PREFIX/trigger-kvm</string>
+    <string>watch</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ProcessType</key><string>Background</string>
+  <key>StandardOutPath</key><string>$TK_LOG</string>
+  <key>StandardErrorPath</key><string>$TK_LOG</string>
+</dict></plist>
+EOF
+  # A malformed plist fails SILENTLY at load, so it is verified before anything
+  # is asked to load it.
+  if ! plutil -lint "$TK_PLIST" >/dev/null; then
+    tk_log "the generated LaunchAgent is malformed; not loading it: $TK_PLIST"
+    rm -f "$TK_PLIST"
+    return 1
+  fi
+  return 0
+}
+
+# What is left to say after configure or install. Short: it runs, here is how
+# to see that, here are four commands. Printed from ONE place for both paths --
+# it used to live in the installer only, so a first install (which hands off
+# to configure) and every later configure ended without it.
+tk_say_done() {
+  local _cmd
+  case ":$PATH:" in
+    *":$TK_BINDIR:"*) _cmd=trigger-kvm ;;
+    *)                _cmd="$TK_BINDIR/trigger-kvm" ;;
+  esac
+  printf '\n'
+  case $TK_TIER_APPLIED in
+    no)
+      printf '  Done. trigger-kvm is installed, but will NOT come back after a restart --\n'
+      printf '  start it yourself with:  %s restart\n' "$_cmd" ;;
+    boot)
+      printf '  Done. trigger-kvm is running, and will start each time the computer\n'
+      printf '  starts -- before anyone logs in.\n' ;;
+    *)
+      printf '  Done. trigger-kvm is running, and will start automatically each time you\n'
+      printf '  log in.\n' ;;
+  esac
+  printf '\n'
+  printf '  Flip your switch to this computer -- the monitors should follow.\n'
+  printf '\n'
+  printf '    %s status      is it running?\n'                 "$_cmd"
+  printf '    %s pull        bring the displays here now\n'    "$_cmd"
+  printf '    %s logs        what has it been doing\n'         "$_cmd"
+  printf '    %s configure   change any of this\n'             "$_cmd"
+  printf '\n'
+}
+
 tk_apply_tier() {
   local CONFIG TMP_DAEMON DOMAIN
   tk_refuse_root || return 1
   DOMAIN="$(tk_domain)"
   CONFIG="${1:-$TK_SUPPORT/config}"
   [ -f "$CONFIG" ] || { TK_TIER_APPLIED=''; return 0; }
-  TK_TIER_APPLIED=$(sed -n 's/^[[:space:]]*install\.autostart[[:space:]]*=[[:space:]]*//p' "$CONFIG" | tail -1)
+  # Through the reader, never a private sed. A trailing comment or a capital
+  # letter on this line otherwise read as "no tier" -- which removed the boot
+  # daemon on the next upgrade while the config still said boot.
+  config_load "$CONFIG"
+  TK_TIER_APPLIED=$(tk_lower "$(config_get install.autostart)")
 
   # Whichever tier is chosen, the OTHER one goes. Two live watchers would both
   # fire on the same arrival.
@@ -249,6 +321,10 @@ EOF
       sudo "$TK_LAUNCHCTL" bootout "system/$TK_LABEL" >/dev/null 2>&1 || true
       sudo "$TK_LAUNCHCTL" bootstrap system "$TK_DAEMON_PLIST"
       tk_log "installed the boot-time start, running as $(id -un), unelevated"
+      # The boot tier owns launchd. A launchd label is per DOMAIN, so a
+      # LaunchAgent left in place comes back at the next login beside the
+      # daemon and respawns on the lock every ten seconds, forever.
+      rm -f "$TK_PLIST"
     else
       # Nothing elevates without someone choosing it. Fall back and SAY SO --
       # silently downgrading a tier is how someone discovers months later that
@@ -268,14 +344,20 @@ EOF
       sudo "$TK_LAUNCHCTL" bootout "system/$TK_LABEL" >/dev/null 2>&1 || true
       sudo rm -f "$TK_DAEMON_PLIST" || true
     fi
+    tk_write_agent_plist || return 1
     if [ "$TK_TIER_APPLIED" = "no" ]; then
       # The agent is installed but not loaded; `restart` loads it. It does not
       # come back after a reboot until then, which is what "no" means.
       tk_log 'autostart is off; the agent is installed but not loaded.'
       tk_log 'start it with:  trigger-kvm restart'
-    else
-      "$TK_LAUNCHCTL" bootstrap "$DOMAIN" "$TK_PLIST"
+    elif "$TK_LAUNCHCTL" bootstrap "$DOMAIN" "$TK_PLIST" >/dev/null 2>&1; then
       tk_log 'loaded the LaunchAgent'
+    else
+      # Over SSH there is no gui domain to load into. The config is written and
+      # the agent installed; it starts at the next login. Not an error under
+      # set -e, which used to abort here with the config already written.
+      tk_log 'could not load the LaunchAgent now -- this is not a login session.'
+      tk_log 'It starts at your next login; to start it sooner:  trigger-kvm restart'
     fi
   fi
 

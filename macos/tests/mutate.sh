@@ -308,6 +308,15 @@ mutate 'revision: this platform falls behind the changelog' SPEC-REVISION spec.t
 mutate 'revision: this platform claims a revision that does not exist' SPEC-REVISION spec.tests.sh \
   's%^revision = [0-9]*%revision = 99%'
 
+# --- the tiers own launchd ---------------------------------------------------
+
+mutate 'tier: choosing boot leaves the LaunchAgent behind' lib/manage.sh walkthrough.tests.sh \
+  's|^      rm -f "\$TK_PLIST"$|      :|'
+mutate 'tier: autostart read with a comment-blind, case-sensitive sed' lib/manage.sh install.tests.sh \
+  's@^  TK_TIER_APPLIED=\$(tk_lower "\$(config_get install.autostart)")$@  TK_TIER_APPLIED=$(sed -n "s/^[[:space:]]*install\\.autostart[[:space:]]*=[[:space:]]*//p" "$CONFIG" | tail -1)@'
+mutate 'walkthrough: configure ends without saying what to do next' trigger-kvm walkthrough.tests.sh \
+  's|tk_apply_tier "\$CONFIG"; tk_say_done; exit 0|tk_apply_tier "$CONFIG"; exit 0|'
+
 # --- the installer's preflight -----------------------------------------------
 
 mutate 'install: a preflight failure does not stop the install' install.sh install.tests.sh \
@@ -352,7 +361,7 @@ mutate 'tier: choosing boot silently writes login' lib/walkthrough.sh walkthroug
   's@    0) WT_TIER=boot ;;@    0) WT_TIER=login ;;@'
 
 mutate 'tier: configure records the tier but never applies it' trigger-kvm walkthrough.tests.sh \
-  's@  configure)     cmd_configure "$FRESH"; tk_apply_tier "$CONFIG"; exit 0 ;;@  configure)     cmd_configure "$FRESH"; exit 0 ;;@'
+  's@cmd_configure "$FRESH"; tk_apply_tier "$CONFIG"; tk_say_done; exit 0 ;;@cmd_configure "$FRESH"; tk_say_done; exit 0 ;;@'
 mutate 'tier: the daemon runs as root instead of the user' lib/manage.sh walkthrough.tests.sh \
   's@  <key>UserName</key><string>$(id -un)</string>@  <key>UserName</key><string>root</string>@'
 mutate 'tier: a declined password leaves the config claiming boot' lib/manage.sh walkthrough.tests.sh \

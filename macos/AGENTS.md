@@ -64,6 +64,12 @@ code in `event-watch.c`.
 user-writable config, and every file created would be root-owned.
 `tk_refuse_root` guards the installer, `configure` and `tk_apply_tier`.
 
+**A launchd label is per DOMAIN, so the two tiers can coexist unless one removes
+the other.** `tk_apply_tier` owns both plists: choosing boot deletes the
+LaunchAgent file (booting it out covers this session only -- it would start
+again at login beside the daemon and respawn on the lock every ten seconds),
+and choosing login or no writes it back. Nothing else writes either plist.
+
 **The boot tier is a LaunchDaemon in `/Library/LaunchDaemons` with `UserName`
 set, so it runs AS THE USER, UNELEVATED.** Root installs it into the system
 domain; root does not run it -- the same property the Windows S4U tier has, and

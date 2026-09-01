@@ -131,9 +131,11 @@ usb|usb:1235:820a|attached now|Clarett+ 2Pre
 bt|bt:0011223344ff|paired, not connected|AirPods Pro
 EOS
 
-  # Never the real /Library/LaunchDaemons.
+  # Never the real /Library/LaunchDaemons, and never the real ~/Library/LaunchAgents:
+  # tk_apply_tier writes one and removes the other.
   TK_DAEMON_PLIST="$FAKE_DIR/fake-LaunchDaemons.plist"
-  export TK_DAEMON_PLIST
+  TK_PLIST="$FAKE_DIR/fake-LaunchAgents.plist"
+  export TK_DAEMON_PLIST TK_PLIST
 
   # Never the real launchd either. Every bootout/bootstrap the program does
   # goes through $TK_LAUNCHCTL, and here that is a recorder: it logs what it was
@@ -169,6 +171,26 @@ EOS
   export TK_SENT TK_FAKE_DISPLAYS TK_FAKE_DEVICES M1DDC TK_PROBE TK_WATCHER
 
   trap 'rm -rf "$FAKE_DIR"' EXIT
+}
+
+# A sudo that runs the command unprivileged, at $FAKE_DIR/bin/sudo. It drops
+# `-o root -g wheel` from `install`, because those cannot succeed without real
+# privileges and the point is to simulate the privileged OUTCOME -- ownership is
+# not what is under test. Put $FAKE_DIR/bin first on PATH to use it.
+fake_sudo_stub() {
+  mkdir -p "$FAKE_DIR/bin"
+  cat >"$FAKE_DIR/bin/sudo" <<'EOS'
+#!/bin/sh
+[ "$1" = "-p" ] && shift 2
+if [ "$1" = "install" ]; then
+  shift
+  set -- install "$(echo "$@" | sed 's/-o root -g wheel //')"
+  # shellcheck disable=SC2086
+  exec $1 $2
+fi
+exec "$@"
+EOS
+  chmod +x "$FAKE_DIR/bin/sudo"
 }
 
 fake_reset() { : >"$TK_SENT"; }
