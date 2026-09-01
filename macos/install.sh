@@ -65,11 +65,11 @@ DOMAIN="gui/$(id -u)"
 # --- uninstall ---------------------------------------------------------------
 
 if [ "$VERB" = "uninstall" ]; then
-  launchctl bootout "$DOMAIN/$TK_LABEL" >/dev/null 2>&1 || true
+  "$TK_LAUNCHCTL" bootout "$DOMAIN/$TK_LABEL" >/dev/null 2>&1 || true
   rm -f "$TK_PLIST" && say "removed $TK_PLIST"
   if [ -f "$TK_DAEMON_PLIST" ]; then
     say "removing the boot-tier LaunchDaemon needs your password once."
-    sudo launchctl bootout "system/$TK_LABEL" >/dev/null 2>&1 || true
+    sudo "$TK_LAUNCHCTL" bootout "system/$TK_LABEL" >/dev/null 2>&1 || true
     sudo rm -f "$TK_DAEMON_PLIST" && say "removed $TK_DAEMON_PLIST"
   fi
   rm -f "$TK_BINDIR/trigger-kvm"

@@ -135,6 +135,34 @@ EOS
   TK_DAEMON_PLIST="$FAKE_DIR/fake-LaunchDaemons.plist"
   export TK_DAEMON_PLIST
 
+  # Never the real launchd either. Every bootout/bootstrap the program does
+  # goes through $TK_LAUNCHCTL, and here that is a recorder: it logs what it was
+  # asked and touches nothing. Before this, a scripted configure that reached
+  # Save unloaded the developer's REAL watcher, and the suite stayed green.
+  cat >"$FAKE_DIR/launchctl" <<'EOS'
+#!/bin/sh
+printf 'launchctl %s\n' "$*" >>"$TK_FAKE_LAUNCHCTL"
+exit 0
+EOS
+  chmod +x "$FAKE_DIR/launchctl"
+  TK_FAKE_LAUNCHCTL="$FAKE_DIR/launchctl.log"
+  : >"$TK_FAKE_LAUNCHCTL"
+  TK_LAUNCHCTL="$FAKE_DIR/launchctl"
+  export TK_FAKE_LAUNCHCTL TK_LAUNCHCTL
+
+  # Defence in depth: a bare `launchctl` from anything the suite runs finds this
+  # first and fails loudly, so a call that skipped the seam cannot pass quietly.
+  # (conventions.tests.sh checks the sources for the same thing statically.)
+  mkdir -p "$FAKE_DIR/guard"
+  cat >"$FAKE_DIR/guard/launchctl" <<'EOS'
+#!/bin/sh
+echo "TEST GUARD: the real launchctl was reached from the suite (args: $*)" >&2
+exit 97
+EOS
+  chmod +x "$FAKE_DIR/guard/launchctl"
+  PATH="$FAKE_DIR/guard:$PATH"
+  export PATH
+
   M1DDC="$FAKE_DIR/m1ddc"
   TK_PROBE="$FAKE_DIR/display-probe"
   TK_WATCHER="$FAKE_DIR/event-watch"

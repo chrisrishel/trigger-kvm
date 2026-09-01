@@ -259,8 +259,9 @@ it 'choosing boot APPLIES it, rather than only recording it'
 # sudo is stubbed to run the command unprivileged. It also drops `-o root -g
 # wheel`, because those cannot succeed without real privileges and the point of
 # the stub is to simulate the privileged OUTCOME -- ownership is not what is
-# under test here. launchctl is stubbed to a log, so the suite never touches the
-# real system domain.
+# under test here. launchctl needs no stub of its own: the harness already
+# points $TK_LAUNCHCTL at a recorder for the whole suite, and what it was asked
+# is read back from $TK_FAKE_LAUNCHCTL.
 mkdir -p "$FAKE_DIR/bin"
 cat >"$FAKE_DIR/bin/sudo" <<'EOS'
 #!/bin/sh
@@ -273,13 +274,7 @@ if [ "$1" = "install" ]; then
 fi
 exec "$@"
 EOS
-cat >"$FAKE_DIR/bin/launchctl" <<'EOS'
-#!/bin/sh
-printf 'launchctl %s
-' "$*" >>"$TK_FAKE_LAUNCHCTL"
-EOS
-chmod +x "$FAKE_DIR/bin/sudo" "$FAKE_DIR/bin/launchctl"
-export TK_FAKE_LAUNCHCTL="$FAKE_DIR/launchctl.log"
+chmod +x "$FAKE_DIR/bin/sudo"
 : >"$TK_FAKE_LAUNCHCTL"
 rm -f "$TK_DAEMON_PLIST" "$CFG"
 PATH="$FAKE_DIR/bin:$SAVED_PATH" configure_with "$BOOT"

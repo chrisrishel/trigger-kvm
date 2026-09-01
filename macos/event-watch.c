@@ -243,15 +243,23 @@ static CFArrayRef bt_section(CFDictionaryRef items, CFStringRef key) {
 // which callers must treat as "nothing connected" -- an absence, and absences
 // never fire. A missing or disabled radio must not take the watcher down; the
 // USB half has to keep working.
+//
+// TK_BT_PLIST names a file to read INSTEAD of running system_profiler. It is
+// how the suite feeds this parser a known paired/connected set, so "offers
+// every paired device" is asserted against a fixture rather than against
+// whatever happens to be paired with the developer's Mac -- the same reason
+// the switcher's probe and m1ddc are overridable. Nothing installed sets it.
 static CFDictionaryRef bt_read(void) {
-    FILE *p = popen("/usr/sbin/system_profiler SPBluetoothDataType -xml 2>/dev/null", "r");
+    const char *fixture = getenv("TK_BT_PLIST");
+    FILE *p = fixture ? fopen(fixture, "r")
+                      : popen("/usr/sbin/system_profiler SPBluetoothDataType -xml 2>/dev/null", "r");
     if (!p) return NULL;
 
     CFMutableDataRef data = CFDataCreateMutable(NULL, 0);
     unsigned char buf[8192];
     size_t n;
     while ((n = fread(buf, 1, sizeof buf, p)) > 0) CFDataAppendBytes(data, buf, (CFIndex)n);
-    pclose(p);
+    if (fixture) fclose(p); else pclose(p);
 
     CFTypeRef plist = CFPropertyListCreateWithData(NULL, data, kCFPropertyListImmutable, NULL, NULL);
     CFRelease(data);

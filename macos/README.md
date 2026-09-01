@@ -351,6 +351,14 @@ assertion for a refusal is that **nothing was sent**, not that a check ran —
 because on Windows the check was present, did not fire, and an unresolved value
 went out as `0x00`, an input no monitor has.
 
+Nor can it reach launchd: every `launchctl` the program runs is
+`"$TK_LAUNCHCTL"`, and the harness points that at a recorder too. And it does
+not assume this desk — the watcher tests take a present device from the live
+list and skip, saying so, on a machine with nothing attached, and the
+Bluetooth semantics run against a plist fixture the watcher reads in place of
+`system_profiler` (`TK_BT_PLIST`) — so `make test` means the same thing on any
+Mac.
+
 Every assertion is mutation-checked: `tests/mutate.sh` reintroduces each bug the
 suite is supposed to catch and fails if any survives.
 

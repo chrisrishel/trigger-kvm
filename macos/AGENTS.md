@@ -85,11 +85,22 @@ That is deliberately stronger than stubbing one function. The harness runs
 `set -euo pipefail` and `shellcheck`, because the scripts do.
 
 `tests/mutate.sh` reintroduces every bug the suite is supposed to catch; all of
-them must be caught. **An interrupted `mutate.sh` leaves the source MUTATED**: a
-run killed outright cannot run its trap, and the next `make` builds the mutant --
-which once cost an hour chasing a lock bug that did not exist. `tests/run.sh`
-refuses to run while a `.mutbak` is present, and `mutate.sh` restores strays on
-startup. Do not remove either guard.
+them must be caught. **A `mutate.sh` killed outright (SIGKILL) leaves the source
+MUTATED**: it cannot run its trap, and the next `make` builds the mutant -- which
+once cost an hour chasing a lock bug that did not exist. Ctrl-C, TERM and HUP
+restore and stop. `tests/run.sh` refuses to run while a `.mutbak` is present,
+and `mutate.sh` restores strays on startup. Do not remove either guard. A
+mutation is judged only against a suite file that passes unmutated; a red suite
+makes its mutations `UNJUDGED`, not "caught".
+
+**The suite must never reach the real launchd.** Every `launchctl` in the
+program is `"$TK_LAUNCHCTL"`, which the harness points at a recorder;
+`tests/conventions.tests.sh` fails on a bare one. Before the seam existed, each
+scripted `configure` that reached Save booted out the developer's live watcher.
+**And no test may assert this desk's devices**: `watcher.tests.sh` takes its
+present device from the live `--list` and skips, saying so, when there is none;
+the Bluetooth semantics run against a plist fixture the watcher reads in place
+of `system_profiler` (`TK_BT_PLIST`, set only by the suite).
 
 To exercise the watcher without installing:
 

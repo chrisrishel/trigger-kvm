@@ -85,14 +85,14 @@ cmd_watch() {
 
 tk_domain() { printf 'gui/%s\n' "$(id -u)"; }
 
-tk_agent_loaded() { launchctl print "$(tk_domain)/$TK_LABEL" >/dev/null 2>&1; }
+tk_agent_loaded() { "$TK_LAUNCHCTL" print "$(tk_domain)/$TK_LABEL" >/dev/null 2>&1; }
 
 cmd_restart() {
   # The boot tier lives in the system domain, which needs a password to bounce.
   if [ -f "$TK_DAEMON_PLIST" ]; then
     tk_log 'restarting the boot-time start needs your password once.'
-    sudo launchctl bootout "system/$TK_LABEL" >/dev/null 2>&1 || true
-    sudo launchctl bootstrap system "$TK_DAEMON_PLIST" >/dev/null 2>&1 || true
+    sudo "$TK_LAUNCHCTL" bootout "system/$TK_LABEL" >/dev/null 2>&1 || true
+    sudo "$TK_LAUNCHCTL" bootstrap system "$TK_DAEMON_PLIST" >/dev/null 2>&1 || true
     sleep 1
     tk_log 'restarted; the watcher has re-read the config.'
     exit 0
@@ -101,8 +101,8 @@ cmd_restart() {
     tk_log "not installed: $TK_PLIST is missing. Run the installer from the source tree."
     exit 1
   fi
-  launchctl bootout "$(tk_domain)/$TK_LABEL" >/dev/null 2>&1 || true
-  launchctl bootstrap "$(tk_domain)" "$TK_PLIST" >/dev/null 2>&1 || true
+  "$TK_LAUNCHCTL" bootout "$(tk_domain)/$TK_LABEL" >/dev/null 2>&1 || true
+  "$TK_LAUNCHCTL" bootstrap "$(tk_domain)" "$TK_PLIST" >/dev/null 2>&1 || true
   sleep 1
   if tk_agent_loaded; then
     tk_log 'restarted; the watcher has re-read the config.'
@@ -121,9 +121,9 @@ cmd_restart() {
 cmd_pause() {
   if [ -f "$TK_DAEMON_PLIST" ]; then
     tk_log 'standing down the boot-time start needs your password once.'
-    sudo launchctl bootout "system/$TK_LABEL" >/dev/null 2>&1 || true
+    sudo "$TK_LAUNCHCTL" bootout "system/$TK_LABEL" >/dev/null 2>&1 || true
   fi
-  launchctl bootout "$(tk_domain)/$TK_LABEL" >/dev/null 2>&1 || true
+  "$TK_LAUNCHCTL" bootout "$(tk_domain)/$TK_LABEL" >/dev/null 2>&1 || true
   tk_log 'paused: the agent is unloaded and the watcher stopped.'
   tk_log 'run one by hand now, e.g.:'
   tk_log "    $TK_ROOT/event-watch --exec /bin/echo --arg TEST --device usb:046d:0843 --verbose"
@@ -191,7 +191,7 @@ tk_apply_tier() {
 
   # Whichever tier is chosen, the OTHER one goes. Two live watchers would both
   # fire on the same arrival.
-  launchctl bootout "$DOMAIN/$TK_LABEL" >/dev/null 2>&1 || true
+  "$TK_LAUNCHCTL" bootout "$DOMAIN/$TK_LABEL" >/dev/null 2>&1 || true
 
   if [ "$TK_TIER_APPLIED" = "boot" ]; then
     # UserName is what makes this the Windows tier rather than a root daemon:
@@ -229,8 +229,8 @@ EOF
     if sudo -p 'Password (once, to install the boot-time start): ' \
             install -o root -g wheel -m 644 "$TMP_DAEMON" "$TK_DAEMON_PLIST" 2>/dev/null; then
       rm -f "$TMP_DAEMON"
-      sudo launchctl bootout "system/$TK_LABEL" >/dev/null 2>&1 || true
-      sudo launchctl bootstrap system "$TK_DAEMON_PLIST"
+      sudo "$TK_LAUNCHCTL" bootout "system/$TK_LABEL" >/dev/null 2>&1 || true
+      sudo "$TK_LAUNCHCTL" bootstrap system "$TK_DAEMON_PLIST"
       tk_log "installed the boot-time start, running as $(id -un), unelevated"
     else
       # Nothing elevates without someone choosing it. Fall back and SAY SO --
@@ -248,7 +248,7 @@ EOF
     # The boot tier owns the daemon; anything else must not leave one behind.
     if [ -f "$TK_DAEMON_PLIST" ]; then
       tk_log 'removing the previous boot-time start needs your password once.'
-      sudo launchctl bootout "system/$TK_LABEL" >/dev/null 2>&1 || true
+      sudo "$TK_LAUNCHCTL" bootout "system/$TK_LABEL" >/dev/null 2>&1 || true
       sudo rm -f "$TK_DAEMON_PLIST" || true
     fi
     if [ "$TK_TIER_APPLIED" = "no" ]; then
@@ -257,7 +257,7 @@ EOF
       tk_log 'autostart is off; the agent is installed but not loaded.'
       tk_log 'start it with:  trigger-kvm restart'
     else
-      launchctl bootstrap "$DOMAIN" "$TK_PLIST"
+      "$TK_LAUNCHCTL" bootstrap "$DOMAIN" "$TK_PLIST"
       tk_log 'loaded the LaunchAgent'
     fi
   fi

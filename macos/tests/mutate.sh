@@ -12,8 +12,16 @@
 # A SURVIVING mutation is a failure of this script: it means an assertion is
 # passing for a reason other than the one it claims.
 #
+# A mutation is only judged against a suite file that PASSES UNMUTATED. Each
+# suite is run once, clean, before its first mutation; if it is red already,
+# every mutation aimed at it is reported UNJUDGED and counted as survived,
+# because "the suite went red" then proves nothing. Before this, a suite that
+# was red for an unrelated reason made every mutation aimed at it read as
+# caught -- eight of them, for a whole day.
+#
 # This is not run by run.sh. It edits files in place, so it is a thing you run
 # deliberately, and it restores every file it touches even when a test wedges.
+# Ctrl-C (INT), TERM and HUP restore the file in flight, rebuild, and STOP.
 
 set -uo pipefail
 
@@ -24,13 +32,40 @@ FILTER=${1:-}
 
 survived=0
 checked=0
+unjudged=0
+
+# One clean run per suite file, remembered as a marker file (bash 3.2 has no
+# associative arrays). "ok" or "red".
+BASE_DIR=$(mktemp -d -t trigger-kvm-mutate)
+trap 'rm -rf "$BASE_DIR"' EXIT
+
+# Run a suite file with the same watchdog a mutation gets; 0 = passed.
+run_suite() {
+  bash "$HERE/$1" >/tmp/tk-mutate.out 2>&1 & p=$!
+  ( sleep "${TK_MUTATE_TIMEOUT:-300}"; kill -9 $p 2>/dev/null ) >/dev/null 2>&1 &
+  w=$!
+  # Disowned so bash does not print "Terminated: 15" over the verdicts when the
+  # watchdog is killed after the suite returns on its own.
+  disown $w 2>/dev/null || true
+  wait $p; rc=$?; kill $w 2>/dev/null
+  return $rc
+}
+
+# Is this suite green on the UNMUTATED tree? Measured once, then remembered.
+suite_is_green() {
+  if [ ! -f "$BASE_DIR/$1" ]; then
+    if run_suite "$1"; then echo ok >"$BASE_DIR/$1"; else echo red >"$BASE_DIR/$1"; fi
+  fi
+  [ "$(cat "$BASE_DIR/$1")" = "ok" ]
+}
 
 # A run that is killed outright (SIGKILL, a watchdog, a closed terminal) cannot
 # run its trap, and would leave a MUTATED source and a mutated binary behind --
 # which then silently becomes what the next test run measures. That happened
 # once and cost an hour chasing a lock bug that did not exist. So: restore
 # anything left over before doing anything else, and say so.
-for bak in "$MAC_DIR"/*.mutbak "$MAC_DIR"/lib/*.mutbak "$MAC_DIR"/tests/*.mutbak; do
+for bak in "$MAC_DIR"/*.mutbak "$MAC_DIR"/lib/*.mutbak "$MAC_DIR"/tests/*.mutbak \
+           "$MAC_DIR"/../specs/*.mutbak; do
   [ -f "$bak" ] || continue
   echo "  restoring ${bak%.mutbak} left mutated by an interrupted run"
   mv -f "$bak" "${bak%.mutbak}"
@@ -47,9 +82,22 @@ mutate() {
   case $name in *"$FILTER"*) ;; *) return 0 ;; esac
 
   target="$MAC_DIR/$file"
+
+  if ! suite_is_green "$suite"; then
+    echo "  UNJUDGED  $name  ->  $suite is red before any mutation; fix the suite first"
+    checked=$(( checked + 1 )); survived=$(( survived + 1 )); unjudged=$(( unjudged + 1 ))
+    return 0
+  fi
+
   cp "$target" "$target.mutbak"
+  # A signal must not leave the mutant in place -- and it must STOP the run. A
+  # handler that restores and returns lets the script carry on to the next
+  # mutation, which is what this did until it was measured: a TERM produced a
+  # restore, a spurious verdict and forty more mutations.
   # shellcheck disable=SC2064
-  trap "mv -f '$target.mutbak' '$target' 2>/dev/null; make -B -C '$MAC_DIR' -s >/dev/null 2>&1" EXIT INT TERM HUP
+  trap "mv -f '$target.mutbak' '$target' 2>/dev/null; make -B -C '$MAC_DIR' -s >/dev/null 2>&1; rm -rf '$BASE_DIR'" EXIT
+  # shellcheck disable=SC2064
+  trap "kill \$p 2>/dev/null; mv -f '$target.mutbak' '$target' 2>/dev/null; make -B -C '$MAC_DIR' -s >/dev/null 2>&1; rm -rf '$BASE_DIR'; echo '  interrupted -- source restored'; exit 130" INT TERM HUP
 
   sed -i '' "$expr" "$target"
   if cmp -s "$target" "$target.mutbak"; then
@@ -68,9 +116,7 @@ mutate() {
     # A mutant can HANG rather than fail -- one sat on a single configure for 28
     # minutes because a prompt at EOF re-asked forever. Bound it, the same way
     # run.sh bounds a test file.
-    if bash "$HERE/$suite" >/tmp/tk-mutate.out 2>&1 & p=$!
-       ( sleep "${TK_MUTATE_TIMEOUT:-300}"; kill -9 $p 2>/dev/null ) >/dev/null 2>&1 &
-       w=$!; wait $p; rc=$?; kill $w 2>/dev/null; [ $rc -eq 0 ]; then
+    if run_suite "$suite"; then
       echo "  SURVIVED  $name"
       survived=$(( survived + 1 ))
     else
@@ -80,7 +126,8 @@ mutate() {
 
   mv -f "$target.mutbak" "$target"
   case $file in *.c) make -B -C "$MAC_DIR" -s >/dev/null 2>&1 || true ;; esac
-  trap - EXIT INT TERM HUP
+  trap - INT TERM HUP
+  trap 'rm -rf "$BASE_DIR"' EXIT
 }
 
 # --- the config reader -------------------------------------------------------
@@ -154,7 +201,7 @@ mutate 'menu: cursor does not skip separators and disabled rows' lib/menu.sh men
 mutate 'menu: (current) is never drawn' lib/menu.sh menu.tests.sh \
   's@  if \[ "$_i" = "$_current" \]; then@  if false; then@'
 mutate 'menu: esc is honoured even when the menu is not escapable' lib/menu.sh menu.tests.sh \
-  's@      Escape) if \[ "$_escapable" = "1" \]; then printf .\\n. >&2; MENU_PICK=-1; return 0; fi ;;@      Escape) printf "\\n" >\&2; MENU_PICK=-1; return 0 ;;@'
+  's@        if \[ "$_escapable" = "1" \]; then printf .\\n. >&2; MENU_PICK=-1; return 0; fi@        printf "\\n" >\&2; MENU_PICK=-1; return 0@'
 mutate 'menu: detail is truncated instead of wrapped' lib/menu.sh menu.tests.sh \
   's@          sub(/\[ .t\]+\$/, "", line); print line; line = ""@          sub(/[ \t]+$/, "", line); print substr(line, 1, w - 3) "..."; line = ""; break@'
 mutate 'menu: item column fixed at 28, never widened' lib/menu.sh menu.tests.sh \
@@ -257,9 +304,14 @@ mutate 'spec: the checker stops reporting anything missing' ../specs/check-confo
 # conformance check cannot see. It has to be able to fail in both directions.
 
 mutate 'revision: this platform falls behind the changelog' SPEC-REVISION spec.tests.sh \
-  's%^revision = 1%revision = 0%'
+  's%^revision = [0-9]*%revision = 0%'
 mutate 'revision: this platform claims a revision that does not exist' SPEC-REVISION spec.tests.sh \
-  's%^revision = 1%revision = 99%'
+  's%^revision = [0-9]*%revision = 99%'
+
+# --- launchd is reached through one name -------------------------------------
+
+mutate 'launchd: a bare launchctl bypasses the seam the suite records through' lib/manage.sh conventions.tests.sh \
+  's@^  "\$TK_LAUNCHCTL" bootout "\$DOMAIN/\$TK_LABEL"@  launchctl bootout "$DOMAIN/$TK_LABEL"@'
 
 # --- revision 2: the method choice, and esc on the top menu ------------------
 
@@ -300,7 +352,9 @@ mutate 'tier: a declined password leaves the config claiming boot' lib/manage.sh
 echo
 if [ "$survived" = "0" ]; then
   echo "all $checked mutations were caught"
+elif [ "$unjudged" = "$survived" ]; then
+  echo "$unjudged of $checked mutations UNJUDGED -- their suite is red unmutated, so nothing was proved"
 else
-  echo "$survived of $checked mutations SURVIVED -- those assertions do not earn their place"
+  echo "$survived of $checked mutations SURVIVED ($unjudged unjudged) -- those assertions do not earn their place"
 fi
 exit "$survived"

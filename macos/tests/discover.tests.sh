@@ -15,10 +15,12 @@ fi
 
 fake_setup
 fake_displays "$FAKE_LG" "$FAKE_ASUS"
-# The DEVICE half runs against the real binary and this real machine, because
-# reporting what is actually attached is its whole job. fake_setup points
-# TK_WATCHER at a fixture for the tests that want one; this one does not.
-export TK_WATCHER="$MAC_DIR/event-watch"
+# The DEVICE half is driven from the harness's fixture list (fake_setup points
+# TK_WATCHER at it), so what discover does with a row -- state, marker,
+# normalisation -- is asserted against known rows. The real binary is run once
+# at the end for its SHAPE only: which devices this machine has is its own
+# business, and asserting a particular one made the suite a description of one
+# desk that went red on every other.
 CFG=$(printf '%s' "$CONFIG_THIS_DESK" | make_config)
 export TK_TRIES=1
 
@@ -59,6 +61,9 @@ fake_displays "$FAKE_LG" "$FAKE_ASUS"
 # devices: USB now, and EVERY paired Bluetooth device
 # =============================================================================
 
+# One connected Bluetooth device alongside the fixture's paired-but-absent one,
+# so both states are on the page.
+printf 'bt|bt:0011223344fe|connected now|Keyboard\n' >>"$TK_FAKE_DEVICES"
 run_tk discover --config "$CFG"
 OUT=$TK_OUT
 
@@ -92,6 +97,25 @@ bare=$(printf '%s' "$CONFIG_THIS_DESK" |
 run_tk discover --config "$bare"
 assert_match "$TK_OUT" 'usb:046d:0843'
 assert_match "$TK_OUT" 'currently a trigger'
+
+it 'the real watcher answers the device half, and its rows have the right shape'
+# One owner of "what is attached": the walkthrough asks event-watch --list
+# rather than keeping a second enumeration. Exercised here against the real
+# binary for its format only -- see the header comment.
+if [ -x "$MAC_DIR/event-watch" ]; then
+  TK_WATCHER="$MAC_DIR/event-watch" run_tk discover --config "$CFG"
+  assert_equal 0 "$TK_RC" "$TK_OUT"
+  assert_match "$TK_OUT" '=== devices that could be a trigger ==='
+  rows=$(printf '%s\n' "$TK_OUT" | grep -E '^  (usb|bt):' || true)
+  if [ -z "$rows" ]; then
+    assert_match "$TK_OUT" '(none found)' 'no rows means it must say so'
+  else
+    bad=$(printf '%s\n' "$rows" | grep -vE '^  (usb:[0-9a-f]{4}:[0-9a-f]{4}|bt:[0-9a-f]{12}) +(USB|BT) +(attached now|paired, not connected|connected now) ' || true)
+    assert_equal '' "$bad" 'malformed device rows from the real watcher'
+  fi
+else
+  echo "  SKIP  $CASE -- event-watch is not built (run: make)" >&2
+fi
 
 it 'says the full vendor+product pair must be matched'
 assert_match "$OUT" 'vendor-only match fires'

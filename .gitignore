@@ -2,7 +2,6 @@
 .DS_Store
 
 # Build artifacts
-macos/usb-watch
 macos/display-probe
 macos/event-watch
 
