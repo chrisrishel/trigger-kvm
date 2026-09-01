@@ -307,16 +307,42 @@ if ('BtPresence' -as [type]) {
 # and a config value would silently lose to a default nobody chose.
 $cfg = Read-Config -Path $Config
 
+# WHAT THIS WATCHER WAS TOLD, CHECKED BEFORE IT ARMS -- specs/detector.md 4.
+#
+# A bad input is REFUSED, loudly, NAMING THE ENTRY. Never defaulted, never
+# silently ignored: a watcher that starts with the wrong device list, or with a
+# debounce of zero because `three` parsed as 0, runs and never does the right
+# thing, which is the worst failure shape available here.
+#
+# Refusing under a supervisor means being restarted and refusing again. That is
+# the point -- it is loud in the log. What it must not be is SILENT, and it was:
+# the timings were a bare [double] cast under Set-StrictMode/Stop, so one bad
+# hand edit killed this process before it armed, inside a console-less wscript
+# host, with the 1-minute self-heal relaunching it to die again every minute and
+# nothing anywhere saying why.
+function Deny-Startup {
+    param([string]$Message)
+    Write-Log "REFUSING to start: $Message"
+    Write-Log "fix it in $Config, then:  trigger-kvm restart"
+    exit 2
+}
+
 if (-not $PSBoundParameters.ContainsKey('Device')) {
     if (-not $cfg.Contains('trigger.device')) {
-        throw "no -Device given and no trigger.device in $Config -- run: trigger-kvm configure"
+        Deny-Startup "no -Device given and no trigger.device in the config -- run: trigger-kvm configure"
     }
     $Device = @($cfg['trigger.device'])
 }
 if (-not $PSBoundParameters.ContainsKey('Debounce') -and $cfg.Contains('trigger.debounce')) {
+    if (-not (Test-Seconds $cfg['trigger.debounce'])) {
+        Deny-Startup ("trigger.debounce = '{0}' is not a number of seconds (digits, or digits.digits)" -f $cfg['trigger.debounce'])
+    }
     $Debounce = [double]$cfg['trigger.debounce']
 }
 if (-not $PSBoundParameters.ContainsKey('Settle') -and $cfg.Contains('trigger.settle')) {
+    if (-not (Test-Seconds $cfg['trigger.settle'])) {
+        Deny-Startup ("trigger.settle = '{0}' is not a number of seconds (digits, or digits.digits)" -f $cfg['trigger.settle'])
+    }
     $Settle = [double]$cfg['trigger.settle']
 }
 
@@ -355,7 +381,11 @@ foreach ($d in ($Device -split ',')) {
     $t = $d.Trim()
     if (-not $t) { continue }
 
-    if ($t -match '^(?:[Uu][Ss][Bb]:)?([0-9A-Fa-f]{4})\s*:\s*([0-9A-Fa-f]{4})$') {
+    # EXACTLY four hex digits, a colon, four more -- no whitespace inside the
+    # entry. It used to allow `\s*:\s*`, which accepted `046d : 0843` that the
+    # macOS reader refuses, so one config could have described two different
+    # sets of watched devices depending on which computer read it.
+    if ($t -match '^(?:[Uu][Ss][Bb]:)?([0-9A-Fa-f]{4}):([0-9A-Fa-f]{4})$') {
         # Not $pid: that is a read-only automatic variable (this process's id).
         $vid  = $Matches[1].ToUpper()
         $prod = $Matches[2].ToUpper()
@@ -377,8 +407,13 @@ foreach ($d in ($Device -split ',')) {
         }
     }
     else {
-        throw "bad -Device '$t'; expected usb:VVVV:PPPP (or bare VVVV:PPPP) or bt:AAAAAAAAAAAA"
+        # NAMED, and never prefixed into a `usb:` entry that can match nothing.
+        Deny-Startup ("trigger.device entry '{0}' is not a device; expected usb:VVVV:PPPP (or bare VVVV:PPPP) or bt:AAAAAAAAAAAA" -f $t)
     }
+}
+
+if ($watch.Count -eq 0) {
+    Deny-Startup 'no devices to watch -- run: trigger-kvm configure'
 }
 
 # --- presence ---------------------------------------------------------------

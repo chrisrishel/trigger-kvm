@@ -270,6 +270,36 @@ Invoke-Mutation 'values: outcome 2 re-asks without the map, so an input can be t
     '                -Default $Answer.Map[$This] -Taken $taken `' `
     '                -Default $Answer.Map[$This] `'
 
+# --- what the detector refuses before it arms ---------------------------------
+
+Invoke-Mutation 'detector: a malformed debounce is cast, and kills the watcher silently' `
+    'event-watch.ps1' 'detector.tests.ps1' `
+    "    if (-not (Test-Seconds `$cfg['trigger.debounce'])) {
+        Deny-Startup (""trigger.debounce = '{0}' is not a number of seconds (digits, or digits.digits)"" -f `$cfg['trigger.debounce'])
+    }" ''
+Invoke-Mutation 'detector: a malformed settle is cast' `
+    'event-watch.ps1' 'detector.tests.ps1' `
+    "    if (-not (Test-Seconds `$cfg['trigger.settle'])) {
+        Deny-Startup (""trigger.settle = '{0}' is not a number of seconds (digits, or digits.digits)"" -f `$cfg['trigger.settle'])
+    }" ''
+Invoke-Mutation 'detector: a bad device entry is thrown, not logged' `
+    'event-watch.ps1' 'detector.tests.ps1' `
+    "        Deny-Startup (""trigger.device entry '{0}' is not a device; expected usb:VVVV:PPPP (or bare VVVV:PPPP) or bt:AAAAAAAAAAAA"" -f `$t)" `
+    "        throw ""bad -Device '`$t'"""
+Invoke-Mutation 'detector: whitespace inside a device entry is accepted' `
+    'event-watch.ps1' 'detector.tests.ps1' `
+    "    if (`$t -match '^(?:[Uu][Ss][Bb]:)?([0-9A-Fa-f]{4}):([0-9A-Fa-f]{4})`$') {" `
+    "    if (`$t -match '^(?:[Uu][Ss][Bb]:)?([0-9A-Fa-f]{4})\s*:\s*([0-9A-Fa-f]{4})`$') {"
+Invoke-Mutation 'detector: settle asks whether ANY watched device is present' `
+    'event-watch.ps1' 'detector.tests.ps1' `
+    '        $stillHere = @($arrived | Where-Object { $present[$_] })' `
+    '        $stillHere = @($watch | Where-Object { $present[$_.Key] })'
+Invoke-Mutation 'detector: an empty device list arms and watches nothing' `
+    'event-watch.ps1' 'detector.tests.ps1' `
+    "if (`$watch.Count -eq 0) {
+    Deny-Startup 'no devices to watch -- run: trigger-kvm configure'
+}" ''
+
 # --- the LG service channel has one door --------------------------------------
 #
 # The self-test inside conventions.tests.ps1 already proves the CHECK bites, on
