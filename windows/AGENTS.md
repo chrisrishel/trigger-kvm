@@ -155,15 +155,9 @@ $e
 
 ## Exercising the watcher
 
-```powershell
-trigger-kvm pause                           # stand the installed watcher down
-.\event-watch.ps1 -Exec .\some-harmless-script.ps1 -Arg TEST -Device 046d:c547 -Verbose
-.\install.ps1                               # restore it afterwards
-```
-
-`046d:c547` is the keyboard, always present, so this is the direct check that
-already-present devices do not fire. **`pause` rather than `Stop-ScheduledTask`**:
-stopping the task kills only the `wscript` shim (task -> `wscript.exe` ->
-`powershell.exe`) and leaves the watcher holding the mutex, and the 1-minute
-self-heal trigger restarts it regardless, so the task has to be *disabled*, not
-merely stopped. `pause` does both; `trigger-kvm restart` re-enables and restarts.
+**`trigger-kvm pause` before running one by hand, never `Stop-ScheduledTask`.**
+Stopping the task kills only the `wscript` shim (task -> `wscript.exe` ->
+`powershell.exe`), leaves the watcher holding the mutex, and the 1-minute
+self-heal restarts it regardless -- so the task has to be DISABLED, not merely
+stopped. `pause` does both; `trigger-kvm restart` puts it back. The commands are
+in `README.md`, "Running a watcher by hand".

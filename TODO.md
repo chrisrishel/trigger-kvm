@@ -15,3 +15,28 @@
   either). It is step 4 of the ladder in `ideas/unknown-monitor-discovery.md` and the only
   part of that note with no home yet. Trigger: when someone reports a monitor that answers
   neither standard DDC nor a known manufacturer dialect.
+
+- **Measure whether a directory-scoped `AGENTS.md` is loaded by both tools, and if
+  so move the test-harness hazards into `windows/tests/AGENTS.md`.** The instruction
+  files are near their caps (`windows/AGENTS.md` has ~300 bytes spare of 10240) and
+  the next hazard learned has nowhere to go. The tempting fix — an `agents/` folder
+  of instructions loaded on demand — does NOT work by `@`-import:
+  `docs/decisions/002` measured that Codex reads the `AGENTS.md` chain by PATH and
+  never sees `CLAUDE.md` or anything it imports, so the two agents would silently
+  get different instructions. What might work is the mechanism both tools already
+  have: Codex loads the chain root-down-to-CWD, and Claude Code loads a
+  subdirectory `CLAUDE.md` on first read of a file there.
+
+  What to measure, the same sentinel way 002 measured the byte cap: whether each
+  tool actually picks up `windows/tests/AGENTS.md` under realistic working
+  patterns. The known asymmetry is that Codex keys on the working DIRECTORY while
+  Claude Code keys on the file READ, so editing `windows/tests/*.tests.ps1` from
+  `windows/` may give Codex the root+platform chain and not the tests one. Same
+  content either way — only the timing differs, which is far weaker than the
+  import asymmetry, but it is the thing that decides whether this is worth doing.
+
+  Candidates to move if it holds: the `Import-Subject` first-definition trap, the
+  StrictMode note, and `Start-Process -PassThru` never populating `.ExitCode`
+  (~1.5 KB). They only bite when writing tests, which is exactly when that
+  directory is in play. Trigger: when `windows/AGENTS.md` next needs a rule added
+  and there is no room. Outcome is an amendment to decision 002, or 003.

@@ -1018,6 +1018,34 @@ trigger-kvm uninstall   # unregister the task and remove the program directory
 leaves the watcher holding the mutex, and the self-heal trigger starts it again
 within the minute. The task has to be *disabled*.
 
+### Running a watcher by hand
+
+With the installed one stood down, `event-watch.ps1` can be run directly against
+whatever you want to watch, with `-Verbose` to see the decisions it takes rather
+than only the ones it acts on:
+
+```powershell
+trigger-kvm pause
+.\event-watch.ps1 -Exec .\some-harmless-script.ps1 -Arg TEST -Device 046d:c547 -Verbose
+trigger-kvm restart      # put the installed one back
+```
+
+`-Exec` takes anything — point it at a script that only prints, and nothing can
+reach a monitor. `046d:c547` is a keyboard, wired to the motherboard rather than
+through the switch and therefore always present, which makes this the direct
+check that an **already-present device never fires**: the watcher should arm with
+`1 already present, not firing` and then sit there.
+
+`-Verbose` is what makes the negative case visible. The no-edge branch logs at
+verbose level on purpose — one USB plug is dozens of events, and promoting that
+line would bury the log — so a quiet log on its own cannot tell "no event was
+delivered" from "an event was delivered and correctly rejected". With `-Verbose`
+it says which:
+
+```
+device-change event yielded no arrival edge (no watched device changed state); ignoring
+```
+
 ## Watched devices
 
 Whatever moves when you flip the switch. `trigger-kvm discover` lists what is

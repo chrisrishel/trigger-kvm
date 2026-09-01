@@ -248,8 +248,9 @@ both vendors document that adherence drops as these files grow.
 
 ## Build and test
 
-Each platform's `AGENTS.md` carries the hazards of its toolchain and how to
-exercise its watcher without installing. The commands:
+Each platform's `AGENTS.md` carries the hazards of its toolchain. How to exercise
+that platform's watcher without installing sits with its other how-tos --
+`macos/AGENTS.md`, `windows/README.md`. The commands:
 
 ```sh
 cd macos
