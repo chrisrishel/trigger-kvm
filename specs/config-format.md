@@ -27,7 +27,15 @@ depend on a parser being installed. The whole reader is one regular expression.
 That is the definition. Everything below follows from it, and every one of these
 is a way two readers could differ, so each is stated:
 
+- **`\s` is whitespace in the regex's sense**, which includes the carriage
+  return of a CRLF line. A reader that trims only space and tab keeps the CR on
+  every value: `lg-alt<CR>` is an unknown method and every switch refuses with a
+  message that looks right. A UTF-8 byte-order mark at the start of the file is
+  ignored; left in, it hides the first key.
 - A key is `[A-Za-z0-9_.-]+` and is **lower-cased on read**.
+- **Enumerated values are matched case-insensitively**: `Boot`, `LG-ALT` and
+  `Standard` are `boot`, `lg-alt` and `standard`. Refusing `Boot` while
+  accepting `boot` is a disagreement with whichever platform does not.
 - Everything after the **first** `=` is the value — so a value may contain `=`
   and it is not a second separator.
 - The value is **cut at the first `#`**, then trimmed at both ends. There is no
@@ -48,7 +56,7 @@ Two converters, and **both fail rather than guess or default**.
 | kind | accepts | example |
 |---|---|---|
 | byte (an input value) | `0xNN`, `0XNN`, or 1–3 decimal digits ≤ 255 | `0x11`, `17` |
-| word (an EDID id) | `0xNNNN` (1–4 hex digits), or 1–5 decimal digits | `0x1E6D` |
+| word (an EDID id) | `0xNNNN` (1–4 hex digits), or 1–5 decimal digits ≤ 65535 | `0x1E6D` |
 
 A leading zero is **decimal, not octal**: `010` is ten. Shells read it as eight
 by default, which would be a silent cross-platform disagreement about which
@@ -81,11 +89,19 @@ trigger.debounce = 3.0
 trigger.settle   = 0.75
 ```
 
-`trigger.device` is comma-separated. An entry is `usb:VVVV:PPPP`,
-`bt:AAAAAAAAAAAA`, or a bare `VVVV:PPPP` — **bare means usb**, so configs written
-before Bluetooth existed keep working unchanged. A reader must normalise the bare
-form, or every "currently a trigger" marker silently stops appearing, which reads
-as "none of these are configured" and is worse than no marker at all.
+`trigger.device` is comma-separated. An entry is `usb:VVVV:PPPP` (exactly four
+hex digits, colon, four), `bt:AAAAAAAAAAAA` (exactly twelve hex digits, no
+separators), or a bare `VVVV:PPPP` — **bare means usb**, so configs written
+before Bluetooth existed keep working unchanged. Case does not matter; the
+normalised form is lower-case. A reader must normalise the bare form, or every
+"currently a trigger" marker silently stops appearing, which reads as "none of
+these are configured" and is worse than no marker at all. **Anything else is
+refused by name** where the list is consumed ([`detector.md`](detector.md) §4)
+— never prefixed into a `usb:` entry that can match nothing.
+
+`trigger.debounce` and `trigger.settle` are non-negative decimals — digits, or
+digits `.` digits. A malformed value is refused by name, never read as zero: a
+debounce of zero fires on every event in a plug's burst.
 
 ## `display.<label>.input.<value> = <computer>` is the whole map
 
@@ -132,6 +148,27 @@ someone listed their computers in is the one they will look for.
 
 ## Hand edits survive
 
-`configure` rewrites this file from its answers. Any key the walkthrough does not
-ask about — `trigger.debounce` and `trigger.settle` today — must be **carried
-across from the existing file** rather than reset to a default.
+`configure` rewrites this file from its answers. **Every key the walkthrough does
+not write must be carried across from the existing file** — `trigger.debounce`
+and `trigger.settle`, and any key the reader has never heard of. An unknown key
+is someone's hand edit or a newer version's setting; dropping it on Save is a
+silent loss with no way to notice. (A key the walkthrough *does* write — a panel
+unmanaged, a computer removed — is dropped on purpose; that is the answer being
+applied.) Comments are not carried; the file is rewritten with its own.
+
+## The shared fixture
+
+Two readers written independently drift in the details above, and each
+platform's own tests only ever mirror what its author remembered. So the
+adversarial cases live **once**, here, and both suites parse them with their own
+reader:
+
+| file | what |
+|---|---|
+| [`config-fixture/input.conf`](config-fixture/input.conf) | a config exercising every rule above, including CRLF lines and a byte-order mark |
+| [`config-fixture/expected.tsv`](config-fixture/expected.tsv) | what a reader must produce from it: `key<TAB>value`, one per surviving key, in file order, last duplicate winning |
+| [`config-fixture/values.tsv`](config-fixture/values.tsv) | the byte and word converters: `kind<TAB>input<TAB>decimal-or-REFUSE` |
+
+Each suite must assert its reader reproduces `expected.tsv` exactly and its
+converters agree with every row of `values.tsv`. `input.conf` is marked binary
+in `.gitattributes` so no checkout normalises its line endings away.

@@ -59,6 +59,17 @@ uses `flock`, which the kernel releases when the holder dies however it dies. A
 force-killed watcher leaves nothing behind, and there is deliberately no takeover
 code in `event-watch.c`.
 
+**Nothing here runs as root, and the installer refuses to.** Under `sudo`,
+`id -un` is root, so the boot daemon would be written to run as root on a
+user-writable config, and every file created would be root-owned.
+`tk_refuse_root` guards the installer, `configure` and `tk_apply_tier`.
+
+**A launchd label is per DOMAIN, so the two tiers can coexist unless one removes
+the other.** `tk_apply_tier` owns both plists: choosing boot deletes the
+LaunchAgent file (booting it out covers this session only -- it would start
+again at login beside the daemon and respawn on the lock every ten seconds),
+and choosing login or no writes it back. Nothing else writes either plist.
+
 **The boot tier is a LaunchDaemon in `/Library/LaunchDaemons` with `UserName`
 set, so it runs AS THE USER, UNELEVATED.** Root installs it into the system
 domain; root does not run it -- the same property the Windows S4U tier has, and
@@ -85,11 +96,22 @@ That is deliberately stronger than stubbing one function. The harness runs
 `set -euo pipefail` and `shellcheck`, because the scripts do.
 
 `tests/mutate.sh` reintroduces every bug the suite is supposed to catch; all of
-them must be caught. **An interrupted `mutate.sh` leaves the source MUTATED**: a
-run killed outright cannot run its trap, and the next `make` builds the mutant --
-which once cost an hour chasing a lock bug that did not exist. `tests/run.sh`
-refuses to run while a `.mutbak` is present, and `mutate.sh` restores strays on
-startup. Do not remove either guard.
+them must be caught. **A `mutate.sh` killed outright (SIGKILL) leaves the source
+MUTATED**: it cannot run its trap, and the next `make` builds the mutant -- which
+once cost an hour chasing a lock bug that did not exist. Ctrl-C, TERM and HUP
+restore and stop. `tests/run.sh` refuses to run while a `.mutbak` is present,
+and `mutate.sh` restores strays on startup. Do not remove either guard. A
+mutation is judged only against a suite file that passes unmutated; a red suite
+makes its mutations `UNJUDGED`, not "caught".
+
+**The suite must never reach the real launchd.** Every `launchctl` in the
+program is `"$TK_LAUNCHCTL"`, which the harness points at a recorder;
+`tests/conventions.tests.sh` fails on a bare one. Before the seam existed, each
+scripted `configure` that reached Save booted out the developer's live watcher.
+**And no test may assert this desk's devices**: `watcher.tests.sh` takes its
+present device from the live `--list` and skips, saying so, when there is none;
+the Bluetooth semantics run against a plist fixture the watcher reads in place
+of `system_profiler` (`TK_BT_PLIST`, set only by the suite).
 
 To exercise the watcher without installing:
 
@@ -113,6 +135,11 @@ narrowed -- a path no unit test had reached. UPPERCASE names are the deliberate
 globals; `_lowercase` is scratch. A variable only READ is fine, and is how a
 helper reads its caller's state under bash's dynamic scoping. No single mutation
 reproduces this, so `tests/conventions.tests.sh` scans for it directly.
+
+**Every menu runs inside `menu_tty_guard`, which restores the terminal on INT
+and TERM.** `menu_read_key` restores it on the normal path only; Ctrl-C arrives
+while it is blocked in `dd` and left the caller's shell with no echo. Do not
+add a raw read outside the guard, and do not set another INT trap under it.
 
 **A function that must edit `WT_*` state cannot return its result through
 `$(...)`**: a command substitution is a subshell and the edits are lost. Use an

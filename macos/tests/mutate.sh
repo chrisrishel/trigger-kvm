@@ -12,8 +12,16 @@
 # A SURVIVING mutation is a failure of this script: it means an assertion is
 # passing for a reason other than the one it claims.
 #
+# A mutation is only judged against a suite file that PASSES UNMUTATED. Each
+# suite is run once, clean, before its first mutation; if it is red already,
+# every mutation aimed at it is reported UNJUDGED and counted as survived,
+# because "the suite went red" then proves nothing. Before this, a suite that
+# was red for an unrelated reason made every mutation aimed at it read as
+# caught -- eight of them, for a whole day.
+#
 # This is not run by run.sh. It edits files in place, so it is a thing you run
 # deliberately, and it restores every file it touches even when a test wedges.
+# Ctrl-C (INT), TERM and HUP restore the file in flight, rebuild, and STOP.
 
 set -uo pipefail
 
@@ -24,13 +32,40 @@ FILTER=${1:-}
 
 survived=0
 checked=0
+unjudged=0
+
+# One clean run per suite file, remembered as a marker file (bash 3.2 has no
+# associative arrays). "ok" or "red".
+BASE_DIR=$(mktemp -d -t trigger-kvm-mutate)
+trap 'rm -rf "$BASE_DIR"' EXIT
+
+# Run a suite file with the same watchdog a mutation gets; 0 = passed.
+run_suite() {
+  bash "$HERE/$1" >/tmp/tk-mutate.out 2>&1 & p=$!
+  ( sleep "${TK_MUTATE_TIMEOUT:-300}"; kill -9 $p 2>/dev/null ) >/dev/null 2>&1 &
+  w=$!
+  # Disowned so bash does not print "Terminated: 15" over the verdicts when the
+  # watchdog is killed after the suite returns on its own.
+  disown $w 2>/dev/null || true
+  wait $p; rc=$?; kill $w 2>/dev/null
+  return $rc
+}
+
+# Is this suite green on the UNMUTATED tree? Measured once, then remembered.
+suite_is_green() {
+  if [ ! -f "$BASE_DIR/$1" ]; then
+    if run_suite "$1"; then echo ok >"$BASE_DIR/$1"; else echo red >"$BASE_DIR/$1"; fi
+  fi
+  [ "$(cat "$BASE_DIR/$1")" = "ok" ]
+}
 
 # A run that is killed outright (SIGKILL, a watchdog, a closed terminal) cannot
 # run its trap, and would leave a MUTATED source and a mutated binary behind --
 # which then silently becomes what the next test run measures. That happened
 # once and cost an hour chasing a lock bug that did not exist. So: restore
 # anything left over before doing anything else, and say so.
-for bak in "$MAC_DIR"/*.mutbak "$MAC_DIR"/lib/*.mutbak "$MAC_DIR"/tests/*.mutbak; do
+for bak in "$MAC_DIR"/*.mutbak "$MAC_DIR"/lib/*.mutbak "$MAC_DIR"/tests/*.mutbak \
+           "$MAC_DIR"/../specs/*.mutbak; do
   [ -f "$bak" ] || continue
   echo "  restoring ${bak%.mutbak} left mutated by an interrupted run"
   mv -f "$bak" "${bak%.mutbak}"
@@ -47,9 +82,22 @@ mutate() {
   case $name in *"$FILTER"*) ;; *) return 0 ;; esac
 
   target="$MAC_DIR/$file"
+
+  if ! suite_is_green "$suite"; then
+    echo "  UNJUDGED  $name  ->  $suite is red before any mutation; fix the suite first"
+    checked=$(( checked + 1 )); survived=$(( survived + 1 )); unjudged=$(( unjudged + 1 ))
+    return 0
+  fi
+
   cp "$target" "$target.mutbak"
+  # A signal must not leave the mutant in place -- and it must STOP the run. A
+  # handler that restores and returns lets the script carry on to the next
+  # mutation, which is what this did until it was measured: a TERM produced a
+  # restore, a spurious verdict and forty more mutations.
   # shellcheck disable=SC2064
-  trap "mv -f '$target.mutbak' '$target' 2>/dev/null; make -B -C '$MAC_DIR' -s >/dev/null 2>&1" EXIT INT TERM HUP
+  trap "mv -f '$target.mutbak' '$target' 2>/dev/null; make -B -C '$MAC_DIR' -s >/dev/null 2>&1; rm -rf '$BASE_DIR'" EXIT
+  # shellcheck disable=SC2064
+  trap "kill \$p 2>/dev/null; mv -f '$target.mutbak' '$target' 2>/dev/null; make -B -C '$MAC_DIR' -s >/dev/null 2>&1; rm -rf '$BASE_DIR'; echo '  interrupted -- source restored'; exit 130" INT TERM HUP
 
   sed -i '' "$expr" "$target"
   if cmp -s "$target" "$target.mutbak"; then
@@ -68,9 +116,7 @@ mutate() {
     # A mutant can HANG rather than fail -- one sat on a single configure for 28
     # minutes because a prompt at EOF re-asked forever. Bound it, the same way
     # run.sh bounds a test file.
-    if bash "$HERE/$suite" >/tmp/tk-mutate.out 2>&1 & p=$!
-       ( sleep "${TK_MUTATE_TIMEOUT:-300}"; kill -9 $p 2>/dev/null ) >/dev/null 2>&1 &
-       w=$!; wait $p; rc=$?; kill $w 2>/dev/null; [ $rc -eq 0 ]; then
+    if run_suite "$suite"; then
       echo "  SURVIVED  $name"
       survived=$(( survived + 1 ))
     else
@@ -80,7 +126,8 @@ mutate() {
 
   mv -f "$target.mutbak" "$target"
   case $file in *.c) make -B -C "$MAC_DIR" -s >/dev/null 2>&1 || true ;; esac
-  trap - EXIT INT TERM HUP
+  trap - INT TERM HUP
+  trap 'rm -rf "$BASE_DIR"' EXIT
 }
 
 # --- the config reader -------------------------------------------------------
@@ -154,7 +201,7 @@ mutate 'menu: cursor does not skip separators and disabled rows' lib/menu.sh men
 mutate 'menu: (current) is never drawn' lib/menu.sh menu.tests.sh \
   's@  if \[ "$_i" = "$_current" \]; then@  if false; then@'
 mutate 'menu: esc is honoured even when the menu is not escapable' lib/menu.sh menu.tests.sh \
-  's@      Escape) if \[ "$_escapable" = "1" \]; then printf .\\n. >&2; MENU_PICK=-1; return 0; fi ;;@      Escape) printf "\\n" >\&2; MENU_PICK=-1; return 0 ;;@'
+  's@        if \[ "$_escapable" = "1" \]; then printf .\\n. >&2; MENU_PICK=-1; return 0; fi@        printf "\\n" >\&2; MENU_PICK=-1; return 0@'
 mutate 'menu: detail is truncated instead of wrapped' lib/menu.sh menu.tests.sh \
   's@          sub(/\[ .t\]+\$/, "", line); print line; line = ""@          sub(/[ \t]+$/, "", line); print substr(line, 1, w - 3) "..."; line = ""; break@'
 mutate 'menu: item column fixed at 28, never widened' lib/menu.sh menu.tests.sh \
@@ -236,7 +283,7 @@ mutate 'checks: failures are joined on spaces, splitting panel names' lib/checks
 mutate 'scope: a function stops declaring its scratch local' lib/checks.sh conventions.tests.sh \
   '/^wt_check_round() {/{n;s%^  local .*%  :%;}'
 mutate 'scope: a menu stops declaring its scratch local' lib/menu.sh conventions.tests.sh \
-  '/^select_many() {/{n;s%^  local .*%  :%;}'
+  '/^select_many_body() {/{n;s%^  local .*%  :%;}'
 mutate 'sidechannel: input-alt appears somewhere else too' lib/display.sh conventions.tests.sh \
   's%^# --- the packet%_unused_alt="input-alt"\n# --- the packet%'
 
@@ -257,9 +304,84 @@ mutate 'spec: the checker stops reporting anything missing' ../specs/check-confo
 # conformance check cannot see. It has to be able to fail in both directions.
 
 mutate 'revision: this platform falls behind the changelog' SPEC-REVISION spec.tests.sh \
-  's%^revision = 1%revision = 0%'
+  's%^revision = [0-9]*%revision = 0%'
 mutate 'revision: this platform claims a revision that does not exist' SPEC-REVISION spec.tests.sh \
-  's%^revision = 1%revision = 99%'
+  's%^revision = [0-9]*%revision = 99%'
+
+# --- revision 7: the detector's contract; the shared reader fixture ---------
+
+mutate 'watch: settle fires when ANY device is present, not the arriving one' event-watch.c watcher.tests.sh \
+  's|        if (g_watch\[i\].arrived && now\[i\]) still = true;|        if (now[i]) still = true;|'
+mutate 'watch: a loose device grammar accepts usb:46d:843 and trailing junk' event-watch.c watcher.tests.sh \
+  's|        if (!usb_spec_ok(s)) return false;|        ;|'
+mutate 'watch: a timing that is not a number reads as zero' event-watch.c watcher.tests.sh \
+  's|    if (!ok \|\| \*p != .\\0.) {|    if (false) {|'
+mutate 'config: an unknown trigger entry is prefixed into a usb: key that matches nothing' lib/config.sh config.tests.sh \
+  's|      elif \[\[ \$_d =~ \^\[0-9a-f\]{4}:\[0-9a-f\]{4}\$ \]\];     then printf .usb:%s\\n. "\$_d"|      else printf "usb:%s\\n" "$_d"|'
+mutate 'config: a word above 65535 is accepted' lib/config.sh spec.tests.sh \
+  's|      \[ \$(( 10#\$1 )) -le 65535 \] \|\| return 1|      :|'
+mutate 'watch: the launcher passes a bad trigger entry through' lib/manage.sh install.tests.sh \
+  's|^  _bad=\$(config_bad_trigger_devices)$|  _bad=""|'
+mutate 'walkthrough: Save drops every key it did not ask about' lib/walkthrough.sh walkthrough.tests.sh \
+  's|^    _other=\$(wt_other_keys)$|    _other=""|'
+mutate 'spec: the checker measures a fragment before trimming it' ../specs/check-conformance.sh spec.tests.sh \
+  's|      t = trim(line)$|      t = line|'
+mutate 'spec: the changelog head is the first heading, not the largest' tests/spec.tests.sh spec.tests.sh \
+  's/| sort -n | tail -1; }/| head -1; }/'
+
+# --- revision 6: name the consequence; a panel is one submenu ---------------
+
+mutate 'walkthrough: the method chooser does not name the service channel' lib/walkthrough.sh walkthrough.tests.sh \
+  's|sent only the values written down for it: unknown values on that|mutated|'
+mutate 'walkthrough: a typed value on a manufacturer channel gets no warning' lib/walkthrough.sh walkthrough.tests.sh \
+  's|This is the manufacturer.*s service channel. Type only a value you have|mutated|'
+mutate 'walkthrough: esc at the method question advances instead of backing out' lib/walkthrough.sh walkthrough.tests.sh \
+  's|^    \[ "\$_method" = "BACK" \] && { printf .KEEP.n.; return 0; }$|    :|'
+mutate 'walkthrough: esc at an input question is ignored' lib/walkthrough.sh walkthrough.tests.sh \
+  's|^    \[ "\$WT_INPUT_ESC" = "1" \] && { printf .KEEP.n.; return 0; }$|    :|'
+mutate 'walkthrough: a duplicate short name is accepted' lib/walkthrough.sh walkthrough.tests.sh \
+  's|"\$(wt_labels_except "\$_key")" monitor)|"" monitor)|'
+mutate 'walkthrough: typed input values are compared by spelling, not by value' lib/walkthrough.sh walkthrough.tests.sh \
+  's|^      _v=\$(printf .0x%02X. "\$_n")$|      _v=$_typed|'
+mutate 'tier: From boot is offered to an account that cannot elevate' lib/walkthrough.sh walkthrough.tests.sh \
+  's|  if wt_is_admin; then|  if true; then|'
+mutate 'checks: the trigger check leaves the installed watcher running' lib/checks.sh checks.tests.sh \
+  's@^        "\$TK_LAUNCHCTL" bootout "\$(tk_domain)/\$TK_LABEL" >/dev/null 2>&1 || true$@        :@'
+mutate 'checks: backing out of the scope question counts as a failed check' lib/checks.sh checks.tests.sh \
+  "s|WT_RAN_DISPLAYS='not checked'; WT_DISPLAYS_OK=''; return 0|WT_RAN_DISPLAYS='not checked'; WT_DISPLAYS_OK=0; return 0|"
+
+# --- the tiers own launchd ---------------------------------------------------
+
+mutate 'tier: choosing boot leaves the LaunchAgent behind' lib/manage.sh walkthrough.tests.sh \
+  's|^      rm -f "\$TK_PLIST"$|      :|'
+mutate 'tier: autostart read with a comment-blind, case-sensitive sed' lib/manage.sh install.tests.sh \
+  's@^  TK_TIER_APPLIED=\$(tk_lower "\$(config_get install.autostart)")$@  TK_TIER_APPLIED=$(sed -n "s/^[[:space:]]*install\\.autostart[[:space:]]*=[[:space:]]*//p" "$CONFIG" | tail -1)@'
+mutate 'walkthrough: configure ends without saying what to do next' trigger-kvm walkthrough.tests.sh \
+  's|tk_apply_tier "\$CONFIG"; tk_say_done; exit 0|tk_apply_tier "$CONFIG"; exit 0|'
+
+mutate 'install: a pre-rename install is left running' install.sh install.tests.sh \
+  's|^remove_prerename_install$|:|'
+mutate 'config: the CR of a CRLF file rides on every value' lib/config.sh config.tests.sh \
+  's|      sub(/\\r\$/, "", line)|      # mutated|'
+mutate 'menu: Ctrl-C leaves the terminal in raw mode' lib/menu.sh keys.tests.sh \
+  "s|  trap 'menu_tty_restore; exit 130' INT TERM|  :|"
+
+# --- the installer's preflight -----------------------------------------------
+
+mutate 'install: a preflight failure does not stop the install' install.sh install.tests.sh \
+  's|^refuse() { say "\$@"; say .Nothing was installed..; exit 1; }|refuse() { say "$@"; }|'
+mutate 'install: runs as root without complaint' lib/manage.sh install.tests.sh \
+  's|  if \[ "\$(id -u)" -eq 0 \]; then|  if false; then|'
+mutate 'switch: a bare trigger-kvm pulls instead of printing usage' trigger-kvm install.tests.sh \
+  's|^\[ \$# -gt 0 \] \|\| usage$|[ $# -gt 0 ] \|\| set -- pull|'
+
+mutate 'watch: an oversized Bluetooth entry is clamped after the write, not skipped' event-watch.c watcher.tests.sh \
+  's|        if (nk < 1 \|\| nk > 8) continue;|        if (nk < 1) continue; if (nk > 8) nk = 8;|'
+
+# --- launchd is reached through one name -------------------------------------
+
+mutate 'launchd: a bare launchctl bypasses the seam the suite records through' lib/manage.sh conventions.tests.sh \
+  's@^  "\$TK_LAUNCHCTL" bootout "\$DOMAIN/\$TK_LABEL"@  launchctl bootout "$DOMAIN/$TK_LABEL"@'
 
 # --- revision 2: the method choice, and esc on the top menu ------------------
 
@@ -291,7 +413,7 @@ mutate 'tier: choosing boot silently writes login' lib/walkthrough.sh walkthroug
   's@    0) WT_TIER=boot ;;@    0) WT_TIER=login ;;@'
 
 mutate 'tier: configure records the tier but never applies it' trigger-kvm walkthrough.tests.sh \
-  's@  configure)     cmd_configure "$FRESH"; tk_apply_tier "$CONFIG"; exit 0 ;;@  configure)     cmd_configure "$FRESH"; exit 0 ;;@'
+  's@cmd_configure "$FRESH"; tk_apply_tier "$CONFIG"; tk_say_done; exit 0 ;;@cmd_configure "$FRESH"; tk_say_done; exit 0 ;;@'
 mutate 'tier: the daemon runs as root instead of the user' lib/manage.sh walkthrough.tests.sh \
   's@  <key>UserName</key><string>$(id -un)</string>@  <key>UserName</key><string>root</string>@'
 mutate 'tier: a declined password leaves the config claiming boot' lib/manage.sh walkthrough.tests.sh \
@@ -300,7 +422,9 @@ mutate 'tier: a declined password leaves the config claiming boot' lib/manage.sh
 echo
 if [ "$survived" = "0" ]; then
   echo "all $checked mutations were caught"
+elif [ "$unjudged" = "$survived" ]; then
+  echo "$unjudged of $checked mutations UNJUDGED -- their suite is red unmutated, so nothing was proved"
 else
-  echo "$survived of $checked mutations SURVIVED -- those assertions do not earn their place"
+  echo "$survived of $checked mutations SURVIVED ($unjudged unjudged) -- those assertions do not earn their place"
 fi
 exit "$survived"

@@ -416,4 +416,51 @@ check_with '8
 11'
 assert_match "$CK_OUT" 'No trigger devices are chosen yet'
 
+# =============================================================================
+# the installed watcher during the trigger check (specs 11)
+# =============================================================================
+
+it 'stands the login-tier watcher down for the check, and restores it after'
+# On a re-run the installed watcher sees the same flip and pulls against the
+# SAVED config after the one-shot's pull, so a correct new answer reads as the
+# monitors failing.
+seed_two
+: >"$TK_PLIST"
+rm -f "$TK_DAEMON_PLIST"
+: >"$TK_FAKE_LAUNCHCTL"
+check_with '8
+11'
+assert_match "$CK_OUT" 'The running watcher is paused for this check.'
+log=$(cat "$TK_FAKE_LAUNCHCTL")
+assert_match "$log" 'bootout gui/'   'stood down before the flip'
+assert_match "$log" 'bootstrap gui/' 'and restored after'
+assert_true "$([ "$(printf '%s\n' "$log" | grep -n bootout | cut -d: -f1 | head -1)" -lt \
+                "$(printf '%s\n' "$log" | grep -n bootstrap | cut -d: -f1 | head -1)" ] && echo 0 || echo 1)" \
+  "bootout must come before bootstrap: $log"
+
+it 'says so when the boot-tier watcher is left running, rather than asking for a password'
+rm -f "$TK_PLIST"
+: >"$TK_DAEMON_PLIST"
+: >"$TK_FAKE_LAUNCHCTL"
+check_with '8
+11'
+assert_match "$CK_OUT" 'The running watcher will also fire, using the saved configuration.'
+assert_no_match "$(cat "$TK_FAKE_LAUNCHCTL")" 'bootout' 'the system domain needs a password; leave it'
+rm -f "$TK_DAEMON_PLIST"
+
+# =============================================================================
+# backing out of a check is not a failure (specs 4.2)
+# =============================================================================
+
+it 'backing out of the scope question reads not checked, and the cursor moves on'
+# Landing on Monitors said "you got the monitors wrong" to someone who only
+# declined to move them.
+seed_two
+fake_displays "$FAKE_LG" "$FAKE_ASUS"
+check_with '7
+q
+11'
+assert_match "$CK_OUT" 'Test the monitor inputs      not checked'
+assert_match "$CK_OUT" 'Choice [8]' 'the cursor goes on to the trigger check, not back to Monitors'
+
 finish

@@ -1,4 +1,5 @@
 #!/bin/bash
+# shellcheck disable=SC2016  # the scans below grep for LITERAL $TK_LAUNCHCTL
 #
 # Structural rules, checked mechanically rather than by reading.
 #
@@ -35,6 +36,37 @@ it 'no function takes the channel or a source byte as a parameter'
 # that could pass one in could aim the sidechannel at another vendor's panel.
 assert_no_match "$(cat "$MAC_DIR"/lib/*.sh)" 'ddc_send_raw'
 assert_no_match "$(cat "$MAC_DIR"/lib/*.sh)" '_source=$'
+
+# =============================================================================
+# launchd is reached through exactly one name
+# =============================================================================
+
+it 'every launchctl invocation goes through "$TK_LAUNCHCTL"'
+# The suite points $TK_LAUNCHCTL at a recorder. A bare `launchctl` anywhere in
+# the program is a call the recorder cannot intercept -- and the last one ran
+# `bootout gui/<uid>/<label>` against the developer's live watcher from every
+# scripted configure that reached Save, with the suite green throughout.
+# /dev/null forces the file:line: prefix even for one file, which the filters rely on.
+bare=$(grep -n 'launchctl' "$MAC_DIR"/lib/*.sh "$TK" "$MAC_DIR/install.sh" /dev/null \
+       | grep -v '^[^:]*:[0-9]*: *#' | grep -v '"\$TK_LAUNCHCTL"' \
+       | grep -v '^[^:]*:[0-9]*:TK_LAUNCHCTL=' || true)
+assert_equal '' "$bare" 'these lines reach launchd without going through $TK_LAUNCHCTL'
+
+it 'and TK_LAUNCHCTL is defined once, in common.sh, and is overridable'
+defs=$(grep -ln '^TK_LAUNCHCTL=' "$MAC_DIR"/lib/*.sh "$TK" "$MAC_DIR/install.sh" || true)
+assert_equal "$MAC_DIR/lib/common.sh" "$defs"
+assert_match "$(grep '^TK_LAUNCHCTL=' "$MAC_DIR/lib/common.sh")" '${TK_LAUNCHCTL:-' \
+  'the suite must be able to override it'
+
+it 'the launchctl scan actually finds a bare call'
+probe=$(mktemp "$FAKE_DIR/probe.XXXXXX")
+printf '%s\n' 'x() {' '  "$TK_LAUNCHCTL" print a' '  launchctl bootout b   # bad' '  # launchctl in a comment is fine' 'TK_LAUNCHCTL=${TK_LAUNCHCTL:-/bin/launchctl}' '}' >"$probe"
+found=$(grep -n 'launchctl' "$probe" /dev/null | grep -v '^[^:]*:[0-9]*: *#' | grep -v '"\$TK_LAUNCHCTL"' \
+        | grep -v '^[^:]*:[0-9]*:TK_LAUNCHCTL=' || true)
+assert_no_match "$found" 'TK_LAUNCHCTL='
+assert_match "$found" 'launchctl bootout b'
+assert_no_match "$found" 'print a'
+assert_no_match "$found" 'in a comment'
 
 # =============================================================================
 # Every function declares its scratch variables local

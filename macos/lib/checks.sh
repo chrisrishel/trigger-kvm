@@ -76,7 +76,9 @@ wt_check_displays() {
     while [ "$_i" -lt "${#WT_A_KEY[@]}" ]; do menu_add "${WT_A_NAME[$_i]}" ''; _i=$(( _i + 1 )); done
     select_one --default 0 --escapable
     if [ "$MENU_PICK" -lt 0 ]; then
-      WT_RAN_DISPLAYS='not checked'; WT_DISPLAYS_OK=0; return 0
+      # Neither a pass nor a failure (specs 4.2): OK is left empty, so the
+      # cursor moves on rather than landing on Monitors.
+      WT_RAN_DISPLAYS='not checked'; WT_DISPLAYS_OK=''; return 0
     fi
     [ "$MENU_PICK" -gt 0 ] && _scope=$(( MENU_PICK - 1 ))
   fi
@@ -163,7 +165,7 @@ INNER
 
   # Declining is not a failure and must not read as a pass either.
   if [ "$_skipped" = "1" ]; then
-    WT_RAN_DISPLAYS='not checked'; WT_DISPLAYS_OK=0; return 0
+    WT_RAN_DISPLAYS='not checked'; WT_DISPLAYS_OK=''; return 0
   fi
   _bad=$(printf '%s' "$_bad" | grep -v '^$' || true)
   if [ -n "$_bad" ]; then
@@ -567,8 +569,16 @@ wt_blind_walk() {
 # Checked AFTER the monitor inputs, and that ordering is the point: once the
 # input values are confirmed, the flip BACK can pull the monitors for real, so
 # it stops being "an event was observed" and becomes the whole thing working.
+# Restore the watcher the trigger check stood down. Called from a RETURN trap, so
+# it covers every way out of the check.
+wt_resume_watcher() {
+  [ "$1" = "1" ] || return 0
+  "$TK_LAUNCHCTL" bootstrap "$(tk_domain)" "$TK_PLIST" >/dev/null 2>&1 || true
+  return 0
+}
+
 wt_check_triggers() {
-  local _pull _tmp _d _rc
+  local _pull _tmp _d _rc _paused
   if [ "${#WT_DEVICES[@]}" -eq 0 ]; then
     printf '\n  No trigger devices are chosen yet -- pick some first.\n' >&2
     WT_RAN_TRIGGERS='no devices chosen'; WT_TRIGGERS_OK=0
@@ -589,13 +599,30 @@ wt_check_triggers() {
     printf '  check them first (the row above) and this becomes the real thing.\n' >&2
   fi
 
+  # The installed watcher would see the same flip and pull against the SAVED
+  # config after the one-shot's pull, so a correct new answer would read as the
+  # monitors failing (specs 11). Stand it down where that needs no password --
+  # the login tier -- and restore it on every way out; the boot tier lives in
+  # the system domain, so say it will fire rather than ask for a password here.
+  _paused=0
+  case $(tk_installed_tier) in
+    login)
+      if tk_agent_loaded; then
+        "$TK_LAUNCHCTL" bootout "$(tk_domain)/$TK_LABEL" >/dev/null 2>&1 || true
+        _paused=1
+        printf '\n  The running watcher is paused for this check.\n' >&2
+      fi ;;
+    boot)
+      printf '\n  The running watcher will also fire, using the saved configuration.\n' >&2 ;;
+  esac
+
   # A throwaway config, for the same reason the monitor check uses one: the
   # answers are not written yet, and pulling against the SAVED config would move
   # the panels to whatever was configured before rather than to what is on
   # screen now.
   _tmp=$(mktemp -t trigger-kvm-trig)
   # shellcheck disable=SC2064
-  trap "rm -f '$_tmp'" RETURN
+  trap "rm -f '$_tmp'; wt_resume_watcher $_paused" RETURN
   wt_write_config "$_tmp"
 
   set -- --test-trigger

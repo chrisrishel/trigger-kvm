@@ -47,6 +47,12 @@ config_normalize() {
   awk '
     {
       line = $0
+      # The spec regex trims \s, which includes the CR of a CRLF file; awk does
+      # not. Left in, the CR rode on every value: `lg-alt<CR>` was an unknown
+      # method, the vendor did not parse, and every switch refused with a
+      # message that looked fine. A BOM on the first line hid the first key.
+      sub(/\r$/, "", line)
+      if (NR == 1 && substr(line, 1, 3) == "\357\273\277") line = substr(line, 4)
       sub(/#.*$/, "", line)
       if (line !~ /^[ \t]*[A-Za-z0-9_.-]+[ \t]*=/) next
       eq  = index(line, "=")
@@ -120,10 +126,14 @@ config_to_word() {
     0[xX][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f])
       printf '%d\n' $(( 0x${1#0?} )); return 0 ;;
     [0-9]|[0-9][0-9]|[0-9][0-9][0-9]|[0-9][0-9][0-9][0-9]|[0-9][0-9][0-9][0-9][0-9])
+      [ $(( 10#$1 )) -le 65535 ] || return 1
       printf '%d\n' $(( 10#$1 )); return 0 ;;
   esac
   return 1
 }
+
+# A number of seconds as the config allows it: digits, or digits.digits.
+config_is_seconds() { [[ $1 =~ ^[0-9]+(\.[0-9]+)?$ ]]; }
 
 # --- the display map ---------------------------------------------------------
 
@@ -192,14 +202,34 @@ config_known_computers() {
 }
 
 # The configured trigger devices, normalised to the form the candidate keys use.
-# A bare VVVV:PPPP means usb, so configs written before Bluetooth existed keep
-# working unchanged.
+# The grammar is strict (specs/config-format.md): usb:VVVV:PPPP, bt: plus twelve
+# hex digits, or a bare VVVV:PPPP, which means usb so configs written before
+# Bluetooth existed keep working. Anything else is NOT prefixed into a usb:
+# entry that matches nothing -- it is left for config_bad_trigger_devices to
+# name, and the launcher refuses.
 config_trigger_devices() {
   local _d
   config_get 'trigger.device' |
     tr ',' '\n' | tr -d ' \t' | tr '[:upper:]' '[:lower:]' |
     while IFS= read -r _d; do
       [ -n "$_d" ] || continue
-      case $_d in usb:*|bt:*) printf '%s\n' "$_d" ;; *) printf 'usb:%s\n' "$_d" ;; esac
+      if [[ $_d =~ ^usb:[0-9a-f]{4}:[0-9a-f]{4}$ ]]; then printf '%s\n' "$_d"
+      elif [[ $_d =~ ^bt:[0-9a-f]{12}$ ]];             then printf '%s\n' "$_d"
+      elif [[ $_d =~ ^[0-9a-f]{4}:[0-9a-f]{4}$ ]];     then printf 'usb:%s\n' "$_d"
+      fi
+    done
+}
+
+# The entries config_trigger_devices dropped, as written, for a refusal to name.
+config_bad_trigger_devices() {
+  local _d _l
+  config_get 'trigger.device' |
+    tr ',' '\n' | tr -d ' \t' |
+    while IFS= read -r _d; do
+      [ -n "$_d" ] || continue
+      _l=$(printf '%s' "$_d" | tr '[:upper:]' '[:lower:]')
+      if [[ $_l =~ ^usb:[0-9a-f]{4}:[0-9a-f]{4}$ ]] || [[ $_l =~ ^bt:[0-9a-f]{12}$ ]] \
+         || [[ $_l =~ ^[0-9a-f]{4}:[0-9a-f]{4}$ ]]; then continue; fi
+      printf '%s\n' "$_d"
     done
 }

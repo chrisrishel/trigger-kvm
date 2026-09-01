@@ -12,12 +12,22 @@ TK_LABEL="com.chrisrishel.trigger-kvm"
 TK_SUPPORT="$HOME/Library/Application Support/trigger-kvm"
 TK_LOG="$HOME/Library/Logs/trigger-kvm.log"
 TK_LOCK="$TK_SUPPORT/watcher.lock"
-TK_PLIST="$HOME/Library/LaunchAgents/$TK_LABEL.plist"
+# The login tier's LaunchAgent. Overridable for the same reason the daemon plist
+# below is: tk_apply_tier writes and removes it, and the suite must be able to
+# point that at a temp file.
+TK_PLIST=${TK_PLIST:-$HOME/Library/LaunchAgents/$TK_LABEL.plist}
 # The boot tier. A LaunchDaemon in the system domain, but with UserName set so
 # it runs AS THE USER, unelevated -- root installs it, root does not run it.
 # Overridable so the suite can never touch the real system path. Everything
 # else a test needs to fake is already overridable for the same reason.
 TK_DAEMON_PLIST=${TK_DAEMON_PLIST:-/Library/LaunchDaemons/$TK_LABEL.plist}
+# launchd is reached through this ONE name, never as a bare `launchctl`, so the
+# suite can point it at a recorder. The gui domain has no fake path the way the
+# daemon plist does: a scripted `configure` that reached Save ran a real
+# `launchctl bootout gui/<uid>/<label>` against the developer's live watcher --
+# about twenty times per `make test` -- and nothing restored it.
+# tests/conventions.tests.sh asserts every invocation goes through here.
+TK_LAUNCHCTL=${TK_LAUNCHCTL:-/bin/launchctl}
 
 # Where an installed copy lives, and where the one symlink that goes on PATH
 # points from. Only a directory holding the launcher is published, never the

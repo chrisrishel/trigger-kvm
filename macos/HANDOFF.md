@@ -40,3 +40,84 @@ Anything longer goes underneath.
   have better evidence — you can run it and they could not.
 
 ---
+
+## Measure the Intel-Mac DDC route on the Intel MacBook Pro
+
+Kind:     measurement brief -- not a defect; a reading only that machine can
+          take, and nothing to implement until it is in
+Spec:     n/a -- see the macOS row of README.md ("Apple Silicon") and
+          macos/AGENTS.md
+Why:      the README says Apple Silicon only, because m1ddc reaches monitors
+          through IOAVService, which Intel Macs do not have. Intel Macs have a
+          framebuffer I2C route instead (what ddcctl and ddc-macos use). An
+          Intel MacBook Pro is available, so whether that route reaches THESE
+          panels through THIS cabling can be measured rather than assumed.
+Owed:     a measurement, recorded in docs/measurements.md under a new "Intel
+          DDC route" heading, and then a decision record (004) -- NOT a
+          transport. Every reading stays in the context it is a claim about
+          (the note at the top of docs/measurements.md).
+
+          The instrument is macos/intel-ddc-probe.c: `make intel-ddc-probe`.
+          It is READ-ONLY. Without flags it enumerates and sends no I2C at all;
+          with --i2c-read it sends one standard GetVCP 0x60 (source 0x51,
+          hard-coded, nothing else expressible) per external display and
+          prints the raw reply. It cannot write a value. The MacBook's own
+          screen keeps the terminal, so hard rule 4 is satisfied throughout.
+
+          1. On the MacBook: clone, `cd macos && make intel-ddc-probe`, run it
+             with nothing attached. Record the arch line, the CoreGraphics
+             list (the built-in panel) and the IOFramebuffer count.
+             The MacBook is a 2019 model with four USB-C/Thunderbolt 3 ports
+             and no HDMI. Record WHICH 2019 model: the 13" drives external
+             displays from the Intel GPU, the 15"/16" from an AMD Radeon Pro,
+             and they are different framebuffer drivers (the probe prints the
+             class). Both monitors' DisplayPort inputs are taken (the LG's by
+             the PC, the ASUS's by the Mac Studio); the free inputs are HDMI
+             on both. So there are two readings, and they answer different
+             questions -- take them in this order:
+          2. THE ROUTE: a USB-C to DisplayPort cable, direct. DP Alt Mode is
+             plain DisplayPort and the DDC channel rides along natively, so
+             this is the cleanest test of whether the framebuffer I2C route
+             works on this Mac at all. It needs a DP input: unplug the PC's DP
+             cable from the LG and plug the MacBook's in for the duration (the
+             Mac Studio keeps both monitors on its own inputs throughout, so
+             hard rule 4 holds; the PC loses the LG until the cable goes
+             back). Run the probe. Record: does a framebuffer appear, does
+             IODisplayCreateInfoDictionary carry the EDID (vendor/product/
+             name must match what `trigger-kvm list` prints on the Mac Studio
+             apart from the LG's per-input product id -- note the product id
+             this input reports, it will be a fourth value), how many I2C
+             buses, which transaction types (DDCci reply support matters).
+          3. `./intel-ddc-probe --i2c-read`. Record the IOI2CSendRequest
+             return, result, and the raw reply. A well-formed reply is
+             evidence the I2C path reaches the panel; a non-answer is a
+             measurement too (hard rule 2: these panels lie on reads -- the
+             PG42UQ answers 0 to everything -- so an odd value is not a
+             failure). Then put the PC's DP cable back.
+          4. THE ADAPTER: Apple's USB-C to HDMI adapter onto a FREE HDMI input
+             -- the LG's HDMI 1 or the ASUS's HDMI 2, and both if time allows.
+             This is how an Intel Mac would actually live on this desk, and
+             Apple's adapter has a DP-to-HDMI protocol converter inside;
+             whether it passes DDC/CI is the unknown that decides whether an
+             Intel transport is worth building. Repeat 2-3. If the route
+             worked in step 2 and not here, the finding is "adapter", and it
+             is worth naming the adapter model in the measurement.
+          5. Also `make test` on the MacBook: the suite has never run on an
+             Intel Mac. Report what passes and what does not (the installer's
+             arch preflight refusing is expected and correct).
+
+          Do NOT: send anything on I2C source 0x50 by any route; do not write
+          a VCP value from the MacBook -- a write is the next decision, taken
+          after these readings, and the switch it would cause is exactly the
+          thing hard rule 3 says a person has to watch for on purpose.
+
+          Afterwards: docs/measurements.md entry; decision 004 proposing (or
+          declining) an Intel transport under the existing ddc_send gate --
+          m1ddc on arm64, an IOI2CSendRequest tool with the same `set input`
+          / `set input-alt` surface on x86_64 -- and an Intel branch of
+          display-probe.c for identity. Nothing is written into the tree
+          before the decision.
+Verified: the probe compiles clean under -Wall -Wextra on the Apple Silicon
+          Mac and, run there, reports zero IOFramebuffer services -- the
+          expected answer on that hardware. It has not yet run on an Intel
+          Mac; that is the point of this entry.

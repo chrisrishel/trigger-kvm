@@ -121,7 +121,9 @@ it 'never starts the cursor on a disabled row'
 menu_reset; menu_add a ''; menu_add b ''; menu_add c ''
 menu_disable 0
 keys 'Enter' select_one --default 0
-assert_no_match "$MENU_PICK" '^0$'
+# assert_no_match is a substring test, so '^0$' could never match a number and
+# the old assertion could never fail. The cursor must have moved to row 1.
+assert_equal 1 "$MENU_PICK" 'the cursor must skip the disabled row 0'
 
 # --- (current) ---------------------------------------------------------------
 

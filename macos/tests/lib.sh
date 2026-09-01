@@ -131,9 +131,39 @@ usb|usb:1235:820a|attached now|Clarett+ 2Pre
 bt|bt:0011223344ff|paired, not connected|AirPods Pro
 EOS
 
-  # Never the real /Library/LaunchDaemons.
+  # Never the real /Library/LaunchDaemons, and never the real ~/Library/LaunchAgents:
+  # tk_apply_tier writes one and removes the other.
   TK_DAEMON_PLIST="$FAKE_DIR/fake-LaunchDaemons.plist"
-  export TK_DAEMON_PLIST
+  TK_PLIST="$FAKE_DIR/fake-LaunchAgents.plist"
+  export TK_DAEMON_PLIST TK_PLIST
+
+  # Never the real launchd either. Every bootout/bootstrap the program does
+  # goes through $TK_LAUNCHCTL, and here that is a recorder: it logs what it was
+  # asked and touches nothing. Before this, a scripted configure that reached
+  # Save unloaded the developer's REAL watcher, and the suite stayed green.
+  cat >"$FAKE_DIR/launchctl" <<'EOS'
+#!/bin/sh
+printf 'launchctl %s\n' "$*" >>"$TK_FAKE_LAUNCHCTL"
+exit 0
+EOS
+  chmod +x "$FAKE_DIR/launchctl"
+  TK_FAKE_LAUNCHCTL="$FAKE_DIR/launchctl.log"
+  : >"$TK_FAKE_LAUNCHCTL"
+  TK_LAUNCHCTL="$FAKE_DIR/launchctl"
+  export TK_FAKE_LAUNCHCTL TK_LAUNCHCTL
+
+  # Defence in depth: a bare `launchctl` from anything the suite runs finds this
+  # first and fails loudly, so a call that skipped the seam cannot pass quietly.
+  # (conventions.tests.sh checks the sources for the same thing statically.)
+  mkdir -p "$FAKE_DIR/guard"
+  cat >"$FAKE_DIR/guard/launchctl" <<'EOS'
+#!/bin/sh
+echo "TEST GUARD: the real launchctl was reached from the suite (args: $*)" >&2
+exit 97
+EOS
+  chmod +x "$FAKE_DIR/guard/launchctl"
+  PATH="$FAKE_DIR/guard:$PATH"
+  export PATH
 
   M1DDC="$FAKE_DIR/m1ddc"
   TK_PROBE="$FAKE_DIR/display-probe"
@@ -141,6 +171,26 @@ EOS
   export TK_SENT TK_FAKE_DISPLAYS TK_FAKE_DEVICES M1DDC TK_PROBE TK_WATCHER
 
   trap 'rm -rf "$FAKE_DIR"' EXIT
+}
+
+# A sudo that runs the command unprivileged, at $FAKE_DIR/bin/sudo. It drops
+# `-o root -g wheel` from `install`, because those cannot succeed without real
+# privileges and the point is to simulate the privileged OUTCOME -- ownership is
+# not what is under test. Put $FAKE_DIR/bin first on PATH to use it.
+fake_sudo_stub() {
+  mkdir -p "$FAKE_DIR/bin"
+  cat >"$FAKE_DIR/bin/sudo" <<'EOS'
+#!/bin/sh
+[ "$1" = "-p" ] && shift 2
+if [ "$1" = "install" ]; then
+  shift
+  set -- install "$(echo "$@" | sed 's/-o root -g wheel //')"
+  # shellcheck disable=SC2086
+  exec $1 $2
+fi
+exec "$@"
+EOS
+  chmod +x "$FAKE_DIR/bin/sudo"
 }
 
 fake_reset() { : >"$TK_SENT"; }

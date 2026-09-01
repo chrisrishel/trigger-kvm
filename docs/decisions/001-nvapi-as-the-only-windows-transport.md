@@ -45,8 +45,9 @@ a dormant fallback.
   `Switch-Lg` differ only in which write they pass to a shared `Invoke-Switch`.
 - A non-NVIDIA GPU is unsupported -- unchanged from before, and stated in
   `windows/README.md`.
-- The deleted `dxva2` implementation remains in git history at `40770ca`, working and
-  verified, if it is ever wanted back.
+- The deleted `dxva2` implementation remains in git history: the commit that removed
+  it is `70e5ed4` ("one NVAPI transport for both panels, drop dxva2"), so the last
+  working, verified copy is its parent, `70e5ed4^`.
 
 ## What would reopen this
 

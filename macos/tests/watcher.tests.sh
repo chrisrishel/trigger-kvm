@@ -8,6 +8,13 @@
 # /bin/echo throughout. The watcher never touches a display itself; it spawns
 # the switcher, and here the switcher is echo.
 #
+# They assert PROPERTIES of what the machine reports, never a particular
+# device: which devices are attached is this machine's business, and a suite
+# that named one described a single desk and went red on every other. The one
+# thing a few cases need -- a device that is present right now -- is taken
+# from the watcher's own list, and those cases SKIP, saying so, on a machine
+# with nothing attached.
+#
 # HOME is redirected at a temp directory so the lock file under
 # "Library/Application Support/trigger-kvm" is a fresh one and a real installed
 # watcher, if any, is neither seen nor disturbed.
@@ -25,11 +32,13 @@ export HOME="$FAKE_DIR/home"
 mkdir -p "$HOME/Library/Application Support/trigger-kvm"
 LOG="$FAKE_DIR/watch.log"
 
-# A device that is genuinely attached right now, and one that cannot be.
-# 046d:c547 is the Logitech receiver -- always present, which makes it the
-# direct check that an already-present device does not fire.
-PRESENT=usb:046d:c547
+# A device that cannot be attached. Its present counterpart is derived from
+# the live list below, once there is one.
 ABSENT=usb:dead:beef
+PRESENT=""
+
+# The cases that need a present device skip, visibly, when there is none.
+skip_no_present() { echo "  SKIP  $CASE -- no USB device is attached to stand in as present" >&2; }
 
 kill_watchers() { pkill -f "$WATCH" 2>/dev/null || true; sleep 0.3; }
 trap 'kill_watchers' EXIT
@@ -75,9 +84,12 @@ it 'lists candidates as kind|key|state|name'
 bad=$(printf '%s\n' "$LIST" | grep -vc '^\(usb\|bt\)|[a-z]*:[0-9a-f:]*|[^|]*|' || true)
 assert_equal 0 "$bad" "malformed rows in: $LIST"
 
-it 'lists USB devices attached right now'
-assert_match "$LIST" 'usb:046d:0843' 'the webcam is on the switch and attached'
-assert_match "$LIST" 'attached now'
+it 'a USB row is always "attached now" -- USB has no paired-but-absent state'
+bad=$(printf '%s\n' "$LIST" | awk -F'|' '$1 == "usb" && $3 != "attached now"' || true)
+assert_equal '' "$bad" 'USB rows with a state other than attached now'
+
+# The present device for the cases below: the first USB row, whatever it is.
+PRESENT=$(printf '%s\n' "$LIST" | awk -F'|' '$1 == "usb" { print $2; exit }' || true)
 
 it 'excludes hubs and controllers, which never move'
 assert_no_match "$LIST" 'Hub'
@@ -85,13 +97,146 @@ assert_no_match "$LIST" 'Hub'
 it 'excludes a device whose enumeration failed (vendor 0000)'
 assert_no_match "$LIST" 'usb:0000:'
 
+it 'a Bluetooth row states paired-or-connected in exactly two spellings'
+# Whether this machine has any pairings is its own business; the vocabulary is
+# ours.
+bad=$(printf '%s\n' "$LIST" | awk -F'|' '$1 == "bt" && $3 != "paired, not connected" && $3 != "connected now"' || true)
+assert_equal '' "$bad" 'Bluetooth rows with an unknown state'
+
+# The Bluetooth SEMANTICS need a known paired set, so they run against a
+# fixture the watcher reads in place of system_profiler (TK_BT_PLIST): one
+# device connected, one paired but away. Same shape system_profiler emits.
+BT_FIXTURE="$FAKE_DIR/bluetooth.plist"
+cat >"$BT_FIXTURE" <<'EOS'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><array><dict>
+  <key>_items</key><array><dict>
+    <key>device_connected</key><array>
+      <dict><key>Fixture Keyboard</key><dict><key>device_address</key><string>00:11:22:33:44:FD</string></dict></dict>
+    </array>
+    <key>device_not_connected</key><array>
+      <dict><key>Fixture Headphones</key><dict><key>device_address</key><string>00:11:22:33:44:FF</string></dict></dict>
+    </array>
+  </dict></array>
+</dict></array></plist>
+EOS
+BT_LIST=$(TK_BT_PLIST="$BT_FIXTURE" "$WATCH" --list)
+
 it 'offers every PAIRED Bluetooth device, not just the connected ones'
 # The one that is disconnected right now is precisely the one that will produce
 # an arrival -- filtering to connected-only hides the choice a user most wants.
-assert_match "$LIST" 'paired, not connected'
+assert_match "$BT_LIST" 'bt|bt:0011223344ff|paired, not connected|Fixture Headphones'
 
 it 'shows Bluetooth connection state without filtering on it'
-assert_match "$LIST" 'connected now'
+assert_match "$BT_LIST" 'bt|bt:0011223344fd|connected now|Fixture Keyboard'
+
+it 'normalises the address system_profiler gives to the bare lowercase form'
+assert_no_match "$BT_LIST" '00:11:22'
+
+# =============================================================================
+# settle: the ARRIVING device must still be there (specs/detector.md 2)
+# =============================================================================
+#
+# Driven through the Bluetooth fixture: rewriting the plist between polls is an
+# arrival edge the watcher cannot tell from a real one. A is present throughout;
+# B arrives, and either vanishes inside the settle window or stays.
+
+BT_FLIP="$FAKE_DIR/bluetooth-flip.plist"
+bt_fixture() {  # bt_fixture <connected addresses...>
+  {
+    printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>' '<plist version="1.0"><array><dict><key>_items</key><array><dict>' '<key>device_connected</key><array>'
+    for a in "$@"; do printf '<dict><key>Dev %s</key><dict><key>device_address</key><string>%s</string></dict></dict>\n' "$a" "$a"; done
+    printf '%s\n' '</array><key>device_not_connected</key><array></array>' '</dict></array></dict></array></plist>'
+  } >"$BT_FLIP"
+}
+
+it 'ignores an arrival whose device is gone again by the end of the settle window'
+kill_watchers
+: >"$LOG"
+bt_fixture 0011223344aa
+TK_BT_PLIST="$BT_FLIP" bg_watch --device bt:0011223344aa --device bt:0011223344bb \
+  --settle 1.5 --bt-poll 0.3 --debounce 0 --log "$LOG"
+sleep 1
+bt_fixture 0011223344aa 0011223344bb      # B arrives
+sleep 0.6
+bt_fixture 0011223344aa                   # ...and is gone before the settle ends; A is still here
+sleep 2
+assert_match "$(cat "$LOG")" 'arrival bt:0011223344bb'
+assert_match "$(cat "$LOG")" 'device vanished during settle window' "$(cat "$LOG")"
+assert_no_match "$(cat "$LOG")" 'fired:' 'another device being present is not the arriving device being present'
+
+it 'and fires when the arriving device is still there'
+bt_fixture 0011223344aa 0011223344bb
+sleep 2.5
+assert_match "$(cat "$LOG")" 'fired:' "$(cat "$LOG")"
+kill_watchers
+
+# =============================================================================
+# what it refuses at startup (specs/detector.md 4)
+# =============================================================================
+
+it 'refuses a device entry that is not exactly usb:VVVV:PPPP or bt: plus twelve hex digits'
+# `%x:%x` used to accept usb:46d:843 and trailing junk, and a separated
+# Bluetooth address the config-side marker could never match.
+# Bounded: a watcher that wrongly ACCEPTS the entry would arm and run forever,
+# and the whole suite with it -- which is how the first mutation run of this
+# case sat for five minutes.
+for bad in usb:46d:843 usb:046d:0843x 0x046d:0x0843 bt:00:11:22:33:44:ff bt:0011223344f hid:1:2; do
+  run_bounded 3 "$WATCH" --exec /bin/echo --device "$bad" --log "$LOG"
+  assert_equal 2 "$BOUNDED_RC" "must refuse '$bad': $BOUNDED_OUT"
+  assert_match "$BOUNDED_OUT" "bad --device '$bad'"
+done
+kill_watchers
+
+it 'and still takes the documented forms, in either case'
+for good in usb:046d:0843 046D:0843 bt:0011223344FF; do
+  set +e; out=$("$WATCH" --test-trigger --device "$good" --timeout 1 2>&1); rc=$?; set -e
+  assert_no_match "$out" 'bad --device' "'$good' is a documented form: $out"
+done
+
+it 'refuses a debounce or settle that is not seconds, rather than reading it as zero'
+for flag in --debounce --settle; do
+  run_bounded 3 "$WATCH" --exec /bin/echo --device "$ABSENT" "$flag" three --log "$LOG"
+  assert_equal 2 "$BOUNDED_RC" "$flag three must be refused: $BOUNDED_OUT"
+  assert_match "$BOUNDED_OUT" "$flag must be seconds like 3 or 0.75, not 'three'"
+  run_bounded 3 "$WATCH" --exec /bin/echo --device "$ABSENT" "$flag" '3 s' --log "$LOG"
+  assert_equal 2 "$BOUNDED_RC" "$flag '3 s' must be refused: $BOUNDED_OUT"
+done
+kill_watchers
+
+it 'skips an entry with more keys than it has room for, rather than overrunning'
+# CFDictionaryGetKeysAndValues writes every pair. The count used to be clamped
+# AFTER the call, which bounded the loop but not the write -- a stack overflow
+# waiting for system_profiler to change shape. Nine keys here; the buffer holds
+# eight; the one-key entry beside it must still be listed.
+WIDE_FIXTURE="$FAKE_DIR/bluetooth-wide.plist"
+{
+  printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>' \
+    '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' \
+    '<plist version="1.0"><array><dict><key>_items</key><array><dict>' \
+    '<key>device_not_connected</key><array>' \
+    '<dict>'
+  for k in 1 2 3 4 5 6 7 8 9; do
+    printf '<key>Wide %s</key><dict><key>device_address</key><string>00:11:22:33:55:%02d</string></dict>\n' "$k" "$k"
+  done
+  printf '%s\n' '</dict>' \
+    '<dict><key>Fixture Headphones</key><dict><key>device_address</key><string>00:11:22:33:44:FF</string></dict></dict>' \
+    '</array></dict></array></dict></array></plist>'
+} >"$WIDE_FIXTURE"
+wide=$(TK_BT_PLIST="$WIDE_FIXTURE" "$WATCH" --list 2>&1; echo "rc=$?")
+assert_match "$wide" 'rc=0' "the watcher must survive the entry: $wide"
+assert_no_match "$wide" 'Wide' 'the oversized entry is skipped whole'
+assert_match "$wide" 'bt:0011223344ff|paired, not connected|Fixture Headphones'
+
+it 'Bluetooth presence means CONNECTED, never merely paired'
+# A paired-but-away device must read as absent, or its arrival can never be an
+# edge -- the failure shape the Windows side measured on PnP presence.
+out=$(TK_BT_PLIST="$BT_FIXTURE" "$WATCH" --test-trigger --device bt:0011223344fd --device bt:0011223344ff --timeout 1 2>&1 || true)
+assert_match "$out" 'bt:0011223344fd'
+assert_match "$out" 'here now'
+assert_match "$out" 'bt:0011223344ff'
+assert_match "$out" 'not here'
 
 it 'lists nothing twice'
 dupes=$(printf '%s\n' "$LIST" | cut -d'|' -f2 | sort | uniq -d)
@@ -107,23 +252,28 @@ assert_equal 0 "$rc" '--list must succeed while a watcher holds the lock'
 # =============================================================================
 
 it 'does not fire for a device that was already present at startup'
-kill_watchers
-: >"$LOG"
-bg_watch --device "$PRESENT" --log "$LOG"
-assert_match "$(cat "$LOG")" 'already present, not firing'
-assert_no_match "$(cat "$LOG")" 'fired:'
+if [ -n "$PRESENT" ]; then
+  kill_watchers
+  : >"$LOG"
+  bg_watch --device "$PRESENT" --log "$LOG"
+  assert_match "$(cat "$LOG")" 'already present, not firing'
+  assert_no_match "$(cat "$LOG")" 'fired:'
+else skip_no_present; fi
 
 it 'refuses to start twice'
 # Two watchers would each hold their own in-memory debounce and both fire on the
 # same arrival; the debounce is per-process and cannot dedupe across them.
-run_bounded 8 "$WATCH" --exec /bin/echo --arg TEST --device "$PRESENT" --log "$LOG"
+# The lock does not depend on presence, so an absent device serves.
+kill_watchers
+bg_watch --device "$ABSENT" --log "$LOG"
+run_bounded 8 "$WATCH" --exec /bin/echo --arg TEST --device "$ABSENT" --log "$LOG"
 assert_match "$BOUNDED_OUT" 'another watcher is already running'
 assert_no_match "$BOUNDED_RC" '137' 'the second watcher must exit, not keep running'
 
 it 'the refused second watcher exits 0, not as an error'
 # launchd restarts on a non-zero exit, so a redundant start must look like a
 # no-op rather than a crash.
-run_bounded 8 "$WATCH" --exec /bin/echo --arg TEST --device "$PRESENT" --log "$LOG"
+run_bounded 8 "$WATCH" --exec /bin/echo --arg TEST --device "$ABSENT" --log "$LOG"
 assert_equal 0 "$BOUNDED_RC"
 
 it 'releases the lock when it is KILLED, with nothing left to take over'
@@ -137,11 +287,11 @@ it 'releases the lock when it is KILLED, with nothing left to take over'
 # rather than by capturing a backgrounded process's stderr, which would make the
 # command substitution wait for a process that never exits.
 kill_watchers
-bg_watch --device "$PRESENT" --log "$LOG"
+bg_watch --device "$ABSENT" --log "$LOG"
 pkill -9 -f "$WATCH" 2>/dev/null || true
 sleep 0.3
 : >"$LOG"
-bg_watch --device "$PRESENT" --log "$LOG"
+bg_watch --device "$ABSENT" --log "$LOG"
 assert_match "$(cat "$LOG")" 'watching 1 device' 'the lock must be free after a kill -9'
 kill_watchers
 
@@ -193,11 +343,18 @@ it 'reports current presence and waits, taking no lock'
 # not a second watcher.
 # `|| true`: a one-shot that times out exits 1 BY DESIGN, and under `set -e` that
 # status propagates out of the capture and kills the suite.
-out=$("$WATCH" --test-trigger --device "$PRESENT" --device "$ABSENT" --timeout 1 2>&1 || true)
-assert_match "$out" "$PRESENT"
-assert_match "$out" 'here now'
-assert_match "$out" "$ABSENT"
-assert_match "$out" 'not here'
+if [ -n "$PRESENT" ]; then
+  out=$("$WATCH" --test-trigger --device "$PRESENT" --device "$ABSENT" --timeout 1 2>&1 || true)
+  assert_match "$out" "$PRESENT"
+  assert_match "$out" 'here now'
+  assert_match "$out" "$ABSENT"
+  assert_match "$out" 'not here'
+else
+  out=$("$WATCH" --test-trigger --device "$ABSENT" --timeout 1 2>&1 || true)
+  assert_match "$out" "$ABSENT"
+  assert_match "$out" 'not here'
+  skip_no_present
+fi
 
 it 'exits non-zero when nothing arrives'
 set +e
@@ -214,10 +371,12 @@ it 'RUNS NOTHING, even when a watched device is present'
 # --exec/--arg pair is length-bounded, and a marker path longer than the bound
 # used to be truncated silently -- so the fire landed somewhere the assertion
 # was not looking, and the mutation that proved it survived.
-out=$("$WATCH" --test-trigger --device "$PRESENT" --timeout 1 \
-               --exec /bin/echo --arg TEST 2>&1 || true)
-assert_no_match "$out" 'fired:'    '--test-trigger must run nothing'
-assert_no_match "$out" 'posix_spawn'
+if [ -n "$PRESENT" ]; then
+  out=$("$WATCH" --test-trigger --device "$PRESENT" --timeout 1 \
+                 --exec /bin/echo --arg TEST 2>&1 || true)
+  assert_no_match "$out" 'fired:'    '--test-trigger must run nothing'
+  assert_no_match "$out" 'posix_spawn'
+else skip_no_present; fi
 
 it 'refuses an over-long --arg rather than truncating it'
 long=$(printf 'x%.0s' $(seq 1 200))

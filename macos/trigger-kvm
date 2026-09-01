@@ -116,8 +116,10 @@ EOF
   exit 2
 }
 
-VERB=${1:-pull}
-[ $# -gt 0 ] && shift || true
+# No default verb. `pull` moves monitors, and the first thing a stranger types
+# to see what a command does is the bare command.
+[ $# -gt 0 ] || usage
+VERB=$1; shift
 
 WHO=""
 ONLY="all"
@@ -307,7 +309,7 @@ case $VERB in
   # not something a user invokes -- which is why there is no apply verb. It used
   # to exec `restart`, which only bounces the LaunchAgent, so choosing the boot
   # tier wrote it to the config and then silently did nothing.
-  configure)     cmd_configure "$FRESH"; tk_apply_tier "$CONFIG"; exit 0 ;;
+  configure)     tk_refuse_root || exit 2; cmd_configure "$FRESH"; tk_apply_tier "$CONFIG"; tk_say_done; exit 0 ;;
   status)        cmd_status ;;
   restart)       cmd_restart ;;
   pause)         cmd_pause ;;

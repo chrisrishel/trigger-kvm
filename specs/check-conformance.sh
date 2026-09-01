@@ -51,22 +51,27 @@ while IFS= read -r frag; do
   esac
 done <<EOF
 $(awk '
+  # Lengths are measured AFTER trimming (specs/README.md). Measuring first pinned
+  # "     Yes" as a whole line the Windows checker, which trims first, did not.
+  function trim(s) { gsub(/^[ \t]+/, "", s); gsub(/[ \t]+$/, "", s); return s }
   /^```normative[ \t]*$/ { inblock = 1; next }
   /^```/                 { inblock = 0; next }
   inblock {
     line = $0
     if (line !~ /\{[^}]*\}/) {          # a whole line: keep it at any length
-      if (length(line) >= 6) print line
+      t = trim(line)
+      if (length(t) >= 6) print t
       next
     }
     while (match(line, /\{[^}]*\}/)) {  # a split piece: needs to be distinctive
-      piece = substr(line, 1, RSTART - 1)
+      piece = trim(substr(line, 1, RSTART - 1))
       if (length(piece) >= 18) print piece
       line = substr(line, RSTART + RLENGTH)
     }
-    if (length(line) >= 18) print line
+    t = trim(line)
+    if (length(t) >= 18) print t
   }
-' "$SPEC" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+' "$SPEC")
 EOF
 
 if [ "$MISSING" -gt 0 ]; then

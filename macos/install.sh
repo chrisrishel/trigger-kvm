@@ -62,14 +62,37 @@ say() { printf 'install: %s\n' "$*"; }
 
 DOMAIN="gui/$(id -u)"
 
+# Neither verb may run as root: install would write a root daemon and root-owned
+# files, uninstall would delete inside root's home. See tk_refuse_root.
+tk_refuse_root || exit 2
+
+# --- the pre-rename install --------------------------------------------------
+#
+# This was called display-switch until 2026-08-30. An install from before the
+# rename left a LaunchAgent under the old label running a watcher called
+# usb-watch, and nothing removed it -- so it kept firing its own switcher on
+# every flip beside the new one (two watchers, the condition AGENTS.md forbids),
+# and after its switcher was deleted it kept failing to spawn it. Removed on
+# install and on uninstall; the old log is left, as logs are. Delete this block
+# once no machine can plausibly still have one.
+OLD_LABEL="com.chrisrishel.displayswitch"
+remove_prerename_install() {
+  "$TK_LAUNCHCTL" bootout "$DOMAIN/$OLD_LABEL" >/dev/null 2>&1 || true
+  for _old in "$HOME/Library/LaunchAgents/$OLD_LABEL.plist" \
+              "$TK_BINDIR/usb-watch" "$TK_BINDIR/switch-displays.sh"; do
+    if [ -e "$_old" ]; then rm -f "$_old" && say "removed the pre-rename $_old"; fi
+  done
+}
+remove_prerename_install
+
 # --- uninstall ---------------------------------------------------------------
 
 if [ "$VERB" = "uninstall" ]; then
-  launchctl bootout "$DOMAIN/$TK_LABEL" >/dev/null 2>&1 || true
+  "$TK_LAUNCHCTL" bootout "$DOMAIN/$TK_LABEL" >/dev/null 2>&1 || true
   rm -f "$TK_PLIST" && say "removed $TK_PLIST"
   if [ -f "$TK_DAEMON_PLIST" ]; then
     say "removing the boot-tier LaunchDaemon needs your password once."
-    sudo launchctl bootout "system/$TK_LABEL" >/dev/null 2>&1 || true
+    sudo "$TK_LAUNCHCTL" bootout "system/$TK_LABEL" >/dev/null 2>&1 || true
     sudo rm -f "$TK_DAEMON_PLIST" && say "removed $TK_DAEMON_PLIST"
   fi
   rm -f "$TK_BINDIR/trigger-kvm"
@@ -83,21 +106,32 @@ if [ "$VERB" = "uninstall" ]; then
   exit 0
 fi
 
-# --- build -------------------------------------------------------------------
+# --- preflight ---------------------------------------------------------------
+#
+# Everything a stranger's Mac can lack is checked BEFORE anything is built or
+# copied, so "this will not work here" is the first thing said, not the last.
+# Each stop leaves the machine exactly as it was.
+
+refuse() { say "$@"; say 'Nothing was installed.'; exit 1; }
 
 if ! command -v clang >/dev/null 2>&1; then
-  say 'clang not found. Install the Xcode command line tools: xcode-select --install'
-  exit 1
+  refuse 'clang not found. Install the Xcode command line tools: xcode-select --install'
 fi
+
+# m1ddc, which does the DDC writing, supports Apple Silicon only.
+ARCH=$(uname -m)
+if [ "$ARCH" != "arm64" ]; then
+  refuse "this Mac is $ARCH. m1ddc, the tool that talks to the monitors, supports Apple Silicon only."
+fi
+
+if [ ! -x "${M1DDC:-/opt/homebrew/bin/m1ddc}" ]; then
+  refuse "m1ddc not found at ${M1DDC:-/opt/homebrew/bin/m1ddc}. Install it with:  brew install m1ddc"
+fi
+
+# --- build -------------------------------------------------------------------
 
 say 'building'
 make -C "$SRC" -s all
-
-if [ ! -x "${M1DDC:-/opt/homebrew/bin/m1ddc}" ]; then
-  say "m1ddc not found at ${M1DDC:-/opt/homebrew/bin/m1ddc}."
-  say 'Install it with:  brew install m1ddc'
-  say 'Continuing -- everything else installs, but a switch will refuse until it is there.'
-fi
 
 # --- copy --------------------------------------------------------------------
 
@@ -130,41 +164,6 @@ say "installed to $TK_PREFIX"
 ln -sf "$TK_PREFIX/trigger-kvm" "$TK_BINDIR/trigger-kvm"
 say "linked $TK_BINDIR/trigger-kvm"
 
-# --- the LaunchAgent ---------------------------------------------------------
-#
-# It runs `trigger-kvm watch`, which reads the config and execs the watcher. NO
-# configuration is baked in here: which devices to watch and the timings all
-# live in the config, and an edit takes effect on the next `trigger-kvm
-# restart`. That is why there is no apply step.
-#
-# KeepAlive is the self-heal. Windows needs a 1-minute repeating trigger for
-# this; launchd does it properly, in about a fifth of a second -- measured.
-
-mkdir -p "$(dirname "$TK_PLIST")"
-cat > "$TK_PLIST" <<EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict>
-  <key>Label</key><string>$TK_LABEL</string>
-  <key>ProgramArguments</key><array>
-    <string>$TK_PREFIX/trigger-kvm</string>
-    <string>watch</string>
-  </array>
-  <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><true/>
-  <key>ProcessType</key><string>Background</string>
-  <key>StandardOutPath</key><string>$TK_LOG</string>
-  <key>StandardErrorPath</key><string>$TK_LOG</string>
-</dict></plist>
-EOF
-
-# A malformed plist fails SILENTLY at load, so it is verified before anything is
-# asked to load it.
-if ! plutil -lint "$TK_PLIST" >/dev/null; then
-  say "the generated plist is malformed: $TK_PLIST"
-  exit 1
-fi
-
 # --- configure, if there is nothing to install from --------------------------
 #
 # No config means nothing to install FROM: values describe one specific desk and
@@ -185,42 +184,10 @@ fi
 
 # --- start -------------------------------------------------------------------
 #
-# The tier work lives in lib/manage.sh, because `configure` has to do exactly
-# the same thing and there must be one implementation of it. Applying is a
-# CONSEQUENCE of configuring, not something a user invokes -- which is why there
-# is no apply verb on the CLI.
+# The tier work and the closing words live in lib/manage.sh, because
+# `configure` has to do exactly the same things and there must be one
+# implementation of each. Applying is a CONSEQUENCE of configuring, not
+# something a user invokes -- which is why there is no apply verb on the CLI.
 
 tk_apply_tier
-TIER=$TK_TIER_APPLIED
-
-# --- what is left to say -----------------------------------------------------
-#
-# Short. It runs, here is how to see that, here are four commands. Everything
-# else -- how it starts, sessions, the transport -- is in the docs for the day
-# someone needs it, and is noise on the day they do not.
-
-case ":$PATH:" in
-  *":$TK_BINDIR:"*) CMD=trigger-kvm ;;
-  *)                CMD="$TK_BINDIR/trigger-kvm" ;;
-esac
-
-printf '\n'
-case $TIER in
-  no)
-    printf '  Done. trigger-kvm is installed, but will NOT come back after a restart --\n'
-    printf '  start it yourself with:  %s restart\n' "$CMD" ;;
-  boot)
-    printf '  Done. trigger-kvm is running, and will start each time the computer\n'
-    printf '  starts -- before anyone logs in.\n' ;;
-  *)
-    printf '  Done. trigger-kvm is running, and will start automatically each time you\n'
-    printf '  log in.\n' ;;
-esac
-printf '\n'
-printf '  Flip your switch to this computer -- the monitors should follow.\n'
-printf '\n'
-printf '    %s status      is it running?\n'                 "$CMD"
-printf '    %s pull        bring the displays here now\n'    "$CMD"
-printf '    %s logs        what has it been doing\n'         "$CMD"
-printf '    %s configure   change any of this\n'             "$CMD"
-printf '\n'
+tk_say_done

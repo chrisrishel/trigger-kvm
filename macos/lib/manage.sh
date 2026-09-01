@@ -64,18 +64,38 @@ cmd_discover() {
 # the watcher holding the lock -- a trap that has caught people repeatedly.
 # There is deliberately no equivalent here to fall into.
 cmd_watch() {
-  local _devices _d _deb _set
+  local _devices _bad _d _deb _set
+  # Refused by name, never defaulted or dropped (specs/detector.md 4). A watcher
+  # armed on a mis-parsed entry, or with a debounce that read as zero, runs and
+  # never does the right thing -- the worst failure shape available. Refusing
+  # under KeepAlive means refusing again every few seconds, loudly in the log,
+  # which is the point.
+  _bad=$(config_bad_trigger_devices)
+  if [ -n "$_bad" ]; then
+    tk_log "REFUSING to watch: trigger.device has an entry that is not usb:VVVV:PPPP or bt:AAAAAAAAAAAA: $(printf '%s' "$_bad" | tr '\n' ' ')"
+    exit 2
+  fi
   _devices=$(config_trigger_devices)
   if [ -z "$_devices" ]; then
     tk_log "no trigger.device in $CONFIG -- run: trigger-kvm configure"
+    exit 2
+  fi
+  _deb=$(config_get 'trigger.debounce')
+  _set=$(config_get 'trigger.settle')
+  if [ -n "$_deb" ] && ! config_is_seconds "$_deb"; then
+    tk_log "REFUSING to watch: trigger.debounce = '$_deb' is not a number of seconds like 3 or 0.75"
+    exit 2
+  fi
+  if [ -n "$_set" ] && ! config_is_seconds "$_set"; then
+    tk_log "REFUSING to watch: trigger.settle = '$_set' is not a number of seconds like 3 or 0.75"
     exit 2
   fi
 
   set -- --exec "$TK_SELF" --arg pull --log "$TK_LOG"
   for _d in $_devices; do set -- "$@" --device "$_d"; done
 
-  _deb=$(config_get 'trigger.debounce'); [ -n "$_deb" ] && set -- "$@" --debounce "$_deb"
-  _set=$(config_get 'trigger.settle');   [ -n "$_set" ] && set -- "$@" --settle "$_set"
+  [ -n "$_deb" ] && set -- "$@" --debounce "$_deb"
+  [ -n "$_set" ] && set -- "$@" --settle "$_set"
 
   mkdir -p "$(dirname "$TK_LOG")"
   exec "$TK_WATCHER" "$@"
@@ -85,14 +105,30 @@ cmd_watch() {
 
 tk_domain() { printf 'gui/%s\n' "$(id -u)"; }
 
-tk_agent_loaded() { launchctl print "$(tk_domain)/$TK_LABEL" >/dev/null 2>&1; }
+# Nothing here may run as root. The boot tier's whole property is that root
+# INSTALLS the daemon and the daemon runs as the user (UserName in the plist);
+# run under sudo, `id -un` is root, so the daemon would be written to run as
+# root on a user-writable config -- a local privilege escalation -- and every
+# file the installer creates would be root-owned, so the user's next
+# `configure` could not write its own config. `sudo ./install.sh` is the first
+# thing a stranger tries, so it is refused, in words, before anything happens.
+tk_refuse_root() {
+  if [ "$(id -u)" -eq 0 ]; then
+    tk_log 'run this as yourself, not with sudo.'
+    tk_log 'It asks for your password itself if you choose to start from boot, and nothing it installs runs as root.'
+    return 1
+  fi
+  return 0
+}
+
+tk_agent_loaded() { "$TK_LAUNCHCTL" print "$(tk_domain)/$TK_LABEL" >/dev/null 2>&1; }
 
 cmd_restart() {
   # The boot tier lives in the system domain, which needs a password to bounce.
   if [ -f "$TK_DAEMON_PLIST" ]; then
     tk_log 'restarting the boot-time start needs your password once.'
-    sudo launchctl bootout "system/$TK_LABEL" >/dev/null 2>&1 || true
-    sudo launchctl bootstrap system "$TK_DAEMON_PLIST" >/dev/null 2>&1 || true
+    sudo "$TK_LAUNCHCTL" bootout "system/$TK_LABEL" >/dev/null 2>&1 || true
+    sudo "$TK_LAUNCHCTL" bootstrap system "$TK_DAEMON_PLIST" >/dev/null 2>&1 || true
     sleep 1
     tk_log 'restarted; the watcher has re-read the config.'
     exit 0
@@ -101,8 +137,8 @@ cmd_restart() {
     tk_log "not installed: $TK_PLIST is missing. Run the installer from the source tree."
     exit 1
   fi
-  launchctl bootout "$(tk_domain)/$TK_LABEL" >/dev/null 2>&1 || true
-  launchctl bootstrap "$(tk_domain)" "$TK_PLIST" >/dev/null 2>&1 || true
+  "$TK_LAUNCHCTL" bootout "$(tk_domain)/$TK_LABEL" >/dev/null 2>&1 || true
+  "$TK_LAUNCHCTL" bootstrap "$(tk_domain)" "$TK_PLIST" >/dev/null 2>&1 || true
   sleep 1
   if tk_agent_loaded; then
     tk_log 'restarted; the watcher has re-read the config.'
@@ -121,9 +157,9 @@ cmd_restart() {
 cmd_pause() {
   if [ -f "$TK_DAEMON_PLIST" ]; then
     tk_log 'standing down the boot-time start needs your password once.'
-    sudo launchctl bootout "system/$TK_LABEL" >/dev/null 2>&1 || true
+    sudo "$TK_LAUNCHCTL" bootout "system/$TK_LABEL" >/dev/null 2>&1 || true
   fi
-  launchctl bootout "$(tk_domain)/$TK_LABEL" >/dev/null 2>&1 || true
+  "$TK_LAUNCHCTL" bootout "$(tk_domain)/$TK_LABEL" >/dev/null 2>&1 || true
   tk_log 'paused: the agent is unloaded and the watcher stopped.'
   tk_log 'run one by hand now, e.g.:'
   tk_log "    $TK_ROOT/event-watch --exec /bin/echo --arg TEST --device usb:046d:0843 --verbose"
@@ -182,16 +218,89 @@ tk_warn_if_stale() {
 # silently did nothing, never even asking for the password. The config records
 # what was asked for; this is what makes the system match it.
 TK_TIER_APPLIED=''
+# The login tier's LaunchAgent. It runs `trigger-kvm watch`, which reads the
+# config and execs the watcher; NO configuration is baked in, so an edit takes
+# effect on the next `restart` and there is no apply step. KeepAlive is the
+# self-heal -- launchd does it in about a fifth of a second, measured.
+#
+# Written here, by tk_apply_tier, and nowhere else: the tier that owns launchd
+# owns both plists, so choosing boot can remove this one (see below) and
+# choosing login can write it back.
+tk_write_agent_plist() {
+  mkdir -p "$(dirname "$TK_PLIST")"
+  cat > "$TK_PLIST" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>$TK_LABEL</string>
+  <key>ProgramArguments</key><array>
+    <string>$TK_PREFIX/trigger-kvm</string>
+    <string>watch</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ProcessType</key><string>Background</string>
+  <key>StandardOutPath</key><string>$TK_LOG</string>
+  <key>StandardErrorPath</key><string>$TK_LOG</string>
+</dict></plist>
+EOF
+  # A malformed plist fails SILENTLY at load, so it is verified before anything
+  # is asked to load it.
+  if ! plutil -lint "$TK_PLIST" >/dev/null; then
+    tk_log "the generated LaunchAgent is malformed; not loading it: $TK_PLIST"
+    rm -f "$TK_PLIST"
+    return 1
+  fi
+  return 0
+}
+
+# What is left to say after configure or install. Short: it runs, here is how
+# to see that, here are four commands. Printed from ONE place for both paths --
+# it used to live in the installer only, so a first install (which hands off
+# to configure) and every later configure ended without it.
+tk_say_done() {
+  local _cmd
+  case ":$PATH:" in
+    *":$TK_BINDIR:"*) _cmd=trigger-kvm ;;
+    *)                _cmd="$TK_BINDIR/trigger-kvm" ;;
+  esac
+  printf '\n'
+  case $TK_TIER_APPLIED in
+    no)
+      printf '  Done. trigger-kvm is installed, but will NOT come back after a restart --\n'
+      printf '  start it yourself with:  %s restart\n' "$_cmd" ;;
+    boot)
+      printf '  Done. trigger-kvm is running, and will start each time the computer\n'
+      printf '  starts -- before anyone logs in.\n' ;;
+    *)
+      printf '  Done. trigger-kvm is running, and will start automatically each time you\n'
+      printf '  log in.\n' ;;
+  esac
+  printf '\n'
+  printf '  Flip your switch to this computer -- the monitors should follow.\n'
+  printf '\n'
+  printf '    %s status      is it running?\n'                 "$_cmd"
+  printf '    %s pull        bring the displays here now\n'    "$_cmd"
+  printf '    %s logs        what has it been doing\n'         "$_cmd"
+  printf '    %s configure   change any of this\n'             "$_cmd"
+  printf '\n'
+}
+
 tk_apply_tier() {
   local CONFIG TMP_DAEMON DOMAIN
+  tk_refuse_root || return 1
   DOMAIN="$(tk_domain)"
   CONFIG="${1:-$TK_SUPPORT/config}"
   [ -f "$CONFIG" ] || { TK_TIER_APPLIED=''; return 0; }
-  TK_TIER_APPLIED=$(sed -n 's/^[[:space:]]*install\.autostart[[:space:]]*=[[:space:]]*//p' "$CONFIG" | tail -1)
+  # Through the reader, never a private sed. A trailing comment or a capital
+  # letter on this line otherwise read as "no tier" -- which removed the boot
+  # daemon on the next upgrade while the config still said boot.
+  config_load "$CONFIG"
+  TK_TIER_APPLIED=$(tk_lower "$(config_get install.autostart)")
 
   # Whichever tier is chosen, the OTHER one goes. Two live watchers would both
   # fire on the same arrival.
-  launchctl bootout "$DOMAIN/$TK_LABEL" >/dev/null 2>&1 || true
+  "$TK_LAUNCHCTL" bootout "$DOMAIN/$TK_LABEL" >/dev/null 2>&1 || true
 
   if [ "$TK_TIER_APPLIED" = "boot" ]; then
     # UserName is what makes this the Windows tier rather than a root daemon:
@@ -229,9 +338,13 @@ EOF
     if sudo -p 'Password (once, to install the boot-time start): ' \
             install -o root -g wheel -m 644 "$TMP_DAEMON" "$TK_DAEMON_PLIST" 2>/dev/null; then
       rm -f "$TMP_DAEMON"
-      sudo launchctl bootout "system/$TK_LABEL" >/dev/null 2>&1 || true
-      sudo launchctl bootstrap system "$TK_DAEMON_PLIST"
+      sudo "$TK_LAUNCHCTL" bootout "system/$TK_LABEL" >/dev/null 2>&1 || true
+      sudo "$TK_LAUNCHCTL" bootstrap system "$TK_DAEMON_PLIST"
       tk_log "installed the boot-time start, running as $(id -un), unelevated"
+      # The boot tier owns launchd. A launchd label is per DOMAIN, so a
+      # LaunchAgent left in place comes back at the next login beside the
+      # daemon and respawns on the lock every ten seconds, forever.
+      rm -f "$TK_PLIST"
     else
       # Nothing elevates without someone choosing it. Fall back and SAY SO --
       # silently downgrading a tier is how someone discovers months later that
@@ -248,17 +361,23 @@ EOF
     # The boot tier owns the daemon; anything else must not leave one behind.
     if [ -f "$TK_DAEMON_PLIST" ]; then
       tk_log 'removing the previous boot-time start needs your password once.'
-      sudo launchctl bootout "system/$TK_LABEL" >/dev/null 2>&1 || true
+      sudo "$TK_LAUNCHCTL" bootout "system/$TK_LABEL" >/dev/null 2>&1 || true
       sudo rm -f "$TK_DAEMON_PLIST" || true
     fi
+    tk_write_agent_plist || return 1
     if [ "$TK_TIER_APPLIED" = "no" ]; then
       # The agent is installed but not loaded; `restart` loads it. It does not
       # come back after a reboot until then, which is what "no" means.
       tk_log 'autostart is off; the agent is installed but not loaded.'
       tk_log 'start it with:  trigger-kvm restart'
-    else
-      launchctl bootstrap "$DOMAIN" "$TK_PLIST"
+    elif "$TK_LAUNCHCTL" bootstrap "$DOMAIN" "$TK_PLIST" >/dev/null 2>&1; then
       tk_log 'loaded the LaunchAgent'
+    else
+      # Over SSH there is no gui domain to load into. The config is written and
+      # the agent installed; it starts at the next login. Not an error under
+      # set -e, which used to abort here with the config already written.
+      tk_log 'could not load the LaunchAgent now -- this is not a login session.'
+      tk_log 'It starts at your next login; to start it sooner:  trigger-kvm restart'
     fi
   fi
 
@@ -306,7 +425,9 @@ cmd_status() {
   # `|| true`: pgrep exits 1 when nothing matches, and under `set -euo pipefail`
   # that made `status` stop dead at this line on a machine with no watcher --
   # which is exactly the machine someone runs `status` on.
-  _n=$(pgrep -f 'event-watch --exec' 2>/dev/null | wc -l | tr -d ' ' || true)
+  # Counts the pre-rename watcher too: one was found still running beside the
+  # real one, firing on every flip, a day after the rename.
+  _n=$(pgrep -f 'usb-watch --exec|event-watch --exec' 2>/dev/null | wc -l | tr -d ' ' || true)
   [ -n "$_n" ] || _n=0
   if [ "$_n" = "1" ]; then _note=''; else _note='  <- expected exactly 1'; fi
   printf 'watchers : %s%s\n' "$_n" "$_note"

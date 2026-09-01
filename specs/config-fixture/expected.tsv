@@ -1,0 +1,12 @@
+computer.this	mac
+display.lg.vendor	0x1E6D
+display.lg.method	LG-ALT
+display.lg.input.0xd1	mac
+display.lg.input.0xd0	pc
+indented.key	value with  two  spaces
+odd	a = b
+cut	before
+only	
+dup	last
+tab	value
+trigger.device	046D:0843, usb:1235:820a ,BT:0011223344FF

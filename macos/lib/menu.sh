@@ -321,7 +321,33 @@ read_yesno() {
 #                      cannot be discarded by a stray keypress, because enter on
 #                      a row saying "Cancel (discard changes)" is still required.
 #   neither            esc does nothing. For a question that must be answered.
-select_one() {
+# Both menus run inside this guard. menu_read_key puts the terminal in raw mode
+# around each byte and restores it on the way out -- but Ctrl-C arrives while
+# it is blocked in dd, kills the process, and the restore never runs: the shell
+# it was called from is left with no echo and no line editing until `reset`.
+# The handler restores the terminal and exits with the conventional 130.
+MENU_TTY_SAVED=""
+# The redirections are inside a group: with no controlling terminal (a scripted
+# run) bash reports the failed `</dev/tty` itself, and `2>/dev/null` on the
+# command alone does not cover that message.
+menu_tty_restore() {
+  [ -n "$MENU_TTY_SAVED" ] && { stty "$MENU_TTY_SAVED" </dev/tty; } 2>/dev/null
+  return 0
+}
+menu_tty_guard() {
+  local _rc
+  MENU_TTY_SAVED=$({ stty -g </dev/tty; } 2>/dev/null || true)
+  trap 'menu_tty_restore; exit 130' INT TERM
+  # Not `"$@"; _rc=$?`: under set -e a non-zero return from the body (running
+  # out of typed input) would exit here instead of reaching the caller.
+  if "$@"; then _rc=0; else _rc=$?; fi
+  trap - INT TERM
+  return "$_rc"
+}
+select_one()  { menu_tty_guard select_one_body  "$@"; }
+select_many() { menu_tty_guard select_many_body "$@"; }
+
+select_one_body() {
   local _default _current _help _escapable _escapeto _sel _i _ok _s _itemw _at
   local _n _width _buf _j
   _default=0 _current=-1 _help='' _escapable=0 _escapeto=-1
@@ -475,7 +501,7 @@ select_one_typed() {
 # Sets MENU_PICKED to the space-separated indices; MENU_ESCAPED=1 for esc, which
 # is distinct from any list of indices and from the empty list this refuses to
 # return.
-select_many() {
+select_many_body() {
   local _checked _help _escapable _donelabel _state _i _c _done _cursor _note _itemw
   local _width _buf _m _b _n _s _count _key _out
   _checked='' _help='' _escapable=0 _donelabel='Done'

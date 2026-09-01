@@ -8,8 +8,9 @@ no code. Everything they must agree on lives here.
 
 | file | what it settles |
 |---|---|
-| [`config-format.md`](config-format.md) | the flat `key = value` file both platforms read and write |
+| [`config-format.md`](config-format.md) | the flat `key = value` file both platforms read and write, and the shared fixture both readers must reproduce |
 | [`configure.md`](configure.md) | the `configure` walkthrough: its UI grammar, every menu, and the two checks |
+| [`detector.md`](detector.md) | the watcher: what fires, what never does, the one-shot, and what it refuses at startup |
 | [`CHANGELOG.md`](CHANGELOG.md) | behaviour changes implementations must act on, and the revision each is at |
 
 ## What does NOT belong here
@@ -181,7 +182,17 @@ These monitors are shared between this computer and some others.
   `--- monitors ---` is 16 characters and cannot match by accident.
 - A fragment left **between two placeholders** carries an 18-character floor,
   because a short piece of a sentence often is not distinctive.
+- **Lengths are measured after trimming** leading and trailing whitespace. A
+  checker that measured first and trimmed after pinned `"     Yes"` as a
+  fragment the other did not, and the two disagreed on the same spec.
+- **Normative blocks are ASCII.** A checker reading a BOM-less file as ANSI
+  would see different bytes; keeping the blocks ASCII removes the question.
 - Prose outside a `normative` block describes intent and is not checked.
+
+[`CHANGELOG.md`](CHANGELOG.md) is **newest first**, and the revision is the
+**largest** `## Revision N` in it, not the first one found — so a checker that
+reads the top and one that takes the maximum agree, and an entry appended in the
+wrong place is a formatting error rather than a silent downgrade.
 
 Mark as normative what is **load-bearing**: menu labels people navigate by,
 refusal messages, and safety text read under pressure. Do not mark everything,

@@ -7,21 +7,28 @@ At parity with the Windows side. The shared behaviour is specified in
 Almost everything in them was arrived at by getting it wrong first, on real
 hardware.
 
-**Change the spec first**, then this implementation, then append an entry to
-[`../windows/HANDOFF.md`](../windows/HANDOFF.md) saying what Windows owes.
-[`HANDOFF.md`](HANDOFF.md) here is the other direction — read it before starting
-work, because it is what *this* side owes.
+**Change the spec first**, then this implementation, then add a
+`specs/CHANGELOG.md` entry and bump `SPEC-REVISION` here — the Windows suite
+learns what it owes from its own checkout, so a spec change is never written
+into its inbox. [`../windows/HANDOFF.md`](../windows/HANDOFF.md) is for a defect
+you find in *its* code; [`HANDOFF.md`](HANDOFF.md) here is the other direction —
+read it before starting work, because it is what *this* side owes.
 
 A LaunchAgent runs `trigger-kvm watch`, which reads the config and execs the
 watcher; the watcher fires `trigger-kvm pull` when a watched device arrives.
 
 ## Requirements
 
+An Apple Silicon Mac — `m1ddc`, which does the DDC writing, does not support
+Intel Macs — with:
+
 ```sh
 brew install m1ddc
 ```
 
-Xcode command line tools for `clang` (you almost certainly already have them).
+and the Xcode command line tools for `clang` (`xcode-select --install`). The
+installer checks all three before it builds or copies anything, and stops with
+the reason if one is missing.
 
 ## Install
 
@@ -29,13 +36,17 @@ Xcode command line tools for `clang` (you almost certainly already have them).
 cd macos && ./install.sh      # build, install, load the agent, walk you through it
 ```
 
+As yourself, never with `sudo` — the installer refuses to run as root. The
+only time a password is involved is if you choose to start from boot, and it
+asks for it itself, once, to install a launchd job that then runs as you.
+
 That is what installing *is*, and it is why there is no `install` verb: installing
 is what produces the command. Upgrading and repairing both mean "fetch the source
 and run its installer", which works because the install is self-contained — the
 installer copies itself alongside the program, so managing and removing keep
-working after the source tree is gone.
-
-Nothing needs `sudo`, at install or at run time.
+working after the source tree is gone. An install from before this project was
+renamed (`display-switch`, `usb-watch`) is removed on the way, so two watchers
+can never fire on one flip.
 
 ```sh
 ./install.sh uninstall        # remove the program; keep the config and the log
@@ -351,27 +362,26 @@ assertion for a refusal is that **nothing was sent**, not that a check ran —
 because on Windows the check was present, did not fire, and an unresolved value
 went out as `0x00`, an input no monitor has.
 
+Nor can it reach launchd: every `launchctl` the program runs is
+`"$TK_LAUNCHCTL"`, and the harness points that at a recorder too. And it does
+not assume this desk — the watcher tests take a present device from the live
+list and skip, saying so, on a machine with nothing attached, and the
+Bluetooth semantics run against a plist fixture the watcher reads in place of
+`system_profiler` (`TK_BT_PLIST`) — so `make test` means the same thing on any
+Mac.
+
 Every assertion is mutation-checked: `tests/mutate.sh` reintroduces each bug the
 suite is supposed to catch and fails if any survives.
 
 ## Watched devices
 
-Currently in the `Makefile` (`DEVICES`), and moving into the config as the
-walkthrough lands. Kept in sync with `../displays.toml`:
-
-| Device | ID | Note |
-|---|---|---|
-| Logitech Webcam C930e | `046d:0843` | Preferred anchor — a UVC camera rarely re-enumerates spuriously |
-| Focusrite Clarett+ 2Pre | `1235:820a` | Weaker anchor — audio interfaces re-enumerate on driver reloads and power events |
-
-The keyboard and mouse are wired directly to the Windows PC's motherboard and
-never pass through the switch, so they can't be the trigger.
-
-To re-check the ids:
-
-```sh
-ioreg -p IOUSB -l | grep -E 'idVendor|idProduct'
-```
+They live in the config (`trigger.device = usb:VVVV:PPPP, bt:AAAAAAAAAAAA`),
+chosen in the walkthrough from what `trigger-kvm discover` lists. A webcam is a
+good anchor — a UVC camera enumerates on connection and rarely otherwise; an
+audio interface is a weaker one, since it can re-enumerate on driver reloads and
+power events. Anything wired directly to one computer cannot be a trigger, and
+the full vendor+product pair is matched, because a keyboard often shares a
+vendor id with something that never moves.
 
 ## Persistence, measured
 

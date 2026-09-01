@@ -106,9 +106,9 @@ answers "make the monitors show me." They are separate processes so the switcher
 stays usable by hand and testable in isolation.
 
 The detector is **one process with N event sources**, not one process per source.
-Today it has a single source — USB device presence — but the shape is deliberate,
-and the reasoning is worth keeping because the obvious alternative is wrong in two
-different ways.
+Today it has two — USB device presence and Bluetooth connection — and the shape is
+deliberate, because the obvious alternative is wrong in two different ways. Its
+contract is [`specs/detector.md`](specs/detector.md).
 
 *Not* a second watcher process per source: the debounce is in-memory, so two
 watchers would each hold their own window and both fire when a USB device and a
@@ -144,10 +144,12 @@ stale one must never be reachable from anything automatic. Nothing in the trigge
 path takes a name at all — `pull` looks up `computer.this` — which is why that holds
 by construction rather than by discipline.
 
-macOS is already built this way: `event-watch.c` runs a
-`CFRunLoop` with an `IONotificationPort` source and a settle timer source already
-multiplexed. Adding an `IOBluetooth` connect notification or a hotkey is another
-`CFRunLoopAddSource`, in the same process, by design.
+macOS is built this way: `event-watch.c` runs a `CFRunLoop` with an
+`IONotificationPort` source for USB, a poll timer for Bluetooth and a settle
+timer multiplexed. (Bluetooth is polled through `system_profiler` rather than
+subscribed through IOBluetooth, for a permission reason recorded in
+`macos/AGENTS.md`.) A hotkey would be another `CFRunLoopAddSource`, in the same
+process, by design.
 
 ## Two kinds of knowledge, two homes
 
@@ -171,10 +173,11 @@ The reframing that made this clean: **each machine only ever selects its own
 inputs.** The switcher pulls displays toward itself and holds no belief about any
 other machine, so two hosts' configs don't have to agree about anything — a change
 on one cannot invalidate the other. `displays.toml`'s old role as a *contract*
-between implementations largely dissolves with that; what remains genuinely shared
-is model knowledge, which is reference data. Scenes are the one place a machine
-records inputs belonging to another, they are local and optional, and the trigger
-can never reach them.
+between implementations dissolves with that; what remains genuinely shared is
+model knowledge, which is reference data, and nothing reads the file at run time.
+The one place a config names inputs belonging to another computer is the same
+map `pull` uses (`display.<label>.input.<value> = <computer>`), reached only by
+the manual `to <computer>` — the trigger can never get there.
 
 Neither file is parsed by a heavyweight reader at runtime. The generated config is
 flat `key = value` precisely because it is read on every device arrival and must not

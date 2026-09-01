@@ -32,7 +32,8 @@ failed=0
 # that tree would measure the mutant and report whatever it happened to do, so
 # stop loudly instead -- the failure mode this replaces is a green suite, or a
 # baffling red one, against code nobody wrote.
-strays=$(ls "$MAC_DIR"/*.mutbak "$MAC_DIR"/lib/*.mutbak 2>/dev/null || true)
+strays=$(ls "$MAC_DIR"/*.mutbak "$MAC_DIR"/lib/*.mutbak "$MAC_DIR"/tests/*.mutbak \
+            "$MAC_DIR"/../specs/*.mutbak 2>/dev/null || true)
 if [ -n "$strays" ]; then
   echo "  FAIL  the source tree is MUTATED -- an interrupted mutation run left:"
   printf '%s\n' "$strays" | while IFS= read -r stray; do printf '        %s\n' "$stray"; done

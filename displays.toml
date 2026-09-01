@@ -1,149 +1,81 @@
-# trigger-kvm — the shared contract
+# trigger-kvm -- reference values for the monitors this was developed against
 #
-# This file is the single source of truth for both platforms. Code is not shared
-# between macOS and Windows (IOAVService vs NVAPI), but this map is. Keep it here
-# so the two implementations cannot silently drift apart.
+# REFERENCE, NOT CONFIGURATION. Nothing reads this file at run time. Each
+# computer's own config, written by `trigger-kvm configure`, holds which panels
+# are on that desk and which input each computer is on. What lives here is the
+# researched, cross-machine knowledge about a monitor MODEL: which method it
+# needs, which VCP code carries its input, and which values are known safe.
 #
-# All values verified by direct testing on 2026-08-30, confirmed visually in both
-# directions on both monitors, including from an inactive link -- and independently
-# from both machines: macOS via m1ddc, Windows via dxva2 and lg-input-switch.
+# It is the ALLOWLIST hard rule 1 (AGENTS.md) refers to. The dialect tables in
+# both implementations -- DIALECT_* in macos/lib/walkthrough.sh and $DIALECTS in
+# windows/install.ps1 -- carry these values, and a change here changes both in
+# the same commit. Both test suites assert the exact packets below.
 #
-# The Windows transport has since changed -- the LG from lg-input-switch and the ASUS
-# from dxva2, both onto aimed NVAPI I2C writes, re-verified visually in both
-# directions. The VALUES below did not change: the same bytes go on the same wire,
-# each to one output instead of a desktop-bound handle or every output at once.
-
-# ---------------------------------------------------------------------------
-# RULE: never verify a switch by reading a VCP value back.
+# Hard rule 2 applies to everything here: never verify a switch by reading a VCP
+# value back. Reads lie on both of these panels (the PG42UQ returns 0 for every
+# feature; the LG returns -7 while its link renegotiates). Confirm by looking.
 #
-# Reads are unreliable on both of these monitors and gave false negatives during
-# testing:
-#   * PG42UQ  — returns 0 for luminance/contrast/volume AND max luminance, always,
-#               whether or not it is the active input. Writes still work.
-#   * LG      — returns real values on a settled active link, but -7 while the link
-#               is inactive or renegotiating. It read -7 immediately after a switch
-#               that had in fact succeeded, then recovered to 100 once settled.
-#
-# Writes are fire-and-forget. Trust the screen, not the tool.
-# ---------------------------------------------------------------------------
-
-[computers]
-mac     = "Mac Studio M4 Max"
-windows = "Windows PC (RTX 4090)"
+# All values confirmed visually, in both directions, from both platforms.
 
 # ---------------------------------------------------------------------------
 
 [[monitor]]
-name         = "LG 45GX950A"
-match_name   = "LG ULTRAGEAR+"   # as reported by `m1ddc display list`
-win_match    = "GSM9E9D"         # EDID id in the Windows PnP interface path
-osd_auto_input = "Auto Input Switch"   # MUST be OFF. Verified 2026-08-30: on, this
-                                       # monitor defects to the other machine when
-                                       # the machine driving it sleeps; off, it
-                                       # holds. Not software-controllable.
-edid_vendor  = 0x1e6d            # GSM / LG Electronics -- agrees on both platforms
-edid_product = "per-input, see below"
-# This panel does NOT have one product id. It reports a different one per input, so
-# there is no single correct value and this cannot be a shared constant. Measured:
-#   0x9e9d  Windows, direct DisplayPort -> the LG's DP input
-#   0x9e9f  Mac, direct USB-C           -> the LG's USB-C input
-#   0x9ea0  Mac, via the old KVM        -> DP input, through the KVM's EDID emulation
-# The ids are consecutive, which is consistent with one id assigned per physical
-# input. The 0x9ea0 reading was NOT unverified -- it was decoded from raw EDID bytes
-# at the time; it is simply what that path presented.
-#
-# Consequence: a host may only use the value IT measures on ITS OWN input. Never
-# copy one host's value to another, and never treat this field as authoritative.
-# Nothing reads it today (macOS matches match_name, Windows matches win_match).
-# The ASUS shows no such behaviour: 0x42e0 on both hosts, over DP and HDMI alike.
+name           = "LG 45GX950A"
+edid_name      = "LG ULTRAGEAR+"   # descriptor 0xFC, as `trigger-kvm list` prints it
+edid_vendor    = 0x1E6D            # GSM / LG Electronics
+osd_auto_input = "Auto Input Switch"   # MUST be OFF. On, the panel defects to the
+                                       # other live input when the computer driving
+                                       # it sleeps; off, it holds. Not controllable
+                                       # from software.
+
+# This panel does NOT have one EDID product id. It reports a different one per
+# input (three consecutive values measured on one panel, one per physical path),
+# so there is no single correct value and it cannot be a shared constant. A host
+# may only use the value it measures on ITS OWN input, and must never copy one
+# from another host or another cable. The ASUS below shows no such behaviour.
+edid_product   = "per-input; use what `trigger-kvm list` shows on this computer"
 
 # Standard DDC/CI VCP 0x60 is STUBBED on this panel: writes return success and are
-# ignored, and reads always return 0x0F regardless of the displayed input.
-# Input control lives on LG's manufacturer sidechannel instead:
-#   I2C source address 0x50  (standard is 0x51)
+# ignored; reads return 0x0F whatever is displayed. Input control lives on LG's
+# manufacturer sidechannel instead:
+#   I2C source address 0x50  (standard is 0x51)   -- a service channel
 #   VCP code           0xF4  (standard is 0x60)
-# m1ddc exposes this as `set input-alt`. On Windows the packet is injected through
-# NVAPI, aimed at the one output whose EDID vendor is 0x1e6d.
+# m1ddc exposes this as `set input-alt`; on Windows the packet is injected through
+# NVAPI, aimed at the one output whose EDID vendor is 0x1E6D.
 #
-# The exact bytes, for either platform (checksum = 0x6e XOR every preceding byte):
+# The exact bytes (checksum = 0x6E XOR every preceding byte):
 #   LG -> DisplayPort   50 84 03 F4 00 D0 9D
 #   LG -> USB-C         50 84 03 F4 00 D1 9C
 method = "lg-alt"
 
 [monitor.input]
-mac     = 0xD1   # 209 — USB-C.       NOTE: ddcutil's wiki calls 0xD1 "DisplayPort 2"
-                 #       and lists USB-C as 0xD2. On this panel 0xD1 is correct and
-                 #       0xD2 was never needed. Confirmed from both Windows and macOS.
-windows = 0xD0   # 208 — DisplayPort
-hdmi1   = 0x90   # 144 — unused, documented for completeness
-hdmi2   = 0x91   # 145 — unused
+displayport = 0xD0   # 208
+usb-c       = 0xD1   # 209 -- NOTE: ddcutil's wiki calls 0xD1 "DisplayPort 2" and lists
+                     #        USB-C as 0xD2. On this panel 0xD1 is correct and 0xD2 was
+                     #        never needed. Confirmed from both platforms.
+hdmi1       = 0x90   # 144 -- documented, not exercised
+hdmi2       = 0x91   # 145 -- documented, not exercised
 
 # ---------------------------------------------------------------------------
 
 [[monitor]]
-name         = "ASUS PG42UQ"
-match_name   = "PG42UQ"
-win_match    = "AUS42E0"         # EDID id in the Windows PnP interface path
+name           = "ASUS PG42UQ"
+edid_name      = "PG42UQ"
+edid_vendor    = 0x06B3            # AUS / ASUSTek
+edid_product   = 0x42E0            # the same on every input and both hosts
 osd_auto_input = "Auto Input Detection"  # MUST be OFF. Named differently from the
-                                         # LG's, but covers the same behaviour --
-                                         # switching on signal loss, not just
-                                         # detection at power-on. Verified both
-                                         # states across real sleep cycles.
-edid_vendor  = 0x06b3            # AUS / ASUSTek
-edid_product = 0x42e0            # confirmed from raw EDID on Windows; agrees
+                                         # LG's, but it does cover switching on
+                                         # signal loss, not only at power-on.
 
-# Standard DDC/CI. Works normally.
+# Standard DDC/CI, I2C source 0x51, VCP 0x60. Works normally. Answers DDC over its
+# HDMI input as well as DisplayPort, including while displaying the other one.
 #
-# The exact bytes (checksum = 0x6e XOR every preceding byte):
-#   ASUS -> HDMI 1        51 84 03 60 00 11 C9
+# The exact bytes (checksum = 0x6E XOR every preceding byte):
 #   ASUS -> DisplayPort   51 84 03 60 00 0F D7
-method = "standard"              # VCP 0x60, I2C source address 0x51
+#   ASUS -> HDMI 1        51 84 03 60 00 11 C9
+method = "standard"
 
 [monitor.input]
-mac     = 0x0F   # 15 — DisplayPort
-windows = 0x11   # 17 — HDMI 1. Confirmed from Windows 2026-08-30: this panel does
-                 #      answer DDC over the HDMI cable, including while it is
-                 #      displaying its DisplayPort input. Only DP had been
-                 #      exercised previously, from the Mac side.
-hdmi2   = 0x12   # 18 — unused
-
-# ---------------------------------------------------------------------------
-# USB trigger: which device arriving means "this machine now owns the peripherals".
-#
-# The keyboard and mouse are wired directly to the Windows PC's motherboard and do
-# NOT pass through the USB switch, so they cannot be the trigger. The devices that
-# actually move are the webcam and the audio interface.
-#
-# Any listed device arriving fires a switch; the debounce below stops two arrivals
-# from double-firing. Order matters only for documentation.
-#
-# Both IDs verified on Windows 2026-08-30 with the devices behind the USB switch:
-#   USB\VID_046D&PID_0843\5A5A5A5A     Logitech Webcam C930e
-#   USB\VID_1235&PID_820A\00001234     Focusrite Clarett+ 2Pre
-# To re-check:  macOS   ioreg -p IOUSB -l | grep -E 'idVendor|idProduct'
-#               Windows Get-PnpDevice -PresentOnly | ? InstanceId -match 'VID_046D'
-#
-# TRAP: the keyboard and mouse are Logitech too (VID_046D, PID_C547) and are always
-# present. Match the full vendor+product pair; a vendor-only match fires constantly.
-
-[[trigger]]
-name    = "Logitech Webcam C930e"
-vendor  = 0x046D
-product = 0x0843
-primary = true
-# Preferred anchor. A UVC camera enumerates on physical connection and little else,
-# so it rarely produces a spurious arrival.
-
-[[trigger]]
-name    = "Focusrite Clarett+ 2Pre"
-vendor  = 0x1235
-product = 0x820A
-primary = false
-# Usable, but a weaker anchor: audio interfaces can re-enumerate on driver reloads,
-# sample-rate changes and power events, and a spurious arrival here would yank both
-# displays mid-session. If this interface ends up wired directly to one machine
-# instead of passing through the switch, drop this entry.
-
-[trigger.timing]
-debounce_seconds = 3.0   # ignore any event within this window of the last switch
-settle_seconds   = 0.75  # device must still be present after this delay before acting
+displayport = 0x0F   # 15
+hdmi1       = 0x11   # 17
+hdmi2       = 0x12   # 18 -- documented, not exercised
