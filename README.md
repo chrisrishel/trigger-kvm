@@ -77,14 +77,15 @@ computer runs its own copy and only ever selects its own inputs.
 ## Install
 
 Run the installer on each computer, from a checkout of this repository. It
-builds or copies what it needs, then starts the setup walkthrough.
+builds or copies what it needs, then -- when there is no configuration yet --
+starts the setup walkthrough itself. There is nothing to run afterwards.
 
 ```sh
 cd macos && ./install.sh            # macOS
 ```
 
 ```powershell
-cd windows; .\install.ps1           # Windows  (add -AddToPath to put trigger-kvm on PATH)
+cd windows; .\install.ps1           # Windows
 ```
 
 The walkthrough is one menu. Finishing a section returns you to it with the
