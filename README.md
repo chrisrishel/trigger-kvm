@@ -9,26 +9,38 @@ monitor over DDC/CI to select that computer's input. Nothing switches video, so
 the link never drops and your window layout survives every switch.
 
 ```
-             ┌── USB-C ──────────────┐
-Mac ─────────┤                       ├── LG 45GX950A   (USB-C | DisplayPort)
-             └── USB-C→DP ───────┐   │
-                                 ├───┼── ASUS PG42UQ   (DisplayPort | HDMI 1)
-Windows PC ──── DisplayPort ─────┘   │
-           └─── HDMI 1 ──────────────┘
+                    ┌────────────────────┐
+  Computer A ───────┤ input 1            │
+                    │         Monitor 1  │
+  Computer B ───────┤ input 2            │
+                    └────────────────────┘
+                    ┌────────────────────┐
+  Computer A ───────┤ input 1            │
+                    │         Monitor 2  │
+  Computer B ───────┤ input 2            │
+                    └────────────────────┘
 
-USB switch ──> peripherals ──> whichever computer gets them pulls the monitors to itself
+  Computer A ═══╗
+                ╠═══ USB switch ═══ keyboard, mouse, webcam, ...
+  Computer B ═══╝
+
+  Flip the switch. The computer that receives the devices tells every monitor,
+  over DDC/CI, to show its own input. Video cables never move.
 ```
 
-Developed and tested against exactly this: an LG 45GX950A and an ASUS PG42UQ,
-from one Mac and one Windows PC. Anything else is untested, and the maintainers
-cannot test hardware they do not own. Read [Safety](#safety) before you run it.
+Developed and tested against one desk: two monitors (an LG 45GX950A and an ASUS
+PG42UQ), one Mac and one Windows PC. Anything else is untested, and the
+maintainers cannot test hardware they do not own. Read [Safety](#safety) before
+you run it.
 
 ## Does it apply to your hardware?
 
 **Monitors.** Each monitor must accept input selection over DDC/CI. Most do.
-Some LG models ignore the standard command and only answer LG's own method; that
-method is supported, for LG panels only. A monitor that answers neither is
-unsupported, and the setup walkthrough tells you so rather than guessing.
+Some ignore the standard command and only answer their manufacturer's own
+method; one such method is supported today, LG's, and it is offered for LG
+panels only, because it uses a service channel that must never be sent to
+another make. A monitor that answers neither is unsupported, and the setup
+walkthrough tells you so rather than guessing.
 
 **Cabling.** Every computer needs its own cable to every monitor, each on a
 different input.
@@ -50,11 +62,11 @@ computer runs its own copy and only ever selects its own inputs.
 
 ## Before you install
 
-1. **Turn off automatic input switching on every monitor.** The setting has a
-   different name per vendor -- *Auto Input Switch* on the LG, *Auto Input
-   Detection* on the ASUS. With it on, a monitor jumps to the other computer the
-   moment this one sleeps, and nothing brings it back until you next flip the
-   switch. Nothing in software compensates for this.
+1. **Turn off automatic input switching on every monitor.** Every vendor names
+   it differently -- *Auto Input Switch*, *Auto Input Detection*, *Auto Source*
+   -- and it is usually on by default. With it on, a monitor jumps to the other
+   computer the moment this one sleeps, and nothing brings it back until you
+   next flip the switch. Nothing in software compensates for this.
 2. **Cable every computer to every monitor**, and note which input each is on.
    The walkthrough asks.
 3. **Decide what goes through the USB switch.** A webcam is a good trigger: it
@@ -75,22 +87,28 @@ cd macos && ./install.sh            # macOS
 cd windows; .\install.ps1           # Windows  (add -AddToPath to put trigger-kvm on PATH)
 ```
 
-The walkthrough is one menu: **Computers** (named once; the names are what you
-type to switch by hand), **Monitors** (each reports its own name; you say which
-computer is on which input, and where the manufacturer has a documented
-alternative to standard DDC/CI you are offered it up front), **Triggers** (a
-checklist of what is attached or paired right now), **Autostart?** (from boot,
-from login, or no), **Add to PATH?**, then two optional checks, then Save.
-**Nothing is written until you choose Save**; Cancel or an interrupted run
-leaves an existing setup untouched.
+The walkthrough is one menu. Finishing a section returns you to it with the
+cursor on the next thing that needs an answer:
 
-**Test the monitor inputs** moves the monitors to each computer for about eight
-seconds, brings them back, and asks what you saw. One monitor always stays on
-this computer so you can read the question, and the walkthrough names it before
-anything moves. With a single monitor it tells you how to get back with the
-monitor's own input button before it sends anything, and lets you decline.
-**Test the triggers** asks you to flip the switch away and back; once the inputs
-have passed, that flip pulls the monitors for real.
+1. **Computers** -- name this one and the others. The names are what you type to
+   switch by hand (`trigger-kvm to desktop`).
+2. **Monitors** -- each attached monitor reports its own name. For each, say
+   which computer is on which input. Where the manufacturer has a documented
+   alternative to standard DDC/CI, you are offered it here, with what it means.
+3. **Triggers** -- a checklist of the USB devices attached and the Bluetooth
+   devices paired right now. Tick what travels with the switch.
+4. **Autostart?** -- from boot, from login, or not at all.
+5. **Add to PATH?** -- one directory holding one launcher.
+6. **Test the monitor inputs** (optional) -- moves the monitors to each computer
+   for about eight seconds, brings them back, and asks what you saw. One monitor
+   always stays on this computer so you can read the question, and it is named
+   before anything moves. With a single monitor you are told how to get back
+   with the monitor's own input button before anything is sent, and can decline.
+7. **Test the triggers** (optional) -- flip the switch away and back. Once the
+   inputs have passed, that flip pulls the monitors for real: the whole thing
+   working, before anything is saved.
+8. **Save** -- nothing is written until here. Cancel, or an interrupted run,
+   leaves an existing setup untouched.
 
 Where things land:
 
@@ -116,7 +134,7 @@ each platform's convention (`--only` / `-Only`, `--dry-run` / `-WhatIf`,
 ```
 trigger-kvm pull                 point every configured monitor at THIS computer
 trigger-kvm to <computer>        point them at another computer, by name. Manual only
-trigger-kvm pull --only lg       one monitor only -- use when testing
+trigger-kvm pull --only main     one monitor only -- use when testing (works with `to` as well)
 trigger-kvm pull --dry-run       resolve and print the packets, send nothing
 trigger-kvm list                 connected displays, with their identifiers
 trigger-kvm discover             what is attached, in the form the config wants
@@ -138,9 +156,9 @@ never an automatic switch. A trigger only ever runs `pull`. The config behind
 both verbs is one map:
 
 ```
-computer.this = pc
-display.lg.input.0xD0 = pc          which computer is on which input
-display.lg.input.0xD1 = mac
+computer.this = desktop
+display.main.input.0x11 = desktop       which computer is on which input
+display.main.input.0x0f = laptop
 trigger.device = usb:046d:0843, bt:0011223344ff
 ```
 
@@ -148,15 +166,17 @@ trigger.device = usb:046d:0843, bt:0011223344ff
 
 You use this at your own risk. It writes to your monitors' control channels.
 
-- **A switch cannot be verified in software.** Both monitors this was developed
-  against return wrong values when read back. The tool never reads a value to
-  decide anything, and the walkthrough asks you to look at the screen instead.
-- **LG's input method uses a service channel** (I2C address `0x50`). Only
-  values from documentation, or a value you type, are ever sent to it -- never a
-  sweep or a guess. An LG monitor has been bricked by sweeping that channel
-  (ddcutil issue #419, "Bricked LG Monitor"). Do not experiment there, and do
-  not type a value onto it that you did not get from documentation. The code
-  refuses to send on that channel to any monitor whose EDID vendor is not LG.
+- **A switch cannot be verified in software.** Monitors return wrong values
+  when read back -- both of the ones this was developed against do, and they
+  are not unusual. The tool never reads a value to decide anything, and the
+  walkthrough asks you to look at the screen instead.
+- **A manufacturer's method uses a service channel.** The one supported today,
+  LG's, is I2C address `0x50`. Only values from documentation, or a value you
+  type, are ever sent to it -- never a sweep or a guess. An LG monitor has been
+  bricked by sweeping that channel (ddcutil issue #419, "Bricked LG Monitor").
+  Do not experiment there, and do not type a value onto it that you did not get
+  from documentation. The code refuses to send on that channel to any monitor
+  whose EDID vendor is not LG.
 - **Your last display is never taken silently.** Every check names which
   monitor stays before it moves the others, and the one-monitor case tells you
   how to get back before it starts. Blind value-walking is refused outright when
@@ -174,8 +194,9 @@ switching off, a monitor that powers on to an input with no signal stays there.
 Use the input or source button on the monitor. This is the cost of the setting
 above.
 
-**The LG flickers on every switch, even to the input it is already on.** Normal.
-It is renegotiating the link, and each write is sent twice on purpose.
+**A monitor flickers on every switch, even to the input it is already on.**
+Normal (the LG here does it). It is renegotiating the link, and each write is
+sent twice on purpose.
 
 **Usually only one device appears in the log per flip.** Normal. Watched devices
 arrive together; the first fires, the second lands inside the debounce window.
@@ -189,8 +210,8 @@ are re-checked with `trigger-kvm configure`.
 
 **You moved a cable to a different input, or copied a config from another
 computer.** Run `trigger-kvm configure` again. Some panels report a different
-EDID product id per input -- the LG 45GX950A does -- so an id measured on one
-input, or on another host, matches nothing here.
+EDID product id per input (the LG here does), so an id measured on one input, or
+on another computer, matches nothing on this one.
 
 **Windows: `status` shows a last-run result of `0x800710E0`.** Normal while the
 watcher is healthy. A repeating task trigger restarts a dead watcher within a
@@ -229,14 +250,26 @@ there is always a path to command it back. The reasoning is in
 
 ## Related work
 
-- [haimgel/display-switch](https://github.com/haimgel/display-switch) -- switches
-  monitor inputs over DDC/CI when a USB device connects; macOS, Windows and
-  Linux. This project adds LG's manufacturer method for panels that ignore
-  standard input control, per-output aiming on Windows, and a start-from-boot
-  option; it does not support Linux.
-- [SzozdaK/DDC-Trigger](https://github.com/SzozdaK/DDC-Trigger) -- the same idea
-  with a Raspberry Pi as the DDC console and an industrial USB switch as the
-  trigger. This project runs on the computers themselves, with no extra hardware.
+[haimgel/display-switch](https://github.com/haimgel/display-switch) is the
+established tool in this space: it switches monitor inputs over standard DDC/CI
+when a USB device connects or disconnects, on macOS, Windows and Linux, from an
+INI file you write. The differences, so you can pick:
+
+| | display-switch | trigger-kvm |
+|---|---|---|
+| Monitors it can drive | those that take the standard DDC/CI input command | the same, plus a manufacturer channel for panels that ignore it (LG today), gated to that vendor |
+| Setup | a hand-edited INI file | a walkthrough that reads your monitors' EDID, asks which computer is on which input, then proves it by moving one monitor at a time while you watch |
+| Direction | switches on connect, and optionally the other way on disconnect | pull only: the computer that receives the devices takes the monitors. Nothing is ever pushed toward a computer that cannot see the result |
+| Before login | no | yes, on both platforms, without anything running elevated |
+| Triggers | USB | USB, and a Bluetooth device connecting |
+| Platforms | macOS, Windows (any GPU), Linux | macOS (Apple Silicon), Windows (NVIDIA only) |
+
+If your monitors all take the standard command and you want Linux or a
+non-NVIDIA Windows computer, display-switch is the better fit.
+
+[SzozdaK/DDC-Trigger](https://github.com/SzozdaK/DDC-Trigger) is the same idea
+with a Raspberry Pi as the DDC console and an industrial USB switch as the
+trigger. This project runs on the computers themselves, with no extra hardware.
 
 ## License
 
