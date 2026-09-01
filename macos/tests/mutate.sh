@@ -283,7 +283,7 @@ mutate 'checks: failures are joined on spaces, splitting panel names' lib/checks
 mutate 'scope: a function stops declaring its scratch local' lib/checks.sh conventions.tests.sh \
   '/^wt_check_round() {/{n;s%^  local .*%  :%;}'
 mutate 'scope: a menu stops declaring its scratch local' lib/menu.sh conventions.tests.sh \
-  '/^select_many() {/{n;s%^  local .*%  :%;}'
+  '/^select_many_body() {/{n;s%^  local .*%  :%;}'
 mutate 'sidechannel: input-alt appears somewhere else too' lib/display.sh conventions.tests.sh \
   's%^# --- the packet%_unused_alt="input-alt"\n# --- the packet%'
 
