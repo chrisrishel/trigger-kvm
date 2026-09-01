@@ -499,6 +499,28 @@ the point:**
 3. **Add a `specs/CHANGELOG.md` entry and bump YOUR platform's
    `SPEC-REVISION`.** Leave every other platform's alone: their suites now fail
    and name what they owe, which is how they find out without being told.
+4. **PUSH IT.** Nothing above reaches another platform until you do.
+
+**Publishing is the push, not the commit.** A changelog entry sitting in an
+unpushed commit is not published: the other platform's suite reads ITS checkout,
+so it stays green and unaware, which is the exact silent drift the mechanism
+exists to prevent. "Their suites now fail" is a claim about the other machine,
+and it is false until the push.
+
+So **push anything addressed to another platform** -- which is broader than
+specs. The rule covers `specs/` and `specs/CHANGELOG.md`, and equally an entry
+appended to another platform's `HANDOFF.md`: a defect report nobody can pull is a
+defect report nobody has. This overrides the usual "do not push without being
+asked"; it was agreed as a standing policy precisely because the alternative is a
+mechanism that only appears to work.
+
+**Push the finished unit, not a bare spec edit.** The unit is: the spec, this
+platform's implementation, the changelog entry and this platform's
+`SPEC-REVISION`. Pushing a spec edit alone leaves YOUR suite red too, so whoever
+pulls gets two failing platforms and no way to tell which failures are theirs to
+act on. Nothing else changes: still no force-push, no amend, no rebase without
+asking, and platform-local work that touches none of the above is still pushed
+only when asked.
 
 **DO NOT CHANGE ANYTHING IN THE OTHER PLATFORM'S DIRECTORY** -- not its code,
 not its tests, not its docs. You cannot run its tests or see its hardware, and a

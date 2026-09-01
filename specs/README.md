@@ -82,6 +82,9 @@ the point:
 3. **Add a [`CHANGELOG.md`](CHANGELOG.md) entry** and bump your platform's
    `SPEC-REVISION`. Leave every other platform's alone — their suites now fail,
    which is how they find out.
+4. **Push it.** Their suites read their checkout, so none of the above reaches
+   them until you do — see [`../AGENTS.md`](../AGENTS.md), "Publishing is the
+   push, not the commit."
 
 `<platform>/HANDOFF.md` is an **inbox** — what that platform owes. Anyone may
 append; only that platform works through it and deletes from it, so crossing a
