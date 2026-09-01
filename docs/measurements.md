@@ -127,6 +127,34 @@ resumed at offset 0 with zero NUL bytes in the file.
 
 ## PowerShell console and language
 
+**2026-09-01 -- the .NET user-environment API cannot round-trip a PATH.**
+`[Environment]::SetEnvironmentVariable('X','C:\a;%USERPROFILE%\b','User')`
+stores the value as **REG_SZ**, not REG_EXPAND_SZ, even though it contains a
+`%VAR%` reference -- checked with `GetValueKind`. And
+`GetEnvironmentVariable(...,'User')` EXPANDS such references when the value IS
+REG_EXPAND_SZ, because that is what reading one means. Together they read a
+user's `%USERPROFILE%`-style PATH entries as literal paths and write them back
+that way, with the kind downgraded. A fresh Windows profile's `Path` is
+REG_EXPAND_SZ; this desk's is already REG_SZ, which is consistent with it having
+happened here. `install.ps1` therefore reads with
+`DoNotExpandEnvironmentNames` and writes the kind back itself, and sends
+`WM_SETTINGCHANGE` by P/Invoke because a registry write notifies nobody.
+
+**2026-09-01 -- `Get-Content` strips a byte-order mark and the CR of a CRLF
+file.** Reading `specs/config-fixture/input.conf`, which carries both on
+purpose, `windows/config.ps1`'s single regex reproduced `expected.tsv` exactly
+with no explicit handling of either. The macOS reader has to strip both by hand
+in awk. Same contract, different amount of code, and the fixture is what proves
+the two agree.
+
+**2026-09-01 -- `Start-Process -PassThru` without `-Wait` never populates
+`.ExitCode`.** `$p.WaitForExit(ms)` returns `$true` and `$p.ExitCode` reads
+EMPTY, not 0. Every suite therefore looked red to `tests/mutate.ps1` and all
+seven mutations came back UNJUDGED. `[Diagnostics.Process]::Start` with a
+`ProcessStartInfo` gives a handle whose `ExitCode` is real -- and its output has
+to be read asynchronously, or a child that fills the pipe buffer blocks and
+looks exactly like a hang.
+
 **2026-08-31 -- `[Console]::CursorLeft` clamps.** After `Write-Host ('x' * $w)
 -NoNewline` on a `$w`-wide buffer, `CursorLeft` reads `$w - 1`, the same as after
 `$w - 1` characters; and writing into the last column wraps. A first measurement
