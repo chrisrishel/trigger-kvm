@@ -3677,8 +3677,23 @@ if (Get-ScheduledTask -TaskName $TASK -ErrorAction SilentlyContinue) {
 # -Trigger will not take an empty array, so the manual task is registered without it.
 $register = @{ TaskName = $TASK; Action = $action; Principal = $principal; Settings = $settings }
 if ($triggers.Count -gt 0) { $register['Trigger'] = $triggers }
-Register-ScheduledTask @register `
-    -Description "trigger-kvm: pull the configured monitors to this computer when the shared peripherals arrive." | Out-Null
+
+# The OLD task was unregistered a few lines up, so a throw HERE leaves no
+# autostart at all -- and under $ErrorActionPreference = 'Stop' it left no
+# message about it either, just a stack trace after the files had already been
+# copied. specs/configure.md 4.4: an interrupted run must leave a working setup
+# untouched, and where it cannot, it has to say what is left and how to recover.
+try {
+    Register-ScheduledTask @register `
+        -Description "trigger-kvm: pull the configured monitors to this computer when the shared peripherals arrive." | Out-Null
+} catch {
+    Write-Log ("could not register the task '{0}': {1}" -f $TASK, $_.Exception.Message)
+    Write-Log 'the scripts are installed and the config is intact; what is missing is the autostart entry.'
+    Write-Log 'nothing is watching until that is fixed. To try again:'
+    Write-Log ("    {0}" -f $PSCommandPath)
+    Write-Log 'or start one for this session only:  trigger-kvm restart'
+    exit 1
+}
 
 # -Pause disables the task; installing again must undo that or the watcher would
 # be registered, reported healthy, and never actually start.

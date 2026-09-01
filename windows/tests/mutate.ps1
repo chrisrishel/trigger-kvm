@@ -192,6 +192,19 @@ Invoke-Mutation 'launch: an absent log becomes an empty -LogFile' `
     "    if (`$LogFile)    { `$a += @('-LogFile', ""``""`$LogFile``"""") }" `
     "    `$a += @('-LogFile', ""``""`$LogFile``"""")"
 
+# --- registering the task ------------------------------------------------------
+
+Invoke-Mutation 'install: a failed registration is a bare stack trace' `
+    'install.ps1' 'conventions.tests.ps1' `
+    'try {
+    Register-ScheduledTask @register `
+        -Description "trigger-kvm: pull the configured monitors to this computer when the shared peripherals arrive." | Out-Null
+} catch {' `
+    'if ($true) {
+    Register-ScheduledTask @register `
+        -Description "trigger-kvm: pull the configured monitors to this computer when the shared peripherals arrive." | Out-Null
+} else {'
+
 # --- the user PATH -------------------------------------------------------------
 
 Invoke-Mutation 'path: the read expands other people''s %VAR% entries' `

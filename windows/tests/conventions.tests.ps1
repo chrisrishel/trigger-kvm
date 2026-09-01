@@ -283,6 +283,56 @@ foreach ($l in (Select-String -LiteralPath $installer -Pattern 'New-ScheduledTas
 }
 Assert-Equal 0 $asWho.Count ("every task principal and logon trigger names `$FORUSER:`n  " + ($asWho -join "`n  "))
 
+# ---- registering the task is allowed to fail, and must explain itself --------
+#
+# specs/configure.md 4.4: an interrupted run must leave a working setup
+# untouched, and where it cannot, it has to say what is left. The OLD task is
+# unregistered before the new one is registered, so a throw between them leaves
+# no autostart at all -- and under $ErrorActionPreference = 'Stop' it left no
+# message either, just a stack trace after the files had been copied.
+#
+# Structural because it is straight-line install code: reaching it for real
+# means registering a scheduled task, which is machine-wide and outlives
+# anything a test can sandbox.
+
+function Test-InsideTry {
+    param([string]$Path, [string]$Command)
+
+    $errors = $null
+    $ast = [System.Management.Automation.Language.Parser]::ParseFile($Path, [ref]$null, [ref]$errors)
+    if ($errors) { throw ("{0} does not parse: {1}" -f $Path, $errors[0].Message) }
+
+    $calls = @($ast.FindAll({
+        param($n) $n -is [System.Management.Automation.Language.CommandAst] -and
+                  $n.GetCommandName() -eq $Command }, $true))
+    if ($calls.Count -eq 0) { return $false }   # gone is not the same as guarded
+
+    foreach ($c in $calls) {
+        $guarded = $false
+        for ($p = $c.Parent; $p; $p = $p.Parent) {
+            if ($p -is [System.Management.Automation.Language.TryStatementAst]) { $guarded = $true; break }
+        }
+        if (-not $guarded) { return $false }
+    }
+    return $true
+}
+
+Assert-True (Test-InsideTry -Path $installer -Command 'Register-ScheduledTask') `
+    'Register-ScheduledTask must be caught: the old task is already gone by then'
+Assert-True (Test-InsideTry -Path $installer -Command 'Unregister-ScheduledTask') `
+    'and so must Unregister, which is where the ownership trap surfaces'
+
+# The check can see an unguarded call, and does not fire on a guarded one.
+$probe = Join-Path $env:TEMP 'trigger-kvm-try-probe.ps1'
+'Register-ScheduledTask -TaskName x' | Set-Content -LiteralPath $probe -Encoding ASCII
+Assert-True (-not (Test-InsideTry -Path $probe -Command 'Register-ScheduledTask')) `
+    'an unguarded call must be reported'
+@'
+try { Register-ScheduledTask -TaskName x } catch { }
+'@ | Set-Content -LiteralPath $probe -Encoding ASCII
+Assert-True (Test-InsideTry -Path $probe -Command 'Register-ScheduledTask') 'and a guarded one must not'
+Remove-Item -LiteralPath $probe -Force -ErrorAction SilentlyContinue
+
 # ---- the LG service channel is reachable from exactly one place --------------
 #
 # ..\..\AGENTS.md hard rule 5. I2C source 0x50 is LG's service/factory channel;
