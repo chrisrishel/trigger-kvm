@@ -104,15 +104,55 @@ param(
 
     # Set only on the elevated relaunch, to stop an elevation that does not take
     # from looping UAC prompts forever. Not for humans.
-    [switch]$Relaunched
+    [switch]$Relaunched,
+
+    # WHO THIS INSTALL IS FOR. Set only on the elevated relaunch, and not for
+    # humans either.
+    #
+    # `-Verb RunAs` from a STANDARD account elevates a DIFFERENT user: on a family
+    # or corporate PC the person at the keyboard is not an admin, so the child that
+    # comes back is somebody else. Left to derive its own answers it would install
+    # into the admin's profile and register the task as the admin, and the user's
+    # watcher would never start -- with nothing saying so.
+    #
+    # These are the two facts the parent knows for certain and the child cannot
+    # work out: the identity every task principal is registered as, and the
+    # LOCALAPPDATA every path is built from. They are two facts, not one -- a
+    # redirected LOCALAPPDATA is not derivable from an account name.
+    [string]$ForUser = '',
+    [string]$ForAppData = ''
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+$IsElevated = ([Security.Principal.WindowsPrincipal] `
+               [Security.Principal.WindowsIdentity]::GetCurrent()
+              ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+
+# WHO THIS INSTALL IS FOR, resolved once. See the -ForUser parameter for why the
+# elevated child cannot be left to answer this for itself.
+#
+# THE ONLY PLACE $env:LOCALAPPDATA AND $env:USERNAME ARE READ. Everything below
+# builds on $APPDATA and $FORUSER, so there is one answer to "whose install is
+# this?" rather than one per use -- and a check in tests/conventions.tests.ps1
+# holds it to that, the way the I2C gate is held to one door.
+$ME      = "$env:USERDOMAIN\$env:USERNAME"
+$FORUSER = $(if ($ForUser)    { $ForUser }    else { $ME })
+$APPDATA = $(if ($ForAppData) { $ForAppData } else { $env:LOCALAPPDATA })
+
+# Installing into somebody else's profile is exactly what elevation is for, and
+# without it the copies would fail halfway rather than not at all. Refused rather
+# than attempted: a half-written install in the wrong profile is the failure this
+# whole parameter pair exists to prevent.
+if ($FORUSER -ne $ME -and -not $IsElevated) {
+    Write-Host "install: asked to install for $FORUSER, which needs administrator rights."
+    exit 1
+}
+
 $TASK    = 'trigger-kvm'
-$DEST    = Join-Path $env:LOCALAPPDATA 'Programs\trigger-kvm'
-$LOG     = Join-Path $env:LOCALAPPDATA 'trigger-kvm\trigger-kvm.log'
+$DEST    = Join-Path $APPDATA 'Programs\trigger-kvm'
+$LOG     = Join-Path $APPDATA 'trigger-kvm\trigger-kvm.log'
 $WATCH   = Join-Path $DEST 'event-watch.ps1'
 $SWITCH  = Join-Path $DEST 'trigger-kvm.ps1'
 $LGEXE   = Join-Path $DEST 'lg-input-switch.exe'   # legacy; removed on install/uninstall
@@ -148,8 +188,8 @@ $STALE = @(
 # would mean two watchers both firing on every arrival. Removed on install and on
 # uninstall. Delete this block once no machine can plausibly still have one.
 $OLD_TASK = 'display-switch'
-$OLD_DEST = Join-Path $env:LOCALAPPDATA 'Programs\display-switch'
-$OLD_LOG  = Join-Path $env:LOCALAPPDATA 'display-switch\displayswitch.log'
+$OLD_DEST = Join-Path $APPDATA 'Programs\display-switch'
+$OLD_LOG  = Join-Path $APPDATA 'display-switch\displayswitch.log'
 
 # Machine-local configuration. Generated here, then read by trigger-kvm.ps1 at every
 # switch. Lives beside the log rather than in $DEST, so that uninstalling does not
@@ -184,7 +224,10 @@ function Write-Log { param([string]$m) Write-Host "install: $m" }
 # Returns the INTERNAL names ('s4u' / 'user') because they are what the Scheduled
 # Task API calls these principals; nothing a user reads says either word.
 function Get-EffectiveTier {
-    $c = Read-Config -Path (Get-ConfigPath)
+    # $CONFIG, not Get-ConfigPath: the elevated child must read the config of the
+    # user it is installing FOR, and Get-ConfigPath answers for whoever is running.
+    # Two spellings of one path can disagree; one cannot.
+    $c = Read-Config -Path $CONFIG
     if ($c.ContainsKey('install.autostart')) {
         switch ($c['install.autostart']) {
             'boot'  { return 's4u' }
@@ -212,9 +255,31 @@ function Get-EffectiveTier {
 
 # --- elevation --------------------------------------------------------------
 
-$IsElevated = ([Security.Principal.WindowsPrincipal] `
-               [Security.Principal.WindowsIdentity]::GetCurrent()
-              ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+# $IsElevated is resolved at the top of the file, beside $FORUSER: the two
+# together decide whether this process may install for the user it was told to.
+
+# The child is started by handing a STRING to powershell -Command, so its argument
+# list has to survive being written out and parsed again. A user name or a profile
+# path may contain a space -- "First Last" -- and a plain `-join ' '` does not
+# survive one.
+#
+# Measured 2026-09-01 (docs/measurements.md), because two obvious shapes both look
+# right and neither works:
+#   & $f @args                    -- array splat binds every element POSITIONALLY:
+#                                    "A positional parameter cannot be found that
+#                                    accepts argument '-AddToPath'".
+#   & $f install -ForUser A B     -- "...accepts argument 'B'".
+# Flag names must stay BARE (a quoted '-ForUser' is a positional string, not a
+# parameter name) and values must be quoted. So this quotes exactly the elements
+# that are not flags.
+function Format-ChildArguments {
+    param([string[]]$ChildArgs)
+
+    return (@($ChildArgs | ForEach-Object {
+        if ($_ -match '^-\w+$') { $_ }
+        else { "'" + ($_ -replace "'", "''") + "'" }
+    }) -join ' ')
+}
 
 # Re-run this script elevated, wait for it, and print what it did.
 #
@@ -230,6 +295,11 @@ $IsElevated = ([Security.Principal.WindowsPrincipal] `
 function Request-Elevation {
     param([string[]]$ChildArgs)
 
+    # WHO the install is for travels with it, always. The child cannot work this
+    # out: on a standard account the elevated process is a different user, and
+    # every path and principal it derived for itself would be that admin's.
+    $ChildArgs = @($ChildArgs) + @('-ForUser', $FORUSER, '-ForAppData', $APPDATA)
+
     if ($Relaunched) {
         # We already asked and came back still unelevated. Something is refusing
         # (policy, or an account with no admin rights available). Do not prompt
@@ -240,12 +310,14 @@ function Request-Elevation {
     if ($NoElevate) {
         Write-Log 'elevation required, and -NoElevate was given.'
         Write-Host ''
-        Write-Host ("Run this from an elevated PowerShell:  {0} {1}" -f $PSCommandPath, ($ChildArgs -join ' '))
+        # Quoted, because this line is meant to be pasted and a profile path with a
+        # space in it would not survive being retyped bare either.
+        Write-Host ("Run this from an elevated PowerShell:  & '{0}' {1}" -f $PSCommandPath, (Format-ChildArguments $ChildArgs))
         return 1
     }
 
     $transcript = Join-Path ([IO.Path]::GetTempPath()) ("trigger-kvm-elevated-{0}.log" -f [Guid]::NewGuid().ToString('N').Substring(0,8))
-    $inner = "& '{0}' {1} -Relaunched *> '{2}'" -f $PSCommandPath, ($ChildArgs -join ' '), $transcript
+    $inner = "& '{0}' {1} -Relaunched *> '{2}'" -f $PSCommandPath, (Format-ChildArguments $ChildArgs), $transcript
 
     Write-Log 'this needs administrator rights; approving the UAC prompt will continue.'
     try {
@@ -288,6 +360,30 @@ function Remove-FromUserPath {
     if ($parts -notcontains $Dir) { return }
     [Environment]::SetEnvironmentVariable('Path', (@($parts | Where-Object { $_ -ne $Dir }) -join ';'), 'User')
     Write-Log "removed from your PATH: $Dir"
+}
+
+# THE USER PATH BELONGS TO THE USER WHOSE PATH IT IS, AND ONLY A PROCESS RUNNING
+# AS THEM MAY EDIT IT. Both helpers above go through 'User' scope, which is
+# HKCU\Environment -- and in an elevated child on a standard account, HKCU is the
+# ADMIN'S hive. A child asked to do this would edit the wrong person's PATH and
+# report that it had done what was asked.
+#
+# So the child never does it, and it never needs to: PATH is per-user and has
+# never required elevation. The parent -- which is running as the right user --
+# does this itself once the child comes back clean.
+# Both verbs, because the rule is about WHO may edit a PATH, not about which way
+# the edit goes -- and an uninstall that left the entry behind would be the same
+# defect wearing the other hat.
+function Set-InstalledPath {
+    # An earlier layout put $DEST itself on PATH, which published launcher.vbs as a
+    # bare `launcher` command. Undone on every install.
+    Remove-FromUserPath -Dir $DEST
+    if ($AddToPath) { Add-ToUserPath -Dir $BINDIR }
+}
+
+function Clear-InstalledPath {
+    Remove-FromUserPath -Dir $BINDIR
+    Remove-FromUserPath -Dir $DEST      # an earlier layout put this one on PATH
 }
 
 # --- configuration ----------------------------------------------------------
@@ -2808,7 +2904,9 @@ if ($Command -eq 'uninstall') {
             if (-not $IsElevated) {
                 Write-Log "'$TASK' was registered by an elevated process."
                 $rc = Request-Elevation -ChildArgs @('uninstall')
-                if ($rc -ne 0) { Write-Log 'nothing removed -- files left in place so the task keeps working.' }
+                # The child cannot reach this user's PATH -- see Set-InstalledPath.
+                if ($rc -eq 0) { Clear-InstalledPath }
+                else { Write-Log 'nothing removed -- files left in place so the task keeps working.' }
                 exit $rc
             }
             Write-Log "cannot unregister '$TASK' even elevated: $($_.Exception.Message)"
@@ -2819,8 +2917,7 @@ if ($Command -eq 'uninstall') {
 
     Stop-Watchers
     Remove-LegacyInstall
-    Remove-FromUserPath -Dir $BINDIR
-    Remove-FromUserPath -Dir $DEST      # an earlier layout put this one on PATH
+    if ($FORUSER -eq $ME) { Clear-InstalledPath }
 
     # Leave the log AND the config in place. The log is the only record of what
     # happened, and a config can represent real work -- reinstalling should not
@@ -2854,9 +2951,10 @@ if ($Command -eq 'uninstall') {
 $EffectiveTier = Get-EffectiveTier
 
 if ($EffectiveTier -eq 's4u' -and -not $IsElevated) {
-    $childArgs = @('install')
-    if ($AddToPath) { $childArgs += '-AddToPath' }
-    exit (Request-Elevation -ChildArgs $childArgs)
+    # -AddToPath is deliberately NOT handed over. See Set-InstalledPath.
+    $rc = Request-Elevation -ChildArgs @('install')
+    if ($rc -eq 0) { Set-InstalledPath }
+    exit $rc
 }
 
 # No config means nothing to install FROM: the seed values describe one specific
@@ -2877,9 +2975,9 @@ if (-not (Test-Path -LiteralPath $CONFIG)) {
         # the common path now that boot start is the default answer.
         $EffectiveTier = Get-EffectiveTier
         if ($EffectiveTier -eq 's4u' -and -not $IsElevated) {
-            $childArgs = @('install')
-            if ($AddToPath) { $childArgs += '-AddToPath' }
-            exit (Request-Elevation -ChildArgs $childArgs)
+            $rc = Request-Elevation -ChildArgs @('install')
+            if ($rc -eq 0) { Set-InstalledPath }
+            exit $rc
         }
     } else {
         Write-Log "no configuration at $CONFIG, and this is not an interactive terminal."
@@ -2964,13 +3062,13 @@ if ((Resolve-Path $PSScriptRoot).Path -ne (Resolve-Path $DEST).Path) {
 }
 Write-Log "installed scripts to $DEST"
 
-# An earlier layout put the shim in $DEST and therefore $DEST on PATH, which
-# published launcher.vbs as a bare `launcher` command. Undo both.
+# An earlier layout put the shim in $DEST and therefore $DEST on PATH. The file is
+# removed here; the PATH half of it is Set-InstalledPath's, at the end, because
+# only a process running as the target user may touch that user's PATH.
 if (Test-Path -LiteralPath $OLD_SHIM) {
     Remove-Item -LiteralPath $OLD_SHIM -Force
     Write-Log "removed the old shim from $DEST (it required putting the whole directory on PATH)"
 }
-Remove-FromUserPath -Dir $DEST
 
 # Leftovers from earlier layouts inside this same directory.
 foreach ($f in $STALE) {
@@ -3081,7 +3179,7 @@ if ($EffectiveTier -eq 'manual') {
     # started on demand, which is what `trigger-kvm restart` does -- so "no" means
     # "nothing starts it but you", including the self-heal below.
     $triggers = @()
-    $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" `
+    $principal = New-ScheduledTaskPrincipal -UserId $FORUSER `
         -LogonType Interactive -RunLevel Limited
 } elseif ($EffectiveTier -eq 's4u') {
     # At startup, so it is running before anyone logs in. S4U means "run as this
@@ -3089,12 +3187,14 @@ if ($EffectiveTier -eq 'manual') {
     # outright), and RunLevel Limited means ordinary user rights at run time even
     # though registering it needed admin.
     $triggers = @( (New-ScheduledTaskTrigger -AtStartup) )
-    $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" `
+    $principal = New-ScheduledTaskPrincipal -UserId $FORUSER `
         -LogonType S4U -RunLevel Limited
 } else {
     # Interactive session, normal user rights, and deliberately no admin anywhere.
-    $triggers = @( (New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME) )
-    $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" `
+    # $FORUSER, not this process's own name: the ownership-denial path relaunches
+    # elevated even for THIS tier, and on a standard account that is somebody else.
+    $triggers = @( (New-ScheduledTaskTrigger -AtLogOn -User $FORUSER) )
+    $principal = New-ScheduledTaskPrincipal -UserId $FORUSER `
         -LogonType Interactive -RunLevel Limited
 }
 
@@ -3160,10 +3260,9 @@ if (Get-ScheduledTask -TaskName $TASK -ErrorAction SilentlyContinue) {
             # reported that nothing had changed. The tier is not the parent's to hand
             # over anyway: the child re-derives it from the config with
             # Get-EffectiveTier, exactly as the other two relaunch sites do.
-            $childArgs = @('install')
-            if ($AddToPath) { $childArgs += '-AddToPath' }
-            $rc = Request-Elevation -ChildArgs $childArgs
+            $rc = Request-Elevation -ChildArgs @('install')
             if ($rc -eq 0) {
+                Set-InstalledPath
                 Write-Log 'done (elevated).'
             } else {
                 Write-Log 'the task was left exactly as it was, so what was running still is.'
@@ -3199,7 +3298,9 @@ Write-Log ("registered and started task '{0}' ({1})" -f $TASK, `
                'manual' { 'no autostart' }
                default  { 'starts when you log in' } }))
 
-if ($AddToPath) { Add-ToUserPath -Dir $BINDIR }
+# Skipped when this process is the elevated child of a standard account: that
+# user's PATH is not in this process's HKCU, and the parent does it instead.
+if ($FORUSER -eq $ME) { Set-InstalledPath }
 
 # What is left to say is short: it is running, when it will run again, how to see
 # that, and the four things you can do to it. Everything else -- tiers, sessions,

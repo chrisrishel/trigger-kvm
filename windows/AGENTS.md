@@ -98,6 +98,14 @@ user with Read only. Every later unelevated `setup` or `uninstall` then fails wi
 it and explain; do not simplify those catch blocks away. Recovery: `uninstall`
 elevated once, then `setup` normally.
 
+**`-Verb RunAs` from a STANDARD account elevates a DIFFERENT USER, so the child is
+TOLD who the install is for** -- `$ME`/`$FORUSER`/`$APPDATA`, resolved once at the
+top of `install.ps1`, the only place the environment is read. Two consequences,
+both pinned by the suite: only a process running AS a user may edit that user's
+PATH (`HKCU` in the child is the ADMIN's hive); and the child's arguments are
+TEXT while a profile path has spaces, so flags stay bare and values quoted
+(`Format-ChildArguments`).
+
 **Tiers**: the task-registration logic lives in `install.ps1` only. A headless
 install defaults to login-start; "from boot" registers an S4U task at the cost of
 admin *to register* (it still runs unelevated). `event-watch.ps1` takes a

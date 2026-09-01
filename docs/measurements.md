@@ -121,3 +121,20 @@ row" -- true of that API and not of `Write-Host`.
 `Test-Simple -A hello -ThisName world` binds `$A`, leaves `-ThisName world` in
 `$args`, and does not throw; a `[CmdletBinding()]` function throws `A parameter
 cannot be found that matches parameter name 'ThisName'`.
+
+**2026-09-01 -- neither obvious way to pass an argument list to another script
+survives a space.** Against a `[CmdletBinding()]` script declaring `Command`,
+`AddToPath`, `ForUser` and `ForAppData`, with the list
+`@('install','-AddToPath','-ForUser','HOME\First Last','-ForAppData','C:\Users\First Last\AppData\Local')`:
+
+| form | result |
+|---|---|
+| `& $f @a` (array splat) | `A positional parameter cannot be found that accepts argument '-AddToPath'` -- splatting an ARRAY binds every element positionally, flag-looking strings included |
+| `& $f ` + `($a -join ' ')` | `A positional parameter cannot be found that accepts argument 'Last'` |
+| flags bare, values single-quoted with `''` escaping | binds correctly, including a space AND an apostrophe in both the account name and the path |
+
+Quoting a flag name is equally wrong in the other direction: `'-ForUser'` is a
+positional string, not a parameter name. This is why `install.ps1` builds its
+elevated child's command line through `Format-ChildArguments` rather than a join,
+and why the suite round-trips it through a real script instead of asserting on
+the text alone.

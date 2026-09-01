@@ -177,12 +177,18 @@ function Get-ScriptParameter {
 function Get-RelaunchFlag {
     <#
       .SYNOPSIS
-      Every '-Something' written into a $childArgs literal, as name -> line.
+      Every '-Something' handed to the elevated child, as name -> line.
 
       .DESCRIPTION
-      Both shapes: the assignment that builds the list, and the `+=` that appends
-      to it. A flag computed at run time is out of reach here and is not what this
-      is for -- all three sites write theirs literally.
+      Keyed on the DOOR -- what is passed to Request-Elevation's -ChildArgs -- and
+      not on the name of a variable. An earlier version of this check looked for
+      assignments to $childArgs, and when the call sites were rewritten to pass
+      their array inline the check went on passing while guarding nothing: the
+      only thing left called $ChildArgs was Request-Elevation's own parameter.
+      A check that cannot see the thing it is about is worse than no check.
+
+      A flag computed at run time is out of reach here and is not what this is
+      for -- every site writes its arguments literally.
     #>
     param([string]$Path)
 
@@ -190,12 +196,27 @@ function Get-RelaunchFlag {
     $ast = [System.Management.Automation.Language.Parser]::ParseFile($Path, [ref]$null, [ref]$errors)
     if ($errors) { throw ("{0} does not parse: {1}" -f $Path, ($errors[0].Message)) }
 
-    $found = @()
+    # The array each caller hands over, plus the append inside Request-Elevation
+    # that adds the identity to it. Both end up in the child's argument list.
+    $lists = @()
+    foreach ($c in $ast.FindAll({ $args[0] -is [System.Management.Automation.Language.CommandAst] }, $true)) {
+        if ($c.GetCommandName() -ne 'Request-Elevation') { continue }
+        $els = @($c.CommandElements)
+        for ($i = 0; $i -lt $els.Count - 1; $i++) {
+            if ($els[$i] -is [System.Management.Automation.Language.CommandParameterAst] -and
+                $els[$i].ParameterName -eq 'ChildArgs') { $lists += $els[$i + 1] }
+        }
+    }
     foreach ($asn in $ast.FindAll({ $args[0] -is [System.Management.Automation.Language.AssignmentStatementAst] }, $true)) {
         $left = $asn.Left
         if ($left -isnot [System.Management.Automation.Language.VariableExpressionAst]) { continue }
-        if ($left.VariablePath.UserPath -ne 'childArgs') { continue }
-        foreach ($s in $asn.Right.FindAll({ $args[0] -is [System.Management.Automation.Language.StringConstantExpressionAst] }, $true)) {
+        if ($left.VariablePath.UserPath -ne 'ChildArgs') { continue }
+        $lists += $asn.Right
+    }
+
+    $found = @()
+    foreach ($l in $lists) {
+        foreach ($s in $l.FindAll({ $args[0] -is [System.Management.Automation.Language.StringConstantExpressionAst] }, $true)) {
             if ($s.Value -match '^-\w') {
                 $found += [pscustomobject]@{ Flag = $s.Value; Line = $s.Extent.StartLineNumber }
             }
@@ -217,6 +238,50 @@ foreach ($f in $flags) {
     }
 }
 Assert-Equal 0 $unbound.Count ("the elevated relaunch passes what it cannot bind:`n  " + ($unbound -join "`n  "))
+
+# ---- the relaunch never hands the child the PATH edit ------------------------
+#
+# Add-ToUserPath and Remove-FromUserPath write the 'User' scope, which is
+# HKCU\Environment -- and in an elevated child on a STANDARD account, HKCU is the
+# ADMIN's hive. A child asked to do it would edit the wrong person's PATH and
+# report success. PATH is per-user and never needed elevation, so the parent keeps
+# it: see Set-InstalledPath.
+
+$delegated = @($flags | Where-Object { $_.Flag -eq '-AddToPath' })
+Assert-Equal 0 $delegated.Count ("the PATH edit must not be delegated to the elevated child, at line(s) " +
+                                 (($delegated | ForEach-Object { $_.Line }) -join ', '))
+
+# ---- one door for "whose install is this?" -----------------------------------
+#
+# On a standard account the elevated child is a DIFFERENT user, so every path and
+# principal it derives from its OWN environment is that admin's. $APPDATA and
+# $FORUSER are the answers, resolved once at the top of the file from what the
+# parent passed; reading the environment anywhere else re-opens the bug.
+#
+# Same shape as the I2C source gate: one place may say it, and a check holds it
+# there. A comment naming the variable is fine -- the ban is on reading it.
+
+$identity = @()
+$lines = @(Get-Content -LiteralPath $installer)
+for ($i = 0; $i -lt $lines.Count; $i++) {
+    if ($lines[$i] -match '^\s*#') { continue }
+    if ($lines[$i] -match '\$env:(LOCALAPPDATA|USERNAME|USERDOMAIN)') {
+        # The two resolution lines, and nothing else.
+        if ($lines[$i] -match '^\$(ME|APPDATA)\s*=') { continue }
+        $identity += ("install.ps1:{0}: {1}" -f ($i + 1), $lines[$i].Trim())
+    }
+}
+Assert-Equal 0 $identity.Count ("only `$ME and `$APPDATA may read whose account this is:`n  " +
+                                ($identity -join "`n  "))
+
+# ...and the task is registered as that user, never as whoever is running.
+$asWho = @()
+foreach ($l in (Select-String -LiteralPath $installer -Pattern 'New-ScheduledTaskPrincipal|New-ScheduledTaskTrigger\s+-AtLogOn')) {
+    if ($l.Line -notmatch '\$FORUSER') {
+        $asWho += ("install.ps1:{0}: {1}" -f $l.LineNumber, $l.Line.Trim())
+    }
+}
+Assert-Equal 0 $asWho.Count ("every task principal and logon trigger names `$FORUSER:`n  " + ($asWho -join "`n  "))
 
 # ---- the check can actually see one ------------------------------------------
 
@@ -254,9 +319,12 @@ param(
     [Alias('Path')]
     [switch]$AddToPath
 )
-$childArgs = @('install', '-Tier', $EffectiveTier)
-if ($AddToPath) { $childArgs += '-AddToPath' }
-$childArgs += '-Path'
+$rc = Request-Elevation -ChildArgs @('install', '-Tier', $EffectiveTier)
+exit (Request-Elevation -ChildArgs @('install', '-AddToPath'))
+function Request-Elevation {
+    param([string[]]$ChildArgs)
+    $ChildArgs = @($ChildArgs) + @('-Path', $FORUSER)
+}
 $other = @('-NotEvenLookedAt')
 '@ | Set-Content -LiteralPath $relaunch -Encoding ASCII
 
@@ -265,11 +333,16 @@ Assert-Equal 'Command,AddToPath,Path' ($declaredT -join ',') 'an alias binds too
 
 $flagsT = @(Get-RelaunchFlag $relaunch)
 Assert-Equal '-Tier,-AddToPath,-Path' (($flagsT | ForEach-Object { $_.Flag }) -join ',') `
-    'both the assignment and the append are read, and nothing else is'
+    'every call site and the identity append are read, and nothing else is'
 
 $badT = @($flagsT | Where-Object { $declaredT -notcontains $_.Flag.TrimStart('-') })
 Assert-Equal 1       $badT.Count 'the check must see an undeclared flag'
 Assert-Equal '-Tier' $badT[0].Flag
+
+# The mutation that got past the earlier version of this check: a call site that
+# hands the child the PATH edit.
+Assert-Equal 1 @($flagsT | Where-Object { $_.Flag -eq '-AddToPath' }).Count `
+    'a delegated PATH edit must be visible at the call site'
 
 Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
 exit 0

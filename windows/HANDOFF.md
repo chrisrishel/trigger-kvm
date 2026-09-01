@@ -66,33 +66,6 @@ Verified: sizes measured here 2026-08-31 and the macOS suite already enforces
           Windows development); nothing else under `windows/` was touched. The
           Windows suite was not run from here.
 
-## Make the boot tier work from a standard (non-admin) account, or refuse it there
-
-Kind:     defect report
-Spec:     specs/configure.md §8 ("runs as the user"; "falls back to login and
-          says so")
-Why:      on a family or corporate PC the signed-in user is not an admin, and
-          the suggested answer "From boot" then installs for the wrong account
-Owed:     `Request-Elevation` (:230-265) relaunches with `-Verb RunAs`. When
-          the user is not an admin, Windows elevates a DIFFERENT account; the
-          child derives `$DEST`/`$CONFIG` from ITS `$env:LOCALAPPDATA` (:114,
-          :158) and the S4U principal from ITS `$env:USERDOMAIN\$env:USERNAME`
-          (:3056-3057). Read: the child finds no config, `Test-CanPrompt`
-          (:430-434) returns false, it prints "not an interactive terminal"
-          and exits 2 -- or, if it proceeds, registers the task under the
-          admin's identity and copies to the admin's profile. Either way the
-          user's own watcher never starts from boot, and nothing says so.
-          This is TODO.md item 1, whose trigger is "before publishing". Fix
-          either: pass the resolved paths and target user to the child and
-          register the principal as the ORIGINAL user; or detect
-          non-membership in Administrators before offering `From boot` and
-          disable the row with its detail saying why (§8: drawn, disabled,
-          never hidden). Also confirm that an elevated launch of the LOGIN tier
-          does not register the task under the admin principal.
-Verified: read on a Mac; not executed; no standard-user Windows account was
-          available. High confidence in the mechanism (`-Verb RunAs` semantics
-          are documented), medium in which branch the child takes.
-
 ## Bake the config path into the task action and the switcher spawn
 
 Kind:     defect report

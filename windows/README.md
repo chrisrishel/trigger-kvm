@@ -499,6 +499,13 @@ because registering an S4U task leaves the definition admin-owned, so removing i
 needs elevation too. A prompt on the way in without one on the way out would trap you
 in a setup you could not remove.
 
+**If you are not an administrator, someone else can approve that prompt.** Windows
+then elevates *their* account, not yours, so the installer tells the elevated half
+who the install is for: your account name and your `%LOCALAPPDATA%`. The task is
+registered to run as **you**, the files land in **your** profile, and only the
+unelevated half — the one running as you — touches your `PATH`. Nothing about the
+switch path changes: it still runs as you, unelevated.
+
 **A trap worth knowing.** Running the installer from an *elevated* shell — easy if
 you have one open — leaves the task definition Administrators-owned, so later
 *unelevated* runs need elevation as well. Both paths detect it and offer the prompt
