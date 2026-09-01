@@ -565,6 +565,30 @@ dead in the same file. Pair it with a structural check for duplicate
 definitions: `windows/tests/conventions.tests.ps1` is that half, walking the AST
 for two top-level definitions of one name.
 
+**`[Console]::CursorLeft` CLAMPS at `BufferWidth - 1`, and writing into the last
+column WRAPS. Measured 2026-08-31.** After `Write-Host ('x' * $w) -NoNewline` on a
+`$w`-wide buffer, `CursorLeft` reads `$w - 1` -- the same value it reads after
+writing only `$w - 1` characters. A line that exactly fills the row is therefore
+indistinguishable from one that stops a column short, and code that "fills the
+rest of the line" from that reading writes one space too many and wraps.
+
+That is a live hazard for `Write-MenuFrame`, whose whole contract is returning how
+many ROWS it drew so the next redraw can wind the cursor back by exactly that.
+`Clear-ToLineEnd` filling to `BufferWidth` made an exactly-full line report one row
+and cost two; the redraw then wound back one row too few and left the hint line
+duplicated below the menu. It shipped, and was reported from a real terminal.
+`Clear-ToLineEnd` now stops at `BufferWidth - 1` and the last column is never
+erased, which is safe because `Get-MenuWidth` caps a menu at 110.
+
+**Do not conclude anything about console wrapping from `[Console]::Write`.** The
+first version of this was measured that way and read "a full-width line plus a
+newline advances exactly one row" -- true of `[Console]::Write`, and NOT of
+`Write-Host`, which is what the code actually calls. Measure the API you are
+going to use, in a real console: the suite has none, so `Clear-ToLineEnd` is inert
+under test and no unit test can see any of this. The standing check is a sweep of
+widths 60..120 against line lengths around each fold, comparing the rows reported
+against `CursorTop` before and after.
+
 **A SIMPLE PowerShell function SWALLOWS an undeclared named argument into
 `$args` without a word. Measured 2026-08-31.** `Test-Simple -A hello -ThisName
 world` binds `$A`, leaves `-ThisName world` in `$args`, and does not throw; an

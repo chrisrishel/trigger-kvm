@@ -105,11 +105,17 @@ foreach ($l in ($drawn -split "`n")) {
 # Write-MenuFrame returns how many ROWS it drew, and the next call winds the cursor
 # back by exactly that. One row out and every frame creeps down the screen.
 #
-# The count changed with the erase. It used to add 1 to every line, guarding
-# against a full-width line folding to two rows -- measured here, it does not:
-# conhost delays the wrap, so a full-width write followed by a newline advances a
-# single row. Since every line is now erased to the full width, the old +1 would
-# over-count every single one.
+# The count changed with the erase, and the reason is not the one first written
+# down here. A full-width line costs ONE row only because Clear-ToLineEnd stops a
+# column SHORT of the buffer -- writing into the last column wraps. Filling to the
+# full width made an exactly-full line report one row and cost two, and the next
+# redraw then wound back one row too few and left the hint line duplicated under
+# the menu. That shipped, and was reported from a real terminal.
+#
+# THIS FILE CANNOT SEE THAT. There is no console in the harness, so
+# Clear-ToLineEnd is a no-op and $cols falls back to $Width. What it holds down is
+# the arithmetic; the console half was settled by sweeping widths 60..120 against
+# line lengths around each fold in a real console, reported vs actual.
 
 # ERASED, NOT PADDED. specs/configure.md 3.1. PadRight had two faults: it padded
 # to the MENU's width, which is capped at 110, so on a wider window the previous
@@ -132,7 +138,7 @@ Reset-Drawn
 Assert-Equal 1 (Write-MenuFrame -Lines @('') -Width 40) 'so is a blank one'
 Reset-Drawn
 Assert-Equal 1 (Write-MenuFrame -Lines @(('x' * 40)) -Width 40) `
-    'a line of exactly the width is ONE row -- the wrap is delayed'
+    'a line of exactly the width is ONE row -- nothing is written into the last column'
 Reset-Drawn
 Assert-Equal 2 (Write-MenuFrame -Lines @(('x' * 41)) -Width 40) 'one past it folds'
 Reset-Drawn

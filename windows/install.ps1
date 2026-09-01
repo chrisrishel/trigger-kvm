@@ -556,8 +556,20 @@ function Write-MenuFrame {
 # is a column, which part company on the first surrogate pair or combining mark.
 #
 # This asks the CONSOLE where the cursor is, so nothing is measured that is not a
-# column. Filling to the full BufferWidth is safe rather than costing a row --
-# measured: a full-width line plus a newline advances exactly one row.
+# column.
+#
+# IT STOPS ONE COLUMN SHORT, AND MUST. Writing into the LAST column wraps, which
+# costs a row the frame's height count knows nothing about -- and CursorLeft
+# CLAMPS at BufferWidth-1, so a line that exactly fills the row is
+# indistinguishable from one that stops a column short. Filling to BufferWidth
+# therefore wrote one space too many on exactly-full lines: measured, such a line
+# reported one row and cost two, the next redraw wound back one row too few, and
+# the hint line was left duplicated under the menu. Reported from a real terminal
+# at a width where a menu row happened to land exactly on the fold.
+#
+# The last column is never erased. That is the right trade: `Get-MenuWidth` caps a
+# menu at 110 and specs/configure.md 3.1 says nothing a menu writes may exceed the
+# width, so only an already-over-long line could have put anything there.
 #
 # ESC[K would say this more directly and was measured to work in this host, but it
 # needs VT processing, which is not on in every console PowerShell 5.1 runs in --
@@ -566,7 +578,7 @@ function Write-MenuFrame {
 function Clear-ToLineEnd {
     try {
         $left = [Console]::CursorLeft
-        $end  = [Console]::BufferWidth
+        $end  = [Console]::BufferWidth - 1
         if ($left -lt $end) { Write-Host (' ' * ($end - $left)) -NoNewline }
     } catch { }
 }
@@ -1362,12 +1374,27 @@ function Read-Method {
     # Standard is the default and where the cursor starts on a fresh panel; an
     # existing choice keeps the cursor, and is marked (current) so an unchanged
     # default is distinguishable from a deliberate one.
+    #
+    # NOT -Escapable, and that is deliberate. specs/configure.md 3.3 has three
+    # kinds of esc, and this is the third: a question that must be answered, so esc
+    # does nothing. It matches the questions either side of it in this same
+    # sequence -- "Manage this monitor?", the short name, and every input question
+    # -- none of which take esc either, because there is nowhere to go back TO
+    # inside a panel's questions.
+    #
+    # It was -Escapable for one commit, and esc there resolved to "keep $Current
+    # and carry on". With the cursor already on the current row that is byte for
+    # byte what enter does, so esc read as advancing the walkthrough rather than
+    # leaving it. Reported from a real terminal, and correctly.
+    #
+    # A genuine back-out is NOT the missing feature: returning $null from
+    # Get-DisplayAnswers means "do not manage this monitor" and drops the panel, so
+    # "back" would silently unmanage it -- the opposite of changing nothing.
     $now  = $(if ($Current -eq $d.Method) { 1 } else { 0 })
-    $pick = Select-One -Default $now -Current $now -Escapable `
+    $pick = Select-One -Default $now -Current $now `
                 -Items  @('Standard', ("{0}'s own method" -f $d.What)) `
                 -Detail @('what nearly every monitor takes',
                           ('for {0} models that ignore the standard one' -f $d.What))
-    if ($pick -lt 0) { return $Current }
     return $(if ($pick -eq 1) { $d.Method } else { 'standard' })
 }
 

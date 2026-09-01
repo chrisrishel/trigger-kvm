@@ -338,9 +338,28 @@ Reset-Said; Set-Answers @('2')
 Assert-Equal 'lg-alt' (Read-Method -Vendor 0x1E6D -Current 'standard') 'row 2 is the manufacturer one'
 
 # An existing method is a settled answer -- somebody proved it by watching a screen.
-Reset-Said; Set-Answers @('q')
-Assert-Equal 'lg-alt' (Read-Method -Vendor 0x1E6D -Current 'lg-alt') 'backing out changes nothing'
-Assert-Match ((Get-Asked) -join '|') 'Choice \[2\]' 'and a configured method keeps the cursor'
+Reset-Said; Set-Answers @('2')
+Assert-Equal 'lg-alt' (Read-Method -Vendor 0x1E6D -Current 'lg-alt') 'and it survives a re-run'
+Assert-Match ((Get-Asked) -join '|') 'Choice \[2\]' 'a configured method keeps the cursor'
+Assert-Match (Get-Said) "own method\s+for LG.*\(current\)" 'and is marked, not merely pre-selected'
+
+# ---- esc does NOTHING here: it is a question that must be answered ------------
+#
+# specs/configure.md 3.3's third row. Every question either side of this one in
+# the same sequence is the same kind -- "Manage this monitor?", the short name,
+# the input questions -- because inside a panel's questions there is nowhere to go
+# back to.
+#
+# It was -Escapable for one commit. Esc there resolved to "keep the current method
+# and carry on", which with the cursor already sitting on the current row is byte
+# for byte what enter does, so esc appeared to ADVANCE the walkthrough. Reported
+# from a real terminal.
+Reset-Said; Set-Answers @('q', '2')
+Assert-Equal 'lg-alt' (Read-Method -Vendor 0x1E6D -Current 'standard') `
+    'q is refused and the question re-asked, not treated as an answer'
+Assert-Match (Get-Said) 'Pick a number from the list\.' 'and it says so'
+Assert-NoMatch (Get-Said) 'or q to go back' `
+    'the fallback must not offer a way out this question does not have'
 
 # ---- and it lands between the short name and the inputs ----------------------
 
