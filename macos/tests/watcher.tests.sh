@@ -134,6 +134,30 @@ assert_match "$BT_LIST" 'bt|bt:0011223344fd|connected now|Fixture Keyboard'
 it 'normalises the address system_profiler gives to the bare lowercase form'
 assert_no_match "$BT_LIST" '00:11:22'
 
+it 'skips an entry with more keys than it has room for, rather than overrunning'
+# CFDictionaryGetKeysAndValues writes every pair. The count used to be clamped
+# AFTER the call, which bounded the loop but not the write -- a stack overflow
+# waiting for system_profiler to change shape. Nine keys here; the buffer holds
+# eight; the one-key entry beside it must still be listed.
+WIDE_FIXTURE="$FAKE_DIR/bluetooth-wide.plist"
+{
+  printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>' \
+    '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' \
+    '<plist version="1.0"><array><dict><key>_items</key><array><dict>' \
+    '<key>device_not_connected</key><array>' \
+    '<dict>'
+  for k in 1 2 3 4 5 6 7 8 9; do
+    printf '<key>Wide %s</key><dict><key>device_address</key><string>00:11:22:33:55:%02d</string></dict>\n' "$k" "$k"
+  done
+  printf '%s\n' '</dict>' \
+    '<dict><key>Fixture Headphones</key><dict><key>device_address</key><string>00:11:22:33:44:FF</string></dict></dict>' \
+    '</array></dict></array></dict></array></plist>'
+} >"$WIDE_FIXTURE"
+wide=$(TK_BT_PLIST="$WIDE_FIXTURE" "$WATCH" --list 2>&1; echo "rc=$?")
+assert_match "$wide" 'rc=0' "the watcher must survive the entry: $wide"
+assert_no_match "$wide" 'Wide' 'the oversized entry is skipped whole'
+assert_match "$wide" 'bt:0011223344ff|paired, not connected|Fixture Headphones'
+
 it 'Bluetooth presence means CONNECTED, never merely paired'
 # A paired-but-away device must read as absent, or its arrival can never be an
 # edge -- the failure shape the Windows side measured on PnP presence.

@@ -333,6 +333,9 @@ mutate 'install: runs as root without complaint' lib/manage.sh install.tests.sh 
 mutate 'switch: a bare trigger-kvm pulls instead of printing usage' trigger-kvm install.tests.sh \
   's|^\[ \$# -gt 0 \] \|\| usage$|[ $# -gt 0 ] \|\| set -- pull|'
 
+mutate 'watch: an oversized Bluetooth entry is clamped after the write, not skipped' event-watch.c watcher.tests.sh \
+  's|        if (nk < 1 \|\| nk > 8) continue;|        if (nk < 1) continue; if (nk > 8) nk = 8;|'
+
 # --- launchd is reached through one name -------------------------------------
 
 mutate 'launchd: a bare launchctl bypasses the seam the suite records through' lib/manage.sh conventions.tests.sh \

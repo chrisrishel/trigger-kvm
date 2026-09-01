@@ -310,9 +310,12 @@ static void bt_each(CFDictionaryRef items, CFStringRef section, bool connected,
         if (CFGetTypeID(e) != CFDictionaryGetTypeID()) continue;
         // Each entry is a one-key dict: { "<device name>": { device_address: ... } }
         CFIndex nk = CFDictionaryGetCount((CFDictionaryRef)e);
-        if (nk < 1) continue;
+        // CFDictionaryGetKeysAndValues writes EVERY pair, so an entry with more
+        // keys than the buffers hold must be skipped, not clamped: clamping the
+        // count after the call was a stack overflow waiting for system_profiler
+        // to change shape. Today each entry has exactly one key.
+        if (nk < 1 || nk > 8) continue;
         const void *keys[8], *vals[8];
-        if (nk > 8) nk = 8;
         CFDictionaryGetKeysAndValues((CFDictionaryRef)e, keys, vals);
         for (CFIndex k = 0; k < nk; k++) {
             if (CFGetTypeID(vals[k]) != CFDictionaryGetTypeID()) continue;
