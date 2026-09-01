@@ -52,14 +52,15 @@ function Invoke-TriggerTest {
     return [PSCustomObject]@{ Ok = $true; Text = 'arrival seen' }
 }
 
-# Two panels, as reported by `list -Raw`. Not read from hardware: a test that only
-# passes on one desk is not a test.
+# The panels, as reported by `list -Raw`. Not read from hardware: a test that
+# only passes on one desk is not a test. A variable rather than a literal, so a
+# case can put a THIRD monitor on the desk -- two never exercise the row
+# arithmetic in the Monitors list.
+$script:panels = @('06B3|42E0|AUS|HDMI|01010101|PG42UQ',
+                   '1E6D|9E9D|GSM|DisplayPort|00001111|LG ULTRAGEAR+')
 function Invoke-Sibling {
     param([string]$Script, [string[]]$Arguments)
-    if ($Arguments -contains 'list') {
-        return @('06B3|42E0|AUS|HDMI|01010101|PG42UQ',
-                 '1E6D|9E9D|GSM|DisplayPort|00001111|LG ULTRAGEAR+')
-    }
+    if ($Arguments -contains 'list') { return $script:panels }
     return @()
 }
 
@@ -254,6 +255,34 @@ Assert-Equal 0 $LASTEXITCODE 'an already-on-PATH install has nothing left to ans
 $asked = (Get-Asked) -join '|'
 Assert-NoMatch $asked 'Add .* to your PATH' 'and must not ask about it'
 
+# ---- ...and no row in the Monitors list is unpickable ------------------------
+#
+# Read-Monitors passed `-Disabled $off`, and $off is not assigned in it: it
+# resolved by DYNAMIC SCOPE to Invoke-Configure's, which holds the PATH row's
+# index whenever that row is disabled. With THREE monitors and bin\ already on
+# PATH, index 4 in the Monitors list is `Done` -- drawn `--`, skipped by the
+# cursor, reachable only by esc. Two-monitor desks never saw it, and
+# Set-StrictMode does not catch a variable that resolves in a parent scope. So
+# it takes all three conditions at once to reproduce.
+$global:TestUserPath = 'C:\Windows;C:\fake\bin'          # so the PATH row is disabled
+$script:panels = @('06B3|42E0|AUS|HDMI|01010101|PG42UQ',
+                   '1E6D|9E9D|GSM|DisplayPort|00001111|LG ULTRAGEAR+',
+                   '10AC|A0B1|DEL|HDMI|02020202|DELL U2720Q')
+Set-Config $CONFIGURED
+Set-Outcomes @()
+Set-Answers @(
+    '2',            # menu -> Monitors
+    '5',            #   the list: PG42UQ(1) LG(2) DELL(3) (4 blank) Done(5)
+    '10'            # menu -> Save
+)
+Invoke-Configure
+Assert-Equal 0 $LASTEXITCODE 'Done must be reachable with three monitors and bin\ on PATH'
+$c = Get-Written
+Assert-Equal 'lg-alt' $c['display.lg.method'] 'and looking at the list changes nothing'
+Assert-True (-not $c.ContainsKey('display.dell.vendor')) 'the unmanaged third panel stays unmanaged'
+
+$script:panels = @('06B3|42E0|AUS|HDMI|01010101|PG42UQ',
+                   '1E6D|9E9D|GSM|DisplayPort|00001111|LG ULTRAGEAR+')
 $global:TestUserPath = 'C:\Windows'                      # back to not-on-PATH
 
 # ---- backing out of a submenu changes nothing ---------------------------------

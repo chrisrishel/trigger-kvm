@@ -1855,7 +1855,15 @@ function Read-Monitors {
         Write-Host 'Which of these should follow the switch, and which input is each'
         Write-Host 'computer on?'
         Write-Host ''
-        $pick = Select-One -Items $items -Detail $detail -Default $land -Disabled $off -Escapable
+        # No -Disabled: no row in the Monitors list is ever unpickable. It used to
+        # pass `-Disabled $off`, and $off is not assigned in this function -- it
+        # resolved by DYNAMIC SCOPE to Invoke-Configure's, which holds the row
+        # index of the PATH question whenever that row is disabled. With three or
+        # more monitors and bin\ already on PATH, index 4 here is `Done`: drawn
+        # `--`, skipped by the cursor, and reachable only by esc. Two-monitor
+        # desks never saw it, and Set-StrictMode does not catch a variable that
+        # resolves in a parent scope.
+        $pick = Select-One -Items $items -Detail $detail -Default $land -Escapable
         if ($pick -eq $done -or $pick -lt 0) { return @($out) }
 
         $f    = $Found[$pick]

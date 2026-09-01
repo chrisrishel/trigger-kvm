@@ -196,6 +196,13 @@ Invoke-Mutation 'legacy: any task of that name is unregistered' `
     "    if (`$act -match '(usb|event)-watch\.ps1') { return `$true }" `
     "    return `$true"
 
+# --- the monitors list --------------------------------------------------------
+
+Invoke-Mutation 'monitors: the list disables a row it does not own' `
+    'install.ps1' 'walkthrough.tests.ps1' `
+    '        $pick = Select-One -Items $items -Detail $detail -Default $land -Escapable' `
+    '        $pick = Select-One -Items $items -Detail $detail -Default $land -Disabled $off -Escapable'
+
 # =============================================================================
 
 Write-Host ''
