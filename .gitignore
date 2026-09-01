@@ -4,6 +4,7 @@
 # Build artifacts
 macos/display-probe
 macos/event-watch
+macos/intel-ddc-probe
 
 # A mutation run's in-flight backup. tests/run.sh refuses to run while one
 # exists, and tests/mutate.sh restores strays on startup -- but one must never

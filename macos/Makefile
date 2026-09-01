@@ -16,8 +16,14 @@ display-probe: display-probe.c
 event-watch: event-watch.c
 	clang $(CFLAGS) -o $@ $< -framework IOKit -framework CoreFoundation
 
+# A READ-ONLY survey of the Intel-Mac DDC route (framebuffer I2C), for deciding
+# whether to build a transport on it. Not part of `all`: it is a measuring
+# instrument, not a component. See macos/HANDOFF.md for how to take the reading.
+intel-ddc-probe: intel-ddc-probe.c
+	clang $(CFLAGS) -o $@ $< -framework IOKit -framework CoreFoundation -framework ApplicationServices
+
 clean:
-	rm -f event-watch display-probe
+	rm -f event-watch display-probe intel-ddc-probe
 
 # The suite runs without hardware and cannot move a monitor: it points M1DDC at
 # a recorder and display-probe at a fixture.

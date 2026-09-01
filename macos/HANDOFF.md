@@ -40,3 +40,66 @@ Anything longer goes underneath.
   have better evidence — you can run it and they could not.
 
 ---
+
+## Measure the Intel-Mac DDC route on the Intel MacBook Pro
+
+Kind:     measurement brief -- not a defect; a reading only that machine can
+          take, and nothing to implement until it is in
+Spec:     n/a -- see the macOS row of README.md ("Apple Silicon") and
+          macos/AGENTS.md
+Why:      the README says Apple Silicon only, because m1ddc reaches monitors
+          through IOAVService, which Intel Macs do not have. Intel Macs have a
+          framebuffer I2C route instead (what ddcctl and ddc-macos use). An
+          Intel MacBook Pro is available, so whether that route reaches THESE
+          panels through THIS cabling can be measured rather than assumed.
+Owed:     a measurement, recorded in docs/measurements.md under a new "Intel
+          DDC route" heading, and then a decision record (004) -- NOT a
+          transport. Every reading stays in the context it is a claim about
+          (the note at the top of docs/measurements.md).
+
+          The instrument is macos/intel-ddc-probe.c: `make intel-ddc-probe`.
+          It is READ-ONLY. Without flags it enumerates and sends no I2C at all;
+          with --i2c-read it sends one standard GetVCP 0x60 (source 0x51,
+          hard-coded, nothing else expressible) per external display and
+          prints the raw reply. It cannot write a value. The MacBook's own
+          screen keeps the terminal, so hard rule 4 is satisfied throughout.
+
+          1. On the MacBook: clone, `cd macos && make intel-ddc-probe`, run it
+             with nothing attached. Record the arch line, the CoreGraphics
+             list (the built-in panel) and the IOFramebuffer count.
+          2. Attach it to a FREE input on one monitor -- the LG's HDMI or the
+             ASUS's HDMI 2 -- with the most direct cable available first
+             (USB-C to DisplayPort, or USB-C to HDMI). Run again. Record: does
+             a framebuffer appear for it, does IODisplayCreateInfoDictionary
+             carry the EDID (vendor/product/name must match what `trigger-kvm
+             list` prints for that panel on the Mac Studio, apart from the
+             LG's per-input product id), how many I2C buses and which
+             transaction types (DDCci reply support matters).
+          3. `./intel-ddc-probe --i2c-read`. Record the IOI2CSendRequest
+             return, result, and the raw reply. A well-formed reply is
+             evidence the I2C path reaches the panel; a non-answer is a
+             measurement too (hard rule 2: these panels lie on reads -- the
+             PG42UQ answers 0 to everything -- so an odd value is not a
+             failure). Do this for BOTH panels if both have a free input.
+          4. Repeat 2-3 through whatever adapter or hub would actually be used
+             day to day. Adapters are where Intel-Mac DDC most often fails;
+             that is the reading that decides whether this is worth building.
+          5. Also `make test` on the MacBook: the suite has never run on an
+             Intel Mac. Report what passes and what does not (the installer's
+             arch preflight refusing is expected and correct).
+
+          Do NOT: send anything on I2C source 0x50 by any route; do not write
+          a VCP value from the MacBook -- a write is the next decision, taken
+          after these readings, and the switch it would cause is exactly the
+          thing hard rule 3 says a person has to watch for on purpose.
+
+          Afterwards: docs/measurements.md entry; decision 004 proposing (or
+          declining) an Intel transport under the existing ddc_send gate --
+          m1ddc on arm64, an IOI2CSendRequest tool with the same `set input`
+          / `set input-alt` surface on x86_64 -- and an Intel branch of
+          display-probe.c for identity. Nothing is written into the tree
+          before the decision.
+Verified: the probe compiles clean under -Wall -Wextra on the Apple Silicon
+          Mac and, run there, reports zero IOFramebuffer services -- the
+          expected answer on that hardware. It has not yet run on an Intel
+          Mac; that is the point of this entry.
