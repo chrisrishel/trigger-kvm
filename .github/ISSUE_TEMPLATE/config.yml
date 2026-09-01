@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Before reporting a monitor
+    url: https://github.com/chrisrishel/trigger-kvm/blob/main/CONTRIBUTING.md
+    about: What a useful monitor report contains, and what must never be reported (values found by sweeping).

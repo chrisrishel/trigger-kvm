@@ -1,3 +1,14 @@
+# Everything tested here is LF, including the .ps1 files (Windows PowerShell
+# 5.1 reads them fine). A Windows checkout with autocrlf would otherwise push
+# CRLF into .sh files that bash then cannot run.
+* text=auto eol=lf
+*.sh        text eol=lf
+*.c         text eol=lf
+*.ps1       text eol=lf
+*.cmd       text eol=lf
+Makefile    text eol=lf
+macos/trigger-kvm text eol=lf
+
 # The reader fixture carries a byte-order mark and CRLF lines on purpose;
 # no checkout may normalise them away.
 specs/config-fixture/input.conf -text

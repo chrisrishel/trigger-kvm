@@ -1,0 +1,43 @@
+name: Bug report
+description: Something did not do what the docs say it does
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A log line saying a switch was sent is not evidence it happened; what the
+        monitor showed is. Say what you saw on the screens.
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - macOS (Apple Silicon)
+        - Windows (NVIDIA)
+    validations:
+      required: true
+  - type: textarea
+    id: status
+    attributes:
+      label: Output of `trigger-kvm status`
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant lines of `trigger-kvm logs`
+      render: text
+  - type: textarea
+    id: what
+    attributes:
+      label: What you did, what you expected, and what the monitors showed
+    validations:
+      required: true
+  - type: textarea
+    id: hardware
+    attributes:
+      label: Monitors and how each computer is cabled to them
+      placeholder: |
+        LG 45GX950A: Mac on USB-C, PC on DisplayPort
+        ASUS PG42UQ: Mac on DisplayPort, PC on HDMI 1

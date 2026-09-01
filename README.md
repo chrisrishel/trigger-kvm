@@ -225,6 +225,7 @@ there is always a path to command it back. The reasoning is in
 | [`displays.toml`](displays.toml) | Reference values for the two monitors this was developed against: methods, input codes, known-safe values |
 | [`docs/`](docs/) | Decision records and the dated hardware measurements the rules rest on |
 | [`AGENTS.md`](AGENTS.md) | Instructions for anyone changing this repo, including AI agents: the safety rules for the monitors' control channels and the order a change to shared behaviour lands in. Read it before contributing. |
+| [`CONTRIBUTING.md`](CONTRIBUTING.md) | How to contribute, and what a useful report about a monitor nobody here has met contains |
 
 ## Related work
 
@@ -239,4 +240,5 @@ there is always a path to command it back. The reasoning is in
 
 ## License
 
-License: see LICENSE
+MIT — see [`LICENSE`](LICENSE). Third-party notices are in
+[`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md).

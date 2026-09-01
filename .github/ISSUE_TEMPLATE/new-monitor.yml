@@ -1,0 +1,84 @@
+name: New monitor report
+description: A monitor that is not the LG 45GX950A or the ASUS PG42UQ, and what it answered to
+title: "[monitor] <make> <model>"
+labels: ["monitor-report"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The maintainers cannot test a monitor they do not own, so this report is the
+        only evidence there will be. Facts only, and everything confirmed by looking
+        at the screen. Do not report a value found by trying codes or values that are
+        not documented somewhere; see the hard safety rules in `AGENTS.md`.
+  - type: input
+    id: model
+    attributes:
+      label: Make and model
+      placeholder: "Dell U2723QE"
+    validations:
+      required: true
+  - type: input
+    id: edid
+    attributes:
+      label: EDID vendor and product id
+      description: Exactly as `trigger-kvm list` prints them (the first two fields).
+      placeholder: "10AC|4243"
+    validations:
+      required: true
+  - type: textarea
+    id: list
+    attributes:
+      label: Full output of `trigger-kvm list`
+      render: text
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - macOS (Apple Silicon)
+        - Windows (NVIDIA)
+        - Both
+    validations:
+      required: true
+  - type: input
+    id: gpu
+    attributes:
+      label: GPU and driver (Windows) or Mac model and macOS version
+      placeholder: "RTX 4070, driver 32.0.15.7270"
+  - type: dropdown
+    id: method
+    attributes:
+      label: Which method worked
+      options:
+        - standard DDC/CI (VCP 0x60)
+        - a manufacturer method the walkthrough offered (say which below)
+        - neither answered
+    validations:
+      required: true
+  - type: textarea
+    id: inputs
+    attributes:
+      label: Input values confirmed visually
+      description: One line per input. Say what the OSD calls it, the value, and that you watched it move there AND back.
+      placeholder: |
+        DisplayPort 1 = 0x0F  moved there and back, watched
+        HDMI 1        = 0x11  moved there and back, watched
+    validations:
+      required: true
+  - type: input
+    id: osd
+    attributes:
+      label: OSD setting turned off to stop the monitor choosing its own input
+      description: The vendor's name for it, and whether the monitor stayed put across a sleep of the other computer.
+      placeholder: "Auto Source = Off; stayed put across sleep"
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: Confirmations
+      options:
+        - label: Every value above was confirmed by looking at the monitor, not by a command's return code or a read-back.
+          required: true
+        - label: No value above was found by sweeping or guessing codes or values.
+          required: true

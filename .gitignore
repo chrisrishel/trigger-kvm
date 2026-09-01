@@ -15,6 +15,18 @@ macos/event-watch
 # Session-scoped working notes (disposable by convention)
 .context/
 
+# One-off or sensitive research never enters git; distil it into a decision record
+docs/research/private/
+
+# Logs, editors, desktop litter
+*.log
+*.log.1
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+desktop.ini
+
 # Windows build output
 windows/**/bin/
 windows/**/obj/
