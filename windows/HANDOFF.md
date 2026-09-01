@@ -40,3 +40,28 @@ Anything longer goes underneath.
   have better evidence — you can run it and they could not.
 
 ---
+
+## Mirror the instruction-file byte check, and re-point what now lives in windows/AGENTS.md
+
+Kind:     defect report
+Spec:     n/a -- see docs/decisions/002-instruction-files-for-two-agents.md
+Why:      Codex reads at most 32,768 bytes of the AGENTS.md chain and truncates
+          the rest silently; the root file was 53 KB, so Codex never saw
+          "Build and test" or "Conventions" on either machine
+Owed:     (1) add to `windows/tests/conventions.tests.ps1` the check that
+          `macos/tests/conventions.tests.sh` now runs -- root `AGENTS.md`
+          <= 20480 bytes, `windows/AGENTS.md` <= 10240, their sum <= 30720,
+          and every `CLAUDE.md` begins with `@AGENTS.md`. (2) Re-point the
+          references that say "see ..\AGENTS.md" for content that has moved:
+          `grep -n AGENTS.md windows\*.ps1 windows\README.md` and check each --
+          the Bluetooth/presence, abandoned-mutex, phantom-monitor and
+          sleep/wake entries are now in `windows/AGENTS.md`, their dated
+          evidence in `docs/measurements.md`; hard rules 1-5 are still in the
+          root file, so those references are unchanged.
+Verified: sizes measured here 2026-08-31 and the macOS suite already enforces
+          BOTH chains' budgets, so nothing is unprotected -- what Windows lacks
+          is finding out on its own machine. `windows/AGENTS.md` and
+          `windows/CLAUDE.md` were created from the root file's Windows-specific
+          entries with the user's explicit permission (repo management, not
+          Windows development); nothing else under `windows/` was touched. The
+          Windows suite was not run from here.

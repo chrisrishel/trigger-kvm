@@ -299,7 +299,7 @@ The trap that finding exposed: in session 0 `user32` reports **one phantom monit
 not zero**. "No desktop" presents as *wrong* monitors rather than none, so any
 identity check that trusts the Windows display list in a non-interactive context
 matches against a fiction. NVAPI is therefore the sole identity source. See
-`AGENTS.md`.
+`windows/AGENTS.md`.
 
 The Windows side is still a Scheduled Task at logon in the interactive session, but
 that is now a **choice about permissions, not a technical limit**. Measured

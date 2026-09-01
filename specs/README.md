@@ -20,7 +20,9 @@ were both deleted from this project.
 
 | it belongs there | not here |
 |---|---|
-| [`../AGENTS.md`](../AGENTS.md) | the hard safety rules, and every hazard learned on hardware |
+| [`../AGENTS.md`](../AGENTS.md) | the hard safety rules, and the rules every session needs |
+| `macos/AGENTS.md`, `windows/AGENTS.md` | the hazards learned on that platform |
+| [`../docs/measurements.md`](../docs/measurements.md) | the dated observations those rules rest on |
 | [`../displays.toml`](../displays.toml) | measured values — EDID ids, input values, VCP codes, packets |
 | [`../ARCHITECTURE.md`](../ARCHITECTURE.md) | the stable, high-level map: components and data flow |
 | `windows/README.md`, `macos/README.md` | how that platform does it, and why |

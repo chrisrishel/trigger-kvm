@@ -34,7 +34,9 @@ USB switch ──> peripherals ──> whichever machine gets them pulls both di
 | `displays.toml` | **Researched knowledge.** Which method and VCP code a given monitor model needs, which values are known safe. True of that model everywhere, and expensive to rediscover. |
 | *(generated config)* | **Machine-local facts.** Which panels are on this desk, and which computer is on which of their inputs. Written by `configure`, hand-editable. Not in the repo. |
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | The design and its rationale — why pull-to-self, why two DDC dialects, why post-login |
-| [`AGENTS.md`](AGENTS.md) | Instructions for anyone (human or agent) changing this repo, including the hard safety rules |
+| [`AGENTS.md`](AGENTS.md) | Instructions for anyone (human or agent) changing this repo, including the hard safety rules. `CLAUDE.md` imports it, so both Claude Code and Codex read the same file |
+| `macos/AGENTS.md`, `windows/AGENTS.md` | That platform's hazards and toolchain notes, loaded when working in that directory |
+| [`docs/measurements.md`](docs/measurements.md) | The dated observations on real hardware that the rules above rest on |
 | `docs/decisions/` | Architectural trade-offs and why they went the way they did, so they don't get relitigated |
 | [`specs/`](specs/) | **The normative corpus** — what both implementations are built FROM. Start at [`specs/README.md`](specs/README.md) |
 | [`TODO.md`](TODO.md) | Deferred work, each with the trigger that should resurface it |

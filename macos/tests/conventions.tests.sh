@@ -128,4 +128,48 @@ found=$(awk '
 ' "$probe")
 assert_equal 'demo: _leaked' "$found"
 
+# =============================================================================
+# The instruction files fit the tools that load them
+# =============================================================================
+#
+# Codex loads the AGENTS.md chain from the git root down to its working
+# directory into ONE budget of project_doc_max_bytes (32768 by default) and
+# truncates the rest silently, mid-line. Measured 2026-08-31; see
+# docs/decisions/002-instruction-files-for-two-agents.md. This check is what
+# turns "keep it short" from a hope into a failing test, for BOTH platforms'
+# chains -- it is file sizes only, so it runs here even for the chain this
+# machine cannot otherwise test.
+
+ROOT_DIR=$MAC_DIR/..
+CODEX_BUDGET=32768
+HEADROOM=2048
+ROOT_CAP=20480
+PLATFORM_CAP=10240
+
+# Arithmetic expansion, because BSD wc pads its count with spaces.
+root_bytes=$(( $(wc -c <"$ROOT_DIR/AGENTS.md") ))
+
+it 'the root AGENTS.md stays short enough to be followed, not just loaded'
+assert_true "$([ "$root_bytes" -le "$ROOT_CAP" ] && echo 0 || echo 1)" \
+  "AGENTS.md is $root_bytes bytes; the cap is $ROOT_CAP. Move evidence to docs/measurements.md or a platform AGENTS.md rather than raising this."
+
+for platform in macos windows; do
+  it "AGENTS.md plus $platform/AGENTS.md fits under the Codex budget"
+  plat_bytes=$(( $(wc -c <"$ROOT_DIR/$platform/AGENTS.md") ))
+  chain=$(( root_bytes + plat_bytes ))
+  assert_true "$([ "$plat_bytes" -le "$PLATFORM_CAP" ] && echo 0 || echo 1)" \
+    "$platform/AGENTS.md is $plat_bytes bytes; the cap is $PLATFORM_CAP"
+  assert_true "$([ "$chain" -le $(( CODEX_BUDGET - HEADROOM )) ] && echo 0 || echo 1)" \
+    "AGENTS.md ($root_bytes) + $platform/AGENTS.md ($plat_bytes) = $chain bytes; Codex loads at most $CODEX_BUDGET and drops the rest without a word"
+done
+
+it 'every CLAUDE.md is an import of the AGENTS.md beside it, never a second copy'
+# Claude Code reads CLAUDE.md, not AGENTS.md; the @ import is how it gets the
+# same instructions. Anything else at the top of a CLAUDE.md is a second copy
+# waiting to drift.
+for f in "$ROOT_DIR/CLAUDE.md" "$ROOT_DIR/macos/CLAUDE.md" "$ROOT_DIR/windows/CLAUDE.md"; do
+  first=$(grep -m1 -v '^[[:space:]]*$' "$f")
+  assert_equal '@AGENTS.md' "$first" "$f must begin with @AGENTS.md"
+done
+
 finish

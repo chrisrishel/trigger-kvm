@@ -1,8 +1,9 @@
 # macOS side
 
 At parity with the Windows side. The shared behaviour is specified in
-[`../specs/`](../specs/) and the hard safety rules in
-[`../AGENTS.md`](../AGENTS.md) — read both before changing anything here.
+[`../specs/`](../specs/), the hard safety rules in
+[`../AGENTS.md`](../AGENTS.md), and this platform's hazards in
+[`AGENTS.md`](AGENTS.md) — read all three before changing anything here.
 Almost everything in them was arrived at by getting it wrong first, on real
 hardware.
 
