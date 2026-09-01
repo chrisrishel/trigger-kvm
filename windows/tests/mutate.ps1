@@ -312,6 +312,41 @@ Invoke-Mutation 'menus: q moves the cursor onto a disabled row' `
     "            if (`$EscapeTo -ge 0 -and `$pick -eq 'q' -and `$sel -contains `$EscapeTo) {" `
     "            if (`$EscapeTo -ge 0 -and `$pick -eq 'q') {"
 
+# --- the service channel says what it is --------------------------------------
+
+Invoke-Mutation 'safety: the method chooser does not name the consequence' `
+    'install.ps1' 'walkthrough.tests.ps1' `
+    "    Write-Host ('  {0}''s own method talks to a service channel on the monitor. It is' -f `$d.What)" ''
+Invoke-Mutation 'safety: typing onto a manufacturer channel is not warned about' `
+    'install.ps1' 'walkthrough.tests.ps1' `
+    '            if ($Method -ne ''standard'') {' '            if ($false) {'
+Invoke-Mutation 'safety: the warning is shown on the standard channel too' `
+    'install.ps1' 'walkthrough.tests.ps1' `
+    '            if ($Method -ne ''standard'') {' '            if ($true) {'
+
+# --- the checks --------------------------------------------------------------
+
+Invoke-Mutation 'checks: backing out of a check reads as a failure' `
+    'install.ps1' 'walkthrough.tests.ps1' `
+    '            elseif (-not $ranDisplays.Ok -and -not $ranDisplays.Backed) { 1 }' `
+    '            elseif (-not $ranDisplays.Ok) { 1 }'
+Invoke-Mutation 'checks: a real failure no longer lands on its setting' `
+    'install.ps1' 'walkthrough.tests.ps1' `
+    '            elseif (-not $ranDisplays.Ok -and -not $ranDisplays.Backed) { 1 }' ''
+
+# --- hand edits survive ---------------------------------------------------------
+
+Invoke-Mutation 'config: an unknown key is dropped on Save' `
+    'install.ps1' 'walkthrough.tests.ps1' `
+    '    $carried = @(Get-CarriedKeys -Existing $Existing -Displays $Displays)' `
+    '    $carried = @()'
+Invoke-Mutation 'config: an unmanaged panel''s keys are kept anyway' `
+    'install.ps1' 'walkthrough.tests.ps1' `
+    '            if ($managed -notcontains $Matches[1]) { continue }' ''
+Invoke-Mutation 'config: a superseded key name is carried beside the new one' `
+    'install.ps1' 'walkthrough.tests.ps1' `
+    '        if ($RENAMED_KEYS.Contains($k)) { continue }' ''
+
 # --- names -------------------------------------------------------------------
 
 Invoke-Mutation 'names: two monitors may share one short name' `

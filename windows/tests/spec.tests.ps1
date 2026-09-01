@@ -108,7 +108,11 @@ Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
 
 # ---- this implementation conforms -------------------------------------------
 
-foreach ($spec in 'configure', 'config-format') {
+# detector.md too, since revision 7. It pins no wording today -- the detector
+# talks to a log, not to a person -- so the check passes on it trivially. It is
+# in the loop anyway, because the day it grows a normative string is the day
+# nobody will think to add it here.
+foreach ($spec in 'configure', 'config-format', 'detector') {
     $r = Invoke-Checker (Join-Path $Specs "$spec.md")
     Assert-Equal 0 $r.Code "windows does not conform to specs/$spec.md:`n$($r.Text)"
 }

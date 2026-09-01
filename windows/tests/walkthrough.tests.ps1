@@ -11,7 +11,7 @@
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'lib.ps1')
 
-Import-Subject -Script 'install.ps1' -Variables @('DIALECTS','MCCS_INPUTS','NAME_RULE','BACK') -Functions @(
+Import-Subject -Script 'install.ps1' -Variables @('DIALECTS','MCCS_INPUTS','NAME_RULE','BACK','RENAMED_KEYS') -Functions @(
     'Read-Default','Read-YesNo','Get-MenuWidth','Write-MenuFrame','Clear-ToLineEnd',
     'Split-Detail','Get-ItemWidth','Get-MenuRow',
     'Select-One','Select-Many','Join-Names','Get-InputName',
@@ -22,7 +22,7 @@ Import-Subject -Script 'install.ps1' -Variables @('DIALECTS','MCCS_INPUTS','NAME
     'Invoke-DisplayTest','Invoke-TestRound','Invoke-TestRoundBody','Test-OneComputer',
     'Test-DisplayInput','Test-OneValue','Invoke-BlindWalk',
     'Read-Triggers','Read-Tier','Read-PathChoice','Get-CandidateLabel',
-    'Invoke-Configure','Write-ConfigFile')
+    'Invoke-Configure','Get-CarriedKeys','Write-ConfigFile')
 . (Join-Path (Split-Path -Parent $PSScriptRoot) 'config.ps1')
 
 # ---- the machine this suite pretends to be sitting at ------------------------
@@ -53,8 +53,10 @@ $script:triggerPulled = $null
 function Invoke-TriggerTest {
     param([string[]]$Devices, $Answers, [string]$This, [switch]$Pull)
     $script:triggerPulled = [bool]$Pull
-    if ($Pull) { return [PSCustomObject]@{ Ok = $true; Text = 'fired, monitors followed' } }
-    return [PSCustomObject]@{ Ok = $true; Text = 'arrival seen' }
+    # Backed too, like the real one: specs/configure.md 4.2 gives a check THREE
+    # outcomes, and reading a property that is not there is a StrictMode throw.
+    if ($Pull) { return [PSCustomObject]@{ Ok = $true; Backed = $false; Text = 'fired, monitors followed' } }
+    return [PSCustomObject]@{ Ok = $true; Backed = $false; Text = 'arrival seen' }
 }
 
 # The panels, as reported by `list -Raw`. Not read from hardware: a test that
@@ -369,6 +371,15 @@ Assert-Match $said 'Standard\s+what nearly every monitor takes\s+\(current\)' `
 Assert-Match ((Get-Asked) -join '|') 'Choice \[1\]' `
     'and standard is the default, so the cursor starts there'
 
+# THE CONSEQUENCE, NAMED WHERE THE CHOICE IS MADE -- specs/configure.md 6.2.
+# This is the moment a person commits to a service channel, and the rules that
+# keep it safe live in AGENTS.md, which a user never opens. Three lines here are
+# the only warning they get.
+Assert-Match $said "LG's own method talks to a service channel on the monitor\. It is"
+Assert-Match $said 'sent only the values written down for it: unknown values on that'
+Assert-Match $said 'channel have made monitors unusable\.'
+Assert-NoMatch $said '!' 'no exclamation mark: a person about to lose a monitor wants the facts'
+
 Reset-Said; Set-Answers @('2')
 Assert-Equal 'lg-alt' (Read-Method -Vendor 0x1E6D -Current 'standard') 'row 2 is the manufacturer one'
 
@@ -559,6 +570,35 @@ $c = Get-Written
 Assert-Equal 'pc'  $c['display.pg42uq.input.0x11']
 Assert-Equal 'mac' $c['display.pg42uq.input.0x0f'] 'the second computer had to move to a free input'
 
+# ---- typing a value onto a manufacturer channel is warned about first --------
+#
+# specs/configure.md 6.1. 6.2 named what the channel is; a TYPED byte is the one
+# thing that reaches it from outside the documented table, and AGENTS.md hard
+# rule 1 permits that only because the person typing it is the one who has to
+# know where it came from.
+
+Reset-Printed; Set-Answers @('5', '0xD0')     # Type a value... on the LG channel
+$v = Read-InputValue -Table (Get-InputTable -Method 'lg-alt' -Map $null) `
+                     -Method 'lg-alt' -Prompt 'which input?'
+Assert-Equal '0xD0' $v
+$said = Get-Printed
+Assert-Match $said "This is the manufacturer's service channel\. Type only a value you have"
+Assert-Match $said 'from documentation; an unknown value here has made monitors unusable\.'
+
+# ...and NOT on the standard one, where a typed value is ordinary. Saying it
+# everywhere would make it read as boilerplate exactly where it is not.
+Reset-Printed; Set-Answers @('9', '0x11')
+$null = Read-InputValue -Table (Get-InputTable -Method 'standard' -Map $null) `
+                        -Method 'standard' -Prompt 'which input?'
+Assert-NoMatch (Get-Printed) 'service channel' 'the standard channel is not a service channel'
+
+# Picking a LISTED value on the manufacturer channel is not typing one: those
+# values ARE the documented table.
+Reset-Printed; Set-Answers @('1')
+$null = Read-InputValue -Table (Get-InputTable -Method 'lg-alt' -Map $null) `
+                        -Method 'lg-alt' -Prompt 'which input?'
+Assert-NoMatch (Get-Printed) 'Type only a value you have' 'the warning is about typing, not about the channel'
+
 # ---- two monitors cannot share one short name --------------------------------
 #
 # specs/configure.md 6, revision 6 item 3. Two Dell panels both default to
@@ -723,6 +763,79 @@ Set-Outcomes @()
 Set-Answers @('7','1','','y','','y', '8', '5','1', '10')   # monitors, then triggers
 Invoke-Configure
 Assert-Equal $true $script:triggerPulled 'once they are proven, the flip back is the real thing'
+
+# ---- backing out of a check is neither a pass nor a failure ------------------
+#
+# specs/configure.md 4.2. Its row reads `not checked` and the cursor moves ON to
+# the next unfinished thing, as if the check had not been opened. Landing on
+# Monitors would say "you got the monitors wrong" to someone who only declined to
+# move them.
+#
+# Where the cursor lands is read off the Choice prompt's default. bin\ is on
+# PATH for these two, so that row is answered and the checks are what is left --
+# otherwise the cursor lands on PATH both times and the case proves nothing.
+$global:TestUserPath = 'C:\Windows;C:\fake\bin'
+Set-Config $CONFIGURED
+Set-Outcomes @()
+Set-Answers @(
+    '7',            # menu -> Test the monitor inputs
+    'q',            #   ...and back out of "which monitor?"
+    '11'            # menu -> Cancel, whatever the cursor was on
+)
+Invoke-Configure
+$asked = (Get-Asked) -join '|'
+# Row 8 is Test the triggers: the next unfinished thing, NOT row 2 (Monitors).
+Assert-Match   $asked 'Choice \[8\]' 'the cursor moves on to the next check'
+Assert-NoMatch $asked 'Choice \[2\]' 'and does not blame the monitors for a check nobody ran'
+
+# A check that actually FAILED still sends the cursor to the setting that failed.
+# The ASUS answers nothing and has no documented alternative, so that is the end
+# of it; the LG round then passes, which is what leaves exactly one failure.
+Set-Config $CONFIGURED
+Set-Outcomes @(3)
+Set-Answers @('7', '1', '', 'n', '', 'y', '11')
+Invoke-Configure
+Assert-Match ((Get-Asked) -join '|') 'Choice \[2\]' 'a failure does land on Monitors'
+
+$global:TestUserPath = 'C:\Windows'
+
+# ---- a hand-edited key nobody asked about survives Save ----------------------
+#
+# specs/config-format.md, "Hand edits survive". An unknown key is someone's hand
+# edit or a newer version's setting, and dropping it on Save is a silent loss
+# with no way to notice. Only trigger.debounce and trigger.settle used to survive.
+Set-Config (@($CONFIGURED) + @(
+    'trigger.debounce = 5.5'
+    'some.future.setting = 42'
+    'display.lg.brightness = 80'         # unknown, on a panel that stays managed
+    'display.gone.vendor = 0x1234'       # a panel nothing enumerates
+    'display.gone.wallpaper = blue'
+))
+Set-Outcomes @()
+Set-Answers @('5','1', '10')
+Invoke-Configure
+Assert-Equal 0 $LASTEXITCODE
+$c = Get-Written
+Assert-Equal '42'  $c['some.future.setting']   'an unknown key is carried across'
+Assert-Equal '80'  $c['display.lg.brightness'] 'including one under a panel that is still managed'
+Assert-Equal '5.5' $c['trigger.debounce']      'and a hand-set timing still survives'
+Assert-Equal 'login' $c['install.autostart']   'while a key the walkthrough writes is written, not carried'
+
+# A panel the walkthrough is not managing takes its unknown keys with it:
+# unmanaging is the one answer that means "forget", and it forgets the panel.
+Assert-True (-not $c.Contains('display.gone.wallpaper')) 'an unmanaged panel is forgotten whole'
+Assert-True (-not $c.Contains('display.gone.vendor'))
+
+# A superseded spelling is NOT an unknown key -- it is the same fact under an
+# older name, and carrying it would leave two answers to one question in the file.
+Set-Config (@($CONFIGURED) + @('install.start = boot', 'trigger.usb.settle = 9'))
+Set-Outcomes @()
+Set-Answers @('5','1', '10')
+Invoke-Configure
+$c = Get-Written
+Assert-True (-not $c.Contains('install.start'))      'an old key name is rewritten, not kept beside the new one'
+Assert-True (-not $c.Contains('trigger.usb.settle'))
+Assert-Equal 'login' $c['install.autostart']
 
 # ---- what a computer, OR A MONITOR, may be called ----------------------------
 

@@ -6,13 +6,13 @@
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'lib.ps1')
 
-Import-Subject -Script 'install.ps1' -Variables @('DIALECTS','MCCS_INPUTS') -Functions @(
+Import-Subject -Script 'install.ps1' -Variables @('DIALECTS','MCCS_INPUTS','RENAMED_KEYS') -Functions @(
     'Read-Default','Read-YesNo','Get-MenuWidth','Write-MenuFrame','Clear-ToLineEnd',
     'Split-Detail','Get-ItemWidth','Get-MenuRow',
     'Select-One','Select-Many','Join-Names','Get-InputName','Get-InputTable',
     'Format-Byte','Read-InputValue','Get-DisplayMap','Invoke-BlindWalk','Test-OneValue',
     'Invoke-DisplayTest','Invoke-TestRound','Invoke-TestRoundBody','Test-OneComputer',
-    'Test-DisplayInput','Write-ConfigFile')
+    'Test-DisplayInput','Get-CarriedKeys','Write-ConfigFile')
 
 $global:DEFAULT_DEBOUNCE = '3.0'
 $global:DEFAULT_SETTLE   = '0.75'

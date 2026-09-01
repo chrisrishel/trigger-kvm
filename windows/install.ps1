@@ -1691,6 +1691,10 @@ function Format-Byte {
 function Read-InputValue {
     param($Table, [string]$Prompt, [string]$Sub, [string]$Default = '',
           [hashtable]$Taken = @{}, [switch]$AllowNone,
+          # Which channel these values are for. Only the typed branch cares: a
+          # typed byte is the one thing that reaches a manufacturer channel from
+          # outside the documented table (specs/configure.md 6.1).
+          [string]$Method = 'standard',
           # Offer esc, returning $BACK. Opt-in, because "back" only means something
           # where the caller arrived from somewhere: configuring a panel came from
           # the Monitors list, but a repair after a failed check is mid-flow and has
@@ -1742,6 +1746,18 @@ function Read-InputValue {
         } elseif ($AllowNone -and $pick -eq ($rows.Count - 1)) {
             return $null
         } else {
+            if ($Method -ne 'standard') {
+                # ..\AGENTS.md hard rule 1 permits a typed value on a
+                # manufacturer channel only because the person typing it is the
+                # one who has to know where it came from. Say so before they do.
+                Write-Host ''
+                # DOUBLE-quoted, so the apostrophe appears ONCE in the source.
+                # This is normative wording, and the conformance check looks for
+                # it as the spec writes it -- a PowerShell '' escape makes the
+                # line read correctly and match nothing.
+                Write-Host "  This is the manufacturer's service channel. Type only a value you have"
+                Write-Host '  from documentation; an unknown value here has made monitors unusable.'
+            }
             $typed = Read-Default '  Value (e.g. 0x11)' $Default
             # The switcher's own converter, so a value accepted here is one the
             # reader will accept back. Stored canonically, so a typed `17` and a
@@ -1858,6 +1874,15 @@ function Read-Method {
     Write-Host ('  Nearly every monitor takes the standard method, including most {0} ones.' -f $d.What)
     Write-Host ('  A few {0} models ignore it and need {0}''s own method instead.' -f $d.What)
     Write-Host ''
+    # THE CONSEQUENCE, NAMED WHERE THE CHOICE IS MADE -- specs/configure.md 6.2.
+    # This is the moment a person commits to a service channel, and the rules
+    # that keep it safe live in ..\AGENTS.md, which a user never opens. Three
+    # lines here are the only warning they get: what the channel is, what is sent
+    # to it, and what has happened on it. No exclamation mark and no reassurance.
+    Write-Host ('  {0}''s own method talks to a service channel on the monitor. It is' -f $d.What)
+    Write-Host '  sent only the values written down for it: unknown values on that'
+    Write-Host '  channel have made monitors unusable.'
+    Write-Host ''
     Write-Host '  If you are not sure, take the standard one. If it turns out not to'
     Write-Host '  work, the check further down will offer you this again.'
     Write-Host ''
@@ -1952,7 +1977,7 @@ function Get-DisplayAnswers {
         $sub   = if ($m -eq $This) { '(this computer -- the input you would pick to see this screen)' } else { '' }
         $v = Read-InputValue -Table $table -Default $was -Taken $taken -AllowNone:($m -ne $This) `
                              -Prompt ("On the {0}, which input is '{1}' on?" -f $desc, $m) -Sub $sub `
-                             -Escapable
+                             -Method $method -Escapable
         # Esc anywhere in a panel's questions abandons the whole panel, not just
         # this one answer. Half a map is not an answer, and the person asked to
         # leave -- so nothing here is kept and the Monitors list gets its old row
@@ -2368,8 +2393,14 @@ function Invoke-Configure {
 
         # Where the cursor lands is the recommendation, and it is just "the next
         # thing that is not done": the unanswered sections in order, then the checks,
-        # then save. A failed check sends the cursor to the setting that failed
+        # then save. A FAILED check sends the cursor to the setting that failed
         # rather than onward.
+        #
+        # BACKING OUT OF A CHECK IS NEITHER -- specs/configure.md 4.2. Its row
+        # reads `not checked` and the cursor moves on to the next unfinished
+        # thing, as if the check had not been opened. Landing on Monitors would
+        # say "you got the monitors wrong" to someone who only declined to move
+        # them.
         $land =
             if     ($computers.Count -eq 0) { 0 }
             elseif ($answers.Count   -eq 0) { 1 }
@@ -2377,9 +2408,9 @@ function Invoke-Configure {
             elseif (-not $newTier)          { 3 }
             elseif (-not $onPath -and $null -eq $wantPath) { $pathRow }
             elseif (-not $ranDisplays)      { $save - 3 }
-            elseif (-not $ranDisplays.Ok)   { 1 }
+            elseif (-not $ranDisplays.Ok -and -not $ranDisplays.Backed) { 1 }
             elseif (-not $ranTriggers)      { $save - 2 }
-            elseif (-not $ranTriggers.Ok)   { 2 }
+            elseif (-not $ranTriggers.Ok -and -not $ranTriggers.Backed) { 2 }
             else                            { $save }
 
         Write-Host ''
@@ -2484,7 +2515,7 @@ function Invoke-TriggerTest {
     if (@($Devices).Count -eq 0) {
         Write-Host ''
         Write-Host '  No trigger devices are chosen yet -- pick some first.'
-        return [PSCustomObject]@{ Ok = $false; Text = 'no devices chosen' }
+        return [PSCustomObject]@{ Ok = $false; Backed = $false; Text = 'no devices chosen' }
     }
 
     $ew = Join-Path $PSScriptRoot 'event-watch.ps1'
@@ -2560,19 +2591,19 @@ function Invoke-TriggerTest {
         Write-Host ''
         Write-Host '  Nothing arrived, so these may be the wrong devices -- or they may not'
         Write-Host '  be on the switch at all. Pick Triggers again to change them.'
-        return [PSCustomObject]@{ Ok = $false; Text = 'no arrival seen' }
+        return [PSCustomObject]@{ Ok = $false; Backed = $false; Text = 'no arrival seen' }
     }
 
-    if (-not $Pull) { return [PSCustomObject]@{ Ok = $true; Text = 'arrival seen' } }
+    if (-not $Pull) { return [PSCustomObject]@{ Ok = $true; Backed = $false; Text = 'arrival seen' } }
 
     Write-Host ''
     if (Read-YesNo '  Did the monitors come back to this computer?' $true) {
-        return [PSCustomObject]@{ Ok = $true; Text = 'fired, monitors followed' }
+        return [PSCustomObject]@{ Ok = $true; Backed = $false; Text = 'fired, monitors followed' }
     }
     Write-Host ''
     Write-Host '  The trigger fired, so the devices are right. Something about the'
     Write-Host '  monitors is not -- check them again from the row above.'
-    return [PSCustomObject]@{ Ok = $false; Text = 'fired, but the monitors did not follow' }
+    return [PSCustomObject]@{ Ok = $false; Backed = $false; Text = 'fired, but the monitors did not follow' }
 }
 
 # Prove the display answers BEFORE anything is written, against a throwaway config.
@@ -2617,7 +2648,7 @@ function Invoke-DisplayTest {
             Write-Host '  Which monitor do you want to check?'
             $rows = @(@('All of them') + @($Answers | ForEach-Object { $_.Name }))
             $pick = Select-One -Items $rows -Default 0 -Escapable
-            if ($pick -lt 0) { return [PSCustomObject]@{ Ok = $false; Text = 'not checked' } }
+            if ($pick -lt 0) { return [PSCustomObject]@{ Ok = $false; Backed = $true; Text = 'not checked' } }
             if ($pick -gt 0) { $Answers = @($Answers[$pick - 1]) }
         }
 
@@ -2662,9 +2693,9 @@ function Invoke-DisplayTest {
     }
 
     # Declining is not a failure and must not read as a pass either.
-    if ($bad -contains '(skipped)') { return [PSCustomObject]@{ Ok = $false; Text = 'not checked' } }
-    if ($bad.Count -gt 0) { return [PSCustomObject]@{ Ok = $false; Text = ('trouble with ' + ($bad -join ', ')) } }
-    return [PSCustomObject]@{ Ok = $true; Text = 'all responded' }
+    if ($bad -contains '(skipped)') { return [PSCustomObject]@{ Ok = $false; Backed = $true; Text = 'not checked' } }
+    if ($bad.Count -gt 0) { return [PSCustomObject]@{ Ok = $false; Backed = $false; Text = ('trouble with ' + ($bad -join ', ')) } }
+    return [PSCustomObject]@{ Ok = $true; Backed = $false; Text = 'all responded' }
 }
 
 # "LG, ASUS and DELL" rather than "LG and ASUS and DELL". These lines are read
@@ -2816,6 +2847,7 @@ function Test-OneComputer {
         foreach ($m in $Answer.Map.Keys) { if ($m -ne $Target) { $taken[$Answer.Map[$m]] = $m } }
         $v = Read-InputValue -Table (Get-InputTable -Method $Answer.Method -Map $Answer.Map) `
                              -Default $Answer.Map[$Target] -Taken $taken -AllowNone `
+                             -Method $Answer.Method `
                              -Prompt ("On the {0}, which input is '{1}' on?" -f $Answer.Name, $Target)
         if ($null -eq $v) { $Answer.Map.Remove($Target); return $true }
         $Answer.Map[$Target] = $v
@@ -2837,7 +2869,7 @@ function Test-OneComputer {
             $taken = @{}
             foreach ($m in $Answer.Map.Keys) { if ($m -ne $This) { $taken[$Answer.Map[$m]] = $m } }
             $Answer.Map[$This] = Read-InputValue -Table (Get-InputTable -Method $Answer.Method -Map $Answer.Map) `
-                -Default $Answer.Map[$This] -Taken $taken `
+                -Default $Answer.Map[$This] -Taken $taken -Method $Answer.Method `
                 -Prompt ("On the {0}, which input is '{1}' on?" -f $Answer.Name, $This)
         } else {
             $found = Invoke-BlindWalk -Answer $Answer -Config $Config -OtherPanels (@($All).Count - 1)
@@ -2901,7 +2933,7 @@ function Test-OneComputer {
         $taken = @{}
         foreach ($m in $keep) {
             $v = Read-InputValue -Table (Get-InputTable -Method $alt.Method -Map $Answer.Map) `
-                                 -Taken $taken -AllowNone:($m -ne $This) `
+                                 -Taken $taken -AllowNone:($m -ne $This) -Method $alt.Method `
                                  -Prompt ("On the {0}, which input is '{1}' on?" -f $Answer.Name, $m)
             if ($null -ne $v) { $Answer.Map[$m] = $v; $taken[$v] = $m }
         }
@@ -2921,6 +2953,51 @@ function Test-OneComputer {
 
 # Rewrite the config from the answers. There is nothing left to preserve: scenes are
 # gone, and every fact the file holds is something the walkthrough asked about.
+# Superseded spellings of keys the walkthrough writes. NOT unknown keys: each is
+# the same fact under an older name, and carrying one across a Save would leave
+# two answers to one question in the file -- which is the drift this project
+# deletes tables to avoid. `configure` rewrites the file without them, and the
+# install path warns while they are still honoured.
+$RENAMED_KEYS = @{
+    'trigger.usb.device'      = 'trigger.device'
+    'trigger.usb.debounce'    = 'trigger.debounce'
+    'trigger.usb.settle'      = 'trigger.settle'
+    'trigger.device.usb'      = 'trigger.device'
+    'trigger.device.debounce' = 'trigger.debounce'
+    'trigger.device.settle'   = 'trigger.settle'
+    'install.tier'            = 'install.autostart'
+    'install.start'           = 'install.autostart'
+}
+
+# Everything in the old file that this walkthrough does not write itself, as
+# `key = value` lines -- specs/config-format.md, "Hand edits survive".
+#
+# An unknown key is somebody's hand edit or a newer version's setting, and
+# dropping it on Save is a silent loss with no way to notice. A key the
+# walkthrough DOES write is dropped on purpose: that is the answer being applied.
+#
+# A display.<label>.* key is kept only while that panel is still MANAGED.
+# Unmanaging a panel is the one answer that means "forget", and it forgets the
+# whole panel -- so an unknown key under a dropped label goes with it.
+function Get-CarriedKeys {
+    param([System.Collections.IDictionary]$Existing, $Displays)
+
+    $managed = @(@($Displays) | ForEach-Object { $_.Label })
+    $out = @()
+    foreach ($k in @($Existing.Keys)) {
+        if ($k -in @('install.autostart', 'computer.this',
+                     'trigger.device', 'trigger.debounce', 'trigger.settle')) { continue }
+        if ($RENAMED_KEYS.Contains($k)) { continue }
+        if ($k -match '^display\.([^.]+)\.(.+)$') {
+            if ($managed -notcontains $Matches[1]) { continue }
+            if ($Matches[2] -in @('vendor', 'product', 'name', 'method')) { continue }
+            if ($Matches[2] -like 'input.*') { continue }
+        }
+        $out += ('{0} = {1}' -f $k, $Existing[$k])
+    }
+    return @($out | Sort-Object)
+}
+
 function Write-ConfigFile {
     param([string]$Path, $Displays, [string[]]$Devices, [string]$Tier,
           [string]$This, [System.Collections.IDictionary]$Existing)
@@ -2988,6 +3065,14 @@ function Write-ConfigFile {
         ("trigger.settle   = {0}" -f $(if ($Existing.Contains('trigger.settle'))   { $Existing['trigger.settle'] }   else { $DEFAULT_SETTLE }))
         ''
     )
+
+    $carried = @(Get-CarriedKeys -Existing $Existing -Displays $Displays)
+    if ($carried.Count -gt 0) {
+        $lines += @(
+            '# --- kept from the previous file (not something configure asks about) --'
+            ''
+        ) + $carried + @('')
+    }
 
     $lines | Set-Content -LiteralPath $Path -Encoding ASCII
 }
@@ -3405,19 +3490,9 @@ $cfg      = Read-Config -Path $CONFIG
 #
 # Falling back to seed values on an unrecognised old key would silently revert
 # customised triggers, so say so instead. Drop this once no config can still use one.
-$renamed = @{
-    'trigger.usb.device'      = 'trigger.device'
-    'trigger.usb.debounce'    = 'trigger.debounce'
-    'trigger.usb.settle'      = 'trigger.settle'
-    'trigger.device.usb'      = 'trigger.device'
-    'trigger.device.debounce' = 'trigger.debounce'
-    'trigger.device.settle'   = 'trigger.settle'
-    'install.tier'            = 'install.autostart'
-    'install.start'           = 'install.autostart'
-}
-foreach ($old in $renamed.Keys) {
+foreach ($old in $RENAMED_KEYS.Keys) {
     if ($cfg.Contains($old)) {
-        Write-Log ("WARNING: '{0}' is an old key name; rename it to '{1}' in {2}." -f $old, $renamed[$old], $CONFIG)
+        Write-Log ("WARNING: '{0}' is an old key name; rename it to '{1}' in {2}." -f $old, $RENAMED_KEYS[$old], $CONFIG)
         if ($old -eq 'install.tier') {
             Write-Log "         The values changed too: 's4u' is now 'boot', 'user' is now 'login'."
             Write-Log '         This one is still honoured meanwhile, and `trigger-kvm configure`'

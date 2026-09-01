@@ -9,8 +9,8 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest          # as install.ps1 runs
 . (Join-Path $PSScriptRoot 'lib.ps1')
 
-Import-Subject -Script 'install.ps1' -Functions @(
-    'Read-Default','Read-YesNo','Invoke-TriggerTest','Write-ConfigFile')
+Import-Subject -Script 'install.ps1' -Variables @('RENAMED_KEYS') -Functions @(
+    'Read-Default','Read-YesNo','Invoke-TriggerTest','Get-CarriedKeys','Write-ConfigFile')
 
 $global:CONFIG = Join-Path $env:TEMP 'trigger-kvm-trigcheck.cfg'
 $global:SWITCH = Join-Path (Split-Path -Parent $PSScriptRoot) 'trigger-kvm.ps1'
