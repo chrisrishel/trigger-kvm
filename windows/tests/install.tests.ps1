@@ -8,7 +8,8 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'lib.ps1')
 
 Import-Subject -Script 'install.ps1'     -Functions @(
-    'Get-WatcherCommand', 'Test-OurLegacyDir', 'Test-OurLegacyTask')
+    'Get-WatcherCommand', 'Test-OurLegacyDir', 'Test-OurLegacyTask',
+    'Get-PathValueKind', 'Get-UserPath', 'Set-UserPath')
 Import-Subject -Script 'event-watch.ps1' -Functions @('Get-SwitcherArguments')
 
 # ---- the task action carries every path, the config included -----------------
@@ -104,6 +105,51 @@ Assert-True (Test-OurLegacyTask -Task (New-FakeTask 'powershell.exe' '-File C:\x
     'and a bare watcher action counts too'
 Assert-True (-not (Test-OurLegacyTask -Task (New-FakeTask 'C:\Program Files\ds\display_switch.exe' '') -OldDest $OLD)) `
     'a task of that name running somebody else''s program is theirs'
+
+# ---- the user PATH keeps its %VAR% entries, and its kind ---------------------
+#
+# [Environment]::GetEnvironmentVariable('Path','User') EXPANDS %VAR% references,
+# because that is what reading a REG_EXPAND_SZ value means, and
+# SetEnvironmentVariable writes back REG_SZ whatever it is given -- measured
+# 2026-09-01. Between them, answering yes to the PATH question rewrote every
+# %USERPROFILE%-style entry the user already had as a literal path AND downgraded
+# the value's kind, so nothing there would ever follow its variable again.
+#
+# Against a throwaway key under HKCU\Software. The real PATH is the developer's
+# own working setup and a test must not be one edit away from it.
+
+$KeyPath = 'Software\trigger-kvm-tests'
+$full    = "HKCU:\$KeyPath"
+Remove-Item -LiteralPath $full -Recurse -Force -ErrorAction SilentlyContinue
+$k = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($KeyPath)
+try {
+    $k.SetValue('Path', 'C:\a;%USERPROFILE%\b', [Microsoft.Win32.RegistryValueKind]::ExpandString)
+} finally { $k.Close() }
+
+Assert-Equal 'C:\a;%USERPROFILE%\b' (Get-UserPath -KeyPath $KeyPath) `
+    'the value comes back with its %VAR% references intact'
+Assert-True ([Environment]::ExpandEnvironmentVariables('%USERPROFILE%') -ne '%USERPROFILE%') `
+    'and that variable really does expand, so the assertion above means something'
+
+# Write it back, as the add/remove helpers do, and the kind survives.
+Set-UserPath -Value 'C:\a;%USERPROFILE%\b;C:\new' -KeyPath $KeyPath
+$k = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($KeyPath, $false)
+try {
+    Assert-Equal 'ExpandString' ([string]$k.GetValueKind('Path')) 'a REG_EXPAND_SZ PATH stays one'
+    Assert-Equal 'C:\a;%USERPROFILE%\b;C:\new' `
+        ([string]$k.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)) `
+        'and the other entries are written back as they were, not as what they point at'
+} finally { $k.Close() }
+
+Remove-Item -LiteralPath $full -Recurse -Force -ErrorAction SilentlyContinue
+
+# The kind decision on its own, since the three cases are what it is for.
+Assert-Equal 'ExpandString' (Get-PathValueKind -Value 'C:\a;%FOO%\b' -Current 'String') `
+    'a value that needs expansion gets it, whatever the old kind'
+Assert-Equal 'ExpandString' (Get-PathValueKind -Value 'C:\a;C:\b'    -Current 'ExpandString') `
+    'and a PATH that was already REG_EXPAND_SZ is not downgraded'
+Assert-Equal 'String'       (Get-PathValueKind -Value 'C:\a;C:\b'    -Current 'String') `
+    'while a plain one is left plain rather than gratuitously changed'
 
 Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
 exit 0

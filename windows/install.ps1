@@ -376,14 +376,98 @@ function Invoke-BootTierElevation {
 # User PATH only -- never the machine one. This installs per-user and needs no
 # admin, and quietly editing a system-wide setting would be a much bigger thing
 # than the user agreed to.
-function Get-UserPath { [Environment]::GetEnvironmentVariable('Path', 'User') }
+#
+# READ AND WRITTEN THROUGH THE REGISTRY, NOT THROUGH [Environment]. Measured
+# 2026-09-01: SetEnvironmentVariable(...,'User') writes REG_SZ whatever it is
+# given, and GetEnvironmentVariable(...,'User') expands %VAR% references, because
+# that is what reading a REG_EXPAND_SZ value means. Between them, answering yes to
+# the PATH question read every %USERPROFILE%-style entry the user already had as
+# a literal path and wrote it back that way -- with the value's KIND downgraded,
+# so nothing there would ever follow its variable again.
+#
+# It does not reproduce on a machine whose Path is already REG_SZ, which is what
+# it becomes after the first time. A fresh Windows profile's is REG_EXPAND_SZ.
+#
+# -KeyPath so the suite can point this at a throwaway key of its own. The real
+# PATH is the developer's own working setup, and a test must not be one edit away
+# from it.
+function Get-UserPath {
+    param([string]$KeyPath = 'Environment')
+    try {
+        $k = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($KeyPath, $false)
+        if (-not $k) { return '' }
+        try {
+            return [string]$k.GetValue('Path', '',
+                       [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+        } finally { $k.Close() }
+    } catch { return '' }
+}
+
+# REG_EXPAND_SZ where the value needs it or already had it; REG_SZ otherwise, so
+# a machine whose PATH is plain is not gratuitously changed into something else.
+function Get-PathValueKind {
+    param([string]$Value, [string]$Current)
+    if ($Value -match '%')            { return 'ExpandString' }
+    if ($Current -eq 'ExpandString')  { return 'ExpandString' }
+    return 'String'
+}
+
+function Set-UserPath {
+    param([string]$Value, [string]$KeyPath = 'Environment')
+
+    $k = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($KeyPath, $true)
+    if (-not $k) { $k = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($KeyPath) }
+    try {
+        $was = 'String'
+        try { $was = [string]$k.GetValueKind('Path') } catch { }
+        $k.SetValue('Path', $Value,
+                    [Microsoft.Win32.RegistryValueKind](Get-PathValueKind -Value $Value -Current $was))
+    } finally { $k.Close() }
+
+    if ($KeyPath -eq 'Environment') { Send-SettingChange }
+}
+
+# Tell everyone the environment changed.
+#
+# A registry write notifies nobody. Explorer -- and therefore every terminal
+# started from it -- re-reads the environment on WM_SETTINGCHANGE, which is what
+# [Environment]::SetEnvironmentVariable used to send on our behalf. Without it
+# "open a NEW terminal for that to take effect" stops being true and the answer
+# becomes "log out".
+#
+# Guarded by NAME only, with no source stamp -- unlike the transports in
+# trigger-kvm.ps1 and event-watch.ps1, which stamp because running a stale copy
+# of THEM would mean hand-verifying code that is not on disk. This declares one
+# Win32 entry point whose signature has been fixed since 1995 and carries no
+# logic to be stale.
+function Send-SettingChange {
+    if (-not ('TkSettingChange' -as [type])) {
+        Add-Type -ErrorAction SilentlyContinue -Name 'TkSettingChange' -Namespace '' -MemberDefinition @'
+[DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Auto)]
+public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint Msg, UIntPtr wParam,
+                                               string lParam, uint fuFlags, uint uTimeout,
+                                               out UIntPtr lpdwResult);
+'@
+    }
+    try {
+        $r = [UIntPtr]::Zero
+        # HWND_BROADCAST, WM_SETTINGCHANGE, SMTO_ABORTIFHUNG, 5s. A hung window
+        # must not hold up an install.
+        [void][TkSettingChange]::SendMessageTimeout([IntPtr]0xFFFF, 0x1A, [UIntPtr]::Zero,
+                                                    'Environment', 0x0002, 5000, [ref]$r)
+    } catch {
+        # Nothing here is worth failing an install for: the PATH is written
+        # either way, and the worst case is that it takes effect at next logon.
+        Write-Log 'note: could not announce the PATH change; a new logon will pick it up'
+    }
+}
 
 function Add-ToUserPath {
     param([string]$Dir)
     $cur = Get-UserPath
     $parts = @(($cur -split ';') | Where-Object { $_ })
     if ($parts -contains $Dir) { Write-Log "already on PATH: $Dir"; return }
-    [Environment]::SetEnvironmentVariable('Path', (@($parts + $Dir) -join ';'), 'User')
+    Set-UserPath (@($parts + $Dir) -join ';')
     Write-Log "added to your PATH: $Dir"
     Write-Log 'open a NEW terminal for that to take effect'
 }
@@ -393,7 +477,7 @@ function Remove-FromUserPath {
     $cur = Get-UserPath
     $parts = @(($cur -split ';') | Where-Object { $_ })
     if ($parts -notcontains $Dir) { return }
-    [Environment]::SetEnvironmentVariable('Path', (@($parts | Where-Object { $_ -ne $Dir }) -join ';'), 'User')
+    Set-UserPath (@($parts | Where-Object { $_ -ne $Dir }) -join ';')
     Write-Log "removed from your PATH: $Dir"
 }
 

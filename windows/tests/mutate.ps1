@@ -192,6 +192,18 @@ Invoke-Mutation 'launch: an absent log becomes an empty -LogFile' `
     "    if (`$LogFile)    { `$a += @('-LogFile', ""``""`$LogFile``"""") }" `
     "    `$a += @('-LogFile', ""``""`$LogFile``"""")"
 
+# --- the user PATH -------------------------------------------------------------
+
+Invoke-Mutation 'path: the read expands other people''s %VAR% entries' `
+    'install.ps1' 'install.tests.ps1' `
+    "            return [string]`$k.GetValue('Path', '',
+                       [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)" `
+    "            return [string]`$k.GetValue('Path', '')"
+Invoke-Mutation 'path: the write downgrades REG_EXPAND_SZ to REG_SZ' `
+    'install.ps1' 'install.tests.ps1' `
+    "    if (`$Value -match '%')            { return 'ExpandString' }
+    if (`$Current -eq 'ExpandString')  { return 'ExpandString' }" ''
+
 # --- the pre-rename cleanup ---------------------------------------------------
 
 Invoke-Mutation 'legacy: any display-switch directory is deleted' `

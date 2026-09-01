@@ -18,7 +18,12 @@ function Read-MenuKey {
     $script:keys = @($script:keys | Select-Object -Skip 1)
     return $k
 }
-function Test-CanReadKeys { $true }     # these tests drive the key path
+# Which half of the menus a case drives. A VARIABLE rather than a second
+# definition of the function: PowerShell runs the last one defined, so two of
+# them leave a reader unable to say which is live where -- which is exactly what
+# conventions.tests.ps1 forbids, and it caught this.
+$script:canReadKeys = $true
+function Test-CanReadKeys { $script:canReadKeys }
 function Set-Keys { param([string[]]$K) $script:keys = @($K) }
 
 # Capture what a menu drew, so layout can be asserted rather than eyeballed.
@@ -297,7 +302,7 @@ Assert-Equal '0' ($got -join ',') 'and is inert there too without the switch'
 # README claimed it worked; it printed "Pick a number from the list."
 #
 # Everything above drives the KEY path. From here down, the typed one.
-function Test-CanReadKeys { $false }
+$script:canReadKeys = $false
 
 Reset-Drawn; Set-Answers @('q')
 Assert-Equal -1 (Select-One -Items @('a','b') -Default 0 -Escapable) 'q is esc in a submenu'
@@ -324,7 +329,7 @@ Reset-Drawn; Set-Answers @('q', '1')
 Assert-Equal 0 (Select-One -Items @('a','b','c') -Default 0 -EscapeTo 1 -Disabled @(1))
 Assert-Match (Get-Drawn) 'Pick a number from the list\.' 'a disabled way out is no way out'
 
-function Test-CanReadKeys { $true }
+$script:canReadKeys = $true
 
 # ---- Join-Names --------------------------------------------------------------
 
