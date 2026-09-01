@@ -491,6 +491,19 @@ function Read-Default {
 # fallback is not a nicety -- it is what makes the whole flow testable end to end,
 # and what keeps the installer usable over a session that does not forward keys.
 
+# What a question returns when the person pressed esc rather than answering.
+#
+# A panel's questions are a SUBMENU entered from the Monitors list, so esc leaves
+# all of them and the list is where it goes -- specs/configure.md 3.3, first row.
+# That needs THREE outcomes where there were two, because "backed out" and "no, do
+# not manage this monitor" must not be the same thing: conflating them lets esc
+# silently unmanage a panel, which is the opposite of changing nothing.
+#
+# A byte value can never collide with it. Read-InputValue validates a typed value
+# as a hex byte and every table value is one, so 'back' is not a value anything
+# else can produce.
+$BACK = 'back'
+
 function Test-CanReadKeys {
     if ([Console]::IsInputRedirected) { return $false }
     try { $null = [Console]::KeyAvailable } catch { return $false }
@@ -1220,7 +1233,12 @@ function Read-Computers {
 # -AllowNone is given and that machine is not on this panel at all.
 function Read-InputValue {
     param($Table, [string]$Prompt, [string]$Sub, [string]$Default = '',
-          [hashtable]$Taken = @{}, [switch]$AllowNone)
+          [hashtable]$Taken = @{}, [switch]$AllowNone,
+          # Offer esc, returning $BACK. Opt-in, because "back" only means something
+          # where the caller arrived from somewhere: configuring a panel came from
+          # the Monitors list, but a repair after a failed check is mid-flow and has
+          # nowhere to return to.
+          [switch]$Escapable)
 
     $names = @($Table.Keys)
     $rows  = @($names)
@@ -1258,7 +1276,10 @@ function Read-InputValue {
 
     while ($true) {
         $v = $null
-        $pick = Select-One -Items $rows -Detail $vals -Default $row -Current $now -Disabled $off
+        $pick = Select-One -Items $rows -Detail $vals -Default $row -Current $now -Disabled $off `
+                           -Escapable:$Escapable
+        # BEFORE the row tests: esc is -1, and -1 is less than $names.Count.
+        if ($pick -lt 0) { return $BACK }
         if ($pick -lt $names.Count) {
             $v = $Table[$names[$pick]]
         } elseif ($AllowNone -and $pick -eq ($rows.Count - 1)) {
@@ -1375,26 +1396,19 @@ function Read-Method {
     # existing choice keeps the cursor, and is marked (current) so an unchanged
     # default is distinguishable from a deliberate one.
     #
-    # NOT -Escapable, and that is deliberate. specs/configure.md 3.3 has three
-    # kinds of esc, and this is the third: a question that must be answered, so esc
-    # does nothing. It matches the questions either side of it in this same
-    # sequence -- "Manage this monitor?", the short name, and every input question
-    # -- none of which take esc either, because there is nowhere to go back TO
-    # inside a panel's questions.
+    # Esc leaves the panel's questions entirely and returns to the Monitors list --
+    # $BACK, propagated by Get-DisplayAnswers, which is where the list is.
     #
-    # It was -Escapable for one commit, and esc there resolved to "keep $Current
-    # and carry on". With the cursor already on the current row that is byte for
-    # byte what enter does, so esc read as advancing the walkthrough rather than
-    # leaving it. Reported from a real terminal, and correctly.
-    #
-    # A genuine back-out is NOT the missing feature: returning $null from
-    # Get-DisplayAnswers means "do not manage this monitor" and drops the panel, so
-    # "back" would silently unmanage it -- the opposite of changing nothing.
+    # It shipped once resolving esc to "keep $Current and carry on". With the cursor
+    # already on the current row that is byte for byte what enter does, so esc
+    # appeared to ADVANCE the walkthrough. The fix is not to take esc away: this is
+    # a menu you reached from a list, so "back" is exactly what it should mean.
     $now  = $(if ($Current -eq $d.Method) { 1 } else { 0 })
-    $pick = Select-One -Default $now -Current $now `
+    $pick = Select-One -Default $now -Current $now -Escapable `
                 -Items  @('Standard', ("{0}'s own method" -f $d.What)) `
                 -Detail @('what nearly every monitor takes',
                           ('for {0} models that ignore the standard one' -f $d.What))
+    if ($pick -lt 0) { return $BACK }
     return $(if ($pick -eq 1) { $d.Method } else { 'standard' })
 }
 
@@ -1426,6 +1440,7 @@ function Get-DisplayAnswers {
     # Asked here, BEFORE any input question, because the values on offer depend on
     # the answer. Shown only for a vendor with a documented alternative.
     $method = Read-Method -Vendor $Found.EdidVendor -Current $was
+    if ($method -eq $BACK) { return $BACK }
 
     # A changed method makes every prior value meaningless -- they were addresses on
     # the other channel -- so they stop being defaults rather than being carried
@@ -1440,7 +1455,13 @@ function Get-DisplayAnswers {
         $was   = if ($prior.Contains($m)) { $prior[$m] } else { '' }
         $sub   = if ($m -eq $This) { '(this computer -- the input you would pick to see this screen)' } else { '' }
         $v = Read-InputValue -Table $table -Default $was -Taken $taken -AllowNone:($m -ne $This) `
-                             -Prompt ("On the {0}, which input is '{1}' on?" -f $desc, $m) -Sub $sub
+                             -Prompt ("On the {0}, which input is '{1}' on?" -f $desc, $m) -Sub $sub `
+                             -Escapable
+        # Esc anywhere in a panel's questions abandons the whole panel, not just
+        # this one answer. Half a map is not an answer, and the person asked to
+        # leave -- so nothing here is kept and the Monitors list gets its old row
+        # back untouched.
+        if ($v -eq $BACK) { return $BACK }
         if ($null -ne $v) { $map[$m] = $v; $taken[$v] = $m }
     }
 
@@ -1590,6 +1611,10 @@ function Read-Monitors {
         if (-not $prior) { $prior = Get-PriorDisplay -Existing $Existing -Key $key -Computers $Computers }
 
         $a = Get-DisplayAnswers -Found $f -Existing $prior -Computers $Computers -This $This
+        # $BACK is the only string it can return, and it means CHANGE NOTHING --
+        # so the panel keeps whatever row it already had. $null is the different
+        # answer "do not manage this monitor", which does remove it.
+        if ($a -is [string]) { continue }
         $out = @($out | Where-Object { $_.Key -ne $key })
         if ($a) { $out += $a }
     }

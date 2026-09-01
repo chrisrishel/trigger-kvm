@@ -11,7 +11,7 @@
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'lib.ps1')
 
-Import-Subject -Script 'install.ps1' -Variables @('DIALECTS','MCCS_INPUTS','COMPUTER_NAME_RULE') -Functions @(
+Import-Subject -Script 'install.ps1' -Variables @('DIALECTS','MCCS_INPUTS','COMPUTER_NAME_RULE','BACK') -Functions @(
     'Read-Default','Read-YesNo','Get-MenuWidth','Write-MenuFrame','Clear-ToLineEnd',
     'Split-Detail','Get-ItemWidth','Get-MenuRow',
     'Select-One','Select-Many','Join-Names','Get-InputName',
@@ -343,23 +343,70 @@ Assert-Equal 'lg-alt' (Read-Method -Vendor 0x1E6D -Current 'lg-alt') 'and it sur
 Assert-Match ((Get-Asked) -join '|') 'Choice \[2\]' 'a configured method keeps the cursor'
 Assert-Match (Get-Said) "own method\s+for LG.*\(current\)" 'and is marked, not merely pre-selected'
 
-# ---- esc does NOTHING here: it is a question that must be answered ------------
+# ---- esc leaves a panel's questions, and changes nothing ---------------------
 #
-# specs/configure.md 3.3's third row. Every question either side of this one in
-# the same sequence is the same kind -- "Manage this monitor?", the short name,
-# the input questions -- because inside a panel's questions there is nowhere to go
-# back to.
+# specs/configure.md 3.3's first row: a submenu you entered from somewhere returns
+# there, changing nothing. A panel's questions are entered from the Monitors list.
 #
-# It was -Escapable for one commit. Esc there resolved to "keep the current method
-# and carry on", which with the cursor already sitting on the current row is byte
-# for byte what enter does, so esc appeared to ADVANCE the walkthrough. Reported
-# from a real terminal.
-Reset-Said; Set-Answers @('q', '2')
-Assert-Equal 'lg-alt' (Read-Method -Vendor 0x1E6D -Current 'standard') `
-    'q is refused and the question re-asked, not treated as an answer'
-Assert-Match (Get-Said) 'Pick a number from the list\.' 'and it says so'
-Assert-NoMatch (Get-Said) 'or q to go back' `
-    'the fallback must not offer a way out this question does not have'
+# This shipped twice wrong. First esc resolved to "keep the current method and
+# carry on" -- with the cursor already on the current row that is byte for byte
+# what enter does, so esc appeared to ADVANCE the walkthrough. Then esc was taken
+# away entirely, which left it dead on the one menu people press it on hardest,
+# and would have been inconsistent one keystroke later anyway.
+
+Reset-Said; Set-Answers @('q')
+Assert-Equal 'back' (Read-Method -Vendor 0x1E6D -Current 'lg-alt') `
+    'esc backs out rather than answering'
+
+# Backing out of the METHOD question abandons the whole panel...
+Reset-Said; Set-Answers @('y', 'lg', 'q')
+$a = Get-DisplayAnswers -Found ([PSCustomObject]@{
+        EdidVendor = 0x1E6D; EdidProduct = 0x9E9D; Name = 'LG ULTRAGEAR+'
+        Mfg = 'GSM'; Connector = 'DisplayPort' }) `
+     -Existing $null -Computers @('pc','mac') -This 'pc'
+Assert-Equal 'back' $a 'and it propagates out of the panel, not just the question'
+
+# ...and so does backing out of an INPUT question, one keystroke later. Esc that
+# works on one screen and is dead on the next is worse than either.
+Reset-Said; Set-Answers @('y', 'lg', '1', 'q')
+$a = Get-DisplayAnswers -Found ([PSCustomObject]@{
+        EdidVendor = 0x1E6D; EdidProduct = 0x9E9D; Name = 'LG ULTRAGEAR+'
+        Mfg = 'GSM'; Connector = 'DisplayPort' }) `
+     -Existing $null -Computers @('pc','mac') -This 'pc'
+Assert-Equal 'back' $a 'half a map is not an answer'
+
+# THE ONE THAT MATTERS. "Backed out" and "no, do not manage this monitor" must not
+# be the same outcome: Read-Monitors REMOVES a panel on the second, so if esc
+# resolved to the same thing it would silently unmanage a working monitor -- the
+# exact opposite of "changing nothing".
+Set-Config $CONFIGURED
+Set-Outcomes @()
+Set-Answers @(
+    '2',            # menu -> Monitors
+    '2',            #   the LG, which is configured
+    'y', '', 'q',   #   manage? / label / esc at the method question
+    '4',            #   the monitors list: Done
+    '5','1',        # menu -> Add to PATH?
+    '10'            # Save
+)
+Invoke-Configure
+Assert-Equal 0 $LASTEXITCODE
+$c = Get-Written
+Assert-Equal 'lg-alt' $c['display.lg.method']    'backing out must leave the panel exactly as it was'
+Assert-Equal 'pc'     $c['display.lg.input.0xd0']
+Assert-Equal 'mac'    $c['display.lg.input.0xd1']
+Assert-Equal 'pc'     $c['display.asus.input.0x11'] 'and must not disturb the others'
+
+# Whereas answering "no" still takes it out, which is the outcome esc must not
+# be confused with.
+Set-Config $CONFIGURED
+Set-Outcomes @()
+Set-Answers @('2', '2', 'n', '4', '5','1', '10')
+Invoke-Configure
+Assert-Equal 0 $LASTEXITCODE
+$c = Get-Written
+Assert-True (-not $c.ContainsKey('display.lg.method')) '"no" removes the panel'
+Assert-Equal 'pc' $c['display.asus.input.0x11']       'and only that panel'
 
 # ---- and it lands between the short name and the inputs ----------------------
 

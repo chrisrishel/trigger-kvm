@@ -153,6 +153,16 @@ On the main menu it moves rather than acts, so a setup still cannot be discarded
 a stray keypress: you have to press enter on a row that says
 `Cancel (discard changes)`. In the typed fallback the same thing is `q`.
 
+**A monitor's questions are one submenu, not several.** Esc at any of them — how
+to talk to it, or any input — abandons that panel and returns to the Monitors
+list, leaving it exactly as it was. Half a map is not an answer, so nothing
+part-way through is kept.
+
+That is deliberately *not* the same outcome as answering `Manage this monitor?`
+with **no**, which takes the panel out of the config. Backing out and declining
+are different things, and collapsing them would let a stray esc silently unmanage
+a working monitor.
+
 **The menu is the whole flow.** There is no separate first-run questionnaire: an
 empty install is this same menu with `not set` in it and the cursor already on the
 first thing that needs an answer. Finishing a section comes straight back here, with
