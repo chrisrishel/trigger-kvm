@@ -435,29 +435,73 @@ function Stop-Watchers {
     }
 }
 
-# Remove what a pre-rename install left behind. Stop-Watchers above already kills
-# the old watcher process (its regex matches both watcher names),
+# IS THIS OURS? The rename happened precisely because haimgel/display-switch
+# already owns that name, so "anything called display-switch" is exactly the
+# wrong test: a user who also has that tool -- or a scheduled task they named
+# that themselves -- would lose it on our first run, unasked and unexplained.
+#
+# The marker is our own GENERATED LAUNCHER: a launcher.vbs that starts one of
+# our watchers. Nothing else writes that file, it was written by every install
+# of the old layout, and it costs one read to check.
+function Test-OurLegacyDir {
+    param([string]$Path)
+    $vbs = Join-Path $Path 'launcher.vbs'
+    if (-not (Test-Path -LiteralPath $vbs -PathType Leaf)) { return $false }
+    return ((Get-Content -Raw -LiteralPath $vbs) -match '(usb|event)-watch\.ps1')
+}
+
+# The same question about a task: does its action start one of our watchers, or
+# point into the directory our old install used? Anything else with that name
+# belongs to somebody else.
+function Test-OurLegacyTask {
+    param($Task, [string]$OldDest)
+    $act = @($Task.Actions | ForEach-Object { '{0} {1}' -f $_.Execute, $_.Arguments }) -join ' '
+    if ($act -match '(usb|event)-watch\.ps1') { return $true }
+    if ($act -match 'launcher\.vbs')          { return $true }
+    return ($OldDest -and $act -match [regex]::Escape($OldDest))
+}
+
+# Remove what a pre-rename install left behind -- OURS ONLY. Stop-Watchers above
+# already kills the old watcher process (its regex matches both watcher names),
 # which is what releases the old mutex.
 function Remove-LegacyInstall {
-    if (Get-ScheduledTask -TaskName $OLD_TASK -ErrorAction SilentlyContinue) {
-        Stop-ScheduledTask -TaskName $OLD_TASK -ErrorAction SilentlyContinue
-        try {
-            Unregister-ScheduledTask -TaskName $OLD_TASK -Confirm:$false -ErrorAction Stop
-            Write-Log "removed the pre-rename task '$OLD_TASK'"
-        } catch {
-            # An s4u/system-principal task registered by an admin needs an admin to
-            # remove. Say so rather than leaving a second watcher running unexplained.
-            Write-Log ("WARNING: could not remove the old task '{0}': {1}" -f $OLD_TASK, $_.Exception.Message)
-            Write-Log 'Re-run this elevated, or two watchers may both fire on each arrival.'
+    $ours = $false
+
+    $t = Get-ScheduledTask -TaskName $OLD_TASK -ErrorAction SilentlyContinue
+    if ($t) {
+        if (Test-OurLegacyTask -Task $t -OldDest $OLD_DEST) {
+            $ours = $true
+            Stop-ScheduledTask -TaskName $OLD_TASK -ErrorAction SilentlyContinue
+            try {
+                Unregister-ScheduledTask -TaskName $OLD_TASK -Confirm:$false -ErrorAction Stop
+                Write-Log "removed the pre-rename task '$OLD_TASK'"
+            } catch {
+                # An s4u/system-principal task registered by an admin needs an admin to
+                # remove. Say so rather than leaving a second watcher running unexplained.
+                Write-Log ("WARNING: could not remove the old task '{0}': {1}" -f $OLD_TASK, $_.Exception.Message)
+                Write-Log 'Re-run this elevated, or two watchers may both fire on each arrival.'
+            }
+        } else {
+            Write-Log ("a scheduled task called '{0}' is registered here but is not one of ours; left alone." -f $OLD_TASK)
         }
     }
+
     if (Test-Path -LiteralPath $OLD_DEST) {
-        Remove-Item -LiteralPath $OLD_DEST -Recurse -Force -ErrorAction SilentlyContinue
-        Write-Log "removed the pre-rename program directory $OLD_DEST"
+        if (Test-OurLegacyDir -Path $OLD_DEST) {
+            $ours = $true
+            Remove-Item -LiteralPath $OLD_DEST -Recurse -Force -ErrorAction SilentlyContinue
+            Write-Log "removed the pre-rename program directory $OLD_DEST"
+        } else {
+            Write-Log ("{0} exists but nothing in it was written by this project; left alone." -f $OLD_DEST)
+        }
     }
+
     # The old log is the only record of what happened before the rename, so it is
     # moved rather than deleted -- the same reason uninstall leaves logs alone.
-    if ((Test-Path -LiteralPath $OLD_LOG) -and -not (Test-Path -LiteralPath "$LOG.pre-rename")) {
+    # Only once something identified the old install as ours: a log file has no
+    # marker of its own, and taking somebody else's is the same mistake one step
+    # quieter.
+    if ($ours -and (Test-Path -LiteralPath $OLD_LOG) -and -not (Test-Path -LiteralPath "$LOG.pre-rename")) {
         New-Item -ItemType Directory -Force -Path (Split-Path $LOG) | Out-Null
         Move-Item -LiteralPath $OLD_LOG -Destination "$LOG.pre-rename" -Force -ErrorAction SilentlyContinue
         Write-Log "kept the pre-rename log as $LOG.pre-rename"

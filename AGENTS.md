@@ -276,6 +276,7 @@ trigger-kvm configure -Fresh               # ask everything again, pre-fill noth
 .\trigger-kvm.ps1 pull -Only asus          # one monitor only -- use when testing
 .\trigger-kvm.ps1 pull -WhatIf             # resolve + print packets, send nothing
 cd windows\tests; .\run.ps1                # the suite; no hardware needed
+cd windows\tests; .\mutate.ps1             # reintroduce each bug the suite should catch
 ```
 
 Both suites run without hardware and cannot move a monitor. Add to the suite when
