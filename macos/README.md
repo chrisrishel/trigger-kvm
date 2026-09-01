@@ -82,6 +82,10 @@ is the same menu with the answers in it.
 - Computers are asked **before** the monitors, so a computer is described once
   rather than once per screen, and every panel then offers the same names. A
   rename is carried into every panel's map; the monitors are never re-asked.
+- **Enter never destroys.** A blank answer at a rename keeps the name; removing
+  a computer is its own row, which names the panels it is on and confirms with
+  a default of no; and answering no to "Manage this monitor?" on a panel with
+  inputs configured says what is forgotten and asks again.
 - **Standard** DDC/CI is the default for every panel, whatever the make. Where
   the panel's manufacturer has a documented alternative, that choice is *offered*
   up front — never probed, never chosen for you — and the check offers it again,

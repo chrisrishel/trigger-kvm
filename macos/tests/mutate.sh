@@ -190,6 +190,23 @@ mutate 'walkthrough: Cancel writes the config anyway' lib/walkthrough.sh walkthr
 mutate 'walkthrough: the input map is written under a key nothing reads' lib/walkthrough.sh walkthrough.tests.sh \
   's@input\.%s@inputs.%s@'
 
+# Enter never destroys (specs/configure.md 5.0, 5.3, 6). Each of these turns a
+# confirmation back into the one-keypress loss it replaced.
+mutate 'walkthrough: the rename prompt is not pre-filled, so enter is refused' lib/walkthrough.sh walkthrough.tests.sh \
+  's%wt_read_name "New name for '"'"'$_victim'"'"'" "$_victim"%wt_read_name "New name for '"'"'$_victim'"'"'" ""%'
+mutate 'walkthrough: removing a computer defaults to yes' lib/walkthrough.sh walkthrough.tests.sh \
+  's%read_yesno "  Remove '"'"'$_victim'"'"'?" n%read_yesno "  Remove '"'"'$_victim'"'"'?" y%'
+mutate 'walkthrough: removing a computer leaves its input in every map' lib/walkthrough.sh walkthrough.tests.sh \
+  's%    wt_maps_edit map_del "$_victim"%    :%'
+mutate 'walkthrough: unmanaging a monitor never confirms' lib/walkthrough.sh walkthrough.tests.sh \
+  's%    if \[ "$(map_count "$_prior")" -gt 0 \]; then%    if false; then%'
+mutate 'walkthrough: unmanaging a monitor always confirms, even with nothing to lose' lib/walkthrough.sh walkthrough.tests.sh \
+  's%    if \[ "$(map_count "$_prior")" -gt 0 \]; then%    if true; then%'
+mutate 'walkthrough: stop-managing defaults to yes' lib/walkthrough.sh walkthrough.tests.sh \
+  "s%'  Stop managing this monitor?' n%'  Stop managing this monitor?' y%"
+mutate 'walkthrough: declining to stop managing forgets the inputs anyway' lib/walkthrough.sh walkthrough.tests.sh \
+  's%    \[ "$_row" = "KEEP" \] && continue%    :%'
+
 # --- the checks --------------------------------------------------------------
 
 mutate 'checks: every panel moves at once, keeping none here' lib/checks.sh checks.tests.sh \

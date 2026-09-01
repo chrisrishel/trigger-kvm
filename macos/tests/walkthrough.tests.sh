@@ -44,7 +44,7 @@ FULL='1
 mac
 
 pc
-5
+6
 2
 1
 
@@ -132,7 +132,7 @@ ALT='1
 mac
 
 pc
-5
+6
 2
 1
 
@@ -210,7 +210,7 @@ BOOT='1
 mac
 
 pc
-5
+6
 2
 1
 
@@ -435,5 +435,176 @@ it 'and it is still a live question when the directory is NOT on PATH'
 PATH=$SAVED_PATH configure_with '11'
 assert_match "$WT_OUT" 'Add to PATH?                 not set'
 assert_no_match "$WT_OUT" '   -- Add to PATH?'
+
+# =============================================================================
+# enter never destroys (specs/configure.md 5.0, 5.3, 6)
+# =============================================================================
+
+# Three computers, with the third on one panel only -- so the remove list has
+# two different costs to state, and so a rename and a removal in one sitting
+# shift the list, which is the case that inferring the edits afterwards got
+# wrong. Every scripted run below ends on Save, and asserts that the save
+# happened: a run that dies early leaves the seed in place, and a seed that
+# still holds the name proves nothing about what kept it there.
+seed_three() {
+  cat >"$CFG" <<'EOS'
+computer.this = mac
+display.lg.vendor  = 0x1E6D
+display.lg.product = 0x9E9F
+display.lg.name    = LG ULTRAGEAR+
+display.lg.method  = standard
+display.lg.input.0xD1 = mac
+display.lg.input.0xD0 = pc
+display.lg.input.0xD2 = linux
+display.asus.vendor  = 0x06B3
+display.asus.product = 0x42E0
+display.asus.name    = PG42UQ
+display.asus.method  = standard
+display.asus.input.0x0F = mac
+display.asus.input.0x11 = pc
+trigger.device   = usb:046d:0843, usb:1235:820a
+install.autostart = login
+EOS
+}
+
+it 'a blank answer at the rename prompt KEEPS the name'
+# It used to remove the computer -- the most innocuous keypress there is was
+# the destructive one. The prompt is pre-filled like every other prompt here.
+seed_three
+configure_with '1
+2
+
+7
+10'
+assert_match "$WT_OUT" "New name for 'pc' [pc]"
+assert_match "$WT_OUT" 'wrote'
+c=$(cat "$CFG")
+assert_match "$c" 'display.lg.input.0xd0 = pc'
+assert_match "$c" 'display.asus.input.0x11 = pc'
+assert_match "$c" 'display.lg.input.0xd2 = linux'
+
+it 'removing a computer is a ROW, and it says what each removal costs'
+configure_with '1
+6
+4
+7
+11'
+assert_match "$WT_OUT" '--- remove a computer ---'
+assert_match "$WT_OUT" 'Removing a computer also clears its input on every monitor it is on.'
+assert_match "$WT_OUT" '1) pc                           on lg and asus'
+assert_match "$WT_OUT" '2) linux                        on lg'
+
+it 'and this computer is not on it'
+# Its name is what `pull` resolves; a config without it is one the switcher
+# declines to act on.
+blk=$(printf '%s\n' "$WT_OUT" | sed -n '/--- remove a computer ---/,/Choice/p')
+assert_no_match "$blk" 'mac'
+
+it 'the removal is confirmed, and the default is NO'
+configure_with '1
+6
+1
+
+4
+7
+10'
+assert_match "$WT_OUT" 'Its input on every monitor is cleared too. Nothing else changes.'
+assert_match "$WT_OUT" "Remove 'pc'? [y/N]"
+assert_match "$WT_OUT" 'wrote'
+c=$(cat "$CFG")
+assert_match "$c" 'display.lg.input.0xd0 = pc'
+assert_match "$c" 'display.asus.input.0x11 = pc'
+
+it 'yes removes it, and clears its input on every monitor'
+configure_with '1
+6
+1
+y
+3
+6
+10'
+assert_match "$WT_OUT" 'wrote'
+assert_match "$WT_OUT" 'mac (this), linux'
+c=$(cat "$CFG")
+assert_no_match "$c" '= pc'
+assert_match "$c" 'display.lg.input.0xd1 = mac'
+assert_match "$c" 'display.lg.input.0xd2 = linux'
+assert_match "$c" 'display.asus.input.0x0f = mac'
+
+it 'a rename and a removal in one sitting each land on the right computer'
+# Rename linux to box, THEN remove pc. Lining the old list [pc linux] up
+# against the new one [box] afterwards read that as "pc renamed to box, linux
+# removed" -- the removal shifted every position after it. Edits are applied
+# as they happen instead.
+seed_three
+configure_with '1
+3
+box
+6
+1
+y
+3
+6
+10'
+assert_match "$WT_OUT" 'wrote'
+c=$(cat "$CFG")
+assert_match "$c" 'display.lg.input.0xd2 = box'
+assert_no_match "$c" 'linux'
+assert_no_match "$c" '= pc'
+
+it 'the Remove row is drawn but disabled once there is nobody to remove'
+cat >"$CFG" <<'EOS'
+computer.this = mac
+display.lg.vendor  = 0x1E6D
+display.lg.product = 0x9E9F
+display.lg.input.0xD1 = mac
+trigger.device   = usb:046d:0843
+install.autostart = login
+EOS
+configure_with '1
+5
+11'
+assert_match "$WT_OUT" '   -- Remove a computer'
+assert_match "$WT_OUT" 'cancelled; nothing was changed'
+
+it 'answering no to "Manage this monitor?" confirms when there is something to lose'
+# "Manage" reads like a flag; the answer forgets which computer is on which
+# input. Same rule as removing a computer: say what is discarded, and ask.
+seed_three
+configure_with '2
+1
+n
+
+4
+10'
+assert_match "$WT_OUT" 'Which computer is on which of its inputs is forgotten. Nothing else'
+assert_match "$WT_OUT" 'Stop managing this monitor? [y/N]'
+assert_match "$WT_OUT" 'wrote'
+c=$(cat "$CFG")
+assert_match "$c" 'display.lg.input.0xd0 = pc'
+assert_match "$c" 'display.lg.vendor  = 0x1E6D'
+
+it 'yes stops managing it, and forgets its inputs'
+configure_with '2
+1
+n
+y
+4
+10'
+assert_match "$WT_OUT" 'wrote'
+c=$(cat "$CFG")
+assert_no_match "$c" 'display.lg.'
+assert_match "$c" 'display.asus.input.0x11 = pc'
+
+it 'a panel with nothing to lose is not asked twice'
+# The LG is unmanaged now. Were it asked, "4" would be a refused yes/no answer
+# and the run would hit EOF instead of reaching Cancel.
+configure_with '2
+1
+n
+4
+11'
+assert_no_match "$WT_OUT" 'Stop managing this monitor?'
+assert_match "$WT_OUT" 'cancelled; nothing was changed'
 
 finish

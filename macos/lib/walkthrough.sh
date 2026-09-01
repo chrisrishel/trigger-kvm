@@ -148,12 +148,11 @@ wt_format_name() {
 # not like, so "My Mac" quietly became "mymac" and the person was left wondering
 # where their space went.
 wt_read_name() {
-  local _prompt _default _taken _allowblank _raw _n
-  _prompt=$1 _default=${2:-} _taken=${3:-} _allowblank=${4:-0}
+  local _prompt _default _taken _raw _n
+  _prompt=$1 _default=${2:-} _taken=${3:-}
   while :; do
     _raw=$(menu_read_line "  $_prompt" "$_default") || menu_eof
     if [ -z "$_raw" ]; then
-      [ "$_allowblank" = "1" ] && { printf '\n'; return 0; }
       printf '  A name is needed here.\n' >&2
       continue
     fi
@@ -253,8 +252,8 @@ wt_load_answers() {
 # Asked BEFORE the monitors, so a computer is described once rather than once
 # per screen, and so every panel then offers the same names.
 wt_computers() {
-  local _first_run _me _rest _c _was_this _was_rest _n _a _i _q _addrow _pick
-  local _idx _victim _others _new _next _renames _o _n2 _removed _m _r _g
+  local _first_run _me _rest _c _n _a _i _q _addrow _removerow _donerow _pick
+  local _idx _victim _others _new
   printf '\n--- computers ---\n' >&2
   printf 'These monitors are shared between this computer and some others.\n' >&2
   printf 'Each one gets a name, and the name is how you switch to it:\n' >&2
@@ -268,8 +267,6 @@ wt_computers() {
   for _c in ${WT_COMPUTERS[@]+"${WT_COMPUTERS[@]}"}; do
     [ "$_c" = "$WT_THIS" ] || _rest+=("$_c")
   done
-  _was_this=$WT_THIS
-  _was_rest=("${_rest[@]+${_rest[@]}}")
 
   # Nothing configured yet: ask for a COUNT and then that many names. "One per
   # line, blank line when there are no more" made people guess both how to
@@ -295,7 +292,9 @@ wt_computers() {
   fi
 
   # Then, always, a list to correct. Renaming is the common edit -- a name is
-  # typed once and lived with -- so it is what selecting a row does.
+  # typed once and lived with -- so it is what selecting a row does. Removing
+  # is a ROW, never a blank answer: enter is what people press, so a blank
+  # keeps the name here like at every other prompt (specs/configure.md 5.0).
   while :; do
     menu_reset
     menu_add "$_me" 'this computer'
@@ -303,82 +302,113 @@ wt_computers() {
     menu_sep
     _addrow=${#MENU_ITEMS[@]}
     menu_add 'Add another computer' ''
+    _removerow=${#MENU_ITEMS[@]}
+    menu_add 'Remove a computer' ''
+    [ "${#_rest[@]}" -eq 0 ] && menu_disable "$_removerow"
+    _donerow=${#MENU_ITEMS[@]}
     menu_add 'Done' ''
 
     printf '\n' >&2
-    select_one --default $(( _addrow + 1 )) --escapable \
+    select_one --default "$_donerow" --escapable \
                --help '  Pick a name to change it, or Done.'
     _pick=$MENU_PICK
     [ "$_pick" -lt 0 ] && break
-    [ "$_pick" -eq $(( _addrow + 1 )) ] && break
+    [ "$_pick" -eq "$_donerow" ] && break
 
     if [ "$_pick" -eq "$_addrow" ]; then
       _rest+=("$(wt_read_name 'Name for the new computer' '' "$_me ${_rest[*]+${_rest[*]}}")")
-      continue
-    fi
-
-    if [ "$_pick" -eq 0 ]; then
-      _me=$(wt_read_name 'What should I call THIS computer?' "$_me" "${_rest[*]+${_rest[*]}}")
+    elif [ "$_pick" -eq "$_removerow" ]; then
+      wt_remove_computer ${_rest[@]+"${_rest[@]}"}
+      _rest=("${WT_REMAINING[@]+${WT_REMAINING[@]}}")
+    elif [ "$_pick" -eq 0 ]; then
+      _new=$(wt_read_name 'What should I call THIS computer?' "$_me" "${_rest[*]+${_rest[*]}}")
+      wt_maps_edit map_rename "$_me" "$_new"
+      _me=$_new
     else
       _idx=$(( _pick - 1 ))
       _victim=${_rest[$_idx]}
       _others=''
       for _c in ${_rest[@]+"${_rest[@]}"}; do [ "$_c" = "$_victim" ] || _others="$_others $_c"; done
-      # No default, deliberately: menu_read_line substitutes the default when
-      # the answer is empty, so with one supplied "enter nothing to remove it"
-      # could never happen -- enter just re-entered the same name.
-      _new=$(wt_read_name "New name for '$_victim', or enter nothing to remove it" '' "$_me$_others" 1)
-      _next=()
-      for _c in ${_rest[@]+"${_rest[@]}"}; do
-        if [ "$_c" = "$_victim" ]; then
-          [ -n "$_new" ] && _next+=("$_new")
-        else
-          _next+=("$_c")
-        fi
-      done
-      _rest=("${_next[@]+${_next[@]}}")
+      _new=$(wt_read_name "New name for '$_victim'" "$_victim" "$_me$_others")
+      wt_maps_edit map_rename "$_victim" "$_new"
+      _rest[_idx]=$_new
     fi
-  done
-
-  # WHAT CHANGED, not just what it is now. A rename is a rename: every panel's
-  # map still names the old one, and discarding those maps -- which is what
-  # re-asking about the monitors amounted to -- threw away answers nobody asked
-  # to change.
-  _renames=''
-  _i=0
-  while [ "$_i" -lt "${#_was_rest[@]}" ] && [ "$_i" -lt "${#_rest[@]}" ]; do
-    _o=${_was_rest[$_i]} _n2=${_rest[$_i]}
-    if [ "$_o" != "$_n2" ]; then
-      case " ${_rest[*]} " in *" $_o "*) ;; *) _renames="$_renames $_o=$_n2" ;; esac
-    fi
-    _i=$(( _i + 1 ))
-  done
-  [ -n "$_was_this" ] && [ "$_me" != "$_was_this" ] && _renames="$_renames $_was_this=$_me"
-
-  _removed=''
-  for _o in ${_was_rest[@]+"${_was_rest[@]}"}; do
-    case " ${_rest[*]+${_rest[*]}} " in
-      *" $_o "*) ;;
-      *) case $_renames in *" $_o="*) ;; *) _removed="$_removed $_o" ;; esac ;;
-    esac
   done
 
   WT_THIS=$_me
   WT_COMPUTERS=("$_me" ${_rest[@]+"${_rest[@]}"})
+}
 
-  # Carry renames and removals into every panel rather than making someone
-  # answer the monitors again. Adding a computer leaves the maps alone, and the
-  # Monitors row then shows which panels do not know about it yet.
+# Carry a rename or a removal into every panel's map THE MOMENT IT HAPPENS,
+# rather than making someone answer the monitors again -- re-asking threw away
+# answers nobody asked to change. Adding a computer leaves the maps alone; the
+# Monitors row then shows which panels do not know about it yet.
+#
+# Applied as it happens, not inferred afterwards: lining the old list up
+# against the new one to work out what changed went wrong the moment one
+# sitting held both a rename and a removal, because the removal shifted every
+# position after it and the wrong computer was renamed.
+#
+# An edit that changes a map invalidates a monitor-input pass: the values that
+# passed are no longer the values configured. One that changes nothing -- a
+# rename to the same name, a removal of a computer no panel has -- does not.
+wt_maps_edit() {
+  local _fn _i _was
+  _fn=$1; shift
   _i=0
   while [ "$_i" -lt "${#WT_A_MAP[@]}" ]; do
-    _m=${WT_A_MAP[$_i]}
-    for _r in $_renames; do _m=$(map_rename "$_m" "${_r%%=*}" "${_r#*=}"); done
-    for _g in $_removed; do _m=$(map_del "$_m" "$_g"); done
-    WT_A_MAP[_i]=$_m
+    _was=${WT_A_MAP[$_i]}
+    WT_A_MAP[_i]=$("$_fn" "$_was" "$@")
+    [ "${WT_A_MAP[$_i]}" = "$_was" ] || WT_RAN_DISPLAYS=''
     _i=$(( _i + 1 ))
   done
+}
 
-  if [ -n "$_renames" ] || [ -n "$_removed" ]; then WT_RAN_DISPLAYS=''; fi
+# specs/configure.md 5.3. The other computers, as a list to remove from; the
+# survivors are left in WT_REMAINING once Done or esc is chosen. Not a printed
+# result, because a command substitution is a subshell and the map edits made
+# here would be lost in it. This computer is never offered: its name is what
+# `pull` resolves, and a config without it is one the switcher declines to act
+# on.
+WT_REMAINING=()
+wt_remove_computer() {
+  local _rest _c _i _on _donerow _pick _victim _next
+  _rest=("$@")
+  while [ "${#_rest[@]}" -gt 0 ]; do
+    menu_reset
+    for _c in "${_rest[@]}"; do
+      # Which panels lose an input if this one goes -- said in the value column,
+      # so the cost is visible BEFORE the row is chosen, not only after.
+      _on=$(_i=0
+            while [ "$_i" -lt "${#WT_A_MAP[@]}" ]; do
+              map_has "${WT_A_MAP[$_i]}" "$_c" && printf '%s\n' "${WT_A_LABEL[$_i]}"
+              _i=$(( _i + 1 ))
+            done | tk_join_names)
+      if [ -n "$_on" ]; then menu_add "$_c" "on $_on"
+      else menu_add "$_c" 'not on any monitor'; fi
+    done
+    menu_sep
+    _donerow=${#MENU_ITEMS[@]}
+    menu_add 'Done' ''
+
+    printf '\n--- remove a computer ---\n' >&2
+    printf '  Removing a computer also clears its input on every monitor it is on.\n\n' >&2
+    select_one --default "$_donerow" --escapable
+    _pick=$MENU_PICK
+    [ "$_pick" -lt 0 ] && break
+    [ "$_pick" -eq "$_donerow" ] && break
+
+    _victim=${_rest[$_pick]}
+    printf '\n  Its input on every monitor is cleared too. Nothing else changes.\n' >&2
+    # Defaults to NO. This is the destructive half of the menu, and the whole
+    # reason removal stopped being a blank answer.
+    read_yesno "  Remove '$_victim'?" n || continue
+    wt_maps_edit map_del "$_victim"
+    _next=()
+    for _c in "${_rest[@]}"; do [ "$_c" = "$_victim" ] || _next+=("$_c"); done
+    _rest=("${_next[@]+${_next[@]}}")
+  done
+  WT_REMAINING=("${_rest[@]+${_rest[@]}}")
 }
 
 # A sensible name for this computer, before anyone has said one. The host name
@@ -602,6 +632,17 @@ wt_display_answers() {
   fi
 
   if ! read_yesno '  Manage this monitor?' y; then
+    # "No" is DESTRUCTIVE when there is something to lose: it forgets which
+    # computer is on which input. "Manage" reads like a flag, so the loss is
+    # named and confirmed -- the same rule as removing a computer
+    # (specs/configure.md 5.3), and the symmetry worth having between the two
+    # menus. A panel with nothing configured has nothing to lose and is not
+    # asked twice.
+    if [ "$(map_count "$_prior")" -gt 0 ]; then
+      printf '\n  Which computer is on which of its inputs is forgotten. Nothing else\n' >&2
+      printf '  changes, and nothing is written until you save.\n' >&2
+      read_yesno '  Stop managing this monitor?' n || { printf 'KEEP\n'; return 0; }
+    fi
     printf 'REMOVE\n'
     return 0
   fi
@@ -672,6 +713,8 @@ wt_monitors() {
 
     _before=$(wt_answers_signature)
     _row=$(wt_display_answers "$_pick")
+    # Declining to stop managing it: nothing was answered, so nothing changes.
+    [ "$_row" = "KEEP" ] && continue
     _key=${WT_F_KEY[$_pick]}
     wt_answer_remove "$_key"
     if [ "$_row" != "REMOVE" ]; then wt_answer_add "$_row"; fi
