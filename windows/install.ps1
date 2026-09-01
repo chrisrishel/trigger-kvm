@@ -950,6 +950,17 @@ function Select-One {
         while ($true) {
             $pick = Read-Default '  Choice' ([string]($Default + 1))
             if ($Escapable -and $pick -eq 'q') { return -1 }
+            # The typed analogue of MOVING THE CURSOR -- specs/configure.md 3.3
+            # and 3.5. Esc is offered on the top menu (it moves to Cancel), so
+            # `q` has to mean the same here, or a scripted or redirected-stdin
+            # run cannot express it -- and that run is what each platform's suite
+            # drives `configure` with. It makes the way out the DEFAULT, so the
+            # next bare enter takes it: still two keystrokes, so a setup still
+            # cannot be discarded by one.
+            if ($EscapeTo -ge 0 -and $pick -eq 'q' -and $sel -contains $EscapeTo) {
+                $Default = $EscapeTo
+                continue
+            }
             if ($pick -match '^[0-9]+$' -and $sel -contains ([int]$pick - 1)) { return ([int]$pick - 1) }
             Write-Host $(if ($Escapable) { '  Pick a number from the list, or q to go back.' }
                          else            { '  Pick a number from the list.' })

@@ -270,6 +270,23 @@ Invoke-Mutation 'values: outcome 2 re-asks without the map, so an input can be t
     '                -Default $Answer.Map[$This] -Taken $taken `' `
     '                -Default $Answer.Map[$This] `'
 
+# --- the typed fallback --------------------------------------------------------
+
+Invoke-Mutation 'menus: q is dead on the top menu in the typed fallback' `
+    'install.ps1' 'menus.tests.ps1' `
+    '            if ($EscapeTo -ge 0 -and $pick -eq ''q'' -and $sel -contains $EscapeTo) {
+                $Default = $EscapeTo
+                continue
+            }' ''
+Invoke-Mutation 'menus: q on the top menu chooses Cancel outright' `
+    'install.ps1' 'menus.tests.ps1' `
+    '                $Default = $EscapeTo
+                continue' '                return $EscapeTo'
+Invoke-Mutation 'menus: q moves the cursor onto a disabled row' `
+    'install.ps1' 'menus.tests.ps1' `
+    "            if (`$EscapeTo -ge 0 -and `$pick -eq 'q' -and `$sel -contains `$EscapeTo) {" `
+    "            if (`$EscapeTo -ge 0 -and `$pick -eq 'q') {"
+
 # --- names -------------------------------------------------------------------
 
 Invoke-Mutation 'names: two monitors may share one short name' `

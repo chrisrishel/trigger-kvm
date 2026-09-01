@@ -288,6 +288,44 @@ Set-Keys @('Escape','DownArrow','DownArrow','Enter')
 $got = Select-Many -Items @('a','b') -Detail @('one','two') -Checked @(0)
 Assert-Equal '0' ($got -join ',') 'and is inert there too without the switch'
 
+# ---- the typed fallback: `q` is its esc, wherever esc is offered -------------
+#
+# specs/configure.md 3.5. "`q` is the fallback's esc, and only where esc is
+# offered" -- and esc IS offered on the top menu, where it moves the cursor to
+# Cancel. Without this a scripted or redirected-stdin run had no way to express
+# it, and that run is what each platform's suite drives `configure` with. The
+# README claimed it worked; it printed "Pick a number from the list."
+#
+# Everything above drives the KEY path. From here down, the typed one.
+function Test-CanReadKeys { $false }
+
+Reset-Drawn; Set-Answers @('q')
+Assert-Equal -1 (Select-One -Items @('a','b') -Default 0 -Escapable) 'q is esc in a submenu'
+
+Reset-Drawn; Set-Answers @('q', '')
+Assert-Equal 3 (Select-One -Items @('Computers','Monitors','Save','Cancel') -Default 0 -EscapeTo 3) `
+    'on the top menu it makes Cancel the default, and the next bare enter takes it'
+Assert-NoMatch (Get-Drawn) 'Pick a number from the list' 'so it is an answer, not a refusal'
+
+# AND IT IS STILL NOT ONE KEYPRESS. The enter is a separate answer, and moving
+# off Cancel before pressing it still works -- which is the property that keeps a
+# setup from being discarded by a stray key.
+Reset-Drawn; Set-Answers @('q', '3')
+Assert-Equal 2 (Select-One -Items @('Computers','Monitors','Save','Cancel') -Default 0 -EscapeTo 3) `
+    'q moves the default; it does not choose'
+
+# A question that must be answered has no way out at all, so q is refused there.
+Reset-Drawn; Set-Answers @('q', '1')
+Assert-Equal 0 (Select-One -Items @('a','b') -Default 0)
+Assert-Match (Get-Drawn) 'Pick a number from the list\.' 'q means nothing where esc means nothing'
+
+# ...and it does not move the cursor onto a row the cursor cannot land on.
+Reset-Drawn; Set-Answers @('q', '1')
+Assert-Equal 0 (Select-One -Items @('a','b','c') -Default 0 -EscapeTo 1 -Disabled @(1))
+Assert-Match (Get-Drawn) 'Pick a number from the list\.' 'a disabled way out is no way out'
+
+function Test-CanReadKeys { $true }
+
 # ---- Join-Names --------------------------------------------------------------
 
 Assert-Equal 'LG'                (Join-Names @('LG'))
