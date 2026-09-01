@@ -1305,51 +1305,68 @@ function Get-KnownComputers {
     return $out
 }
 
-# What a computer may be called.
+# What a computer -- OR A MONITOR -- may be called.
 #
-# ONE name, not a slug plus a friendly name. This name is a value in the config, an
-# argument you type (`trigger-kvm to mac`), and a label in every prompt -- a second
-# "display name" field would be a second thing to keep in step for the sake of
-# capital letters. So the one name has to be typeable without quoting, which is what
-# the character rule is for.
+# ONE name, not a slug plus a friendly name. A computer's name is a value in the
+# config, an argument you type (`trigger-kvm to mac`), and a label in every
+# prompt; a second "display name" field would be a second thing to keep in step
+# for the sake of capital letters. So the one name has to be typeable without
+# quoting, which is what the character rule is for.
 #
-# Suggests rather than silently mangles. The old version stripped what it did not
-# like, so "My Mac" quietly became "mymac" and the person was left wondering where
-# their space went.
-function Format-ComputerName {
+# A monitor's short name follows the SAME rule and is asked the same way --
+# specs/configure.md 6, which points at 5.1 rather than restating it. One
+# function for both, because "a name someone types, in the character rule,
+# unique among its peers" is one idea with two nouns; two functions would be two
+# places for the rule to drift.
+function Format-Name {
     param([string]$Raw)
     $n = "$Raw".Trim().ToLower()
-    $n = $n -replace '[\s._]+', '-'          # spaces and dots read as separators
+    $n = $n -replace '[\s._]+', '-'          # spaces, dots and underscores separate
     $n = $n -replace '[^a-z0-9-]', ''        # anything else is simply not usable
     $n = $n -replace '-{2,}', '-'
     return $n.Trim('-')
 }
 
-$COMPUTER_NAME_RULE = 'Lowercase letters, digits and dashes.'
+$NAME_RULE = 'Lowercase letters, digits and dashes.'
 
-function Read-ComputerName {
-    param([string]$Prompt, [string]$Default, [string[]]$Taken = @(), [switch]$AllowBlank)
+# Suggests rather than silently mangling. The old version stripped what it did
+# not like, so "My Mac" quietly became "mymac" and the person was left wondering
+# where their space went.
+#
+# A blank answer KEEPS the default and never removes anything -- specs 5.0.
+# There is no -AllowBlank: it existed for a rename prompt whose blank meant
+# REMOVE, which made the most innocuous keypress available the destructive one,
+# and removal became a row of its own in revision 5.
+function Read-Name {
+    param([string]$Prompt, [string]$Default, [string[]]$Taken = @(),
+          # 'computer' or 'monitor'. It picks the refusal, which is normative
+          # wording in both cases, so the two are written out rather than
+          # composed -- the conformance check looks for each as written.
+          [string]$Noun = 'computer')
 
     while ($true) {
         $raw = Read-Default ('  ' + $Prompt) $Default
         if (-not $raw.Trim()) {
-            if ($AllowBlank) { return '' }
             Write-Host '  A name is needed here.'
             continue
         }
-        $n = Format-ComputerName $raw
+        $n = Format-Name $raw
         if (-not $n) {
-            Write-Host ('  Nothing usable in that. {0}' -f $COMPUTER_NAME_RULE)
+            Write-Host ('  Nothing usable in that. {0}' -f $NAME_RULE)
             continue
         }
         if ($n -ne $raw.Trim().ToLower()) {
             # Say what changed and let them accept or retype, rather than quietly
             # substituting a name they never chose.
-            Write-Host ('  Names are what you type at a prompt, so: {0}' -f $COMPUTER_NAME_RULE)
+            Write-Host ('  Names are what you type at a prompt, so: {0}' -f $NAME_RULE)
             if (-not (Read-YesNo ("  Use '{0}'?" -f $n) $true)) { $Default = $n; continue }
         }
         if ($Taken -contains $n) {
-            Write-Host ('  There is already a computer called {0}.' -f $n)
+            # Two panels with one label would be WRITTEN as one panel and read
+            # back as a merge of both, and the switcher would then refuse without
+            # saying why. Two computers with one name is the same shape.
+            if ($Noun -eq 'monitor') { Write-Host ('  There is already a monitor called {0}.' -f $n) }
+            else                     { Write-Host ('  There is already a computer called {0}.' -f $n) }
             continue
         }
         return $n
@@ -1472,7 +1489,7 @@ function Read-Computers {
     # finish and whether a blank meant cancel.
     if (-not $Existing) {
         $was = $me
-        $me  = Read-ComputerName -Prompt 'What should I call THIS computer?' -Default $This
+        $me  = Read-Name -Prompt 'What should I call THIS computer?' -Default $This
         if ($was -and $me -ne $was) { Edit-PanelMaps -Panels $Panels -Was $was -Now $me; $edits = $true }
 
         $n = -1
@@ -1486,7 +1503,7 @@ function Read-Computers {
         $rest = @()
         for ($i = 1; $i -le $n; $i++) {
             $d = ''      # only suggest a leftover name when it is still free
-            $rest += Read-ComputerName -Taken (@($me) + $rest) -Default $d `
+            $rest += Read-Name -Taken (@($me) + $rest) -Default $d `
                         -Prompt $(if ($n -eq 1) { 'What is the other one called?' }
                                   else { "Name for computer $i of ${n}:" })
         }
@@ -1509,7 +1526,7 @@ function Read-Computers {
         if ($pick -eq $add + 2 -or $pick -lt 0) { break }
 
         if ($pick -eq $add) {
-            $rest += Read-ComputerName -Prompt 'Name for the new computer' -Default '' `
+            $rest += Read-Name -Prompt 'Name for the new computer' -Default '' `
                                        -Taken (@($me) + $rest)
             continue
         }
@@ -1523,7 +1540,7 @@ function Read-Computers {
 
         if ($pick -eq 0) {
             $was = $me
-            $me  = Read-ComputerName -Prompt 'What should I call THIS computer?' `
+            $me  = Read-Name -Prompt 'What should I call THIS computer?' `
                                      -Default $me -Taken $rest
             if ($me -ne $was) { Edit-PanelMaps -Panels $Panels -Was $was -Now $me; $edits = $true }
         } else {
@@ -1533,7 +1550,7 @@ function Read-Computers {
             # Read-ComputerRemovals for where removal went and why.
             $i   = $pick - 1
             $was = $rest[$i]
-            $rest[$i] = Read-ComputerName -Prompt ("Name for computer '{0}'" -f $was) `
+            $rest[$i] = Read-Name -Prompt ("Name for computer '{0}'" -f $was) `
                             -Default $was `
                             -Taken (@($me) + @($rest | Where-Object { $_ -ne $was }))
             if ($rest[$i] -ne $was) {
@@ -1774,7 +1791,11 @@ function Get-DisplayAnswers {
     # $Existing is a PSCustomObject or $null -- deliberately untyped, because a
     # [hashtable] annotation here silently accepted the call at parse time and threw
     # a transformation error at RUN time, i.e. mid-walkthrough.
-    param($Found, $Existing, [string[]]$Computers, [string]$This)
+    param($Found, $Existing, [string[]]$Computers, [string]$This,
+          # The short names the OTHER managed panels already have. Two panels
+          # with one label would be written as one and read back as a merge of
+          # both -- specs/configure.md 6.
+          [string[]]$Labels = @())
 
     $key  = '{0:X4}:{1:X4}' -f $Found.EdidVendor, $Found.EdidProduct
     # The panel's own name, out of its EDID. No table to be absent from.
@@ -1783,7 +1804,10 @@ function Get-DisplayAnswers {
     Write-Host ''
     Write-Host ('  {0}   EDID {1}   {2}' -f $desc, $key, $Found.Connector)
 
-    $defaultLabel = if ($Existing) { $Existing.Label } else { ($desc -split ' ')[0].ToLower() }
+    # Through the character rule, like every other name here: the first word of
+    # the panel's own EDID name, else its manufacturer.
+    $defaultLabel = if ($Existing) { $Existing.Label } else { Format-Name (($desc -split ' ')[0]) }
+    if (-not $defaultLabel) { $defaultLabel = Format-Name $Found.Mfg }
     if (-not (Read-YesNo '  Manage this monitor?' $true)) {
         # "No" is DESTRUCTIVE when there is something to lose: it forgets which
         # computer is on which input. "Manage" reads like a flag, so the loss is
@@ -1801,9 +1825,13 @@ function Get-DisplayAnswers {
         return $BACK
     }
 
-    $label = Read-Default '  Short name for it' $defaultLabel
-    $label = ($label -replace '[^A-Za-z0-9_-]', '').ToLower()
-    if (-not $label) { $label = $defaultLabel }
+    # The same rule, prompt and duplicate check as a computer name --
+    # specs/configure.md 6, which points at 5.1 rather than restating it.
+    # Suggested and asked, never silently mangled: it used to strip to
+    # [^A-Za-z0-9_-] behind the person's back, which also kept underscores the
+    # rule turns into dashes.
+    $label = Read-Name -Prompt 'Short name for it' -Default $defaultLabel `
+                       -Taken $Labels -Noun 'monitor'
 
     # An existing method is a settled answer -- it was proven by someone watching the
     # screen. Do not quietly walk it back to standard on a re-run.
@@ -2034,7 +2062,11 @@ function Read-Monitors {
         $prior = $was
         if (-not $prior) { $prior = Get-PriorDisplay -Existing $Existing -Key $key -Computers $Computers }
 
-        $a = Get-DisplayAnswers -Found $f -Existing $prior -Computers $Computers -This $This
+        # Every OTHER managed panel's short name, so this one cannot take a name
+        # already in use. This panel's own is excluded: keeping it is not a clash.
+        $others = @($out | Where-Object { $_.Key -ne $key } | ForEach-Object { $_.Label })
+        $a = Get-DisplayAnswers -Found $f -Existing $prior -Computers $Computers -This $This `
+                                -Labels $others
         # $BACK is the only string it can return, and it means CHANGE NOTHING --
         # so the panel keeps whatever row it already had. $null is the different
         # answer "do not manage this monitor", which does remove it.

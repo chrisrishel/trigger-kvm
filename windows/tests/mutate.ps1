@@ -270,6 +270,31 @@ Invoke-Mutation 'values: outcome 2 re-asks without the map, so an input can be t
     '                -Default $Answer.Map[$This] -Taken $taken `' `
     '                -Default $Answer.Map[$This] `'
 
+# --- names -------------------------------------------------------------------
+
+Invoke-Mutation 'names: two monitors may share one short name' `
+    'install.ps1' 'walkthrough.tests.ps1' `
+    "                       -Taken `$Labels -Noun 'monitor'" `
+    "                       -Noun 'monitor'"
+Invoke-Mutation 'names: a panel clashes with its own short name' `
+    'install.ps1' 'walkthrough.tests.ps1' `
+    '        $others = @($out | Where-Object { $_.Key -ne $key } | ForEach-Object { $_.Label })' `
+    '        $others = @($out | ForEach-Object { $_.Label })'
+Invoke-Mutation 'names: the short name is mangled instead of asked about' `
+    'install.ps1' 'walkthrough.tests.ps1' `
+    "    `$label = Read-Name -Prompt 'Short name for it' -Default `$defaultLabel ``
+                       -Taken `$Labels -Noun 'monitor'" `
+    "    `$label = Read-Default '  Short name for it' `$defaultLabel
+    `$label = (`$label -replace '[^A-Za-z0-9_-]', '').ToLower()
+    if (-not `$label) { `$label = `$defaultLabel }"
+Invoke-Mutation 'names: a duplicate is accepted rather than refused' `
+    'install.ps1' 'walkthrough.tests.ps1' `
+    '        if ($Taken -contains $n) {' '        if ($false) {'
+Invoke-Mutation 'names: an underscore survives the character rule' `
+    'install.ps1' 'walkthrough.tests.ps1' `
+    "    `$n = `$n -replace '[\s._]+', '-'          # spaces, dots and underscores separate" `
+    "    `$n = `$n -replace '[\s.]+', '-'"
+
 # --- the trigger check stands the watcher down --------------------------------
 
 Invoke-Mutation 'trigger check: the live watcher fires alongside the one-shot' `

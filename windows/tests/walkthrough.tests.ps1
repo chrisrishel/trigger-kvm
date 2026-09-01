@@ -11,12 +11,12 @@
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'lib.ps1')
 
-Import-Subject -Script 'install.ps1' -Variables @('DIALECTS','MCCS_INPUTS','COMPUTER_NAME_RULE','BACK') -Functions @(
+Import-Subject -Script 'install.ps1' -Variables @('DIALECTS','MCCS_INPUTS','NAME_RULE','BACK') -Functions @(
     'Read-Default','Read-YesNo','Get-MenuWidth','Write-MenuFrame','Clear-ToLineEnd',
     'Split-Detail','Get-ItemWidth','Get-MenuRow',
     'Select-One','Select-Many','Join-Names','Get-InputName',
     'Get-DefaultComputerName','Get-KnownComputers','Read-Computers','Read-ComputerRemovals',
-    'Edit-PanelMaps','Format-ComputerName','Read-ComputerName',
+    'Edit-PanelMaps','Format-Name','Read-Name',
     'Format-Byte','Read-InputValue','Get-InputTable','Get-DisplayMap','Read-Method',
     'Get-DisplayAnswers','Get-ConfiguredAnswers','Get-PriorDisplay','Read-Monitors',
     'Invoke-DisplayTest','Invoke-TestRound','Invoke-TestRoundBody','Test-OneComputer',
@@ -559,6 +559,50 @@ $c = Get-Written
 Assert-Equal 'pc'  $c['display.pg42uq.input.0x11']
 Assert-Equal 'mac' $c['display.pg42uq.input.0x0f'] 'the second computer had to move to a free input'
 
+# ---- two monitors cannot share one short name --------------------------------
+#
+# specs/configure.md 6, revision 6 item 3. Two Dell panels both default to
+# `dell`; accepting both writes display.dell.* twice, and the reader merges them
+# into one panel with a union map -- which the switcher then refuses to act on,
+# without saying why. Refused here, where the person can still say what they
+# meant.
+$script:panels = @('06B3|42E0|AUS|HDMI|01010101|Dell U2720Q',
+                   '10AC|A0B1|DEL|DisplayPort|02020202|Dell U2723QE')
+Set-Config $null
+Set-Outcomes @()
+Reset-Printed
+Set-Answers @(
+    '1','pc','1','mac','6',
+    '2','1',            # Monitors -> the first Dell
+    'y','',             #   manage / keep the suggested short name `dell`
+    '3','1',            #   pc on HDMI 1, mac on DisplayPort 1
+    '2',                # Monitors -> the second Dell
+    'y',                #   manage
+    '',                 #   ...which also suggests `dell`, and is refused
+    'dell-2',           #   so a different one is typed
+    '3','1',
+    '4',                # Monitors -> Done
+    '3','1,3', '4','1', '5','1',
+    '10'
+)
+Invoke-Configure
+Assert-Equal 0 $LASTEXITCODE
+Assert-Match (Get-Printed) 'There is already a monitor called dell\.'
+$c = Get-Written
+Assert-Equal 'pc' $c['display.dell.input.0x11']
+Assert-Equal 'pc' $c['display.dell-2.input.0x11'] 'the second panel is its own panel, not a merge'
+
+# Re-opening a panel is not a clash with ITSELF: keeping the name it has must be
+# allowed, or a re-run could never leave a monitor alone.
+Set-Outcomes @()
+Set-Answers @('2', '1', 'y', '', '3', '1', '4', '5','1', '10')
+Invoke-Configure
+Assert-Equal 0 $LASTEXITCODE 'a panel may keep its own short name'
+Assert-Equal 'pc' (Get-Written)['display.dell.input.0x11']
+
+$script:panels = @('06B3|42E0|AUS|HDMI|01010101|PG42UQ',
+                   '1E6D|9E9D|GSM|DisplayPort|00001111|LG ULTRAGEAR+')
+
 # ---- the walkthrough and the switcher agree about what a value is ------------
 #
 # specs/config-format.md "Value parsing", specs/configure.md 6.1. The walkthrough
@@ -680,33 +724,48 @@ Set-Answers @('7','1','','y','','y', '8', '5','1', '10')   # monitors, then trig
 Invoke-Configure
 Assert-Equal $true $script:triggerPulled 'once they are proven, the flip back is the real thing'
 
-# ---- what a computer may be called -------------------------------------------
+# ---- what a computer, OR A MONITOR, may be called ----------------------------
 
 # One name, not a slug plus a display name: it is a config value, a thing you type
 # at a prompt, and a label in every message. The rule exists so it survives all three.
-Assert-Equal 'mac'         (Format-ComputerName 'Mac')
-Assert-Equal 'my-mac'      (Format-ComputerName 'My Mac')        'spaces read as separators'
-Assert-Equal 'my-mac'      (Format-ComputerName 'my.mac')        'so do dots'
-Assert-Equal 'work-laptop' (Format-ComputerName 'work_laptop')
-Assert-Equal 'mac'         (Format-ComputerName '  Mac!  ')      'unusable characters go'
-Assert-Equal 'a-b'         (Format-ComputerName 'a---b')         'runs collapse'
-Assert-Equal 'mac'         (Format-ComputerName '-mac-')         'and it never starts or ends with a dash'
-Assert-Equal ''            (Format-ComputerName '!!!')           'nothing usable is nothing, not a guess'
+# specs/configure.md 6 gives a monitor's short name the SAME rule, by pointing at
+# 5.1 rather than restating it -- so there is one function, with two nouns.
+Assert-Equal 'mac'         (Format-Name 'Mac')
+Assert-Equal 'my-mac'      (Format-Name 'My Mac')        'spaces read as separators'
+Assert-Equal 'my-mac'      (Format-Name 'my.mac')        'so do dots'
+Assert-Equal 'work-laptop' (Format-Name 'work_laptop')
+Assert-Equal 'mac'         (Format-Name '  Mac!  ')      'unusable characters go'
+Assert-Equal 'a-b'         (Format-Name 'a---b')         'runs collapse'
+Assert-Equal 'mac'         (Format-Name '-mac-')         'and it never starts or ends with a dash'
+Assert-Equal ''            (Format-Name '!!!')           'nothing usable is nothing, not a guess'
 
 # It SUGGESTS rather than silently mangling: the old version stripped what it did not
 # like, so "My Mac" quietly became "mymac" and left someone hunting for their space.
 Set-Answers @('My Mac', 'y')
-Assert-Equal 'my-mac' (Read-ComputerName -Prompt 'name?' -Default '')
+Assert-Equal 'my-mac' (Read-Name -Prompt 'name?' -Default '')
 Assert-Match ((Get-Asked) -join '|') "Use 'my-mac'" 'the change has to be offered, not applied behind their back'
 
 Set-Answers @('My Mac', 'n', 'mac')     # decline the suggestion, type another
-Assert-Equal 'mac' (Read-ComputerName -Prompt 'name?' -Default '')
+Assert-Equal 'mac' (Read-Name -Prompt 'name?' -Default '')
 
-Set-Answers @('mac', 'pc')
-Assert-Equal 'pc' (Read-ComputerName -Prompt 'name?' -Default '' -Taken @('mac')) 'a name in use is refused'
+Reset-Printed; Set-Answers @('mac', 'pc')
+Assert-Equal 'pc' (Read-Name -Prompt 'name?' -Default '' -Taken @('mac')) 'a name in use is refused'
+Assert-Match (Get-Printed) 'There is already a computer called mac\.'
 
+# The same function, the same rule, a different noun -- and a different refusal,
+# because both are normative wording.
+Reset-Printed; Set-Answers @('lg', 'asus')
+Assert-Equal 'asus' (Read-Name -Prompt 'Short name for it' -Default '' -Taken @('lg') -Noun 'monitor')
+Assert-Match   (Get-Printed) 'There is already a monitor called lg\.'
+Assert-NoMatch (Get-Printed) 'already a computer' 'a monitor is not told it clashes with a computer'
+
+# A BLANK ANSWER KEEPS THE DEFAULT, here as everywhere -- specs 5.0. There is no
+# -AllowBlank any more: it existed for a rename prompt whose blank meant REMOVE,
+# which revision 5 replaced with a row of its own.
 Set-Answers @('')
-Assert-Equal '' (Read-ComputerName -Prompt 'name?' -Default '' -AllowBlank) 'blank removes, where blank is allowed'
+Assert-Equal 'mac' (Read-Name -Prompt 'name?' -Default 'mac') 'enter keeps what is there'
+Assert-True (-not (Get-Command Read-Name).Parameters.ContainsKey('AllowBlank')) `
+    'and the parameter that used to make blank destructive is gone'
 
 # ---- the computers list carries every edit into the panels' maps -------------
 
