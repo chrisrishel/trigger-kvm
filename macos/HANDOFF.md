@@ -67,23 +67,41 @@ Owed:     a measurement, recorded in docs/measurements.md under a new "Intel
           1. On the MacBook: clone, `cd macos && make intel-ddc-probe`, run it
              with nothing attached. Record the arch line, the CoreGraphics
              list (the built-in panel) and the IOFramebuffer count.
-          2. Attach it to a FREE input on one monitor -- the LG's HDMI or the
-             ASUS's HDMI 2 -- with the most direct cable available first
-             (USB-C to DisplayPort, or USB-C to HDMI). Run again. Record: does
-             a framebuffer appear for it, does IODisplayCreateInfoDictionary
-             carry the EDID (vendor/product/name must match what `trigger-kvm
-             list` prints for that panel on the Mac Studio, apart from the
-             LG's per-input product id), how many I2C buses and which
-             transaction types (DDCci reply support matters).
+             The MacBook is a 2019 model with four USB-C/Thunderbolt 3 ports
+             and no HDMI. Record WHICH 2019 model: the 13" drives external
+             displays from the Intel GPU, the 15"/16" from an AMD Radeon Pro,
+             and they are different framebuffer drivers (the probe prints the
+             class). Both monitors' DisplayPort inputs are taken (the LG's by
+             the PC, the ASUS's by the Mac Studio); the free inputs are HDMI
+             on both. So there are two readings, and they answer different
+             questions -- take them in this order:
+          2. THE ROUTE: a USB-C to DisplayPort cable, direct. DP Alt Mode is
+             plain DisplayPort and the DDC channel rides along natively, so
+             this is the cleanest test of whether the framebuffer I2C route
+             works on this Mac at all. It needs a DP input: unplug the PC's DP
+             cable from the LG and plug the MacBook's in for the duration (the
+             Mac Studio keeps both monitors on its own inputs throughout, so
+             hard rule 4 holds; the PC loses the LG until the cable goes
+             back). Run the probe. Record: does a framebuffer appear, does
+             IODisplayCreateInfoDictionary carry the EDID (vendor/product/
+             name must match what `trigger-kvm list` prints on the Mac Studio
+             apart from the LG's per-input product id -- note the product id
+             this input reports, it will be a fourth value), how many I2C
+             buses, which transaction types (DDCci reply support matters).
           3. `./intel-ddc-probe --i2c-read`. Record the IOI2CSendRequest
              return, result, and the raw reply. A well-formed reply is
              evidence the I2C path reaches the panel; a non-answer is a
              measurement too (hard rule 2: these panels lie on reads -- the
              PG42UQ answers 0 to everything -- so an odd value is not a
-             failure). Do this for BOTH panels if both have a free input.
-          4. Repeat 2-3 through whatever adapter or hub would actually be used
-             day to day. Adapters are where Intel-Mac DDC most often fails;
-             that is the reading that decides whether this is worth building.
+             failure). Then put the PC's DP cable back.
+          4. THE ADAPTER: Apple's USB-C to HDMI adapter onto a FREE HDMI input
+             -- the LG's HDMI 1 or the ASUS's HDMI 2, and both if time allows.
+             This is how an Intel Mac would actually live on this desk, and
+             Apple's adapter has a DP-to-HDMI protocol converter inside;
+             whether it passes DDC/CI is the unknown that decides whether an
+             Intel transport is worth building. Repeat 2-3. If the route
+             worked in step 2 and not here, the finding is "adapter", and it
+             is worth naming the adapter model in the measurement.
           5. Also `make test` on the MacBook: the suite has never run on an
              Intel Mac. Report what passes and what does not (the installer's
              arch preflight refusing is expected and correct).
