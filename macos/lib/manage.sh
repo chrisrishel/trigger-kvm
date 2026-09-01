@@ -405,7 +405,9 @@ cmd_status() {
   # `|| true`: pgrep exits 1 when nothing matches, and under `set -euo pipefail`
   # that made `status` stop dead at this line on a machine with no watcher --
   # which is exactly the machine someone runs `status` on.
-  _n=$(pgrep -f 'event-watch --exec' 2>/dev/null | wc -l | tr -d ' ' || true)
+  # Counts the pre-rename watcher too: one was found still running beside the
+  # real one, firing on every flip, a day after the rename.
+  _n=$(pgrep -f 'usb-watch --exec|event-watch --exec' 2>/dev/null | wc -l | tr -d ' ' || true)
   [ -n "$_n" ] || _n=0
   if [ "$_n" = "1" ]; then _note=''; else _note='  <- expected exactly 1'; fi
   printf 'watchers : %s%s\n' "$_n" "$_note"

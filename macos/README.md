@@ -42,7 +42,9 @@ That is what installing *is*, and it is why there is no `install` verb: installi
 is what produces the command. Upgrading and repairing both mean "fetch the source
 and run its installer", which works because the install is self-contained — the
 installer copies itself alongside the program, so managing and removing keep
-working after the source tree is gone.
+working after the source tree is gone. An install from before this project was
+renamed (`display-switch`, `usb-watch`) is removed on the way, so two watchers
+can never fire on one flip.
 
 ```sh
 ./install.sh uninstall        # remove the program; keep the config and the log

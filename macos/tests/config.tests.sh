@@ -29,6 +29,21 @@ it 'cuts the value at the first #'
 cfg 'display.lg.input.0xD1 = mac        # USB-C'
 assert_equal 'mac' "$(config_get 'display.lg.input.0xd1')"
 
+it 'reads a CRLF file as if it were LF -- the spec trims \s, which includes CR'
+# The CR rode on every value: `lg-alt<CR>` was an unknown method, the vendor did
+# not parse, and every switch refused with a message that looked fine. Windows
+# reads the same file without the CR, so this was a silent cross-platform
+# disagreement about a hand-edited config.
+printf 'display.lg.method = lg-alt\r\ndisplay.lg.vendor = 0x1E6D\r\n' >"$FAKE_DIR/c"
+config_load "$FAKE_DIR/c"
+assert_equal 'lg-alt' "$(config_get 'display.lg.method')"
+assert_equal '0x1E6D' "$(config_get 'display.lg.vendor')"
+
+it 'ignores a UTF-8 byte-order mark, which otherwise hides the first key'
+printf '\357\273\277computer.this = mac\n' >"$FAKE_DIR/c"
+config_load "$FAKE_DIR/c"
+assert_equal 'mac' "$(config_get 'computer.this')"
+
 it 'cuts at a # with no space before it'
 cfg 'a = b#c'
 assert_equal 'b' "$(config_get 'a')"

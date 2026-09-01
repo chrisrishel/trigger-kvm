@@ -128,6 +128,24 @@ assert_match "$INST_OUT" 'before anyone logs in'
 it 'and the boot tier leaves no LaunchAgent behind'
 assert_true "$([ ! -f "$TK_PLIST" ] && echo 0 || echo 1)" 'a launchd label is per domain; the agent must go'
 
+it 'removes an install from before the rename, so two watchers cannot both fire'
+# The old LaunchAgent (com.chrisrishel.displayswitch) ran a watcher called
+# usb-watch. Nothing removed it, and one was found a day after the rename still
+# firing its own switcher on every flip beside the new one.
+mkdir -p "$HOME/Library/LaunchAgents" "$HOME/.local/bin"
+: >"$HOME/Library/LaunchAgents/com.chrisrishel.displayswitch.plist"
+: >"$HOME/.local/bin/usb-watch"
+: >"$HOME/.local/bin/switch-displays.sh"
+: >"$TK_FAKE_LAUNCHCTL"
+run_install
+assert_equal 0 "$INST_RC" "$INST_OUT"
+assert_match "$(cat "$TK_FAKE_LAUNCHCTL")" 'bootout gui/'
+assert_match "$(cat "$TK_FAKE_LAUNCHCTL")" 'com.chrisrishel.displayswitch'
+assert_true "$([ ! -e "$HOME/Library/LaunchAgents/com.chrisrishel.displayswitch.plist" ] && echo 0 || echo 1)" 'old plist removed'
+assert_true "$([ ! -e "$HOME/.local/bin/usb-watch" ] && echo 0 || echo 1)" 'old watcher removed'
+assert_true "$([ ! -e "$HOME/.local/bin/switch-displays.sh" ] && echo 0 || echo 1)" 'old switcher removed'
+assert_match "$INST_OUT" 'removed the pre-rename'
+
 it 'uninstall removes the program, the launcher and both tiers, and keeps the config and log'
 : >"$TK_FAKE_LAUNCHCTL"
 PATH="$FAKE_DIR/bin:$PATH" run_install uninstall

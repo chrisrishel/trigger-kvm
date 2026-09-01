@@ -52,11 +52,17 @@ chmod +x "$FAKE_DIR/many-demo.sh"
 
 # Run a script on a pty, type the given bytes at it, return everything it wrote.
 cat >"$FAKE_DIR/ptydrive.py" <<'EOS'
-import os, pty, sys, time, select
+import os, pty, sys, time, select, signal
 script, keys = sys.argv[1], sys.argv[2]
 pid, fd = pty.fork()
 if pid == 0:
     os.environ["COLUMNS"] = "100"
+    # run.sh starts each test file as a background job of a non-interactive
+    # shell, which leaves SIGINT ignored -- and an ignored-at-entry signal stays
+    # ignored through exec and cannot be trapped by a script. The Ctrl-C case
+    # needs a real interrupt, so the child gets the default dispositions back.
+    signal.signal(signal.SIGINT, signal.SIG_DFL)
+    signal.signal(signal.SIGTERM, signal.SIG_DFL)
     os.execv("/bin/bash", ["/bin/bash", script])
 out = b""
 # Give the menu a moment to draw before typing, then send each key with a gap so
@@ -65,7 +71,7 @@ out = b""
 time.sleep(0.4)
 for k in keys.split(","):
     b = {"UP": b"\x1b[A", "DOWN": b"\x1b[B", "ENTER": b"\r",
-         "ESC": b"\x1b", "SPACE": b" ", "Q": b"q"}[k]
+         "ESC": b"\x1b", "SPACE": b" ", "Q": b"q", "INT": b"\x03"}[k]
     os.write(fd, b)
     time.sleep(0.25)
     while select.select([fd], [], [], 0)[0]:
@@ -233,6 +239,27 @@ chmod +x "$FAKE_DIR/restore-demo.sh"
 out=$(pty_run "$FAKE_DIR/restore-demo.sh" ENTER)
 assert_match "$out" 'AFTER=icanon' "the terminal must be canonical again: $out"
 assert_match "$out" 'ECHO=echo'    "echo must be back on: $out"
+
+it 'gives the terminal back on Ctrl-C too'
+# Ctrl-C arrives while the reader is blocked in dd, so the normal restore never
+# runs. Measured before the guard existed: the child died with 130 and left the
+# pty at -icanon -echo. The menu runs as a foreground job of its own process
+# group (set -m), so the pty's Ctrl-C reaches it and not the script that then
+# reads the terminal state back.
+cat >"$FAKE_DIR/ctrlc-demo.sh" <<EOS
+#!/bin/bash
+set -m
+/bin/bash -c '. "$MAC_DIR/lib/common.sh"; . "$MAC_DIR/lib/menu.sh"; menu_reset; menu_add alpha ""; menu_add beta ""; select_one --default 0' >/dev/null 2>&1
+rc=\$?
+after=\$(stty -a </dev/tty | grep -o '\-\?icanon')
+echoback=\$(stty -a </dev/tty | grep -o '\-\?echo ' | head -1)
+printf 'INT RC=%s AFTER=%s ECHO=%s\n' "\$rc" "\$after" "\$echoback"
+EOS
+chmod +x "$FAKE_DIR/ctrlc-demo.sh"
+out=$(pty_run "$FAKE_DIR/ctrlc-demo.sh" INT)
+assert_match "$out" 'INT RC=130'   "the menu must die of the interrupt, not swallow it: $out"
+assert_match "$out" 'AFTER=icanon' "the terminal must be canonical again after Ctrl-C: $out"
+assert_match "$out" 'ECHO=echo'    "echo must be back on after Ctrl-C: $out"
 
 it 'reads Enter on a terminal that does NOT translate carriage return'
 # ICRNL is on by default, so Enter arrives as 10 and the 13 branch is never

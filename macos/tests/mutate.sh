@@ -317,6 +317,13 @@ mutate 'tier: autostart read with a comment-blind, case-sensitive sed' lib/manag
 mutate 'walkthrough: configure ends without saying what to do next' trigger-kvm walkthrough.tests.sh \
   's|tk_apply_tier "\$CONFIG"; tk_say_done; exit 0|tk_apply_tier "$CONFIG"; exit 0|'
 
+mutate 'install: a pre-rename install is left running' install.sh install.tests.sh \
+  's|^remove_prerename_install$|:|'
+mutate 'config: the CR of a CRLF file rides on every value' lib/config.sh config.tests.sh \
+  's|      sub(/\\r\$/, "", line)|      # mutated|'
+mutate 'menu: Ctrl-C leaves the terminal in raw mode' lib/menu.sh keys.tests.sh \
+  "s|  trap 'menu_tty_restore; exit 130' INT TERM|  :|"
+
 # --- the installer's preflight -----------------------------------------------
 
 mutate 'install: a preflight failure does not stop the install' install.sh install.tests.sh \

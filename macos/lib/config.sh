@@ -47,6 +47,12 @@ config_normalize() {
   awk '
     {
       line = $0
+      # The spec regex trims \s, which includes the CR of a CRLF file; awk does
+      # not. Left in, the CR rode on every value: `lg-alt<CR>` was an unknown
+      # method, the vendor did not parse, and every switch refused with a
+      # message that looked fine. A BOM on the first line hid the first key.
+      sub(/\r$/, "", line)
+      if (NR == 1 && substr(line, 1, 3) == "\357\273\277") line = substr(line, 4)
       sub(/#.*$/, "", line)
       if (line !~ /^[ \t]*[A-Za-z0-9_.-]+[ \t]*=/) next
       eq  = index(line, "=")

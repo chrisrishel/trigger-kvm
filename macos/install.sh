@@ -66,6 +66,25 @@ DOMAIN="gui/$(id -u)"
 # files, uninstall would delete inside root's home. See tk_refuse_root.
 tk_refuse_root || exit 2
 
+# --- the pre-rename install --------------------------------------------------
+#
+# This was called display-switch until 2026-08-30. An install from before the
+# rename left a LaunchAgent under the old label running a watcher called
+# usb-watch, and nothing removed it -- so it kept firing its own switcher on
+# every flip beside the new one (two watchers, the condition AGENTS.md forbids),
+# and after its switcher was deleted it kept failing to spawn it. Removed on
+# install and on uninstall; the old log is left, as logs are. Delete this block
+# once no machine can plausibly still have one.
+OLD_LABEL="com.chrisrishel.displayswitch"
+remove_prerename_install() {
+  "$TK_LAUNCHCTL" bootout "$DOMAIN/$OLD_LABEL" >/dev/null 2>&1 || true
+  for _old in "$HOME/Library/LaunchAgents/$OLD_LABEL.plist" \
+              "$TK_BINDIR/usb-watch" "$TK_BINDIR/switch-displays.sh"; do
+    if [ -e "$_old" ]; then rm -f "$_old" && say "removed the pre-rename $_old"; fi
+  done
+}
+remove_prerename_install
+
 # --- uninstall ---------------------------------------------------------------
 
 if [ "$VERB" = "uninstall" ]; then

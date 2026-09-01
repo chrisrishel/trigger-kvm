@@ -136,6 +136,11 @@ globals; `_lowercase` is scratch. A variable only READ is fine, and is how a
 helper reads its caller's state under bash's dynamic scoping. No single mutation
 reproduces this, so `tests/conventions.tests.sh` scans for it directly.
 
+**Every menu runs inside `menu_tty_guard`, which restores the terminal on INT
+and TERM.** `menu_read_key` restores it on the normal path only; Ctrl-C arrives
+while it is blocked in `dd` and left the caller's shell with no echo. Do not
+add a raw read outside the guard, and do not set another INT trap under it.
+
 **A function that must edit `WT_*` state cannot return its result through
 `$(...)`**: a command substitution is a subshell and the edits are lost. Use an
 out-parameter global (`WT_INPUT_VALUE`, `WT_REMAINING`) as the existing ones do.
