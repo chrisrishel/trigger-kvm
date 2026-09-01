@@ -1137,12 +1137,41 @@ function Read-ComputerName {
     }
 }
 
+# Carry a rename or a removal into every panel's map THE MOMENT IT HAPPENS, rather
+# than making someone answer the monitors again -- re-asking threw away answers
+# nobody asked to change. An empty -Now is a removal.
+#
+# Applied as it happens, not inferred afterwards. Lining the old list of computers
+# up against the new one to work out what changed went wrong the moment one sitting
+# held both a rename and a removal: the removal shifted every position after it, so
+# the computer that slid into the victim's slot was recorded as its NEW NAME and
+# inherited its inputs. Two representations of "computer C is on input V of panel
+# D" can disagree; one cannot.
+function Edit-PanelMaps {
+    param($Panels = @(), [string]$Was, [string]$Now)
+
+    if ($Was -eq $Now) { return }
+
+    foreach ($a in @($Panels | Where-Object { $_ })) {
+        if (-not $a.Map.Contains($Was)) { continue }
+        # Rebuilt rather than edited in place, because the map's ORDER is the order
+        # the panel's inputs were answered in and a rename must not move a row.
+        $map = [ordered]@{}
+        foreach ($c in @($a.Map.Keys)) {
+            if ($c -eq $Was) { if ($Now) { $map[$Now] = $a.Map[$c] } }
+            else             { $map[$c]   = $a.Map[$c] }
+        }
+        $a.Map = $map
+    }
+}
+
 # The computers plugged into these monitors, this one included.
 #
 # Asked BEFORE the monitors, so a computer is described once and is then an option on
 # every panel. Asking per-monitor meant typing "mac" once per screen, and gave the
 # tool no way to know the two answers were about the same computer.
-# Which computers to take off the list. Returns the survivors.
+# Which computers to take off the list. Returns the survivors, and whether any
+# panel's map changed.
 #
 # A ROW, NOT A KEYPRESS -- specs/configure.md 5.0. Three reasons that all point
 # the same way: it is visible in the list rather than a gesture you have to know;
@@ -1155,9 +1184,10 @@ function Read-ComputerName {
 function Read-ComputerRemovals {
     param([string[]]$Others, $Panels)
 
-    $rest = @($Others)
+    $rest  = @($Others)
+    $edits = $false
     while ($true) {
-        if ($rest.Count -eq 0) { return @() }
+        if ($rest.Count -eq 0) { return [PSCustomObject]@{ Remaining = @(); Edited = $edits } }
 
         $rows = @()
         $det  = @()
@@ -1178,7 +1208,9 @@ function Read-ComputerRemovals {
         Write-Host '  Removing a computer also clears its input on every monitor it is on.'
         Write-Host ''
         $pick = Select-One -Items $rows -Detail $det -Default $done -Escapable
-        if ($pick -lt 0 -or $pick -eq $done) { return $rest }
+        if ($pick -lt 0 -or $pick -eq $done) {
+            return [PSCustomObject]@{ Remaining = @($rest); Edited = $edits }
+        }
 
         $victim = $rows[$pick]
         Write-Host ''
@@ -1186,16 +1218,21 @@ function Read-ComputerRemovals {
         # Defaults to NO. This is the destructive half of this menu, and the whole
         # reason removal stopped being a blank answer.
         if (Read-YesNo ("  Remove '{0}'?" -f $victim) $false) {
-            $rest = @($rest | Where-Object { $_ -ne $victim })
+            # Cleared from the maps HERE, while the name is still known to be the
+            # one that was chosen. See Edit-PanelMaps.
+            Edit-PanelMaps -Panels $Panels -Was $victim -Now ''
+            $rest  = @($rest | Where-Object { $_ -ne $victim })
+            $edits = $true
         }
     }
 }
 
 function Read-Computers {
     param([string]$This, [string[]]$Others, [switch]$Existing,
-          # The display answers as they stand, so the removal list can say which
-          # panels a computer is on. Only read, never changed here -- the caller
-          # applies Removed and Renames to the maps.
+          # The display answers as they stand: read, to say which panels a computer
+          # is on, and EDITED IN PLACE, because a rename or a removal is carried
+          # into every map as it happens rather than reported for the caller to
+          # apply afterwards. See Edit-PanelMaps for why.
           $Panels = @())
 
     Write-Host ''
@@ -1205,14 +1242,19 @@ function Read-Computers {
     Write-Host '    trigger-kvm to mac'
     Write-Host ''
 
-    $me   = $This
-    $rest = @($Others | Where-Object { $_ -and $_ -ne $This })
+    $me    = $This
+    $rest  = @($Others | Where-Object { $_ -and $_ -ne $This })
+    # Whether anything happened that a monitor-input pass no longer describes:
+    # specs/configure.md 5.2, "a rename or a removal invalidates a pass".
+    $edits = $false
 
     # Nothing configured yet: ask for a count and then that many names. "One per
     # line, blank line when there are no more" made people guess at both how to
     # finish and whether a blank meant cancel.
     if (-not $Existing) {
-        $me = Read-ComputerName -Prompt 'What should I call THIS computer?' -Default $This
+        $was = $me
+        $me  = Read-ComputerName -Prompt 'What should I call THIS computer?' -Default $This
+        if ($was -and $me -ne $was) { Edit-PanelMaps -Panels $Panels -Was $was -Now $me; $edits = $true }
 
         $n = -1
         while ($n -lt 0) {
@@ -1254,36 +1296,35 @@ function Read-Computers {
         }
 
         if ($pick -eq $add + 1) {
-            $rest = @(Read-ComputerRemovals -Others $rest -Panels $Panels)
+            $r     = Read-ComputerRemovals -Others $rest -Panels $Panels
+            $rest  = @($r.Remaining)
+            $edits = $edits -or $r.Edited
             continue
         }
 
         if ($pick -eq 0) {
-            $me = Read-ComputerName -Prompt 'What should I call THIS computer?' `
-                                    -Default $me -Taken $rest
+            $was = $me
+            $me  = Read-ComputerName -Prompt 'What should I call THIS computer?' `
+                                     -Default $me -Taken $rest
+            if ($me -ne $was) { Edit-PanelMaps -Panels $Panels -Was $was -Now $me; $edits = $true }
         } else {
             # PRE-FILLED, and a blank answer KEEPS the name -- like every other
             # prompt here. It used to remove the computer instead, which made the
             # most innocuous keypress available the destructive one. See
             # Read-ComputerRemovals for where removal went and why.
-            $i = $pick - 1
-            $rest[$i] = Read-ComputerName -Prompt ("Name for computer '{0}'" -f $rest[$i]) `
-                            -Default $rest[$i] `
-                            -Taken (@($me) + @($rest | Where-Object { $_ -ne $rest[$i] }))
+            $i   = $pick - 1
+            $was = $rest[$i]
+            $rest[$i] = Read-ComputerName -Prompt ("Name for computer '{0}'" -f $was) `
+                            -Default $was `
+                            -Taken (@($me) + @($rest | Where-Object { $_ -ne $was }))
+            if ($rest[$i] -ne $was) {
+                Edit-PanelMaps -Panels $Panels -Was $was -Now $rest[$i]
+                $edits = $true
+            }
         }
     }
 
-    # What changed, not just what it is now. A rename is a rename: every panel's map
-    # still names the old one, and discarding those maps (which is what re-asking
-    # about the monitors amounted to) threw away answers nobody asked to change.
-    $renames = @{}
-    for ($i = 0; $i -lt $rest.Count -and $i -lt $Others.Count; $i++) {
-        if ($Others[$i] -ne $rest[$i] -and ($rest -notcontains $Others[$i])) { $renames[$Others[$i]] = $rest[$i] }
-    }
-    if ($This -and $me -ne $This) { $renames[$This] = $me }
-    $gone = @($Others | Where-Object { $_ -and -not ($rest -contains $_) -and -not $renames.ContainsKey($_) })
-
-    return [PSCustomObject]@{ This = $me; All = @(@($me) + $rest); Renames = $renames; Removed = $gone }
+    return [PSCustomObject]@{ This = $me; All = @(@($me) + $rest); Edited = $edits }
 }
 
 # Ask which input something is on, for one panel. Returns a value, or $null when
@@ -1932,20 +1973,15 @@ function Invoke-Configure {
                 $this = $m.This
                 $computers = $m.All
 
-                # A rename is a rename: carry it into every panel rather than making
-                # someone answer the monitors again. Removing a computer takes it out
-                # of the maps; adding one leaves them alone, and the Monitors row then
-                # shows which panels do not know about it yet.
-                foreach ($a in $answers) {
-                    $map = [ordered]@{}
-                    foreach ($c in @($a.Map.Keys)) {
-                        if ($m.Removed -contains $c) { continue }
-                        $map[$(if ($m.Renames.ContainsKey($c)) { $m.Renames[$c] } else { $c })] = $a.Map[$c]
-                    }
-                    $a.Map = $map
-                    $carry[$a.Key] = $a
-                }
-                if ($m.Renames.Count -or $m.Removed.Count) { $ranDisplays = $null }
+                # The maps have already followed the edit -- Read-Computers carried
+                # each rename and removal into them as it happened. Adding a computer
+                # leaves them alone, and the Monitors row then shows which panels do
+                # not know about it yet.
+                foreach ($a in $answers) { $carry[$a.Key] = $a }
+                # specs/configure.md 5.2: a rename or a removal invalidates a
+                # monitor-input pass, because the values that passed are no longer
+                # the values configured.
+                if ($m.Edited) { $ranDisplays = $null }
             }
             'Monitors' {
                 $before  = ($answers | ForEach-Object { '{0}={1}' -f $_.Label, (@($_.Map.Values) -join ',') }) -join '|'
@@ -3118,7 +3154,13 @@ if (Get-ScheduledTask -TaskName $TASK -ErrorAction SilentlyContinue) {
         # trap on the way out as on the way in.
         if (-not $IsElevated) {
             Write-Log "the existing '$TASK' task was registered by an elevated process."
-            $childArgs = @('install', '-Tier', $EffectiveTier)
+            # No tier is passed. There is no -Tier parameter -- this script's param()
+            # is [CmdletBinding()], which THROWS on an unknown named argument, so the
+            # child died at parameter binding in a hidden window while the parent
+            # reported that nothing had changed. The tier is not the parent's to hand
+            # over anyway: the child re-derives it from the config with
+            # Get-EffectiveTier, exactly as the other two relaunch sites do.
+            $childArgs = @('install')
             if ($AddToPath) { $childArgs += '-AddToPath' }
             $rc = Request-Elevation -ChildArgs $childArgs
             if ($rc -eq 0) {

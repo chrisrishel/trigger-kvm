@@ -140,6 +140,84 @@ foreach ($s in @(Get-ChildItem -LiteralPath $WinDir -Filter '*.ps1' -File)) {
 
 Assert-Equal 0 $saidMachine.Count ("the user must never be shown ""machine"":`n  " + ($saidMachine -join "`n  "))
 
+# ---- the elevated relaunch's arguments bind against this script's param() ----
+#
+# install.ps1 relaunches ITSELF elevated, by name, with an argument list built as a
+# literal. Nothing checks that list against the parameters the script declares, and
+# the failure is invisible from the parent: `param()` is [CmdletBinding()], which
+# THROWS on an unknown named argument, and the child runs in a hidden window whose
+# output the parent only prints if the child got far enough to write any.
+#
+# That shipped. One of the three relaunch sites passed `-Tier $EffectiveTier`, a
+# parameter that has never existed, so the documented recovery from an
+# admin-owned task died at parameter binding while the parent reported that the
+# task had been left exactly as it was.
+
+function Get-ScriptParameter {
+    param([string]$Path)
+    $errors = $null
+    $ast = [System.Management.Automation.Language.Parser]::ParseFile($Path, [ref]$null, [ref]$errors)
+    if ($errors) { throw ("{0} does not parse: {1}" -f $Path, ($errors[0].Message)) }
+    if (-not $ast.ParamBlock) { return @() }
+    $names = @()
+    foreach ($p in $ast.ParamBlock.Parameters) {
+        $names += $p.Name.VariablePath.UserPath
+        # An alias binds just as well as the parameter's own name.
+        foreach ($a in $p.Attributes) {
+            if ($a -is [System.Management.Automation.Language.AttributeAst] -and $a.TypeName.Name -eq 'Alias') {
+                foreach ($arg in $a.PositionalArguments) {
+                    if ($arg -is [System.Management.Automation.Language.StringConstantExpressionAst]) { $names += $arg.Value }
+                }
+            }
+        }
+    }
+    return $names
+}
+
+function Get-RelaunchFlag {
+    <#
+      .SYNOPSIS
+      Every '-Something' written into a $childArgs literal, as name -> line.
+
+      .DESCRIPTION
+      Both shapes: the assignment that builds the list, and the `+=` that appends
+      to it. A flag computed at run time is out of reach here and is not what this
+      is for -- all three sites write theirs literally.
+    #>
+    param([string]$Path)
+
+    $errors = $null
+    $ast = [System.Management.Automation.Language.Parser]::ParseFile($Path, [ref]$null, [ref]$errors)
+    if ($errors) { throw ("{0} does not parse: {1}" -f $Path, ($errors[0].Message)) }
+
+    $found = @()
+    foreach ($asn in $ast.FindAll({ $args[0] -is [System.Management.Automation.Language.AssignmentStatementAst] }, $true)) {
+        $left = $asn.Left
+        if ($left -isnot [System.Management.Automation.Language.VariableExpressionAst]) { continue }
+        if ($left.VariablePath.UserPath -ne 'childArgs') { continue }
+        foreach ($s in $asn.Right.FindAll({ $args[0] -is [System.Management.Automation.Language.StringConstantExpressionAst] }, $true)) {
+            if ($s.Value -match '^-\w') {
+                $found += [pscustomobject]@{ Flag = $s.Value; Line = $s.Extent.StartLineNumber }
+            }
+        }
+    }
+    return $found
+}
+
+$installer = Join-Path $WinDir 'install.ps1'
+$declared  = @(Get-ScriptParameter $installer)
+$flags     = @(Get-RelaunchFlag $installer)
+
+Assert-True ($flags.Count -gt 0) 'the relaunch check must have found some flags to check'
+
+$unbound = @()
+foreach ($f in $flags) {
+    if ($declared -notcontains $f.Flag.TrimStart('-')) {
+        $unbound += ("install.ps1:{0}: {1} is not a parameter of install.ps1" -f $f.Line, $f.Flag)
+    }
+}
+Assert-Equal 0 $unbound.Count ("the elevated relaunch passes what it cannot bind:`n  " + ($unbound -join "`n  "))
+
 # ---- the check can actually see one ------------------------------------------
 
 # A structural check that cannot fail is decoration, and this one is easy to
@@ -165,6 +243,33 @@ function Outer-B { function Helper { 'b' }; Helper }
 
 $fns = Get-TopLevelFunction $nested
 Assert-True (-not $fns.ContainsKey('Helper')) 'a function scoped inside another is not a duplicate'
+
+# ...and the relaunch check sees a flag its own param() does not declare, in both
+# the assignment and the append, while leaving a declared one and an alias alone.
+$relaunch = Join-Path $tmp 'relaunch.ps1'
+@'
+[CmdletBinding()]
+param(
+    [string]$Command = 'install',
+    [Alias('Path')]
+    [switch]$AddToPath
+)
+$childArgs = @('install', '-Tier', $EffectiveTier)
+if ($AddToPath) { $childArgs += '-AddToPath' }
+$childArgs += '-Path'
+$other = @('-NotEvenLookedAt')
+'@ | Set-Content -LiteralPath $relaunch -Encoding ASCII
+
+$declaredT = @(Get-ScriptParameter $relaunch)
+Assert-Equal 'Command,AddToPath,Path' ($declaredT -join ',') 'an alias binds too, so it counts as declared'
+
+$flagsT = @(Get-RelaunchFlag $relaunch)
+Assert-Equal '-Tier,-AddToPath,-Path' (($flagsT | ForEach-Object { $_.Flag }) -join ',') `
+    'both the assignment and the append are read, and nothing else is'
+
+$badT = @($flagsT | Where-Object { $declaredT -notcontains $_.Flag.TrimStart('-') })
+Assert-Equal 1       $badT.Count 'the check must see an undeclared flag'
+Assert-Equal '-Tier' $badT[0].Flag
 
 Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
 exit 0

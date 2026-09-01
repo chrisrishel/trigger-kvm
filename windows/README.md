@@ -1020,7 +1020,9 @@ corroborated by `lg-input-switch`.
   way: `WM_DEVICECHANGE` is a window message and needs a desktop, while
   `Win32_DeviceChangeEvent` is a WMI extrinsic event from the Winmgmt service. Only
   the latter is used here, and it is session-independent.
-- **Does a pre-login tier get built?** Built as opt-in (`-Tier s4u`); the remaining
+- **Does a pre-login tier get built?** Built as opt-in -- `trigger-kvm configure`,
+  `Autostart?`, `From boot`. There is no `-Tier` flag: the tier lives in the config
+  as `install.autostart`, and every part of the installer reads it from there. The remaining
   step is a reboot acceptance test. It is a permissions question rather than a
   technical one. It needs admin to register (measured: `S4U` and `SYSTEM`
   principals both fail with "Access is denied" for an ordinary user, while the

@@ -66,54 +66,6 @@ Verified: sizes measured here 2026-08-31 and the macOS suite already enforces
           Windows development); nothing else under `windows/` was touched. The
           Windows suite was not run from here.
 
-## Record a computer's removal when the row is chosen, not by diffing list positions afterwards
-
-Kind:     defect report
-Spec:     specs/configure.md §5.2, §5.3
-Why:      "Remove a computer" can be recorded as a RENAME, so the removed
-          computer's inputs are handed to whichever computer slid into its slot
-Owed:     `Read-Computers` (install.ps1:1279-1284) infers renames by lining the
-          old `$Others` up against the new `$rest` by index: any position where
-          the names differ and the old name is gone becomes `Renames[old]=new`.
-          With this=`mac`, others=`[pc, linux]`, LG on mac/pc/linux and ASUS on
-          mac/pc only: remove `pc` -> `Renames['pc']='linux'`, `Removed=@()`
-          -> the ASUS map becomes `{mac, linux=0x11}`; `to linux` moves the
-          ASUS to the PC's socket, and the confirm text just shown ("Its input
-          on every monitor is cleared too") was false. Rename-then-remove in
-          one sitting is worse (the case macos/lib/walkthrough.sh:346-350
-          comments on and macos/tests/walkthrough.tests.sh:534-553 pins).
-          Record the victim and each old->new pair at the moment the row is
-          chosen and drop the positional diff. Add a three-computer test with
-          one computer absent from a panel, removing the first-listed one; the
-          existing removal test (walkthrough.tests.ps1:617-625) removes the
-          only other computer, so positions never shift.
-Verified: read on a Mac at commit 657e215; traced by hand through the loop at
-          :1279-1284 and the consumer at :1939-1948. Suite not run. High
-          confidence in the reading; the exact scenario was not executed.
-
-## Stop passing `-Tier` to the elevated relaunch
-
-Kind:     defect report
-Spec:     specs/configure.md §8
-Why:      the documented recovery from an admin-owned task ("both paths detect
-          it and explain", windows/AGENTS.md:93-99) dies at parameter binding
-Owed:     install.ps1:3121 builds `$childArgs = @('install', '-Tier',
-          $EffectiveTier)` for `Request-Elevation`. The script's `param()`
-          (:80-108) declares only `Command, AddToPath, Fresh, NoElevate,
-          Relaunched`, under `[CmdletBinding()]`, which throws on an unknown
-          named parameter (the hazard windows/AGENTS.md:119-124 records). So
-          the user who installed the boot tier, later picks `From login` and
-          saves, gets `Unregister-ScheduledTask` denied (:3110), the relaunch
-          at :3119-3129, and a binding error in a hidden elevated window; the
-          parent prints "the task was left exactly as it was". Fix:
-          `$childArgs = @('install')` -- the child re-derives the tier via
-          `Get-EffectiveTier` as :2821 and :2844 already do. Add a test that
-          every `-X` in a `$childArgs` literal binds against install.ps1's own
-          `param()`. windows/README.md:1023 still documents `-Tier s4u`.
-Verified: `grep -n -- '-Tier' windows/install.ps1` -> only the
-          `Write-ConfigFile` parameter and line 3121; no `$Tier` script
-          parameter exists. Read on a Mac; not executed. Very high confidence.
-
 ## Make the boot tier work from a standard (non-admin) account, or refuse it there
 
 Kind:     defect report

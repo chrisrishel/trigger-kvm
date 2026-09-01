@@ -16,7 +16,7 @@ Import-Subject -Script 'install.ps1' -Variables @('DIALECTS','MCCS_INPUTS','COMP
     'Split-Detail','Get-ItemWidth','Get-MenuRow',
     'Select-One','Select-Many','Join-Names','Get-InputName',
     'Get-DefaultComputerName','Get-KnownComputers','Read-Computers','Read-ComputerRemovals',
-    'Format-ComputerName','Read-ComputerName',
+    'Edit-PanelMaps','Format-ComputerName','Read-ComputerName',
     'Read-InputValue','Get-InputTable','Get-DisplayMap','Read-Method',
     'Get-DisplayAnswers','Get-ConfiguredAnswers','Get-PriorDisplay','Read-Monitors',
     'Invoke-DisplayTest','Invoke-TestRound','Invoke-TestRoundBody','Test-OneComputer',
@@ -581,21 +581,56 @@ Assert-Equal 'pc' (Read-ComputerName -Prompt 'name?' -Default '' -Taken @('mac')
 Set-Answers @('')
 Assert-Equal '' (Read-ComputerName -Prompt 'name?' -Default '' -AllowBlank) 'blank removes, where blank is allowed'
 
-# ---- the computers list reports what CHANGED ---------------------------------
+# ---- the computers list carries every edit into the panels' maps -------------
+
+# specs/configure.md 5.2. The maps are edited AS THE ROW IS CHOSEN, not inferred
+# afterwards by lining the old list of computers up against the new one. That
+# inference was the bug: a removal shifts every position after it, so the computer
+# that slid into the victim's slot was recorded as its NEW NAME and inherited its
+# inputs -- and the confirmation the user had just read ("its input on every
+# monitor is cleared too") was false.
 
 # The list is: 1 pc, 2 mac, (3 blank), 4 Add another, 5 Remove a computer, 6 Done.
 
+# Rebuilt per case, so one case's edits cannot leak into the next.
+function New-TestPanels {
+    @([PSCustomObject]@{ Key = 'lg';   Label = 'lg';   Map = [ordered]@{ pc = '0xD0'; mac = '0xD1' } },
+      [PSCustomObject]@{ Key = 'asus'; Label = 'asus'; Map = [ordered]@{ pc = '0x11' } })
+}
+# Keys AND order: a rename must not move a panel's row.
+function Format-TestMap { param($Panel) (@($Panel.Map.Keys) | ForEach-Object { '{0}={1}' -f $_, $Panel.Map[$_] }) -join ',' }
+
 Set-Answers @('2', 'macbook', '6')
-$r = Read-Computers -This 'pc' -Others @('mac') -Existing
+$p = New-TestPanels
+$r = Read-Computers -This 'pc' -Others @('mac') -Existing -Panels $p
 Assert-Equal 'pc,macbook' ($r.All -join ',')
-Assert-Equal 'macbook'    $r.Renames['mac'] 'a rename has to be reported, so the panels can follow it'
-Assert-Equal 0            @($r.Removed).Count
+Assert-Equal 'pc=0xD0,macbook=0xD1' (Format-TestMap $p[0]) 'a rename is carried into the map, in place'
+Assert-Equal 'pc=0x11'              (Format-TestMap $p[1]) 'and leaves a panel it is not on alone'
+Assert-Equal $true $r.Edited 'a rename invalidates a monitor-input pass'
 Assert-NoMatch ((Get-Asked) -join '|') 'How many OTHER' 'and the count is not re-asked'
 
+# A rename still counts as an edit when no panel happens to have that computer:
+# specs/configure.md 5.2 makes the pass invalid on the rename, not on the map.
+Set-Answers @('2', 'macbook', '6')
+$p = @([PSCustomObject]@{ Key = 'asus'; Label = 'asus'; Map = [ordered]@{ pc = '0x11' } })
+$r = Read-Computers -This 'pc' -Others @('mac') -Existing -Panels $p
+Assert-Equal $true     $r.Edited
+Assert-Equal 'pc=0x11' (Format-TestMap $p[0]) 'and changes nothing it does not name'
+
+# Renaming THIS computer is the same edit. Row 1.
+Set-Answers @('1', 'desktop', '6')
+$p = New-TestPanels
+$r = Read-Computers -This 'pc' -Others @('mac') -Existing -Panels $p
+Assert-Equal 'desktop'                   $r.This
+Assert-Equal 'desktop=0xD0,mac=0xD1'     (Format-TestMap $p[0])
+Assert-Equal 'desktop=0x11'              (Format-TestMap $p[1])
+
 Set-Answers @('4', 'linux', '7')
-$r = Read-Computers -This 'pc' -Others @('mac') -Existing
+$p = New-TestPanels
+$r = Read-Computers -This 'pc' -Others @('mac') -Existing -Panels $p
 Assert-Equal 'pc,mac,linux' ($r.All -join ',')
-Assert-Equal 0 $r.Renames.Count 'adding renames nothing'
+Assert-Equal $false $r.Edited 'adding a computer edits nothing'
+Assert-Equal 'pc=0xD0,mac=0xD1' (Format-TestMap $p[0]) 'and leaves the maps alone'
 
 # ---- ENTER KEEPS THE NAME. It used to remove the computer --------------------
 #
@@ -605,10 +640,11 @@ Assert-Equal 0 $r.Renames.Count 'adding renames nothing'
 # an empty multi-select, which 3 already exists to prevent.
 
 Reset-Printed; Set-Answers @('2', '', '6')
-$r = Read-Computers -This 'pc' -Others @('mac') -Existing
+$p = New-TestPanels
+$r = Read-Computers -This 'pc' -Others @('mac') -Existing -Panels $p
 Assert-Equal 'pc,mac' ($r.All -join ',') 'enter on the rename prompt keeps the name'
-Assert-Equal 0 @($r.Removed).Count       'and removes nothing'
-Assert-Equal 0 $r.Renames.Count          'and is not even a rename'
+Assert-Equal $false $r.Edited            'and is not even a rename, so a pass still stands'
+Assert-Equal 'pc=0xD0,mac=0xD1' (Format-TestMap $p[0]) 'and nothing moved in the maps'
 Assert-Match ((Get-Asked) -join '|') "Name for computer 'mac' \[mac\]" `
     'the prompt is pre-filled, so enter visibly means "keep this"'
 
@@ -618,11 +654,12 @@ Assert-Match ((Get-Asked) -join '|') "Name for computer 'mac' \[mac\]" `
 Reset-Printed; Set-Answers @('5', '1', 'y', '5')   # Remove -> mac -> yes -> Done
 # The removal list returns by itself once nothing is left to remove, and the outer
 # list has shrunk with it: pc(1), blank(2), Add(3), Remove(4), Done(5).
-$r = Read-Computers -This 'pc' -Others @('mac') -Existing `
-        -Panels @([PSCustomObject]@{ Label = 'lg';   Map = [ordered]@{ pc='0xD0'; mac='0xD1' } },
-                  [PSCustomObject]@{ Label = 'asus'; Map = [ordered]@{ pc='0x11' } })
+$p = New-TestPanels
+$r = Read-Computers -This 'pc' -Others @('mac') -Existing -Panels $p
 Assert-Equal 'pc'  ($r.All -join ',')
-Assert-Equal 'mac' ($r.Removed -join ',') 'a removal has to be reported too'
+Assert-Equal $true $r.Edited
+Assert-Equal 'pc=0xD0' (Format-TestMap $p[0]) 'a removal clears that input, as the confirm said it would'
+Assert-Equal 'pc=0x11' (Format-TestMap $p[1]) 'and touches nothing else'
 
 $said = Get-Printed
 Assert-Match $said '--- remove a computer ---'
@@ -633,9 +670,46 @@ Assert-MatchCase ((Get-Asked) -join '|') "Remove 'mac'\? \[y/N\]" 'and the confi
 
 # Declining the confirm keeps it.
 Reset-Printed; Set-Answers @('5', '1', 'n', '3', '6')
-$r = Read-Computers -This 'pc' -Others @('mac') -Existing
+$p = New-TestPanels
+$r = Read-Computers -This 'pc' -Others @('mac') -Existing -Panels $p
 Assert-Equal 'pc,mac' ($r.All -join ',') 'answering no to the confirm removes nothing'
-Assert-Equal 0 @($r.Removed).Count
+Assert-Equal $false $r.Edited
+Assert-Equal 'pc=0xD0,mac=0xD1' (Format-TestMap $p[0]) 'and clears no input either'
+
+# ---- a removal is recorded as a REMOVAL, whoever slides into the slot ---------
+#
+# The whole point of editing the maps when the row is chosen. Three computers,
+# one of them absent from a panel, and the FIRST-LISTED other one removed -- so
+# every position after it shifts. Inferring the change from the list positions
+# afterwards read this as a RENAME of pc to linux, handed pc's ASUS input to
+# linux, and reported nothing removed: `to linux` would then have moved the ASUS
+# to the PC's socket.
+#
+# Outer list: 1 mac, 2 pc, 3 linux, (4 blank), 5 Add, 6 Remove, 7 Done.
+# Removal list: 1 pc, 2 linux, (3 blank), 4 Done -- then, with pc gone,
+#               1 linux, (2 blank), 3 Done.
+Reset-Printed; Set-Answers @('6', '1', 'y', '3', '6')
+$p = @([PSCustomObject]@{ Key = 'lg';   Label = 'lg'
+                          Map = [ordered]@{ mac = '0xD1'; pc = '0xD0'; linux = '0xD2' } },
+       [PSCustomObject]@{ Key = 'asus'; Label = 'asus'
+                          Map = [ordered]@{ mac = '0x0F'; pc = '0x11' } })
+$r = Read-Computers -This 'mac' -Others @('pc', 'linux') -Existing -Panels $p
+Assert-Equal 'mac,linux' ($r.All -join ',')
+Assert-Equal 'mac=0xD1,linux=0xD2' (Format-TestMap $p[0]) 'the removed computer goes, and the rest keep their inputs'
+Assert-Equal 'mac=0x0F'            (Format-TestMap $p[1]) 'nobody inherits the removed computer''s socket'
+
+# Rename and remove in ONE sitting: the case the positional diff could not
+# represent at all, because the removal moves the ground the rename stood on.
+# 2 mac -> macbook, then 6 Remove -> 1 macbook -> yes -> 3 Done -> 6 Done.
+Reset-Printed; Set-Answers @('2', 'macbook', '6', '1', 'y', '3', '6')
+$p = @([PSCustomObject]@{ Key = 'lg';   Label = 'lg'
+                          Map = [ordered]@{ pc = '0xD0'; mac = '0xD1'; linux = '0xD2' } },
+       [PSCustomObject]@{ Key = 'asus'; Label = 'asus'
+                          Map = [ordered]@{ pc = '0x11'; mac = '0x0F' } })
+$r = Read-Computers -This 'pc' -Others @('mac', 'linux') -Existing -Panels $p
+Assert-Equal 'pc,linux' ($r.All -join ',')
+Assert-Equal 'pc=0xD0,linux=0xD2' (Format-TestMap $p[0])
+Assert-Equal 'pc=0x11'            (Format-TestMap $p[1]) 'the renamed computer is gone, not relabelled onto linux'
 
 # THIS computer is never offered for removal: its name is what `pull` resolves.
 Reset-Printed; Set-Answers @('5', '3', '6')
