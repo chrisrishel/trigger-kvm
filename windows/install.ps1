@@ -3181,8 +3181,15 @@ if ($Command -eq 'pause') {
 }
 
 if ($Command -eq 'status') {
+    # EVERYTHING IT CAN SAY, whether or not a task is registered. It used to
+    # print "not installed" and exit before the config block, which is exactly
+    # backwards: the machine that has no task is the one where "what does this
+    # think is configured?" is the question being asked.
     $t = Get-ScheduledTask -TaskName $TASK -ErrorAction SilentlyContinue
-    if (-not $t) { Write-Host 'not installed'; exit 1 }
+    if (-not $t) {
+        Write-Host 'autostart: not installed  <- run install.ps1 from the source tree'
+        Write-Host '           covers: nothing. No watcher starts on its own.'
+    } else {
     $i = Get-ScheduledTaskInfo -TaskName $TASK
 
     # Say when it runs and what that therefore covers -- never a tier name. The
@@ -3208,6 +3215,9 @@ if ($Command -eq 'status') {
         'Interactive' {
             Write-Host '           covers: from logon onward, including while LOCKED'
             Write-Host '           NOT covered: before the first login after a boot; after a logoff'
+            # Say how to get the other tier, rather than only what this one is
+            # not. macOS says the same thing at the same moment.
+            Write-Host '           to cover the login screen too:  trigger-kvm configure  -> Autostart?'
         }
         'S4U' {
             Write-Host '           covers: from boot onward -- before first login, while locked, after logoff'
@@ -3229,6 +3239,7 @@ if ($Command -eq 'status') {
         default    { '  <- unexpected' }
     }
     Write-Host ("last run : {0} (result 0x{1:X8}){2}" -f $i.LastRunTime, $i.LastTaskResult, $note)
+    }
 
     $n = @(Get-CimInstance Win32_Process -Property ProcessId,Name,CommandLine -Verbose:$false |
            Where-Object { $_.CommandLine -and $_.Name -eq 'powershell.exe' -and $_.CommandLine -match '(usb|event)-watch\.ps1' }).Count
@@ -3238,8 +3249,12 @@ if ($Command -eq 'status') {
 
     if (Test-Path -LiteralPath $STAMP) {
         $v = Read-Config -Path $STAMP
-        Write-Host ("version  : {0}  (installed {1}, commit {2})" -f `
-                    $v['version'], $v['installed'], $v['commit'])
+        # The spec revision too: with two implementations of one flow, "which
+        # revision is this one built to?" is the question that says whether a
+        # difference between the two desks is a bug or a version gap.
+        Write-Host ("version  : {0}  (installed {1}, commit {2}, spec revision {3})" -f `
+                    $v['version'], $v['installed'], $v['commit'],
+                    $(if ($v.Contains('spec')) { $v['spec'] } else { 'unrecorded' }))
     } else {
         Write-Host 'version  : unknown  <- installed before version stamping'
     }
@@ -3256,7 +3271,16 @@ if ($Command -eq 'status') {
         (@($computers | ForEach-Object { if ($_ -eq $this) { "$_ (this one)" } else { $_ } }) -join ', ') +
         '   (trigger-kvm to <name>; only pull is automatic)'
     } else { 'none' }))
-    exit 0
+    # What the watcher is actually waiting for. Without this line, "it is running"
+    # and "it will fire" looked like the same claim.
+    $devices = @()
+    if ($c.Contains('trigger.device')) {
+        $devices = @(($c['trigger.device'] -replace '\s','') -split ',' | Where-Object { $_ } | ForEach-Object {
+            if ($_ -match '^(usb:|bt:)') { $_.ToLower() } else { 'usb:' + $_.ToLower() } })
+    }
+    Write-Host ("triggers : {0}" -f $(if ($devices) { $devices -join ', ' } else { 'none configured  <- nothing will ever fire' }))
+
+    exit $(if ($t) { 0 } else { 1 })
 }
 
 if ($Command -eq 'logs') {
@@ -3493,11 +3517,23 @@ try {
     if ($commit -and (& git status --porcelain 2>$null)) { $commit += '+dirty' }
 } catch { } finally { Pop-Location -ErrorAction SilentlyContinue }
 
+# The specs/ revision this copy was built to. With two implementations of one
+# flow, "which revision is this one?" is the question that says whether a
+# difference between the two desks is a bug or a version gap -- and the source
+# tree it came from may be long gone by the time anyone asks.
+$specRev = ''
+$revFile = Join-Path $PSScriptRoot 'SPEC-REVISION'
+if (Test-Path -LiteralPath $revFile) {
+    $m = [regex]::Match((Get-Content -Raw -LiteralPath $revFile), '(?m)^revision\s*=\s*(\d+)')
+    if ($m.Success) { $specRev = $m.Groups[1].Value }
+}
+
 @(
     "version   = $VERSION"
     "installed = $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
     "source    = $PSScriptRoot"
     "commit    = $(if ($commit) { $commit } else { '(not a git checkout)' })"
+    "spec      = $(if ($specRev) { $specRev } else { 'unknown' })"
 ) | Set-Content -LiteralPath $STAMP -Encoding ASCII
 
 # Migration: older installs downloaded lg-input-switch.exe here. The LG is now
