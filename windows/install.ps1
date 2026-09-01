@@ -326,7 +326,10 @@ function Request-Elevation {
              -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', $inner)
     } catch {
         # The user declined the prompt, or no admin credentials were available.
-        Write-Log 'elevation was declined or unavailable; nothing was changed.'
+        # What happens NEXT is the caller's to say -- an uninstall stops here, an
+        # install falls back to the login tier -- so this line no longer claims
+        # that nothing was changed.
+        Write-Log 'elevation was declined or unavailable.'
         return 1
     }
 
@@ -335,6 +338,37 @@ function Request-Elevation {
         Remove-Item -LiteralPath $transcript -Force -ErrorAction SilentlyContinue
     }
     return $p.ExitCode
+}
+
+# The boot tier needs administrator rights ONCE, to register the task. Ask for
+# them; if they do not come, say so and install the tier that needs none.
+#
+# specs/configure.md 8: where elevation cannot be obtained -- a headless install,
+# or a prompt that was declined -- the boot tier FALLS BACK TO LOGIN, SAYS SO,
+# and the config records login, not what was asked for. Silently keeping `boot`
+# is how someone finds out months later that switching does nothing until they
+# log in.
+#
+# This used to exit 1 with the config still saying boot, the OLD watcher still
+# running against the OLD trigger devices, and a message claiming nothing had
+# been changed -- when the config had been rewritten a moment earlier. macOS has
+# done the right thing here since revision 4.
+#
+# Returns the tier to install. Exits when the elevated child did the whole
+# install itself, which is the successful case.
+function Invoke-BootTierElevation {
+    $rc = Request-Elevation -ChildArgs @('install')
+    if ($rc -eq 0) {
+        # The PATH is the one thing the child could not do: on a standard account
+        # its HKCU is the ADMIN's hive. See Set-InstalledPath.
+        Set-InstalledPath
+        exit 0
+    }
+    Write-Log 'falling back to starting at login.'
+    Write-Log 'the switch will follow from your logon onward, but not at the login screen.'
+    Write-Log 'to try again for the boot tier:  trigger-kvm configure'
+    Set-ConfigValue -Path $CONFIG -Key 'install.autostart' -Value 'login'
+    return 'user'
 }
 
 # --- PATH -------------------------------------------------------------------
@@ -1816,6 +1850,32 @@ function Read-PathChoice {
     return ($pick -eq 0)
 }
 
+# Can this account obtain administrator rights AT ALL?
+#
+# Not "is this process elevated" -- that is $IsElevated. This is the prior
+# question: whether a UAC prompt would be a CONSENT prompt for this person, or a
+# CREDENTIAL prompt for somebody else. On a standard account it is the second,
+# and everything the resulting process installs belongs to that other account.
+#
+# Membership of the local Administrators group is the test. A split UAC token
+# still LISTS that group -- marked deny-only, but present -- so an admin running
+# unelevated answers true here, which is right: they can elevate.
+#
+# On an error it answers TRUE, i.e. offer the row. Being unable to ask is not
+# evidence that the answer is no, and a wrongly hidden option is worse than a
+# prompt that turns out to be refused: the prompt at least says so.
+function Test-CanElevate {
+    if ($IsElevated) { return $true }
+    try {
+        $admins = New-Object Security.Principal.SecurityIdentifier(
+                      [Security.Principal.WellKnownSidType]::BuiltinAdministratorsSid, $null)
+        foreach ($g in [Security.Principal.WindowsIdentity]::GetCurrent().Groups) {
+            if ($g.Translate([Security.Principal.SecurityIdentifier]) -eq $admins) { return $true }
+        }
+        return $false
+    } catch { return $true }
+}
+
 # When the watcher should start running. Returns 's4u' or 'user'.
 #
 # From boot is offered FIRST and is the default, because it is the answer that
@@ -1835,11 +1895,28 @@ function Read-Tier {
     Write-Host '  Answering no still installs and starts it now; it just will not come'
     Write-Host '  back after a restart until you run:  trigger-kvm restart'
     Write-Host ''
+    # DRAWN, and disabled with the reason, for an account that cannot elevate at
+    # all -- specs/configure.md 8. Offering it would send the most common kind of
+    # account into a prompt for a DIFFERENT account's credentials, and whatever
+    # that installs belongs to that other account. The row stays so the menu keeps
+    # the shape someone coming from macOS expects, and the question it raises is
+    # answered where it is asked.
+    $canElevate = Test-CanElevate
+    $off = @()
+    if (-not $canElevate) { $off += 0 }
+
     $now = $(switch ($Current) { 's4u' { 0 } 'user' { 1 } 'manual' { 2 } default { -1 } })
-    $pick = Select-One -Default ([Math]::Max(0, $now)) -Current $now -Escapable -Items @(
-        'From boot (requires admin)',
+    $default = [Math]::Max(0, $now)
+    if ($off -contains $default) { $default = 1 }
+
+    $pick = Select-One -Default $default -Current $now -Escapable -Disabled $off -Items @(
+        'From boot',
         'From login',
-        'No -- I will start it myself')
+        'No -- I will start it myself') -Detail @(
+        $(if ($canElevate) { 'one administrator prompt now; nothing runs elevated afterwards' }
+          else             { 'needs an administrator account' }),
+        'covers everything from your logon onward',
+        '')
     if ($pick -lt 0) { return $Current }
     return $(switch ($pick) { 1 { 'user' } 2 { 'manual' } default { 's4u' } })
 }
@@ -3059,9 +3136,9 @@ $EffectiveTier = Get-EffectiveTier
 
 if ($EffectiveTier -eq 's4u' -and -not $IsElevated) {
     # -AddToPath is deliberately NOT handed over. See Set-InstalledPath.
-    $rc = Request-Elevation -ChildArgs @('install')
-    if ($rc -eq 0) { Set-InstalledPath }
-    exit $rc
+    # A refusal is not the end of the install: it falls back to the login tier
+    # and carries on from here, with the config saying so.
+    $EffectiveTier = Invoke-BootTierElevation
 }
 
 # No config means nothing to install FROM: the seed values describe one specific
@@ -3082,9 +3159,7 @@ if (-not (Test-Path -LiteralPath $CONFIG)) {
         # the common path now that boot start is the default answer.
         $EffectiveTier = Get-EffectiveTier
         if ($EffectiveTier -eq 's4u' -and -not $IsElevated) {
-            $rc = Request-Elevation -ChildArgs @('install')
-            if ($rc -eq 0) { Set-InstalledPath }
-            exit $rc
+            $EffectiveTier = Invoke-BootTierElevation
         }
     } else {
         Write-Log "no configuration at $CONFIG, and this is not an interactive terminal."

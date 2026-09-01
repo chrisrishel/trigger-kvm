@@ -36,6 +36,11 @@ $global:SWITCH = Join-Path (Split-Path -Parent $PSScriptRoot) 'trigger-kvm.ps1'
 $global:Relaunched = $false
 
 function Add-ToUserPath { param([string]$Dir) }
+# Whether this account could elevate at all. The real one reads this process's
+# token, so it answers differently depending on who runs the suite; what the
+# walkthrough does with each answer is the thing worth pinning.
+$script:canElevate = $true
+function Test-CanElevate { return $script:canElevate }
 function Get-TriggerCandidates {
     @(
         [PSCustomObject]@{ Key='usb:046d:0843';  Bus='USB'; Name='Webcam';    Class='Image';     State=''; Rank=0 }
@@ -619,6 +624,33 @@ Assert-Equal 'pc'  $c['display.asus.input.0x11'] 'a decimal input key is read, a
 Assert-Equal 'mac' $c['display.asus.input.0x0f']
 Assert-Equal 'PG42UQ' $c['display.asus.name'] `
     'and a decimal EDID id still matches the panel, so it is not silently unmanaged'
+
+# ---- From boot is drawn for everyone, and disabled where it cannot work ------
+#
+# specs/configure.md 8. On a STANDARD account `-Verb RunAs` does not raise a
+# consent prompt -- it raises a CREDENTIAL prompt for a different account, and
+# everything the resulting process installs belongs to that account. So the row
+# is drawn, says why in its detail, and the cursor passes over it. Hidden, the
+# menu would change shape between machines and the question it raises would go
+# unanswered.
+
+Reset-Printed; $script:canElevate = $true
+Set-Answers @('1')
+Assert-Equal 's4u' (Read-Tier 'user') 'an account that can elevate may choose it'
+$said = Get-Printed
+Assert-Match $said 'From boot'
+Assert-NoMatch $said 'needs an administrator account' 'and is not told it cannot'
+
+Reset-Printed; $script:canElevate = $false
+Set-Answers @('1', '2')     # From boot is unpickable, so try again with From login
+Assert-Equal 'user' (Read-Tier '')
+$said = Get-Printed
+Assert-Match $said 'From boot'                     'the row is still drawn'
+Assert-Match $said 'needs an administrator account' 'and says why it is not available'
+Assert-Match $said '-- From boot'                   'drawn unnumbered, so it cannot be picked'
+Assert-Match ((Get-Asked) -join '|') 'Choice \[2\]' 'and the cursor does not start on it'
+
+Reset-Printed; $script:canElevate = $true
 
 # ---- autostart can be answered "no" ------------------------------------------
 

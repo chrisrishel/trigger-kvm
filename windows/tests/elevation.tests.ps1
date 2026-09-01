@@ -11,7 +11,8 @@
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'lib.ps1')
 
-Import-Subject -Script 'install.ps1' -Functions @('Format-ChildArguments', 'Request-Elevation')
+Import-Subject -Script 'install.ps1' -Functions @(
+    'Format-ChildArguments', 'Request-Elevation', 'Invoke-BootTierElevation')
 
 # ---- flags stay bare, values get quoted --------------------------------------
 #
@@ -75,5 +76,35 @@ Assert-Match $said "'install'"                                          'and wha
 
 # The printed line is meant to be PASTED, so it has to be runnable as it stands.
 Assert-Match $said "(?m)^Run this from an elevated PowerShell:  & '" 'a bare path with a space in it would not be'
+
+# ---- elevation that does not come falls back, and says so --------------------
+#
+# specs/configure.md 8. Declining the prompt used to exit 1 with
+# install.autostart still saying `boot`, the old watcher still running against
+# the OLD trigger devices, and a message claiming nothing had been changed --
+# when the config had been rewritten a moment earlier. Silently keeping `boot`
+# is how someone finds out months later that switching does nothing until they
+# log in.
+
+$script:written = @()
+function Set-ConfigValue { param([string]$Path, [string]$Key, [string]$Value)
+    $script:written += ('{0}={1}' -f $Key, $Value)
+}
+function Set-InstalledPath { throw 'the PATH is the parent''s, and only after the child came back clean' }
+function Request-Elevation { param([string[]]$ChildArgs) return $script:elevationResult }
+# lib.ps1's Write-Log swallows its argument unless TK_TEST_VERBOSE is set, and
+# what this case is about is what the person is TOLD.
+function Write-Log { param([string]$m) Add-Printed -Object "install: $m" }
+
+$global:CONFIG = 'C:\fake\config'
+
+Reset-Printed
+$script:elevationResult = 1
+$tier = Invoke-BootTierElevation
+
+Assert-Equal 'user' $tier 'a refusal installs the tier that needs no elevation'
+Assert-Match (Get-Printed) 'falling back to starting at login' 'and says so, in those words'
+Assert-Equal 'install.autostart=login' ($script:written -join ',') `
+    'and the config records what was installed, not what was asked for'
 
 exit 0

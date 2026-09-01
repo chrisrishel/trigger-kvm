@@ -270,6 +270,23 @@ Invoke-Mutation 'values: outcome 2 re-asks without the map, so an input can be t
     '                -Default $Answer.Map[$This] -Taken $taken `' `
     '                -Default $Answer.Map[$This] `'
 
+# --- the boot tier ------------------------------------------------------------
+
+Invoke-Mutation 'tier: a declined prompt leaves the config claiming boot' `
+    'install.ps1' 'elevation.tests.ps1' `
+    "    Write-Log 'falling back to starting at login.'" `
+    "    Write-Log 'nothing was changed.'; return 's4u'"
+Invoke-Mutation 'tier: the fallback does not record what was installed' `
+    'install.ps1' 'elevation.tests.ps1' `
+    "    Set-ConfigValue -Path `$CONFIG -Key 'install.autostart' -Value 'login'" ''
+Invoke-Mutation 'tier: the From boot row is offered to an account that cannot elevate' `
+    'install.ps1' 'walkthrough.tests.ps1' `
+    '    if (-not $canElevate) { $off += 0 }' ''
+Invoke-Mutation 'tier: the row is hidden instead of disabled' `
+    'install.ps1' 'walkthrough.tests.ps1' `
+    "          else             { 'needs an administrator account' }),"  `
+    "          else             { 'not available here' }),"
+
 # --- the monitors list --------------------------------------------------------
 
 Invoke-Mutation 'monitors: the list disables a row it does not own' `
