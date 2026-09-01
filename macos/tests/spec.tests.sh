@@ -55,16 +55,36 @@ assert_equal 1 "$rc" 'a missing fragment must fail'
 assert_match "$out" 'this exact sentence appears in no source file'
 
 it 'the checker ignores fragments too short to pin anything down'
+# The piece left after splitting must be one the sources do NOT contain --
+# "ok" was used here once, and it is a substring of checks.sh, so the fixture
+# passed with the floor removed entirely. A fixture for absence has to be
+# absent.
 cat >"$FAKE_DIR/short-spec.md" <<'EOS'
 ```normative
-{a} ok {b}
+{a} zqxjv {b}
 ```
 EOS
 set +e
 "$CHECK" "$FAKE_DIR/short-spec.md" "${SOURCES[@]}" >/dev/null 2>&1
 rc=$?
 set -e
-assert_equal 0 "$rc" 'a two-character fragment must not be treated as normative'
+assert_equal 0 "$rc" 'a five-character split piece must not be treated as normative'
+
+it 'but a WHOLE line is pinned at any length'
+# The two floors are different on purpose: "--- monitors ---" is 16 characters,
+# under the floor for split pieces, and is exactly what a section header check
+# exists to catch. A blanket floor silently dropped every header in the spec.
+cat >"$FAKE_DIR/line-spec.md" <<'EOS'
+```normative
+--- nowhere ---
+```
+EOS
+set +e
+out=$("$CHECK" "$FAKE_DIR/line-spec.md" "${SOURCES[@]}" 2>&1)
+rc=$?
+set -e
+assert_equal 1 "$rc" 'a 15-character whole line must still be reported missing'
+assert_match "$out" 'nowhere'
 
 # =============================================================================
 # The spec revision this implementation claims to implement
