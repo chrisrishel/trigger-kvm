@@ -442,8 +442,14 @@ managing and removing keep working after the source tree is gone.
 into the scheduled task's command line, so every config edit required re-registering
 the task — a coupling nobody could see, and the reason that verb never had a good
 name. The watcher now reads the config itself, the task action carries no
-configuration at all, and edits take effect when it next starts. `configure`
-restarts it for you; `restart` exists for hand-edits.
+*settings* — only `-Config`, the absolute path of the file to read them from —
+and edits take effect when it next starts. `configure` restarts it for you;
+`restart` exists for hand-edits.
+
+The path is baked in because it is the one answer the watcher cannot work out
+for itself: an at-startup task can run before the user's profile is loaded, and
+`%LOCALAPPDATA%` is then unset or the Default profile's. The watcher passes the
+same path down to the switcher it spawns, for the same reason.
 
 **Verbs, and the same verbs on macOS.** You use both computers daily, so the words
 typed constantly are where cross-platform muscle memory is worth buying. Flags stay

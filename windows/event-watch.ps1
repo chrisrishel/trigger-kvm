@@ -8,8 +8,10 @@ pull the displays here and runs `trigger-kvm.ps1 pull` when one occurs.
 
     event-watch.ps1 -Exec ..\trigger-kvm.ps1 -Arg pull [-Verbose]
 
-Device list, debounce and settle come from the CONFIG unless passed explicitly;
-the task action carries no configuration at all.
+Device list, debounce and settle come from the CONFIG unless passed explicitly.
+The task action carries no SETTINGS -- only -Config, the absolute path of the
+file to read them from, because %LOCALAPPDATA% in session 0 is not necessarily
+the installing user's.
 
 ONE process, N event sources. Today there is one source -- USB device presence --
 but the shape is deliberate: every additional persistent listener a user has to run
@@ -112,11 +114,18 @@ param(
     # years of normal use -- the point is that it is bounded at all.
     [int]$MaxLogBytes = 1MB,
 
-    # Read at STARTUP for anything not passed explicitly. The task action carries
-    # no configuration at all, deliberately: baking trigger settings into the task
-    # command line meant every config edit needed the task re-registered to take
-    # effect, which is a coupling nobody could see and the reason an "apply"
+    # WHICH file to read at STARTUP for anything not passed explicitly. The task
+    # action carries no SETTINGS, deliberately: baking trigger settings into the
+    # task command line meant every config edit needed the task re-registered to
+    # take effect, which is a coupling nobody could see and the reason an "apply"
     # step had to exist as a separate concept.
+    #
+    # The PATH is a different thing and is baked in, because it is the one answer
+    # this process cannot derive: an at-startup S4U task can run before the
+    # user's profile is loaded, and Get-ConfigPath then reads a %LOCALAPPDATA%
+    # that is unset or the Default profile's. Falling back to it is right for a
+    # hand-run watcher and wrong for the installed one, which is why the
+    # installed one is told.
     [string]$Config
 )
 
@@ -452,14 +461,31 @@ if ($TestTrigger) {
     exit 1
 }
 
+# What the switcher is started with. A function so the suite can assert what it
+# is handed without spawning one.
+#
+# -Config is passed on for the same reason the task action bakes it in: this
+# process was TOLD which file to read, and a child left to re-derive it from
+# %LOCALAPPDATA% answers for whoever the child runs as -- which, in session 0
+# before a profile is loaded, is not the installing user. One answer to "which
+# config?", handed down, rather than one derived per process.
+function Get-SwitcherArguments {
+    param([string]$Switcher, [string]$Verb, [string]$LogFile, [string]$ConfigFile)
+
+    $a = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden',
+           '-File', "`"$Switcher`"", $Verb)
+    # Hand the switcher the same log, so its lines land beside ours.
+    if ($LogFile)    { $a += @('-LogFile', "`"$LogFile`"") }
+    if ($ConfigFile) { $a += @('-Config',  "`"$ConfigFile`"") }
+    return $a
+}
+
 function Invoke-Exec {
     # Fire and forget, exactly like the macOS posix_spawn: never block the watch
     # loop on the switcher, and never let a switcher failure kill the watcher.
     try {
-        $switchArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden',
-                        '-File', "`"$Exec`"", $Arg)
-        # Hand the switcher the same log, so its lines land beside ours.
-        if ($LogFile) { $switchArgs += @('-LogFile', "`"$LogFile`"") }
+        $switchArgs = Get-SwitcherArguments -Switcher $Exec -Verb $Arg `
+                                            -LogFile $LogFile -ConfigFile $Config
 
         $psi = @{
             FilePath     = 'powershell.exe'

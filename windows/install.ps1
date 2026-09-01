@@ -27,8 +27,9 @@ itself, so managing and removing work after the source tree is gone.
 AND NO `apply` STEP EITHER. It used to be needed because trigger settings were
 baked into the task's command line, so every config edit required re-registering
 the task. The watcher now reads the config itself, so the task action carries no
-configuration at all and edits take effect when it next starts. `configure`
-restarts it for you; `restart` is there for hand-edits.
+SETTINGS -- only the absolute path of the file to read them from, which the
+watcher cannot work out for itself in session 0 -- and edits take effect when it
+next starts. `configure` restarts it for you; `restart` is there for hand-edits.
 
 VERBS, and the same verbs on macOS. You use both computers daily, so the words you
 type constantly are where cross-platform muscle memory is worth buying. Flags stay
@@ -3138,16 +3139,40 @@ if (Test-Path -LiteralPath $LGEXE) {
 
 # --- the Scheduled Task -----------------------------------------------------
 
-# powershell.exe -File passes every argument as a literal string, which is why
-# -Device takes one comma-separated value here rather than an array.
-$psCmd = @(
-    'powershell.exe',
-    '-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden',
-    '-File', "`"$WATCH`"",
-    '-Exec', "`"$SWITCH`"",
-    '-Arg', 'pull',
-    '-LogFile', "`"$LOG`""
-) -join ' '
+# The command the task runs, as one string.
+#
+# A FUNCTION so the suite can assert what a task will carry without registering
+# one -- the same reason Read-MenuKey and Send-Input are functions.
+#
+# EVERY PATH IS ABSOLUTE AND BAKED IN HERE, at registration, and that includes
+# the CONFIG. An at-startup S4U task can run before the user's profile is
+# loaded, and Get-ConfigPath reads %LOCALAPPDATA% at run time: unset, or
+# pointing at the Default profile, the watcher reads an empty config, throws
+# "no trigger.device" into a console-less wscript host, and the 1-minute
+# self-heal relaunches it to do the same thing forever. Registration is the
+# moment that knows whose install this is; the watcher is not.
+#
+# This is NOT configuration in the task action -- the settings themselves are
+# still read from the file at startup, which is why there is no apply step.
+# It is only the ANSWER TO "WHICH FILE", which the watcher cannot derive.
+function Get-WatcherCommand {
+    param([string]$Watcher, [string]$Switcher, [string]$LogFile, [string]$ConfigFile)
+
+    # powershell.exe -File passes every argument as a literal string, which is
+    # why -Device (when given at all) takes one comma-separated value rather
+    # than an array.
+    return (@(
+        'powershell.exe',
+        '-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden',
+        '-File', "`"$Watcher`"",
+        '-Exec', "`"$Switcher`"",
+        '-Arg', 'pull',
+        '-LogFile', "`"$LogFile`"",
+        '-Config', "`"$ConfigFile`""
+    ) -join ' ')
+}
+
+$psCmd = Get-WatcherCommand -Watcher $WATCH -Switcher $SWITCH -LogFile $LOG -ConfigFile $CONFIG
 
 # Launch through wscript.exe rather than running powershell.exe directly.
 #
