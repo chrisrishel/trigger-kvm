@@ -37,8 +37,10 @@ LOG="$FAKE_DIR/watch.log"
 ABSENT=usb:dead:beef
 PRESENT=""
 
-# The cases that need a present device skip, visibly, when there is none.
-skip_no_present() { echo "  SKIP  $CASE -- no USB device is attached to stand in as present" >&2; }
+# The cases that need a present device skip, visibly, when there is none. These
+# are the ARM and FIRE cases -- the ones this file exists for -- so the skip is
+# counted and reported rather than left to look like a pass.
+skip_no_present() { skip_case 'no USB device is attached to stand in as present'; }
 
 kill_watchers() { pkill -f "$WATCH" 2>/dev/null || true; sleep 0.3; }
 trap 'kill_watchers' EXIT

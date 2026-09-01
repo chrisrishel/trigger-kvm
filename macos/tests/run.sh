@@ -10,7 +10,14 @@
 # names as real functions, and sharing one shell would let those leak into each
 # other.
 #
-# Exit code is the number of files that failed, so CI can just check it.
+# A file or a case that cannot run on this machine reports SKIP, LOUDLY, and is
+# counted separately -- never as a pass. Output is captured and shown only on
+# FAIL, so a skip used to be swallowed: on a machine without python3 the whole
+# interactive half of the walkthrough went untested and this said "all 11 test
+# files passed". Every `SKIPPED:` line is surfaced whatever the verdict.
+#
+# Exit code is the number of files that failed, so CI can just check it. A skip
+# is a fact about the machine rather than a failure, so it does not raise it.
 
 set -uo pipefail
 
@@ -76,25 +83,55 @@ if [ -z "$files" ]; then
   exit 1
 fi
 
+# Every line a file wrote that begins `SKIPPED:` -- printed whatever the verdict,
+# because a file that passed everything it ran is still not a file that ran.
+say_skips() { printf '%s\n' "$1" | grep '^SKIPPED:' | sed 's/^/        /' || true; }
+
 n=0
+skipped_files=""
+skipped_cases=0
 for f in $files; do
   n=$(( n + 1 ))
+  base=$(basename "$f")
   # macOS has no timeout(1). A test that wedges -- a menu spinning on a key it
   # does not recognise, a watcher that never exits -- must fail loudly rather
   # than hang the run.
-  if out=$(bash "$f" 2>&1 & p=$!
-           ( sleep "${TK_TEST_TIMEOUT:-240}"; kill -9 $p 2>/dev/null ) >/dev/null 2>&1 &
-           w=$!; wait $p; rc=$?; kill $w 2>/dev/null; exit $rc); then
-    echo "  PASS  $(basename "$f")"
-    [ -n "${TK_TEST_VERBOSE:-}" ] && printf '%s\n' "$out"
-  else
-    echo "  FAIL  $(basename "$f")"
-    printf '%s\n' "$out"
-    failed=$(( failed + 1 ))
-  fi
+  out=$(bash "$f" 2>&1 & p=$!
+        ( sleep "${TK_TEST_TIMEOUT:-240}"; kill -9 $p 2>/dev/null ) >/dev/null 2>&1 &
+        w=$!; wait $p; rc=$?; kill $w 2>/dev/null; exit $rc)
+  rc=$?
+  # A case-level skip tallies inside the file, which then exits 0 or 1 as usual,
+  # and `finish` prints the count. Read the count from there rather than
+  # counting SKIPPED lines: exit_skipped writes one too, and one skipped case
+  # writes two (its own line, and the tally).
+  cases=$(printf '%s\n' "$out" | sed -n 's/^SKIPPED: \([0-9][0-9]*\) case(s).*/\1/p' | tail -1)
+  [ -n "$cases" ] || cases=0
+  skipped_cases=$(( skipped_cases + cases ))
+
+  case $rc in
+    0) echo "  PASS  $base"
+       say_skips "$out"
+       [ -n "${TK_TEST_VERBOSE:-}" ] && printf '%s\n' "$out" ;;
+    # exit_skipped: the whole file could not run here.
+    2) echo "  SKIP  $base"
+       say_skips "$out"
+       skipped_files="$skipped_files $base" ;;
+    *) echo "  FAIL  $base"
+       printf '%s\n' "$out"
+       failed=$(( failed + 1 )) ;;
+  esac
 done
 
+nskipped=$(printf '%s' "$skipped_files" | wc -w | tr -d ' ')
+ran=$(( n - nskipped ))
+
 echo
-if [ "$failed" = "0" ]; then echo "all $n test files passed"
-else                          echo "$failed of $n FAILED"; fi
+if [ "$failed" = "0" ]; then echo "all $ran test files passed"
+else                          echo "$failed of $ran FAILED"; fi
+if [ "$nskipped" != "0" ]; then
+  echo "$nskipped did NOT run on this machine and proved nothing:$skipped_files"
+fi
+if [ "$skipped_cases" != "0" ]; then
+  echo "$skipped_cases case(s) inside the files that did run were skipped -- see SKIPPED above"
+fi
 exit $failed

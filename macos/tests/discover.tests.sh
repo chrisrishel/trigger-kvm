@@ -114,7 +114,7 @@ if [ -x "$MAC_DIR/event-watch" ]; then
     assert_equal '' "$bad" 'malformed device rows from the real watcher'
   fi
 else
-  echo "  SKIP  $CASE -- event-watch is not built (run: make)" >&2
+  skip_case 'event-watch is not built (run: make)'
 fi
 
 it 'says the full vendor+product pair must be matched'

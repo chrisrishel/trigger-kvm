@@ -15,8 +15,10 @@
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 if ! command -v python3 >/dev/null 2>&1; then
-  echo "  SKIP  keys.tests.sh (no python3 to allocate a pty)" >&2
-  exit 0
+  # This is the ONLY file that drives the real key-driven menus through a pty,
+  # so skipping it leaves the whole interactive half of the walkthrough
+  # untested -- which is why it must not read as a pass.
+  exit_skipped 'keys.tests.sh needs python3 to allocate a pty'
 fi
 
 fake_setup

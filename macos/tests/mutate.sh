@@ -378,6 +378,24 @@ mutate 'switch: a bare trigger-kvm pulls instead of printing usage' trigger-kvm 
 mutate 'watch: an oversized Bluetooth entry is clamped after the write, not skipped' event-watch.c watcher.tests.sh \
   's|        if (nk < 1 \|\| nk > 8) continue;|        if (nk < 1) continue; if (nk > 8) nk = 8;|'
 
+# --- a skip is never a pass ---------------------------------------------------
+#
+# The bug these reintroduce shipped: run.sh printed a file's output only on FAIL,
+# so a SKIP written to stderr vanished and exit 0 was counted as a pass.
+
+mutate 'harness: a file that did not run is counted as a pass' tests/run.sh conventions.tests.sh \
+  's@^    2) echo "  SKIP  \$base"@    2) echo "  PASS  $base"@'
+mutate 'harness: a skipped case is hidden when its file passes' tests/run.sh conventions.tests.sh \
+  '/^    0) echo "  PASS  \$base"$/{n;s@^       say_skips "\$out"$@       :@;}'
+mutate 'harness: the summary counts a skipped file among those that passed' tests/run.sh conventions.tests.sh \
+  's@^ran=\$(( n - nskipped ))$@ran=$n@'
+mutate 'harness: a skip raises the exit code, as if it were a failure' tests/run.sh conventions.tests.sh \
+  's@^exit \$failed$@exit $(( failed + nskipped ))@'
+mutate 'harness: exit_skipped exits 0, which is indistinguishable from a pass' tests/lib.sh conventions.tests.sh \
+  's@^  exit 2$@  exit 0@'
+mutate 'harness: finish drops the skipped-case tally' tests/lib.sh conventions.tests.sh \
+  's@^  if \[ "\$SKIPPED" -gt 0 \]; then@  if false; then@'
+
 # --- launchd is reached through one name -------------------------------------
 
 mutate 'launchd: a bare launchctl bypasses the seam the suite records through' lib/manage.sh conventions.tests.sh \

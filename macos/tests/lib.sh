@@ -22,7 +22,35 @@ MAC_DIR=$(dirname "$TESTS_DIR")
 TK="$MAC_DIR/trigger-kvm"
 
 FAILED=0
+SKIPPED=0
 CASE=""
+
+# --- a test that did not run is not a test that passed ------------------------
+#
+# run.sh captures a file's output and prints it only on FAIL, so a skip written
+# to stderr was SWALLOWED and the file's exit 0 was counted as a PASS. On a
+# machine without python3 the entire interactive half of the walkthrough went
+# untested and the run still said "all 11 test files passed".
+#
+# Both halves below print a line beginning `SKIPPED:`, which is the string
+# run.sh surfaces WHATEVER the verdict -- so a partially-skipped file cannot
+# read as fully run. Windows had the identical shape and it hid the only tests
+# of the byte-exact packets; its fix is commit 5febeec.
+
+# The whole FILE cannot run here. 2 rather than 1, so run.sh can tell "did not
+# run" from "ran and failed" -- the same code windows/tests/lib.ps1 uses.
+exit_skipped() {
+  printf 'SKIPPED: %s\n' "$1" >&2
+  exit 2
+}
+
+# One CASE cannot run here. The file still runs, and still passes or fails on
+# everything else, so this is a tally rather than an exit code: an exit code
+# would report a file that mostly ran as one that did not.
+skip_case() {
+  printf 'SKIPPED: %s -- %s\n' "$CASE" "$1" >&2
+  SKIPPED=$(( SKIPPED + 1 ))
+}
 
 # --- assertions --------------------------------------------------------------
 
@@ -70,6 +98,12 @@ assert_sent() {
 }
 
 finish() {
+  # Reported even when everything that RAN passed, and before the failure exit
+  # so a red file still says what it also skipped.
+  if [ "$SKIPPED" -gt 0 ]; then
+    printf 'SKIPPED: %d case(s) in %s did not run on this machine\n' \
+           "$SKIPPED" "$(basename "$0")" >&2
+  fi
   if [ "$FAILED" -gt 0 ]; then
     printf '%s: %d assertion(s) failed\n' "$(basename "$0")" "$FAILED" >&2
     exit 1

@@ -363,12 +363,19 @@ because on Windows the check was present, did not fire, and an unresolved value
 went out as `0x00`, an input no monitor has.
 
 Nor can it reach launchd: every `launchctl` the program runs is
-`"$TK_LAUNCHCTL"`, and the harness points that at a recorder too. And it does
-not assume this desk — the watcher tests take a present device from the live
-list and skip, saying so, on a machine with nothing attached, and the
-Bluetooth semantics run against a plist fixture the watcher reads in place of
-`system_profiler` (`TK_BT_PLIST`) — so `make test` means the same thing on any
-Mac.
+`"$TK_LAUNCHCTL"`, and the harness points that at a recorder too. And it does not assume this desk — the watcher tests take a
+present device from the live list and skip, saying so, on a machine with nothing
+attached, and the Bluetooth semantics run against a plist fixture the watcher
+reads in place of `system_profiler` (`TK_BT_PLIST`) — so `make test` means the
+same thing on any Mac.
+
+**A test that did not run is never counted as one that passed.** A skipped file
+reports `SKIP` with its reason and is named in the summary as having proved
+nothing; a skipped *case* is printed even though its file passed. A skip does
+not raise the exit code — it is a fact about the machine, not a failure. Before
+this, output was shown only on failure, so a skip was swallowed: on a machine
+without `python3` every pty-driven menu test quietly did not run and the suite
+still said "all 11 test files passed".
 
 Every assertion is mutation-checked: `tests/mutate.sh` reintroduces each bug the
 suite is supposed to catch and fails if any survives.

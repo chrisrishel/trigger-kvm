@@ -195,6 +195,88 @@ for platform in macos windows; do
     "AGENTS.md ($root_bytes) + $platform/AGENTS.md ($plat_bytes) = $chain bytes; Codex loads at most $CODEX_BUDGET and drops the rest without a word"
 done
 
+# =============================================================================
+# A test that did not run is never reported as one that passed
+# =============================================================================
+#
+# run.sh captures each file's output and prints it only on FAIL, so a skip
+# written to stderr was swallowed and the file's exit 0 counted as a PASS. On a
+# machine without python3 that hid every pty-driven menu test while the run said
+# "all 11 test files passed". Windows had the identical shape (commit 5febeec).
+#
+# Driven end to end, against throwaway probes in a COPY of the harness: the
+# rendering was the bug, so asserting the helpers alone would not have caught
+# it. The copy is why no probe file is ever left in the real tests directory,
+# where the next run would pick it up.
+
+probe_dir=$(mktemp -d "$FAKE_DIR/harness.XXXXXX")
+cp "$TESTS_DIR/run.sh" "$TESTS_DIR/lib.sh" "$probe_dir/"
+
+cat >"$probe_dir/pass.tests.sh" <<'EOS'
+#!/bin/bash
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+it 'runs'; assert_equal a a
+finish
+EOS
+cat >"$probe_dir/filelevel.tests.sh" <<'EOS'
+#!/bin/bash
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+exit_skipped 'PROBE-WHOLE-FILE'
+EOS
+cat >"$probe_dir/caselevel.tests.sh" <<'EOS'
+#!/bin/bash
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+it 'one that runs'; assert_equal a a
+it 'one that cannot'; skip_case 'PROBE-ONE-CASE'
+finish
+EOS
+
+set +e
+probe_out=$(bash "$probe_dir/run.sh" --no-lint 2>&1); probe_rc=$?
+set -e
+
+it 'a file that could not run reports SKIP, with its reason, and never PASS'
+assert_match "$probe_out" 'SKIP  filelevel.tests.sh'
+assert_match "$probe_out" 'PROBE-WHOLE-FILE' 'the reason must be printed every time'
+assert_no_match "$probe_out" 'PASS  filelevel.tests.sh'
+
+it 'and is named in the summary as having proved nothing'
+assert_match "$probe_out" 'did NOT run on this machine and proved nothing'
+
+it 'a skipped case is surfaced even though its file PASSED'
+# The swallowing bug in one line: this file exits 0, so its output was hidden.
+assert_match "$probe_out" 'PASS  caselevel.tests.sh'
+assert_match "$probe_out" 'PROBE-ONE-CASE'
+assert_match "$probe_out" '1 case(s) inside the files that did run were skipped'
+
+it 'a skip does not raise the exit code -- it is a fact about the machine'
+assert_equal 0 "$probe_rc"
+
+it 'and the count of files that passed excludes the one that did not run'
+# Three probe files, one skipped: saying "all 3 passed" is the false claim.
+assert_match "$probe_out" 'all 2 test files passed'
+
+it 'the probe harness can still go red, so the assertions above are not vacuous'
+cat >"$probe_dir/red.tests.sh" <<'EOS'
+#!/bin/bash
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+it 'fails'; assert_equal a b
+finish
+EOS
+set +e
+red_out=$(bash "$probe_dir/run.sh" --no-lint red 2>&1); red_rc=$?
+set -e
+assert_match "$red_out" 'FAIL  red.tests.sh'
+assert_equal 1 "$red_rc"
+
+it 'every test file ends in finish, or its skipped-case tally never prints'
+# skip_case tallies into a counter that only `finish` reports. A file that
+# exits by another route drops the count silently -- the same class of bug.
+for f in "$TESTS_DIR"/*.tests.sh; do
+  last=$(grep -v '^[[:space:]]*$' "$f" | tail -1)
+  assert_equal 'finish' "$last" "$(basename "$f") must end in finish"
+done
+
 it 'every CLAUDE.md is an import of the AGENTS.md beside it, never a second copy'
 # Claude Code reads CLAUDE.md, not AGENTS.md; the @ import is how it gets the
 # same instructions. Anything else at the top of a CLAUDE.md is a second copy

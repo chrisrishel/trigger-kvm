@@ -95,6 +95,14 @@ a path nobody anticipated writes a line to a file instead of a packet to a panel
 That is deliberately stronger than stubbing one function. The harness runs
 `set -euo pipefail` and `shellcheck`, because the scripts do.
 
+**A test that did not run is never reported as one that passed.** `run.sh` shows
+a file's output only on FAIL, so a skip written to stderr was swallowed and its
+exit 0 counted as a pass -- without python3 the whole pty-driven half went
+untested under "all 11 test files passed". Use `exit_skipped` (whole file, exit
+2) or `skip_case` (one case, tallied by `finish`); both print a `SKIPPED:` line,
+which `run.sh` surfaces whatever the verdict. A skip does not raise the exit
+code: it is a fact about the machine, not a failure.
+
 `tests/mutate.sh` reintroduces every bug the suite is supposed to catch; all of
 them must be caught. **A `mutate.sh` killed outright (SIGKILL) leaves the source
 MUTATED**: it cannot run its trap, and the next `make` builds the mutant -- which
