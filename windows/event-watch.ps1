@@ -308,15 +308,15 @@ if ('BtPresence' -as [type]) {
 $cfg = Read-Config -Path $Config
 
 if (-not $PSBoundParameters.ContainsKey('Device')) {
-    if (-not $cfg.ContainsKey('trigger.device')) {
+    if (-not $cfg.Contains('trigger.device')) {
         throw "no -Device given and no trigger.device in $Config -- run: trigger-kvm configure"
     }
     $Device = @($cfg['trigger.device'])
 }
-if (-not $PSBoundParameters.ContainsKey('Debounce') -and $cfg.ContainsKey('trigger.debounce')) {
+if (-not $PSBoundParameters.ContainsKey('Debounce') -and $cfg.Contains('trigger.debounce')) {
     $Debounce = [double]$cfg['trigger.debounce']
 }
-if (-not $PSBoundParameters.ContainsKey('Settle') -and $cfg.ContainsKey('trigger.settle')) {
+if (-not $PSBoundParameters.ContainsKey('Settle') -and $cfg.Contains('trigger.settle')) {
     $Settle = [double]$cfg['trigger.settle']
 }
 

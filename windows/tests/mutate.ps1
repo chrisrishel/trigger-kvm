@@ -94,11 +94,16 @@ function Test-SuiteGreen {
 
 # One mutation.
 #
-# -Find is a LITERAL substring on ONE line, not a regex or a patch. A regex
-# would have to be escaped twice over -- once for PowerShell, once for the
-# pattern -- against source that is itself full of $, ` and \, and every version
-# of this that took one silently failed to apply somewhere and reported the
-# mutation caught. A literal that does not appear is an ERROR here, loudly.
+# -Find is a LITERAL substring, not a regex and not a patch. A regex would have
+# to be escaped twice over -- once for PowerShell, once for the pattern --
+# against source that is itself full of $, ` and \, and every version of this
+# that took one silently failed to apply somewhere and reported the mutation
+# caught. A literal that does not appear is an ERROR here, loudly.
+#
+# Newlines are normalised to LF on both sides before matching, because the
+# working tree carries CRLF for .ps1 while the literals in this file do not.
+# The mutant is written back with LF, which PowerShell parses identically; the
+# original comes back from the backup either way.
 function Invoke-Mutation {
     param([string]$Name, [string]$File, [string]$Suite, [string]$Find, [string]$Replace = '')
 
@@ -120,7 +125,9 @@ function Invoke-Mutation {
     $backup = "$target.mutbak"
     Copy-Item -LiteralPath $target -Destination $backup -Force
     try {
-        $src = Get-Content -Raw -LiteralPath $target
+        $src   = (Get-Content -Raw -LiteralPath $target) -replace "`r`n", "`n"
+        $Find  = $Find    -replace "`r`n", "`n"
+        $Replace = $Replace -replace "`r`n", "`n"
         if (-not $src.Contains($Find)) {
             Write-Host ("  ERROR     {0}  ->  mutation did not apply; '{1}' is not in {2}" -f $Name, $Find, $File)
             $script:Checked++; $script:Survived++
@@ -195,6 +202,68 @@ Invoke-Mutation 'legacy: any task of that name is unregistered' `
     'install.ps1' 'install.tests.ps1' `
     "    if (`$act -match '(usb|event)-watch\.ps1') { return `$true }" `
     "    return `$true"
+
+# --- the config reader and its converters -------------------------------------
+
+Invoke-Mutation 'config: the value is not cut at the first #' `
+    'config.ps1' 'config.tests.ps1' `
+    "'^\s*([A-Za-z0-9_.\-]+)\s*=\s*(.*?)\s*(?:#.*)?`$'" `
+    "'^\s*([A-Za-z0-9_.\-]+)\s*=\s*(.*?)\s*`$'"
+Invoke-Mutation 'config: keys are not lower-cased' `
+    'config.ps1' 'config.tests.ps1' `
+    '$map[$Matches[1].ToLower()] = $Matches[2]' '$map[$Matches[1]] = $Matches[2]'
+Invoke-Mutation 'config: the reader loses file order' `
+    'config.ps1' 'config.tests.ps1' `
+    '    $map = [ordered]@{}' '    $map = @{}'
+Invoke-Mutation 'config: a byte that does not parse becomes zero' `
+    'config.ps1' 'config.tests.ps1' `
+    '    if ([string]::IsNullOrEmpty($Text)) { return $null }
+    try {
+        if ($Text -cmatch ''^0[xX][0-9A-Fa-f]{1,2}$'')' `
+    '    if ([string]::IsNullOrEmpty($Text)) { return [byte]0 }
+    try {
+        if ($Text -cmatch ''^0[xX][0-9A-Fa-f]{1,2}$'')'
+Invoke-Mutation 'config: a leading zero is read as octal' `
+    'config.ps1' 'config.tests.ps1' `
+    '        if ($Text -match  ''^[0-9]{1,3}$'')            { return [byte][int]$Text }' `
+    '        if ($Text -match  ''^[0-9]{1,3}$'')            { return [byte][Convert]::ToInt32($Text, 8) }'
+Invoke-Mutation 'config: a word above 65535 is accepted' `
+    'config.ps1' 'config.tests.ps1' `
+    '            if ($n -le 65535) { return $n }' '            return $n'
+Invoke-Mutation 'config: the converters trim, so " 0x11 " is accepted' `
+    'config.ps1' 'config.tests.ps1' `
+    '    if ([string]::IsNullOrEmpty($Text)) { return $null }
+    try {
+        if ($Text -cmatch ''^0[xX][0-9A-Fa-f]{1,2}$'')' `
+    '    if ([string]::IsNullOrEmpty($Text)) { return $null }
+    $Text = $Text.Trim()
+    try {
+        if ($Text -cmatch ''^0[xX][0-9A-Fa-f]{1,2}$'')'
+Invoke-Mutation 'config: a malformed timing reads as zero rather than being refused' `
+    'config.ps1' 'config.tests.ps1' `
+    "    return (`$Text -match '^[0-9]+(\.[0-9]+)?`$')" '    return $true'
+
+# --- the walkthrough parses what the switcher parses ---------------------------
+
+Invoke-Mutation 'values: the typed prompt keeps its own regex' `
+    'install.ps1' 'walkthrough.tests.ps1' `
+    '            $v = Format-Byte $typed
+            if (-not $v) { Write-Host ''  Not a byte.''; continue }' `
+    '            if ($typed -notmatch ''^(0[xX])?[0-9A-Fa-f]{1,2}$'') { Write-Host ''  Not a byte.''; continue }
+            $v = $typed'
+Invoke-Mutation 'values: only a hex input key is read back from the config' `
+    'install.ps1' 'walkthrough.tests.ps1' `
+    "            if (`$k -match ('^display\.' + [regex]::Escape(`$Label) + '\.input\.(.+)`$')) {" `
+    "            if (`$k -match ('^display\.' + [regex]::Escape(`$Label) + '\.input\.(0x[0-9a-f]{1,2})`$')) {"
+Invoke-Mutation 'values: EDID ids are compared as hex text' `
+    'install.ps1' 'walkthrough.tests.ps1' `
+    '        $ven = ConvertTo-Word $Existing["display.$l.vendor"]
+        $pro = ConvertTo-Word $Existing["display.$l.product"]
+        if ($null -eq $ven -or $null -eq $pro) { continue }
+        if ((''{0:X4}'' -f $ven) -ne $Key.Split('':'')[0]) { continue }
+        if ((''{0:X4}'' -f $pro) -ne $Key.Split('':'')[1]) { continue }' `
+    '        if (($Existing["display.$l.vendor"]  -replace ''^0[xX]'','''').ToUpper().PadLeft(4,''0'') -ne $Key.Split('':'')[0]) { continue }
+        if (($Existing["display.$l.product"] -replace ''^0[xX]'','''').ToUpper().PadLeft(4,''0'') -ne $Key.Split('':'')[1]) { continue }'
 
 # --- the monitors list --------------------------------------------------------
 

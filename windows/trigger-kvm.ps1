@@ -123,40 +123,17 @@ $ErrorActionPreference = 'Stop'
 
 # --- configuration ----------------------------------------------------------
 
-# Shared config reader. Dot-sourced rather than duplicated: three consumers parsing
-# the same format independently is a drift risk where the watcher and the switcher
-# could silently disagree about what is configured.
+# Shared config reader AND the two value converters. Dot-sourced rather than
+# duplicated: three consumers parsing the same format independently is a drift
+# risk where the watcher and the switcher could silently disagree about what is
+# configured -- and the walkthrough could accept a value this script then drops.
+#
+# ConvertTo-Byte and ConvertTo-Word return $null on anything unrecognised rather
+# than guessing or defaulting. A misparsed input value is a write aimed at the
+# wrong input, and a misparsed EDID id is a write aimed at the wrong PANEL --
+# silently, since a wrong id simply matches nothing or, worse, something else.
+# $null is "refuse", never zero.
 . (Join-Path $PSScriptRoot 'config.ps1')
-
-# Both parsers return $null on anything unrecognised rather than guessing or
-# defaulting. A misparsed input value is a write aimed at the wrong input, and a
-# misparsed EDID id is a write aimed at the wrong PANEL -- silently, since a wrong
-# id simply matches nothing or, worse, something else. Callers must treat $null as
-# "refuse", never as zero.
-
-# Input value: accepts 0x11, 0X11 or 17.
-function ConvertTo-Byte {
-    param([string]$Text)
-    if ([string]::IsNullOrWhiteSpace($Text)) { return $null }
-    $t = $Text.Trim()
-    try {
-        if ($t -match '^0[xX][0-9A-Fa-f]{1,2}$') { return [byte][Convert]::ToInt32($t.Substring(2), 16) }
-        if ($t -match '^[0-9]{1,3}$')            { return [byte][int]$t }
-    } catch { return $null }
-    return $null
-}
-
-# EDID vendor / product id: 16-bit, e.g. 0x1E6D.
-function ConvertTo-Word {
-    param([string]$Text)
-    if ([string]::IsNullOrWhiteSpace($Text)) { return $null }
-    $t = $Text.Trim()
-    try {
-        if ($t -match '^0[xX][0-9A-Fa-f]{1,4}$') { return [int][Convert]::ToInt32($t.Substring(2), 16) }
-        if ($t -match '^[0-9]{1,5}$')            { return [int]$t }
-    } catch { return $null }
-    return $null
-}
 
 # Every display the config declares, in file order.
 # display.<label>.input.<value> = <machine>, read back as machine -> value.
@@ -165,7 +142,7 @@ function ConvertTo-Word {
 # toss: it means someone edited the file wrongly, and picking one of them would
 # switch to an input the user did not mean on a desk they cannot see.
 function Get-InputMap {
-    param([hashtable]$Cfg, [string]$Label)
+    param([System.Collections.IDictionary]$Cfg, [string]$Label)
 
     $map = @{}
     foreach ($k in ($Cfg.Keys | Sort-Object)) {
@@ -173,7 +150,7 @@ function Get-InputMap {
         $value = ConvertTo-Byte $Matches[1]
         $name  = "$($Cfg[$k])".Trim().ToLower()
         if ($null -eq $value -or -not $name) { continue }
-        if ($map.ContainsKey($name)) {
+        if ($map.Contains($name)) {
             $map[$name] = 'AMBIGUOUS'
             continue
         }
@@ -183,7 +160,7 @@ function Get-InputMap {
 }
 
 function Get-ConfiguredDisplays {
-    param([hashtable]$Cfg)
+    param([System.Collections.IDictionary]$Cfg)
     $labels = @($Cfg.Keys |
         Where-Object { $_ -match '^display\.([^.]+)\.vendor$' } |
         ForEach-Object { $Matches[1] } |
@@ -199,8 +176,8 @@ function Get-ConfiguredDisplays {
             Label   = $l
             Vendor  = ConvertTo-Word $Cfg["display.$l.vendor"]
             Product = ConvertTo-Word $Cfg["display.$l.product"]
-            Name    = $(if ($Cfg.ContainsKey("display.$l.name")) { $Cfg["display.$l.name"] } else { $l })
-            Method  = $(if ($Cfg.ContainsKey("display.$l.method")) { $Cfg["display.$l.method"].ToLower() } else { 'standard' })
+            Name    = $(if ($Cfg.Contains("display.$l.name")) { $Cfg["display.$l.name"] } else { $l })
+            Method  = $(if ($Cfg.Contains("display.$l.method")) { $Cfg["display.$l.method"].ToLower() } else { 'standard' })
             # machine name (lower-cased) -> input value. The whole map: which
             # machine is on which input of this panel. `pull` and `to` are the same
             # lookup against it, differing only in which name they look up.
@@ -788,7 +765,7 @@ if ($Command -eq 'list') {
         Write-Host ('  0x{0:X4}   0x{1:X4}    {2,-11} {3,-22} {4}' -f `
                     $d.EdidVendor, $d.EdidProduct, $d.Connector,
                     $(if ($d.EdidName) { $d.EdidName } else { '(' + [NvDdc]::DecodeMfg($d.EdidVendor) + ', unnamed)' }),
-                    $(if ($known.ContainsKey($key)) { $known[$key] } else { '-- not in config --' }))
+                    $(if ($known.Contains($key)) { $known[$key] } else { '-- not in config --' }))
     }
     Write-Host ''
     Write-Host 'To add one, put this in the config and name the input each computer is on:'
@@ -810,7 +787,7 @@ if (-not $Config) { $Config = Get-ConfigPath }
 $cfg      = Read-Config -Path $Config
 $displays = @(Get-ConfiguredDisplays -Cfg $cfg)
 # What this config calls the machine it is running on. `pull` is `to $ThisComputer`.
-$ThisComputer = $(if ($cfg.ContainsKey('computer.this')) { "$($cfg['computer.this'])".Trim().ToLower() } else { '' })
+$ThisComputer = $(if ($cfg.Contains('computer.this')) { "$($cfg['computer.this'])".Trim().ToLower() } else { '' })
 
 if ($displays.Count -eq 0) {
     Write-Log ("no displays configured. Expected a config at {0}; run install.ps1 to generate one." -f $Config)
@@ -856,7 +833,7 @@ foreach ($d in $displays) {
             }
             exit 2
         }
-        if (-not $d.Inputs.ContainsKey($who)) {
+        if (-not $d.Inputs.Contains($who)) {
             $known = @($d.Inputs.Keys | Sort-Object)
             Write-Log ("REFUSING: '{0}' has no input named '{1}' ({2}). Nothing was sent." -f `
                        $d.Label, $who,

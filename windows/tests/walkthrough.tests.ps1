@@ -17,7 +17,7 @@ Import-Subject -Script 'install.ps1' -Variables @('DIALECTS','MCCS_INPUTS','COMP
     'Select-One','Select-Many','Join-Names','Get-InputName',
     'Get-DefaultComputerName','Get-KnownComputers','Read-Computers','Read-ComputerRemovals',
     'Edit-PanelMaps','Format-ComputerName','Read-ComputerName',
-    'Read-InputValue','Get-InputTable','Get-DisplayMap','Read-Method',
+    'Format-Byte','Read-InputValue','Get-InputTable','Get-DisplayMap','Read-Method',
     'Get-DisplayAnswers','Get-ConfiguredAnswers','Get-PriorDisplay','Read-Monitors',
     'Invoke-DisplayTest','Invoke-TestRound','Invoke-TestRoundBody','Test-OneComputer',
     'Test-DisplayInput','Test-OneValue','Invoke-BlindWalk',
@@ -161,7 +161,7 @@ Assert-Equal 'pc'   $c['display.pg42uq.input.0x11']
 Assert-Equal 'mac'  $c['display.pg42uq.input.0x0f']
 Assert-Equal 'pc'   $c['display.lg.input.0xd0']
 Assert-Equal 'mac'  $c['display.lg.input.0xd1']
-Assert-True (-not $c.ContainsKey('display.lg.self')) 'self is gone'
+Assert-True (-not $c.Contains('display.lg.self')) 'self is gone'
 Assert-Equal 'PG42UQ' $c['display.pg42uq.name'] 'the panel names come out of the EDID'
 
 # ---- an assigned input keeps its name, its place, and cannot be taken ---------
@@ -237,7 +237,7 @@ Set-Answers @('1', '5', '1', 'y', '5', '5','1', '10')
 Invoke-Configure
 Assert-Equal 0 $LASTEXITCODE
 $c = Get-Written
-Assert-True (-not $c.ContainsKey('display.lg.input.0xd1')) 'a removed computer leaves no input naming it'
+Assert-True (-not $c.Contains('display.lg.input.0xd1')) 'a removed computer leaves no input naming it'
 Assert-Equal 'pc' $c['display.lg.input.0xd0']
 
 # ---- the PATH row is drawn even when there is nothing to decide ---------------
@@ -279,7 +279,7 @@ Invoke-Configure
 Assert-Equal 0 $LASTEXITCODE 'Done must be reachable with three monitors and bin\ on PATH'
 $c = Get-Written
 Assert-Equal 'lg-alt' $c['display.lg.method'] 'and looking at the list changes nothing'
-Assert-True (-not $c.ContainsKey('display.dell.vendor')) 'the unmanaged third panel stays unmanaged'
+Assert-True (-not $c.Contains('display.dell.vendor')) 'the unmanaged third panel stays unmanaged'
 
 $script:panels = @('06B3|42E0|AUS|HDMI|01010101|PG42UQ',
                    '1E6D|9E9D|GSM|DisplayPort|00001111|LG ULTRAGEAR+')
@@ -440,7 +440,7 @@ Set-Answers @('2', '2', 'n', 'y', '4', '5','1', '10')
 Invoke-Configure
 Assert-Equal 0 $LASTEXITCODE
 $c = Get-Written
-Assert-True (-not $c.ContainsKey('display.lg.method')) '"no", confirmed, removes the panel'
+Assert-True (-not $c.Contains('display.lg.method')) '"no", confirmed, removes the panel'
 Assert-Equal 'pc' $c['display.asus.input.0x11']       'and only that panel'
 $said = Get-Printed
 Assert-Match $said 'Which computer is on which of its inputs is forgotten\. Nothing else'
@@ -553,6 +553,72 @@ Assert-Equal 0 $LASTEXITCODE
 $c = Get-Written
 Assert-Equal 'pc'  $c['display.pg42uq.input.0x11']
 Assert-Equal 'mac' $c['display.pg42uq.input.0x0f'] 'the second computer had to move to a free input'
+
+# ---- the walkthrough and the switcher agree about what a value is ------------
+#
+# specs/config-format.md "Value parsing", specs/configure.md 6.1. The walkthrough
+# carried three regexes of its own and each disagreed with the reader in a
+# different direction, so a saved config was not the setup the person had been
+# shown. All three sites now go through config.ps1's converters.
+
+# A TYPED value is stored canonically, so `17` and the listed `0x11` are one
+# socket rather than two rows that both claim it.
+Set-Config $null
+Set-Outcomes @()
+Set-Answers @(
+    '1','pc','1','mac','6',
+    '2','1',            # Monitors -> PG42UQ
+    'y','',             #   manage / label
+    '9','17',           #   pc: Type a value... -> decimal 17
+    '1',                #   mac: DisplayPort 1 (HDMI 1 is now taken by pc)
+    '2','y','','1',     #   the LG, standard
+    '1','2',
+    '4',                #   Monitors -> Done
+    '3','1,3', '4','1', '5','1',
+    '10'
+)
+Invoke-Configure
+Assert-Equal 0 $LASTEXITCODE
+$c = Get-Written
+Assert-Equal 'pc' $c['display.pg42uq.input.0x11'] 'a typed 17 is written as the canonical 0x11'
+Assert-True (-not $c.Contains('display.pg42uq.input.17')) 'and never in the spelling it was typed in'
+Assert-Equal 'mac' $c['display.pg42uq.input.0x0f'] 'so the next computer had to take a different input'
+
+# A bare hex byte is what the READER drops, so the walkthrough must refuse it
+# rather than saving a line that quietly does nothing.
+Reset-Printed
+Set-Answers @('9', 'd1', '3')       # Type a value... -> refused -> HDMI 1
+$v = Read-InputValue -Table (Get-InputTable -Method 'standard' -Map $null) `
+                     -Prompt 'which input?'
+Assert-Equal '0x11' $v
+Assert-Match (Get-Printed) 'Not a byte' 'a bare d1 is not a byte, whatever it looks like'
+
+# ...and a 3-digit decimal IS one, which the old regex refused.
+Set-Answers @('9', '200')
+Assert-Equal '0xC8' (Read-InputValue -Table (Get-InputTable -Method 'standard' -Map $null) -Prompt 'which input?')
+
+# A HAND-EDITED config in any spelling the reader accepts is VISIBLE here, and
+# survives Save. Matched on hex alone it was invisible to the walkthrough and
+# gone after the next Save, while the switcher went on acting on it.
+Set-Config @(
+ 'computer.this = pc'
+ 'display.lg.vendor = 0x1E6D','display.lg.product = 0x9E9D','display.lg.name = LG ULTRAGEAR+'
+ 'display.lg.method = lg-alt'
+ 'display.lg.input.0xd0 = pc','display.lg.input.0xd1 = mac'
+ 'display.asus.vendor = 1715','display.asus.product = 17120'   # 0x06B3 / 0x42E0, in decimal
+ 'display.asus.name = PG42UQ','display.asus.method = standard'
+ 'display.asus.input.17 = pc','display.asus.input.15 = mac'    # 0x11 / 0x0F, in decimal
+ 'trigger.device = 046d:0843','install.autostart = login'
+)
+Set-Outcomes @()
+Set-Answers @('5','1', '10')        # nothing to change: PATH, then Save
+Invoke-Configure
+Assert-Equal 0 $LASTEXITCODE
+$c = Get-Written
+Assert-Equal 'pc'  $c['display.asus.input.0x11'] 'a decimal input key is read, and rewritten canonically'
+Assert-Equal 'mac' $c['display.asus.input.0x0f']
+Assert-Equal 'PG42UQ' $c['display.asus.name'] `
+    'and a decimal EDID id still matches the panel, so it is not silently unmanaged'
 
 # ---- autostart can be answered "no" ------------------------------------------
 

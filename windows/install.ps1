@@ -229,7 +229,7 @@ function Get-EffectiveTier {
     # user it is installing FOR, and Get-ConfigPath answers for whoever is running.
     # Two spellings of one path can disagree; one cannot.
     $c = Read-Config -Path $CONFIG
-    if ($c.ContainsKey('install.autostart')) {
+    if ($c.Contains('install.autostart')) {
         switch ($c['install.autostart']) {
             'boot'  { return 's4u' }
             'login' { return 'user' }
@@ -241,10 +241,10 @@ function Get-EffectiveTier {
     # working boot-start install to login-only on the next install, with the loss
     # showing up months later as "switching does nothing at the login screen". The
     # rename warning still fires, and `configure` rewrites the file without it.
-    if ($c.ContainsKey('install.start')) {
+    if ($c.Contains('install.start')) {
         switch ($c['install.start']) { 'boot' { return 's4u' } 'login' { return 'user' } }
     }
-    if ($c.ContainsKey('install.tier') -and $c['install.tier'] -in @('user', 's4u')) {
+    if ($c.Contains('install.tier') -and $c['install.tier'] -in @('user', 's4u')) {
         return $c['install.tier']
     }
     # Deliberately NOT the walkthrough's default. The walkthrough offers from-boot
@@ -1207,8 +1207,8 @@ function Invoke-BlindWalk {
 # A sensible name for this computer, before anyone has said one. The hostname is
 # what people already call it, and it is never typed in anger -- `pull` is the verb.
 function Get-DefaultComputerName {
-    param([hashtable]$Seed)
-    if ($Seed.ContainsKey('computer.this') -and $Seed['computer.this']) { return "$($Seed['computer.this'])".Trim().ToLower() }
+    param([System.Collections.IDictionary]$Seed)
+    if ($Seed.Contains('computer.this') -and $Seed['computer.this']) { return "$($Seed['computer.this'])".Trim().ToLower() }
     $n = "$env:COMPUTERNAME".ToLower() -replace '[^a-z0-9_-]', ''
     if ($n) { return $n }
     return 'pc'
@@ -1216,7 +1216,7 @@ function Get-DefaultComputerName {
 
 # Every machine the config already names, in the order it first appears.
 function Get-KnownComputers {
-    param([hashtable]$Cfg)
+    param([System.Collections.IDictionary]$Cfg)
     $out = @()
     foreach ($k in ($Cfg.Keys | Sort-Object)) {
         if ($k -match '^display\.[^.]+\.input\.') {
@@ -1468,8 +1468,36 @@ function Read-Computers {
     return [PSCustomObject]@{ This = $me; All = @(@($me) + $rest); Edited = $edits }
 }
 
+# ONE SPELLING PER INPUT VALUE: the canonical 0xNN, which is how the config is
+# written and how the channel's own tables are written.
+#
+# specs/configure.md 6.1 asks for collision BY VALUE -- `17` and `0x11` are one
+# socket -- and the way to get that is not to compare cleverly everywhere. It is
+# to CONVERT AT THE TWO BOUNDARIES where a value enters the walkthrough, so that
+# from then on every value in every map and every table is already in the same
+# form and a plain comparison IS a comparison by value. The boundaries are the
+# typed prompt in Read-InputValue and Get-DisplayMap, reading the file.
+#
+# ConvertTo-Byte comes from config.ps1, which is where the switcher gets it too.
+# The walkthrough used to carry three regexes of its own and each disagreed with
+# the reader in a different direction: it accepted a bare `d1` the reader then
+# dropped, and refused a 3-digit decimal the reader accepts. A saved config was
+# not the setup the person had been shown.
+#
+# Returns $null for anything that is not a byte -- "refuse", never zero.
+function Format-Byte {
+    param([string]$Text)
+    $n = ConvertTo-Byte $Text
+    if ($null -eq $n) { return $null }
+    return ('0x{0:X2}' -f [int]$n)
+}
+
 # Ask which input something is on, for one panel. Returns a value, or $null when
 # -AllowNone is given and that machine is not on this panel at all.
+#
+# Every value it is handed -- the table's, the default's, $Taken's keys -- is
+# already canonical, so the comparisons below are plain string ones. What keeps
+# that true is the typed branch, which converts before doing anything else.
 function Read-InputValue {
     param($Table, [string]$Prompt, [string]$Sub, [string]$Default = '',
           [hashtable]$Taken = @{}, [switch]$AllowNone,
@@ -1488,7 +1516,7 @@ function Read-InputValue {
     $vals  = @()
     for ($i = 0; $i -lt $names.Count; $i++) {
         $v = $Table[$names[$i]]
-        if ($Taken.ContainsKey($v)) { $vals += ('{0}   assigned to {1}' -f $v, $Taken[$v]); $off += $i }
+        if ($Taken.Contains($v)) { $vals += ('{0}   assigned to {1}' -f $v, $Taken[$v]); $off += $i }
         else                        { $vals += $v }
     }
     $rows += 'Type a value...'; $vals += ''
@@ -1525,13 +1553,17 @@ function Read-InputValue {
             return $null
         } else {
             $typed = Read-Default '  Value (e.g. 0x11)' $Default
-            if ($typed -notmatch '^(0[xX])?[0-9A-Fa-f]{1,2}$') { Write-Host '  Not a byte.'; continue }
-            $v = $typed
+            # The switcher's own converter, so a value accepted here is one the
+            # reader will accept back. Stored canonically, so a typed `17` and a
+            # listed `0x11` are one row rather than two.
+            $v = Format-Byte $typed
+            if (-not $v) { Write-Host '  Not a byte.'; continue }
         }
         # Two machines on one input makes `to` ambiguous, and it refuses rather than
         # guess -- so refuse here instead, where the person can still say which one
-        # they meant. Marking it in the list was not enough: it can still be picked.
-        if ($Taken.ContainsKey($v)) {
+        # they meant. Marking it in the list was not enough: it can still be picked,
+        # and a typed value never appears in the list at all.
+        if ($Taken.Contains($v)) {
             Write-Host ('  {0} is already {1} on this monitor. Two computers cannot share one input.' -f $v, $Taken[$v])
             continue
         }
@@ -1558,7 +1590,9 @@ function Get-InputTable {
     foreach ($n in $base.Keys) { $out[$n] = $base[$n] }
 
     # A value someone typed by hand is not in the channel's list, and would otherwise
-    # be invisible -- including to the "already assigned" marking.
+    # be invisible -- including to the "already assigned" marking. Compared by VALUE:
+    # a hand-edited `display.asus.input.17` is the channel's own 0x11 and must not be
+    # appended as a second row for the same socket.
     if ($Map) {
         foreach ($m in $Map.Keys) {
             if (@($out.Values) -contains $Map[$m]) { continue }
@@ -1576,19 +1610,26 @@ function Get-InputTable {
 # to be plugged into. The order someone listed their computers in is the one they
 # will look for.
 function Get-DisplayMap {
-    param([hashtable]$Existing, [string]$Label, [string[]]$Computers = @())
+    param([System.Collections.IDictionary]$Existing, [string]$Label, [string[]]$Computers = @())
 
+    # `.input.(.+)` and then the converter, not a hex-only pattern. The reader
+    # accepts every form specs/config-format.md allows, so a spec-legal hand edit
+    # -- `display.asus.input.17 = pc` -- has to be VISIBLE here. Matched on hex
+    # alone it was invisible to the walkthrough and gone after the next Save,
+    # while the switcher went on acting on it.
     $found = @{}
     if ($Label) {
         foreach ($k in ($Existing.Keys | Sort-Object)) {
-            if ($k -match ('^display\.' + [regex]::Escape($Label) + '\.input\.(0x[0-9a-f]{1,2})$')) {
-                $found["$($Existing[$k])".Trim().ToLower()] = $Matches[1]
+            if ($k -match ('^display\.' + [regex]::Escape($Label) + '\.input\.(.+)$')) {
+                $v = Format-Byte $Matches[1]
+                if (-not $v) { continue }     # not a byte: dropped, exactly as the switcher drops it
+                $found["$($Existing[$k])".Trim().ToLower()] = $v
             }
         }
     }
 
     $out = [ordered]@{}
-    foreach ($c in $Computers) { if ($found.ContainsKey($c)) { $out[$c] = $found[$c]; $found.Remove($c) } }
+    foreach ($c in $Computers) { if ($found.Contains($c)) { $out[$c] = $found[$c]; $found.Remove($c) } }
     # Anything the config names that the walkthrough does not know about goes last
     # rather than being dropped -- it is somebody's hand edit.
     foreach ($c in ($found.Keys | Sort-Object)) { $out[$c] = $found[$c] }
@@ -1806,7 +1847,7 @@ function Read-Tier {
 # Rebuild the answer objects straight from the config, asking nothing. What the menu
 # opens with.
 function Get-ConfiguredAnswers {
-    param($Found, [hashtable]$Existing, [string[]]$Computers = @())
+    param($Found, [System.Collections.IDictionary]$Existing, [string[]]$Computers = @())
 
     $out = @()
     foreach ($f in $Found) {
@@ -1815,7 +1856,7 @@ function Get-ConfiguredAnswers {
         if (-not $prior) { continue }
         $out += [PSCustomObject]@{
             Label  = $prior.Label
-            Name   = $(if ($Existing.ContainsKey("display.$($prior.Label).name")) { $Existing["display.$($prior.Label).name"] } else { $prior.Label })
+            Name   = $(if ($Existing.Contains("display.$($prior.Label).name")) { $Existing["display.$($prior.Label).name"] } else { $prior.Label })
             Method = $(if ($prior.Method) { $prior.Method } else { 'standard' })
             Vendor = ('0x{0:X4}' -f $f.EdidVendor); Product = ('0x{0:X4}' -f $f.EdidProduct)
             EdidVendor = $f.EdidVendor; Mfg = $f.Mfg; Key = $key
@@ -1829,7 +1870,7 @@ function Get-ConfiguredAnswers {
 # for the same reason. Walking every panel in sequence to change one value meant
 # answering for all of them, which is what a menu exists to avoid.
 function Read-Monitors {
-    param($Found, $Answers, [string[]]$Computers, [string]$This, [hashtable]$Existing = @{})
+    param($Found, $Answers, [string[]]$Computers, [string]$This, [System.Collections.IDictionary]$Existing = @{})
 
     $out = @($Answers)
 
@@ -1885,16 +1926,23 @@ function Read-Monitors {
 # What the config already says about one panel, matched on its EDID rather than on
 # whatever label someone gave it.
 function Get-PriorDisplay {
-    param([hashtable]$Existing, [string]$Key, [string[]]$Computers = @())
+    param([System.Collections.IDictionary]$Existing, [string]$Key, [string[]]$Computers = @())
 
+    # Compared by VALUE, not as hex text. The config may spell an EDID id in
+    # decimal -- specs/config-format.md allows it and the switcher reads it --
+    # and a text comparison then matched nothing, so the panel showed as
+    # unmanaged and its answers were silently dropped on the next Save.
     foreach ($k in $Existing.Keys) {
         if ($k -notmatch '^display\.([^.]+)\.vendor$') { continue }
         $l = $Matches[1]
-        if (($Existing["display.$l.vendor"] -replace '^0[xX]','').ToUpper().PadLeft(4,'0') -ne $Key.Split(':')[0]) { continue }
-        if (($Existing["display.$l.product"] -replace '^0[xX]','').ToUpper().PadLeft(4,'0') -ne $Key.Split(':')[1]) { continue }
+        $ven = ConvertTo-Word $Existing["display.$l.vendor"]
+        $pro = ConvertTo-Word $Existing["display.$l.product"]
+        if ($null -eq $ven -or $null -eq $pro) { continue }
+        if (('{0:X4}' -f $ven) -ne $Key.Split(':')[0]) { continue }
+        if (('{0:X4}' -f $pro) -ne $Key.Split(':')[1]) { continue }
         return [PSCustomObject]@{
             Label  = $l
-            Method = $(if ($Existing.ContainsKey("display.$l.method")) { $Existing["display.$l.method"] } else { '' })
+            Method = $(if ($Existing.Contains("display.$l.method")) { $Existing["display.$l.method"] } else { '' })
             Map    = (Get-DisplayMap -Existing $Existing -Label $l -Computers $Computers)
         }
     }
@@ -1988,7 +2036,7 @@ function Invoke-Configure {
     $carry     = @{}
 
     $devices = @()
-    if ($seed.ContainsKey('trigger.device')) {
+    if ($seed.Contains('trigger.device')) {
         $devices = @(($seed['trigger.device'] -replace '\s','') -split ',' | Where-Object { $_ } | ForEach-Object {
             if ($_ -match '^(usb:|bt:)') { $_.ToLower() } else { 'usb:' + $_.ToLower() } })
     }
@@ -1999,7 +2047,7 @@ function Invoke-Configure {
     # menu, not in the value column of a menu nobody has opened. Showing "from boot"
     # for a choice never made is the tool answering on someone's behalf, and this one
     # raises a UAC prompt.
-    $newTier = $(if ($seed.ContainsKey('install.autostart')) {
+    $newTier = $(if ($seed.Contains('install.autostart')) {
                      $(switch ($seed['install.autostart']) {
                          'boot' { 's4u' } 'no' { 'manual' } default { 'user' } })
                  } else { '' })
@@ -2588,7 +2636,7 @@ function Test-OneComputer {
 # gone, and every fact the file holds is something the walkthrough asked about.
 function Write-ConfigFile {
     param([string]$Path, $Displays, [string[]]$Devices, [string]$Tier,
-          [string]$This, [hashtable]$Existing)
+          [string]$This, [System.Collections.IDictionary]$Existing)
 
     $lines = @(
         '# trigger-kvm configuration'
@@ -2649,8 +2697,8 @@ function Write-ConfigFile {
         '#         Bluetooth fires on CONNECTED, and every PAIRED device is offered.'
         ''
         ("trigger.device   = {0}" -f ($Devices -join ', '))
-        ("trigger.debounce = {0}" -f $(if ($Existing.ContainsKey('trigger.debounce')) { $Existing['trigger.debounce'] } else { $DEFAULT_DEBOUNCE }))
-        ("trigger.settle   = {0}" -f $(if ($Existing.ContainsKey('trigger.settle'))   { $Existing['trigger.settle'] }   else { $DEFAULT_SETTLE }))
+        ("trigger.debounce = {0}" -f $(if ($Existing.Contains('trigger.debounce')) { $Existing['trigger.debounce'] } else { $DEFAULT_DEBOUNCE }))
+        ("trigger.settle   = {0}" -f $(if ($Existing.Contains('trigger.settle'))   { $Existing['trigger.settle'] }   else { $DEFAULT_SETTLE }))
         ''
     )
 
@@ -2772,7 +2820,7 @@ if ($Command -eq 'discover') {
     $cur = @()
     if (Test-Path -LiteralPath $CONFIG) {
         $c = Read-Config -Path $CONFIG
-        if ($c.ContainsKey('trigger.device')) {
+        if ($c.Contains('trigger.device')) {
             # Normalise to the same form the candidate keys use. A config entry may
             # be bare (VVVV:PPPP), which means usb -- without this the "currently a
             # trigger" markers silently stop appearing for every pre-Bluetooth
@@ -2927,7 +2975,7 @@ if ($Command -eq 'status') {
 
     $c = Read-Config -Path $CONFIG
     $labels = @($c.Keys | Where-Object { $_ -match '^display\.([^.]+)\.vendor$' } | ForEach-Object { $Matches[1] } | Sort-Object -Unique)
-    $this = $(if ($c.ContainsKey('computer.this')) { "$($c['computer.this'])".Trim().ToLower() } else { '' })
+    $this = $(if ($c.Contains('computer.this')) { "$($c['computer.this'])".Trim().ToLower() } else { '' })
     $computers = @(Get-KnownComputers -Cfg $c)
     Write-Host ("displays : {0}" -f $(if ($labels) { $labels -join ', ' } else { 'none configured' }))
     Write-Host ("computers: {0}" -f $(if ($computers) {
@@ -3072,7 +3120,7 @@ $renamed = @{
     'install.start'           = 'install.autostart'
 }
 foreach ($old in $renamed.Keys) {
-    if ($cfg.ContainsKey($old)) {
+    if ($cfg.Contains($old)) {
         Write-Log ("WARNING: '{0}' is an old key name; rename it to '{1}' in {2}." -f $old, $renamed[$old], $CONFIG)
         if ($old -eq 'install.tier') {
             Write-Log "         The values changed too: 's4u' is now 'boot', 'user' is now 'login'."
@@ -3089,14 +3137,14 @@ foreach ($old in $renamed.Keys) {
 # No fallback. A config with no trigger.device is not a config with a default one --
 # it is a setup nobody finished, and the task would otherwise be registered to watch
 # for something nobody chose.
-if (-not $cfg.ContainsKey('trigger.device') -or -not "$($cfg['trigger.device'])".Trim()) {
+if (-not $cfg.Contains('trigger.device') -or -not "$($cfg['trigger.device'])".Trim()) {
     Write-Log "no trigger.device in $CONFIG -- nothing to watch for."
     Write-Log 'run:  trigger-kvm configure'
     exit 2
 }
 $devices  = $cfg['trigger.device'] -replace '\s', ''
-$debounce = $(if ($cfg.ContainsKey('trigger.debounce')) { $cfg['trigger.debounce'] }                 else { $DEFAULT_DEBOUNCE })
-$settle   = $(if ($cfg.ContainsKey('trigger.settle'))   { $cfg['trigger.settle'] }                   else { $DEFAULT_SETTLE })
+$debounce = $(if ($cfg.Contains('trigger.debounce')) { $cfg['trigger.debounce'] }                 else { $DEFAULT_DEBOUNCE })
+$settle   = $(if ($cfg.Contains('trigger.settle'))   { $cfg['trigger.settle'] }                   else { $DEFAULT_SETTLE })
 Write-Log "config says: watch $devices  (debounce ${debounce}s, settle ${settle}s)"
 
 New-Item -ItemType Directory -Force -Path $DEST              | Out-Null
