@@ -283,6 +283,125 @@ foreach ($l in (Select-String -LiteralPath $installer -Pattern 'New-ScheduledTas
 }
 Assert-Equal 0 $asWho.Count ("every task principal and logon trigger names `$FORUSER:`n  " + ($asWho -join "`n  "))
 
+# ---- the LG service channel is reachable from exactly one place --------------
+#
+# ..\..\AGENTS.md hard rule 5. I2C source 0x50 is LG's service/factory channel;
+# sweeping it has bricked LG monitors, and what it means on another vendor's
+# panel is unknown. The rule is enforced at the TRANSPORT rather than by caller
+# discipline: exactly one function may emit that source byte, the byte is not a
+# parameter of anything, and that function refuses a target whose EDID
+# manufacturer is not GSM.
+#
+# So the property is structural, and no behavioural test reaches it: a SECOND
+# emitter would pass every test in this suite while quietly removing the gate.
+# macOS pins the same thing in its own conventions file.
+
+$Switcher = Join-Path $WinDir 'trigger-kvm.ps1'
+
+function Get-TransportLine {
+    <#
+      .SYNOPSIS
+      The embedded C# transport, as lines, with its comments removed.
+
+      .DESCRIPTION
+      Comments removed because they TALK about the sidechannel constantly and
+      should go on being allowed to. What must be rare is the code.
+    #>
+    param([string]$Path)
+
+    $ps = Get-Content -Raw -LiteralPath $Path
+    $m  = [regex]::Match($ps, '(?s)\$NvDdcSource = @''\r?\n(.*?)\r?\n''@')
+    if (-not $m.Success) { throw "$Path no longer holds a `$NvDdcSource block; this check is blind" }
+
+    $cs = [regex]::Replace($m.Groups[1].Value, '(?s)/\*.*?\*/', '')
+    return @($cs -split "`r?`n" | ForEach-Object { $_ -replace '//.*$', '' })
+}
+
+function Get-CsMethodLine {
+    <#
+      .SYNOPSIS
+      The line indices of one C# method, signature to closing brace.
+    #>
+    param([string[]]$Lines, [string]$Name)
+
+    for ($i = 0; $i -lt $Lines.Count; $i++) {
+        if ($Lines[$i] -notmatch ('\b' + [regex]::Escape($Name) + '\s*\(')) { continue }
+        if ($Lines[$i] -notmatch '^\s*(public|private|internal|static)') { continue }
+        $depth = 0; $open = $false; $out = @()
+        for ($j = $i; $j -lt $Lines.Count; $j++) {
+            $out   += $j
+            $depth += ([regex]::Matches($Lines[$j], '\{')).Count
+            $depth -= ([regex]::Matches($Lines[$j], '\}')).Count
+            if ($Lines[$j] -match '\{') { $open = $true }
+            if ($open -and $depth -le 0) { break }
+        }
+        return $out
+    }
+    return @()
+}
+
+function Get-SourceGateComplaint {
+    <#
+      .SYNOPSIS
+      Everything about this transport that would let source 0x50 out by a second
+      door. Empty means the gate holds.
+    #>
+    param([string]$Path)
+
+    $lines = Get-TransportLine $Path
+    $out   = @()
+
+    # The gate, and the packet builder -Whatif prints. Two doors, both inside the
+    # one class, and both named here so a THIRD is a complaint rather than a
+    # silently widened allowance.
+    $gate    = @(Get-CsMethodLine -Lines $lines -Name 'WriteLgInput')
+    $builder = @(Get-CsMethodLine -Lines $lines -Name 'PacketForLgInput')
+    if ($gate.Count    -eq 0) { $out += 'WriteLgInput is gone -- there is no gate to check' }
+    if ($builder.Count -eq 0) { $out += 'PacketForLgInput is gone' }
+    $allowed = @($gate) + @($builder)
+
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        $l = $lines[$i]
+        # The declaration is the one place the literal may appear.
+        if ($l -match 'const\s+byte\s+LG_I2C_SOURCE\s*=\s*0x50\s*;') { continue }
+        if ($l -match '0x50') {
+            $out += ("line {0}: the literal 0x50 outside its one const: {1}" -f ($i + 1), $l.Trim())
+        }
+        if ($l -match 'LG_I2C_SOURCE' -and $allowed -notcontains $i) {
+            $out += ("line {0}: LG_I2C_SOURCE outside WriteLgInput and PacketForLgInput: {1}" -f ($i + 1), $l.Trim())
+        }
+    }
+
+    # Send is what actually puts bytes on the bus. Public, it would be the
+    # generic "write to source N" entry point this rule exists to forbid.
+    foreach ($l in @($lines | Where-Object { $_ -match '\bSend\s*\(.*byte\[\]' })) {
+        if ($l -match '\bpublic\b') { $out += ("Send must stay private: {0}" -f $l.Trim()) }
+    }
+
+    # ...and no public method may take a source or an I2C address at all, which
+    # is how the byte would become a caller's choice again.
+    foreach ($l in @($lines | Where-Object { $_ -match '^\s*public\s+static\b.*\(' })) {
+        $p = [regex]::Match($l, '\((.*)\)')
+        if ($p.Success -and $p.Groups[1].Value -match '(?i)\b(source|i2c\w*addr\w*|devaddress)\b') {
+            $out += ("a public method takes a source or I2C address: {0}" -f $l.Trim())
+        }
+    }
+    return @($out)
+}
+
+$gateComplaints = @(Get-SourceGateComplaint $Switcher)
+Assert-Equal 0 $gateComplaints.Count ("source 0x50 has more than one door:`n  " + ($gateComplaints -join "`n  "))
+
+# And the gate still refuses a target that is not GSM, which is the other half:
+# one door is no use if it is unlocked.
+$gateBody = (Get-TransportLine $Switcher)[(Get-CsMethodLine -Lines (Get-TransportLine $Switcher) -Name 'WriteLgInput')] -join "`n"
+# The COMPARISON, not merely the name: the name also appears in the refusal
+# message, so `if (false)` left the constant present and the gate open. Found by
+# a mutation that survived.
+Assert-Match $gateBody 'EdidVendor\s*!=\s*EDID_VENDOR_GSM' 'the vendor check lives inside the gate'
+Assert-Match $gateBody 'throw new InvalidOperationException' `
+    'and it throws rather than returning a code a caller can ignore'
+
 # ---- the instruction files fit the tools that load them ----------------------
 #
 # Codex loads the AGENTS.md chain from the git root down to its working
@@ -391,6 +510,49 @@ Assert-Equal '-Tier' $badT[0].Flag
 # hands the child the PATH edit.
 Assert-Equal 1 @($flagsT | Where-Object { $_.Flag -eq '-AddToPath' }).Count `
     'a delegated PATH edit must be visible at the call site'
+
+# ...and the source-gate check sees a second door, in each of the three shapes
+# it exists to forbid. Against a THROWAWAY COPY, not by breaking the real one:
+# a check that cannot fail is decoration, and this one is easy to write so that
+# it never fires.
+$copy = Join-Path $tmp 'switcher.ps1'
+
+function New-TransportCopy {
+    param([string]$Find, [string]$Replace)
+    $s = Get-Content -Raw -LiteralPath (Join-Path $WinDir 'trigger-kvm.ps1')
+    if (-not $s.Contains($Find)) { throw "the self-test fixture no longer matches the source: $Find" }
+    Set-Content -LiteralPath $copy -Value ($s.Replace($Find, $Replace)) -Encoding ASCII
+}
+
+# 1. A second emitter, which is the failure the whole rule exists to prevent.
+New-TransportCopy '    public static string PacketForStandardVcp(byte vcp, byte value) {' @'
+    public static int WriteAnything(NvDisplay target, byte vcp, byte value) {
+        return Send(target, BuildSetVcp(LG_I2C_SOURCE, vcp, value));
+    }
+
+    public static string PacketForStandardVcp(byte vcp, byte value) {
+'@
+$c = @(Get-SourceGateComplaint $copy)
+Assert-True ($c.Count -ge 1) 'a second emitter of LG_I2C_SOURCE must be reported'
+Assert-Match ($c -join "`n") 'LG_I2C_SOURCE outside WriteLgInput'
+
+# 2. The raw literal, sidestepping the constant.
+New-TransportCopy '        return Send(target, BuildSetVcp(STD_I2C_SOURCE, vcp, value));' `
+                  '        return Send(target, BuildSetVcp(0x50, vcp, value));'
+$c = @(Get-SourceGateComplaint $copy)
+Assert-True ($c.Count -ge 1) 'the raw literal must be reported too, or the constant is only a convention'
+Assert-Match ($c -join "`n") 'the literal 0x50 outside its one const'
+
+# 3. A generic "write to source N", which puts the byte back in a caller's hands.
+New-TransportCopy '    public static int WriteStandardVcp(NvDisplay target, byte vcp, byte value) {' `
+                  '    public static int WriteStandardVcp(NvDisplay target, byte source, byte vcp, byte value) {'
+$c = @(Get-SourceGateComplaint $copy)
+Assert-Match ($c -join "`n") 'takes a source or I2C address'
+
+# ...and it does NOT fire on the file as it stands, which the assertion above
+# already showed -- restated here so the three cases above are read as a
+# comparison rather than as three ways of saying yes.
+Assert-Equal 0 @(Get-SourceGateComplaint (Join-Path $WinDir 'trigger-kvm.ps1')).Count
 
 Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
 exit 0

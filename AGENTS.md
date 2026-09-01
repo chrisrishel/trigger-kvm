@@ -82,8 +82,8 @@ on each platform exactly ONE function can emit source `0x50`, the source byte is
 not a parameter, and it refuses unless the target's EDID manufacturer is GSM
 (`0x1E6D`). There is no generic "write to source N" entry point, so no caller can
 aim it at another vendor's panel, including by accident. Do not add one. Each
-platform's `AGENTS.md` names its gate, and each suite must assert the gate is the
-only door (macOS does; Windows owes it -- see its `HANDOFF.md`).
+platform's `AGENTS.md` names its gate, and each suite asserts -- self-testedly --
+that the gate is the only door.
 
 The switcher also refuses the LG switch unless exactly one enumerated output
 identifies as the LG -- zero is a refusal, and so is more than one, because an

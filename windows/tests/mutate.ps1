@@ -270,6 +270,24 @@ Invoke-Mutation 'values: outcome 2 re-asks without the map, so an input can be t
     '                -Default $Answer.Map[$This] -Taken $taken `' `
     '                -Default $Answer.Map[$This] `'
 
+# --- the LG service channel has one door --------------------------------------
+#
+# The self-test inside conventions.tests.ps1 already proves the CHECK bites, on
+# throwaway copies. These prove the check is wired to the real file.
+
+Invoke-Mutation 'gate: a second emitter of source 0x50' `
+    'trigger-kvm.ps1' 'conventions.tests.ps1' `
+    '    public static int WriteStandardVcp(NvDisplay target, byte vcp, byte value) {
+        if (target == null) throw new ArgumentNullException("target");
+        return Send(target, BuildSetVcp(STD_I2C_SOURCE, vcp, value));' `
+    '    public static int WriteStandardVcp(NvDisplay target, byte vcp, byte value) {
+        if (target == null) throw new ArgumentNullException("target");
+        return Send(target, BuildSetVcp(LG_I2C_SOURCE, vcp, value));'
+Invoke-Mutation 'gate: the vendor check leaves the gate' `
+    'trigger-kvm.ps1' 'conventions.tests.ps1' `
+    '        if (target.EdidVendor != EDID_VENDOR_GSM)' `
+    '        if (false)'
+
 # --- the boot tier ------------------------------------------------------------
 
 Invoke-Mutation 'tier: a declined prompt leaves the config claiming boot' `
