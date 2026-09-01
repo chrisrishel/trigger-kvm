@@ -950,7 +950,7 @@ wt_path() {
 # --- writing -----------------------------------------------------------------
 
 wt_write_config() {
-  local _path _i _l _c
+  local _path _i _l _c _other
   _path=$1
   mkdir -p "$(dirname "$_path")"
   {
@@ -1015,7 +1015,39 @@ wt_write_config() {
     printf 'trigger.debounce = %s\n' "$(wt_keep 'trigger.debounce' '3.0')"
     printf 'trigger.settle   = %s\n' "$(wt_keep 'trigger.settle' '0.75')"
     echo ''
+    # Every key this walkthrough did not write is carried across
+    # (specs/config-format.md, "Hand edits survive"): someone's hand edit, or
+    # a newer version's setting. Dropping it on Save is a loss nobody notices.
+    _other=$(wt_other_keys)
+    if [ -n "$_other" ]; then
+      echo '# --- kept from the previous file (not something configure asks about) --'
+      printf '%s\n' "$_other"
+      echo ''
+    fi
   } > "$_path"
+}
+
+# The keys in the loaded config that wt_write_config does not itself write, as
+# `key = value` lines, last duplicate winning. A display.<label>.* key is kept
+# only while that panel is still managed: unmanaging a panel is the one answer
+# that means "forget", and it forgets the whole panel.
+wt_other_keys() {
+  local _line _k _v _l _rest _i _managed
+  _managed=' '
+  _i=0
+  while [ "$_i" -lt "${#WT_A_LABEL[@]}" ]; do _managed="$_managed${WT_A_LABEL[$_i]} "; _i=$(( _i + 1 )); done
+  printf '%s\n' "$CONFIG_DATA" | awk -F'\t' 'NF { seen[$1] = $0 } END { for (k in seen) print seen[k] }' |
+  while IFS=$'\t' read -r _k _v; do
+    [ -n "$_k" ] || continue
+    case $_k in
+      install.autostart|computer.this|trigger.device|trigger.debounce|trigger.settle) continue ;;
+      display.*)
+        _rest=${_k#display.}; _l=${_rest%%.*}; _rest=${_rest#*.}
+        case " $_managed " in *" $_l "*) ;; *) continue ;; esac
+        case $_rest in vendor|product|name|method|input.*) continue ;; esac ;;
+    esac
+    printf '%s = %s\n' "$_k" "$_v"
+  done | sort
 }
 
 # A hand-written value the walkthrough never asks about survives a rewrite.

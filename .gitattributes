@@ -1,0 +1,3 @@
+# The reader fixture carries a byte-order mark and CRLF lines on purpose;
+# no checkout may normalise them away.
+specs/config-fixture/input.conf -text

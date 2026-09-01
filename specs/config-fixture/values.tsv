@@ -1,0 +1,20 @@
+byte	0x11	17
+byte	0X11	17
+byte	17	17
+byte	017	17
+byte	255	255
+byte	256	REFUSE
+byte	0x100	REFUSE
+byte	-1	REFUSE
+byte	1e2	REFUSE
+byte	0x	REFUSE
+byte		REFUSE
+byte	 0x11 	REFUSE
+word	0x1E6D	7789
+word	0x1e6d	7789
+word	7789	7789
+word	65535	65535
+word	65536	REFUSE
+word	99999	REFUSE
+word	0x10000	REFUSE
+word	0x	REFUSE

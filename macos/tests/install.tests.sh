@@ -159,6 +159,28 @@ assert_true "$([ -f "$SUPPORT/config" ] && echo 0 || echo 1)" 'the config is kep
 assert_match "$INST_OUT" 'config and log kept'
 
 # =============================================================================
+# the launcher refuses a bad config by name (specs/detector.md 4)
+# =============================================================================
+
+it 'watch refuses a trigger.device entry it cannot parse, naming it'
+CFGW=$(printf '%s' "$CONFIG_THIS_DESK" | sed 's|^trigger.device.*|trigger.device = usb:046d:0843, hid:1:2|' | make_config)
+run_tk watch --config "$CFGW"
+assert_equal 2 "$TK_RC" "$TK_OUT"
+assert_match "$TK_OUT" 'REFUSING to watch'
+assert_match "$TK_OUT" 'hid:1:2'
+
+it 'watch refuses a debounce that is not seconds, rather than passing zero on'
+CFGW=$(printf '%s' "$CONFIG_THIS_DESK" | sed 's|^trigger.debounce.*|trigger.debounce = three|' | make_config)
+run_tk watch --config "$CFGW"
+assert_equal 2 "$TK_RC" "$TK_OUT"
+assert_match "$TK_OUT" "trigger.debounce = 'three' is not a number of seconds"
+
+it 'and starts the watcher when the config is sound'
+CFGW=$(printf '%s' "$CONFIG_THIS_DESK" | make_config)
+run_tk watch --config "$CFGW"
+assert_equal 0 "$TK_RC" "$TK_OUT"
+
+# =============================================================================
 # the bare command
 # =============================================================================
 

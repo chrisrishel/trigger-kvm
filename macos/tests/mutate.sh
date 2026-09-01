@@ -308,6 +308,27 @@ mutate 'revision: this platform falls behind the changelog' SPEC-REVISION spec.t
 mutate 'revision: this platform claims a revision that does not exist' SPEC-REVISION spec.tests.sh \
   's%^revision = [0-9]*%revision = 99%'
 
+# --- revision 7: the detector's contract; the shared reader fixture ---------
+
+mutate 'watch: settle fires when ANY device is present, not the arriving one' event-watch.c watcher.tests.sh \
+  's|        if (g_watch\[i\].arrived && now\[i\]) still = true;|        if (now[i]) still = true;|'
+mutate 'watch: a loose device grammar accepts usb:46d:843 and trailing junk' event-watch.c watcher.tests.sh \
+  's|        if (!usb_spec_ok(s)) return false;|        ;|'
+mutate 'watch: a timing that is not a number reads as zero' event-watch.c watcher.tests.sh \
+  's|    if (!ok \|\| \*p != .\\0.) {|    if (false) {|'
+mutate 'config: an unknown trigger entry is prefixed into a usb: key that matches nothing' lib/config.sh config.tests.sh \
+  's|      elif \[\[ \$_d =~ \^\[0-9a-f\]{4}:\[0-9a-f\]{4}\$ \]\];     then printf .usb:%s\\n. "\$_d"|      else printf "usb:%s\\n" "$_d"|'
+mutate 'config: a word above 65535 is accepted' lib/config.sh spec.tests.sh \
+  's|      \[ \$(( 10#\$1 )) -le 65535 \] \|\| return 1|      :|'
+mutate 'watch: the launcher passes a bad trigger entry through' lib/manage.sh install.tests.sh \
+  's|^  _bad=\$(config_bad_trigger_devices)$|  _bad=""|'
+mutate 'walkthrough: Save drops every key it did not ask about' lib/walkthrough.sh walkthrough.tests.sh \
+  's|^    _other=\$(wt_other_keys)$|    _other=""|'
+mutate 'spec: the checker measures a fragment before trimming it' ../specs/check-conformance.sh spec.tests.sh \
+  's|      t = trim(line)$|      t = line|'
+mutate 'spec: the changelog head is the first heading, not the largest' tests/spec.tests.sh spec.tests.sh \
+  's/| sort -n | tail -1; }/| head -1; }/'
+
 # --- revision 6: name the consequence; a panel is one submenu ---------------
 
 mutate 'walkthrough: the method chooser does not name the service channel' lib/walkthrough.sh walkthrough.tests.sh \

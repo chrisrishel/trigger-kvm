@@ -103,7 +103,7 @@ were once "measured" here and were wrong).
 
 - **The detector fires on an absent -> present EDGE, debounced and settled, and
   the debounce is load-bearing** -- a single physical plug produces dozens of
-  events on Windows, not one. **Usually only one device appears in the log, and
+  events on Windows, not one. Its contract is `specs/detector.md`. **Usually only one device appears in the log, and
   that is correct**: both watched devices arrive together, whichever lands first
   fires, the other falls inside the debounce window. A second `pull` on one flip
   means the other device arrived outside that window; harmless. Do not "fix"

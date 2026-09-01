@@ -44,6 +44,22 @@ printf '\357\273\277computer.this = mac\n' >"$FAKE_DIR/c"
 config_load "$FAKE_DIR/c"
 assert_equal 'mac' "$(config_get 'computer.this')"
 
+it 'refuses a word above 65535, which no EDID id can be'
+set +e; config_to_word 65536 >/dev/null; rc=$?; set -e
+assert_equal 1 "$rc" '65536 is not a 16-bit id'
+assert_equal 65535 "$(config_to_word 65535)"
+
+it 'normalises only the documented trigger forms, and names the rest as bad'
+# An unknown entry used to be prefixed into a usb: key that matched nothing,
+# so the watcher armed and never fired.
+cfg 'trigger.device = 046D:0843, USB:1235:820A, BT:0011223344FF, hid:1:2, bt:00:11:22:33:44:ff, usb:46d:843'
+assert_equal 'usb:046d:0843 usb:1235:820a bt:0011223344ff' "$(config_trigger_devices | tr '\n' ' ' | sed 's/ $//')"
+assert_equal 'hid:1:2 bt:00:11:22:33:44:ff usb:46d:843' "$(config_bad_trigger_devices | tr '\n' ' ' | sed 's/ $//')"
+
+it 'knows what a number of seconds looks like'
+for ok in 3 3.0 0.75 0 12.5; do assert_true "$(config_is_seconds "$ok" && echo 0 || echo 1)" "'$ok' is seconds"; done
+for bad in three '3 s' -1 .5 3. '' 1e2; do assert_true "$(config_is_seconds "$bad" && echo 1 || echo 0)" "'$bad' is not seconds"; done
+
 it 'cuts at a # with no space before it'
 cfg 'a = b#c'
 assert_equal 'b' "$(config_get 'a')"

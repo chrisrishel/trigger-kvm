@@ -339,6 +339,32 @@ assert_match "$c2" 'display.asus.input.0x0f = pc' "$WT_OUT"
 assert_no_match "$c2" 'input.15'
 
 # =============================================================================
+# every key the walkthrough does not write is carried across (config-format)
+# =============================================================================
+
+it 'keeps a hand-edited key it has never heard of, and a managed panel'"'"'s extra key'
+# A key the reader does not know is someone's hand edit or a newer version's
+# setting; dropping it on Save is a loss nobody notices. A key of a panel that
+# was UNMANAGED goes, because that answer means forget the panel.
+cat >"$CFG" <<'EOS'
+computer.this = mac
+trigger.hotkey = f13
+display.lg.vendor  = 0x1E6D
+display.lg.product = 0x9E9F
+display.lg.serial  = 0009
+display.old.vendor = 0x0001
+display.old.note   = gone
+trigger.device = usb:046d:0843
+trigger.debounce = 4.5
+EOS
+PATH=$SAVED_PATH configure_with "$FULL"
+c3=$(cat "$CFG")
+assert_match "$c3" 'trigger.hotkey = f13'  "$WT_OUT"
+assert_match "$c3" 'display.lg.serial = 0009' 'a managed panel keeps its extra key'
+assert_match "$c3" 'trigger.debounce = 4.5' 'the timings still carry'
+assert_no_match "$c3" 'display.old' 'an unmanaged panel is forgotten whole'
+
+# =============================================================================
 # an account that cannot elevate is not offered From boot (specs 8)
 # =============================================================================
 

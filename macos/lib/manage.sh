@@ -64,18 +64,38 @@ cmd_discover() {
 # the watcher holding the lock -- a trap that has caught people repeatedly.
 # There is deliberately no equivalent here to fall into.
 cmd_watch() {
-  local _devices _d _deb _set
+  local _devices _bad _d _deb _set
+  # Refused by name, never defaulted or dropped (specs/detector.md 4). A watcher
+  # armed on a mis-parsed entry, or with a debounce that read as zero, runs and
+  # never does the right thing -- the worst failure shape available. Refusing
+  # under KeepAlive means refusing again every few seconds, loudly in the log,
+  # which is the point.
+  _bad=$(config_bad_trigger_devices)
+  if [ -n "$_bad" ]; then
+    tk_log "REFUSING to watch: trigger.device has an entry that is not usb:VVVV:PPPP or bt:AAAAAAAAAAAA: $(printf '%s' "$_bad" | tr '\n' ' ')"
+    exit 2
+  fi
   _devices=$(config_trigger_devices)
   if [ -z "$_devices" ]; then
     tk_log "no trigger.device in $CONFIG -- run: trigger-kvm configure"
+    exit 2
+  fi
+  _deb=$(config_get 'trigger.debounce')
+  _set=$(config_get 'trigger.settle')
+  if [ -n "$_deb" ] && ! config_is_seconds "$_deb"; then
+    tk_log "REFUSING to watch: trigger.debounce = '$_deb' is not a number of seconds like 3 or 0.75"
+    exit 2
+  fi
+  if [ -n "$_set" ] && ! config_is_seconds "$_set"; then
+    tk_log "REFUSING to watch: trigger.settle = '$_set' is not a number of seconds like 3 or 0.75"
     exit 2
   fi
 
   set -- --exec "$TK_SELF" --arg pull --log "$TK_LOG"
   for _d in $_devices; do set -- "$@" --device "$_d"; done
 
-  _deb=$(config_get 'trigger.debounce'); [ -n "$_deb" ] && set -- "$@" --debounce "$_deb"
-  _set=$(config_get 'trigger.settle');   [ -n "$_set" ] && set -- "$@" --settle "$_set"
+  [ -n "$_deb" ] && set -- "$@" --debounce "$_deb"
+  [ -n "$_set" ] && set -- "$@" --settle "$_set"
 
   mkdir -p "$(dirname "$TK_LOG")"
   exec "$TK_WATCHER" "$@"

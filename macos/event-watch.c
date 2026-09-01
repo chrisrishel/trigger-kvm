@@ -82,6 +82,7 @@ typedef struct {
     io_iterator_t iter;
     bool     primed;          // first callback drains pre-existing devices
     bool     present;
+    bool     arrived;         // arrived during the current settle window
 } watch_t;
 
 static watch_t   g_watch[MAX_WATCH];
@@ -399,10 +400,17 @@ static void settle_fired(CFRunLoopTimerRef timer, void *info) {
 
     bool now[MAX_WATCH];
     presence_sweep(now);
-    bool any = false;
-    for (int i = 0; i < g_nwatch; i++) { g_watch[i].present = now[i]; if (now[i]) any = true; }
+    // The test is on a device that ARRIVED, not on any watched device: with
+    // two devices that travel together "is anything present?" is always yes,
+    // and appear-then-vanish would fire anyway (specs/detector.md 2).
+    bool still = false;
+    for (int i = 0; i < g_nwatch; i++) {
+        g_watch[i].present = now[i];
+        if (g_watch[i].arrived && now[i]) still = true;
+        g_watch[i].arrived = false;
+    }
 
-    if (!any) {
+    if (!still) {
         logmsg("device vanished during settle window; ignoring (glitch, not a switch)");
         return;
     }
@@ -411,12 +419,14 @@ static void settle_fired(CFRunLoopTimerRef timer, void *info) {
 }
 
 // An arrival edge was seen. Debounce, then settle, then fire.
-static void arrival(const char *what) {
+static void arrival(watch_t *w) {
+    const char *what = w->key;
     CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
     if (now - g_last_fire < g_debounce) {
         vlog("arrival %s within debounce (%.1fs); ignoring", what, now - g_last_fire);
         return;
     }
+    w->arrived = true;
     if (g_settle_pending) {
         vlog("arrival %s; settle already pending", what);
         return;
@@ -444,7 +454,7 @@ static void device_appeared(void *refcon, io_iterator_t iter) {
     }
     if (n == 0) return;
     w->present = true;
-    arrival(w->key);
+    arrival(w);
 }
 
 // Bluetooth has no notification reachable from a command-line binary, so it is
@@ -459,7 +469,7 @@ static void bt_tick(CFRunLoopTimerRef timer, void *info) {
         bool now = bt_in(&bt, g_watch[i].addr);
         bool was = g_watch[i].present;
         g_watch[i].present = now;
-        if (now && !was) arrival(g_watch[i].key);
+        if (now && !was) arrival(&g_watch[i]);
     }
 }
 
@@ -570,6 +580,19 @@ static void copy_arg(char *dst, size_t dstsz, const char *src, const char *what)
     snprintf(dst, dstsz, "%s", src);
 }
 
+// Exactly n hex digits at s, and then the given terminator.
+static bool hexrun(const char *s, size_t n, char after) {
+    for (size_t i = 0; i < n; i++) if (!isxdigit((unsigned char)s[i])) return false;
+    return s[n] == after;
+}
+
+// The device grammar is STRICT (specs/detector.md 4): usb:VVVV:PPPP is exactly
+// four hex digits, a colon and four; bt: is exactly twelve hex digits with no
+// separators. `%x:%x` used to accept usb:46d:843, 0x046d:0x0843 and trailing
+// junk, and a separated Bluetooth address that the config-side marker could
+// never match. A watcher armed on a mis-parsed entry runs and never fires.
+static bool usb_spec_ok(const char *s) { return hexrun(s, 4, ':') && hexrun(s + 5, 4, '\0'); }
+
 static bool add_device(const char *spec) {
     if (g_nwatch >= MAX_WATCH) return false;
     watch_t *w = &g_watch[g_nwatch];
@@ -577,9 +600,9 @@ static bool add_device(const char *spec) {
 
     const char *s = spec;
     if (!strncasecmp(s, "bt:", 3)) {
+        if (!hexrun(s + 3, 12, '\0')) return false;
         char addr[16];
         bt_normalize(s + 3, addr, sizeof addr);
-        if (strlen(addr) != 12) return false;
         w->kind = W_BT;
         snprintf(w->addr, sizeof w->addr, "%s", addr);
         snprintf(w->key, sizeof w->key, "bt:%s", addr);
@@ -587,6 +610,7 @@ static bool add_device(const char *spec) {
         // A bare VVVV:PPPP means usb, so a config written before Bluetooth
         // existed keeps working unchanged.
         if (!strncasecmp(s, "usb:", 4)) s += 4;
+        if (!usb_spec_ok(s)) return false;
         unsigned v, p;
         if (sscanf(s, "%x:%x", &v, &p) != 2) return false;
         w->kind = W_USB;
@@ -599,6 +623,22 @@ static bool add_device(const char *spec) {
 
 // -------------------------------------------------------------------- main --
 
+// A number of seconds: digits, or digits.digits (specs/detector.md 4). atof
+// read `three` as 0.0, which switched the debounce and the settle OFF and made
+// every event in a plug's burst a fire -- a watcher that ran and did the wrong
+// thing. Refuse by name instead.
+static double parse_secs(const char *s, const char *what) {
+    const char *p = s;
+    bool ok = isdigit((unsigned char)*p) != 0;
+    while (isdigit((unsigned char)*p)) p++;
+    if (*p == '.') { p++; ok = ok && isdigit((unsigned char)*p) != 0; while (isdigit((unsigned char)*p)) p++; }
+    if (!ok || *p != '\0') {
+        fprintf(stderr, "event-watch: %s must be seconds like 3 or 0.75, not '%s'\n", what, s);
+        exit(2);
+    }
+    return atof(s);
+}
+
 int main(int argc, char **argv) {
     signal(SIGCHLD, SIG_IGN);   // auto-reap the spawned switcher
     bool want_list = false;
@@ -609,10 +649,16 @@ int main(int argc, char **argv) {
         if      (!strcmp(a, "--exec"))          copy_arg(g_exec, sizeof g_exec, NEXT(), "--exec");
         else if (!strcmp(a, "--arg"))           copy_arg(g_arg,  sizeof g_arg,  NEXT(), "--arg");
         else if (!strcmp(a, "--log"))           copy_arg(g_log,  sizeof g_log,  NEXT(), "--log");
-        else if (!strcmp(a, "--device"))      { if (!add_device(NEXT())) usage(argv[0]); }
-        else if (!strcmp(a, "--debounce"))      g_debounce = atof(NEXT());
-        else if (!strcmp(a, "--settle"))        g_settle   = atof(NEXT());
-        else if (!strcmp(a, "--bt-poll"))       g_btpoll   = atof(NEXT());
+        else if (!strcmp(a, "--device")) {
+            const char *d = NEXT();
+            if (!add_device(d)) {
+                fprintf(stderr, "event-watch: bad --device '%s': want usb:VVVV:PPPP (4+4 hex) or bt:AAAAAAAAAAAA (12 hex)\n", d);
+                exit(2);
+            }
+        }
+        else if (!strcmp(a, "--debounce"))      g_debounce = parse_secs(NEXT(), "--debounce");
+        else if (!strcmp(a, "--settle"))        g_settle   = parse_secs(NEXT(), "--settle");
+        else if (!strcmp(a, "--bt-poll"))       g_btpoll   = parse_secs(NEXT(), "--bt-poll");
         else if (!strcmp(a, "--max-log-bytes")) g_maxlog   = atol(NEXT());
         else if (!strcmp(a, "--timeout"))       g_timeout  = atoi(NEXT());
         else if (!strcmp(a, "--list"))          want_list  = true;

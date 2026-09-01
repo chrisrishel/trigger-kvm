@@ -67,6 +67,56 @@ it does not have. It is blind to two things, and this closes them:
 
 ---
 
+## Revision 7 — 2026-09-01
+
+**The detector has a contract; the config reader has a shared fixture; the
+checkers agree with each other.**
+
+Sections: new [`detector.md`](detector.md); [`config-format.md`](config-format.md)
+"The line format", "Value parsing", `trigger.device`, "Hand edits survive", "The
+shared fixture"; [`README.md`](README.md) "Normative wording".
+
+**Act on (both platforms):**
+
+1. **`detector.md` §2 — settle tests the ARRIVING device**, not any watched
+   device. Windows already does (`$arrived`); macOS checked `any` and the
+   protection was inert with two devices that travel together. The same-flip
+   second `pull` is accepted, not suppressed — recorded so nobody adds a
+   device-identity window that could miss a real flip back.
+
+2. **`detector.md` §4 — startup refuses a bad device entry or timing by name.**
+   `usb:VVVV:PPPP` is exactly 4+4 hex; `bt:` exactly 12 hex, no separators; a
+   bare 4+4 pair is `usb:`; anything else is refused, never prefixed into a
+   `usb:` entry that matches nothing. Timings are `digits` or `digits.digits`;
+   `three` is refused, not `0`. macOS `atof`'d to zero (both protections off);
+   Windows threw before arming, silently, and was restarted every minute.
+
+3. **`config-format.md` — whitespace includes CR; a BOM is ignored; enumerations
+   are case-insensitive; a word is ≤ 65535.** macOS kept the CR (rev 6 fixed the
+   reader; this makes it the rule) and was case-sensitive on the tier; both
+   accepted words up to 99999.
+
+4. **`config-format.md` "Hand edits survive" — EVERY key the walkthrough does not
+   write is carried across**, unknown keys included. Both carried exactly two.
+
+5. **`config-format.md` "The shared fixture"** — parse `config-fixture/input.conf`
+   with your reader and reproduce `expected.tsv`; run your converters over
+   `values.tsv`. Until now "conforms to config-format.md" passed vacuously on
+   both platforms, because that file has no normative strings — and three
+   reader disagreements were found by hand that this would have caught.
+
+6. **`README.md` — the checker trims before measuring; the changelog head is
+   the maximum revision.** macOS measured then trimmed and took the first
+   heading; Windows trimmed then measured and took the maximum. Two specs were
+   constructed that one flagged and the other did not.
+
+**Why.** The detector is the one component that acts with nobody watching, and
+it had no contract: its rules lived in `AGENTS.md` as things not to "fix on
+sight", which tells a session what not to touch but not what a second
+implementation must do. The reader had a contract that nothing enforced. Both
+gaps were found by a review comparing the two implementations line by line —
+which is exactly the reading the machinery exists to make unnecessary.
+
 ## Revision 6 — 2026-09-01
 
 **Name the consequence at the service channel; a panel is one submenu; the

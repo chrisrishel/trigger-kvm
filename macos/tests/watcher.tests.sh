@@ -134,6 +134,77 @@ assert_match "$BT_LIST" 'bt|bt:0011223344fd|connected now|Fixture Keyboard'
 it 'normalises the address system_profiler gives to the bare lowercase form'
 assert_no_match "$BT_LIST" '00:11:22'
 
+# =============================================================================
+# settle: the ARRIVING device must still be there (specs/detector.md 2)
+# =============================================================================
+#
+# Driven through the Bluetooth fixture: rewriting the plist between polls is an
+# arrival edge the watcher cannot tell from a real one. A is present throughout;
+# B arrives, and either vanishes inside the settle window or stays.
+
+BT_FLIP="$FAKE_DIR/bluetooth-flip.plist"
+bt_fixture() {  # bt_fixture <connected addresses...>
+  {
+    printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>' '<plist version="1.0"><array><dict><key>_items</key><array><dict>' '<key>device_connected</key><array>'
+    for a in "$@"; do printf '<dict><key>Dev %s</key><dict><key>device_address</key><string>%s</string></dict></dict>\n' "$a" "$a"; done
+    printf '%s\n' '</array><key>device_not_connected</key><array></array>' '</dict></array></dict></array></plist>'
+  } >"$BT_FLIP"
+}
+
+it 'ignores an arrival whose device is gone again by the end of the settle window'
+kill_watchers
+: >"$LOG"
+bt_fixture 0011223344aa
+TK_BT_PLIST="$BT_FLIP" bg_watch --device bt:0011223344aa --device bt:0011223344bb \
+  --settle 1.5 --bt-poll 0.3 --debounce 0 --log "$LOG"
+sleep 1
+bt_fixture 0011223344aa 0011223344bb      # B arrives
+sleep 0.6
+bt_fixture 0011223344aa                   # ...and is gone before the settle ends; A is still here
+sleep 2
+assert_match "$(cat "$LOG")" 'arrival bt:0011223344bb'
+assert_match "$(cat "$LOG")" 'device vanished during settle window' "$(cat "$LOG")"
+assert_no_match "$(cat "$LOG")" 'fired:' 'another device being present is not the arriving device being present'
+
+it 'and fires when the arriving device is still there'
+bt_fixture 0011223344aa 0011223344bb
+sleep 2.5
+assert_match "$(cat "$LOG")" 'fired:' "$(cat "$LOG")"
+kill_watchers
+
+# =============================================================================
+# what it refuses at startup (specs/detector.md 4)
+# =============================================================================
+
+it 'refuses a device entry that is not exactly usb:VVVV:PPPP or bt: plus twelve hex digits'
+# `%x:%x` used to accept usb:46d:843 and trailing junk, and a separated
+# Bluetooth address the config-side marker could never match.
+# Bounded: a watcher that wrongly ACCEPTS the entry would arm and run forever,
+# and the whole suite with it -- which is how the first mutation run of this
+# case sat for five minutes.
+for bad in usb:46d:843 usb:046d:0843x 0x046d:0x0843 bt:00:11:22:33:44:ff bt:0011223344f hid:1:2; do
+  run_bounded 3 "$WATCH" --exec /bin/echo --device "$bad" --log "$LOG"
+  assert_equal 2 "$BOUNDED_RC" "must refuse '$bad': $BOUNDED_OUT"
+  assert_match "$BOUNDED_OUT" "bad --device '$bad'"
+done
+kill_watchers
+
+it 'and still takes the documented forms, in either case'
+for good in usb:046d:0843 046D:0843 bt:0011223344FF; do
+  set +e; out=$("$WATCH" --test-trigger --device "$good" --timeout 1 2>&1); rc=$?; set -e
+  assert_no_match "$out" 'bad --device' "'$good' is a documented form: $out"
+done
+
+it 'refuses a debounce or settle that is not seconds, rather than reading it as zero'
+for flag in --debounce --settle; do
+  run_bounded 3 "$WATCH" --exec /bin/echo --device "$ABSENT" "$flag" three --log "$LOG"
+  assert_equal 2 "$BOUNDED_RC" "$flag three must be refused: $BOUNDED_OUT"
+  assert_match "$BOUNDED_OUT" "$flag must be seconds like 3 or 0.75, not 'three'"
+  run_bounded 3 "$WATCH" --exec /bin/echo --device "$ABSENT" "$flag" '3 s' --log "$LOG"
+  assert_equal 2 "$BOUNDED_RC" "$flag '3 s' must be refused: $BOUNDED_OUT"
+done
+kill_watchers
+
 it 'skips an entry with more keys than it has room for, rather than overrunning'
 # CFDictionaryGetKeysAndValues writes every pair. The count used to be clamped
 # AFTER the call, which bounded the loop but not the write -- a stack overflow
