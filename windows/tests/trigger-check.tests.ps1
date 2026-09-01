@@ -31,6 +31,18 @@ function Invoke-Sibling {
     $global:LASTEXITCODE = $script:exit
 }
 
+# What the installed watcher does while the check runs. The real ones talk to
+# Task Scheduler, which a suite must not.
+$script:pauseMode = 'none'
+$script:watcher   = @()
+function Get-WatcherPauseMode { return $script:pauseMode }
+function Suspend-Watcher { $script:watcher += 'suspend' }
+function Resume-Watcher  { $script:watcher += 'resume' }
+
+function Write-Host { param([Parameter(ValueFromPipeline=$true)]$Object, [switch]$NoNewline)
+    Add-Printed -Object $Object -NoNewline:$NoNewline
+}
+
 $panels = @(
     [PSCustomObject]@{
         Label='lg'; Name='LG'; Method='lg-alt'; Vendor='0x1E6D'; Product='0x9E9D'
@@ -83,6 +95,43 @@ $r = Invoke-TriggerTest -Devices @('usb:046d:0843') -Answers $panels -This 'pc' 
 Assert-Equal $false $r.Ok
 Assert-Equal 'no arrival seen' $r.Text
 Assert-Equal 1 $script:calls.Count 'nothing arrived, so nothing may be pulled'
+
+# ---- the installed watcher is stood down for the check -----------------------
+#
+# specs/configure.md 11. On a re-run the live watcher sees the same flip and
+# pulls against the SAVED config -- after the one-shot's pull -- so a correct new
+# answer reads as the monitors failing, and the person is sent to fix something
+# that is not broken.
+
+$script:calls = @(); $script:exit = 0; $script:watcher = @(); $script:pauseMode = 'can'
+Reset-Printed; Set-Answers @()
+$null = Invoke-TriggerTest -Devices @('usb:046d:0843') -Answers $panels -This 'pc'
+Assert-Equal 'suspend,resume' ($script:watcher -join ',') 'stood down, then put back'
+Assert-Match (Get-Printed) 'The running watcher is paused for this check\.'
+
+# Put back on EVERY way out, not just the happy one. Nothing arrived here.
+$script:calls = @(); $script:exit = 1; $script:watcher = @(); $script:pauseMode = 'can'
+Reset-Printed; Set-Answers @()
+$null = Invoke-TriggerTest -Devices @('usb:046d:0843') -Answers $panels -This 'pc'
+Assert-Equal 'suspend,resume' ($script:watcher -join ',') `
+    'a check that found nothing must still leave the watcher running'
+
+# Where standing it down would need a password, it is left alone and the person
+# is TOLD, before they flip -- a check must not raise a prompt of its own.
+$script:calls = @(); $script:exit = 0; $script:watcher = @(); $script:pauseMode = 'needs-admin'
+Reset-Printed; Set-Answers @()
+$null = Invoke-TriggerTest -Devices @('usb:046d:0843') -Answers $panels -This 'pc'
+Assert-Equal '' ($script:watcher -join ',') 'nothing is disabled that would need admin to re-enable'
+$said = Get-Printed
+Assert-Match   $said 'The running watcher will also fire, using the saved configuration\.'
+Assert-NoMatch $said 'is paused for this check' 'and it does not claim otherwise'
+
+# Nothing installed: nothing to say and nothing to do.
+$script:calls = @(); $script:exit = 0; $script:watcher = @(); $script:pauseMode = 'none'
+Reset-Printed; Set-Answers @()
+$null = Invoke-TriggerTest -Devices @('usb:046d:0843') -Answers $panels -This 'pc'
+Assert-Equal '' ($script:watcher -join ',')
+Assert-NoMatch (Get-Printed) 'running watcher' 'a fresh install has no watcher to talk about'
 
 Remove-Item -LiteralPath $global:CONFIG -Force -ErrorAction SilentlyContinue
 exit 0

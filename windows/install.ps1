@@ -495,6 +495,50 @@ function Test-OurLegacyTask {
     return ($OldDest -and $act -match [regex]::Escape($OldDest))
 }
 
+# STAND THE INSTALLED WATCHER DOWN, and bring it back. One definition, because
+# `pause`, `restart` and the trigger check all mean the same thing by it and a
+# second spelling would be a second thing to keep right.
+#
+# Stopping the task is NOT enough, twice over, and both traps have caught people
+# (including the docs, which used to give this advice incompletely):
+#
+#   1. The watcher is a GRANDCHILD of the task -- the task runs wscript.exe,
+#      which runs powershell.exe. Stopping the task kills the shim and leaves
+#      the watcher holding the single-instance mutex, so a hand-run watcher
+#      exits immediately with "another watcher is already running".
+#   2. The 1-minute self-heal trigger would start it again within the minute.
+#      The task has to be DISABLED, not merely stopped.
+function Suspend-Watcher {
+    Disable-ScheduledTask -TaskName $TASK -ErrorAction SilentlyContinue | Out-Null
+    Stop-ScheduledTask    -TaskName $TASK -ErrorAction SilentlyContinue
+    Stop-Watchers
+}
+
+function Resume-Watcher {
+    Enable-ScheduledTask -TaskName $TASK -ErrorAction SilentlyContinue | Out-Null
+    Start-ScheduledTask  -TaskName $TASK -ErrorAction SilentlyContinue
+}
+
+# Can the installed watcher be stood down here, without a password?
+#
+# 'none'       nothing is installed, so there is nothing to stand down
+# 'can'        it is ours to disable
+# 'needs-admin' it is not: the task DEFINITION under System32\Tasks is owned by
+#              whoever registered it, and the boot tier requires an administrator
+#              to register. Disabling it would prompt, and specs/configure.md 11
+#              says a check must not ask for a password -- it says the watcher
+#              will fire and lets the person read that before they flip.
+#
+# Asked of the INSTALLED task rather than of the config, because the walkthrough
+# may have changed the answer in memory and not saved it yet. What matters here
+# is what is running.
+function Get-WatcherPauseMode {
+    $t = Get-ScheduledTask -TaskName $TASK -ErrorAction SilentlyContinue
+    if (-not $t) { return 'none' }
+    if ($t.Principal.LogonType -eq 'S4U' -and -not $IsElevated) { return 'needs-admin' }
+    return 'can'
+}
+
 # Remove what a pre-rename install left behind -- OURS ONLY. Stop-Watchers above
 # already kills the old watcher process (its regex matches both watcher names),
 # which is what releases the old mutex.
@@ -2323,6 +2367,26 @@ function Invoke-TriggerTest {
         Write-Host '  check them first (the row above) and this becomes the real thing.'
     }
 
+    # THE INSTALLED WATCHER IS STOOD DOWN FOR THIS CHECK -- specs/configure.md 11.
+    # On a re-run it would otherwise see the same flip and pull against the SAVED
+    # config, after the one-shot's pull, so a correct new answer would read as
+    # the monitors failing. Where standing it down would need a password the
+    # person is told instead, before they flip, because a check must not raise a
+    # prompt of its own.
+    $paused = $false
+    switch (Get-WatcherPauseMode) {
+        'can' {
+            Suspend-Watcher
+            $paused = $true
+            Write-Host ''
+            Write-Host '  The running watcher is paused for this check.'
+        }
+        'needs-admin' {
+            Write-Host ''
+            Write-Host '  The running watcher will also fire, using the saved configuration.'
+        }
+    }
+
     # A throwaway config, for the same reason the monitor check uses one: the answers
     # are not written yet, and pulling against the SAVED config would move the panels
     # to whatever was configured before rather than to what is on screen now.
@@ -2350,6 +2414,9 @@ function Invoke-TriggerTest {
         }
     } finally {
         Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+        # Restored on EVERY way out, including the ones that throw: leaving the
+        # task disabled would stop the switch working and say nothing.
+        if ($paused) { Resume-Watcher }
     }
 
     if ($code -ne 0) {
@@ -2956,10 +3023,8 @@ if ($Command -eq 'restart') {
     # For a hand-edited config. The watcher reads its settings at startup, so
     # bouncing it is the whole of "make my edit take effect" -- no re-registration,
     # because the task action carries no configuration.
-    Enable-ScheduledTask -TaskName $TASK -ErrorAction SilentlyContinue | Out-Null
-    Stop-ScheduledTask   -TaskName $TASK -ErrorAction SilentlyContinue
-    Stop-Watchers
-    Start-ScheduledTask  -TaskName $TASK -ErrorAction SilentlyContinue
+    Suspend-Watcher
+    Resume-Watcher
     Start-Sleep -Seconds 2
     $n = @(Get-CimInstance Win32_Process -Property ProcessId,Name,CommandLine -Verbose:$false |
            Where-Object { $_.CommandLine -and $_.Name -eq 'powershell.exe' -and $_.CommandLine -match '(usb|event)-watch\.ps1' }).Count
@@ -2969,18 +3034,7 @@ if ($Command -eq 'restart') {
 }
 
 if ($Command -eq 'pause') {
-    # Stopping the task is NOT enough, twice over, and both traps have caught
-    # people (including the docs, which used to give this advice incompletely):
-    #
-    #   1. The watcher is a GRANDCHILD of the task -- the task runs wscript.exe,
-    #      which runs powershell.exe. Stopping the task kills the shim and leaves
-    #      the watcher holding the single-instance mutex, so a hand-run watcher
-    #      exits immediately with "another watcher is already running".
-    #   2. The 1-minute self-heal trigger would start it again within the minute.
-    #      The task has to be DISABLED, not merely stopped.
-    Disable-ScheduledTask -TaskName $TASK -ErrorAction SilentlyContinue | Out-Null
-    Stop-ScheduledTask    -TaskName $TASK -ErrorAction SilentlyContinue
-    Stop-Watchers
+    Suspend-Watcher
     Write-Log "paused: task disabled and watcher stopped"
     Write-Log 'run one by hand now, e.g.:'
     Write-Log '    .\event-watch.ps1 -Exec .\nvapi-probe.ps1 -Arg TEST -Verbose'

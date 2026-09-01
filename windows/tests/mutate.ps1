@@ -270,6 +270,27 @@ Invoke-Mutation 'values: outcome 2 re-asks without the map, so an input can be t
     '                -Default $Answer.Map[$This] -Taken $taken `' `
     '                -Default $Answer.Map[$This] `'
 
+# --- the trigger check stands the watcher down --------------------------------
+
+Invoke-Mutation 'trigger check: the live watcher fires alongside the one-shot' `
+    'install.ps1' 'trigger-check.tests.ps1' `
+    "        'can' {
+            Suspend-Watcher" `
+    "        'can' {"
+Invoke-Mutation 'trigger check: the watcher is left disabled afterwards' `
+    'install.ps1' 'trigger-check.tests.ps1' `
+    '        if ($paused) { Resume-Watcher }' ''
+Invoke-Mutation 'trigger check: an admin-owned watcher is disabled anyway' `
+    'install.ps1' 'trigger-check.tests.ps1' `
+    "        'needs-admin' {
+            Write-Host ''
+            Write-Host '  The running watcher will also fire, using the saved configuration.'
+        }" `
+    "        'needs-admin' {
+            Suspend-Watcher
+            `$paused = `$true
+        }"
+
 # --- what the detector refuses before it arms ---------------------------------
 
 Invoke-Mutation 'detector: a malformed debounce is cast, and kills the watcher silently' `
