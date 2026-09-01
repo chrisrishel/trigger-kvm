@@ -292,8 +292,8 @@ Invoke-Mutation 'values: EDID ids are compared as hex text' `
 
 Invoke-Mutation 'values: outcome 2 re-asks without the map, so an input can be taken twice' `
     'install.ps1' 'monitor-check.tests.ps1' `
-    '                -Default $Answer.Map[$This] -Taken $taken `' `
-    '                -Default $Answer.Map[$This] `'
+    '                -Default $Answer.Map[$This] -Taken $taken -Method $Answer.Method `' `
+    '                -Default $Answer.Map[$This] -Method $Answer.Method `'
 
 # --- the typed fallback --------------------------------------------------------
 
