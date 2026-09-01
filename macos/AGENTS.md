@@ -59,6 +59,11 @@ uses `flock`, which the kernel releases when the holder dies however it dies. A
 force-killed watcher leaves nothing behind, and there is deliberately no takeover
 code in `event-watch.c`.
 
+**Nothing here runs as root, and the installer refuses to.** Under `sudo`,
+`id -un` is root, so the boot daemon would be written to run as root on a
+user-writable config, and every file created would be root-owned.
+`tk_refuse_root` guards the installer, `configure` and `tk_apply_tier`.
+
 **The boot tier is a LaunchDaemon in `/Library/LaunchDaemons` with `UserName`
 set, so it runs AS THE USER, UNELEVATED.** Root installs it into the system
 domain; root does not run it -- the same property the Windows S4U tier has, and

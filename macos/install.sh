@@ -62,6 +62,10 @@ say() { printf 'install: %s\n' "$*"; }
 
 DOMAIN="gui/$(id -u)"
 
+# Neither verb may run as root: install would write a root daemon and root-owned
+# files, uninstall would delete inside root's home. See tk_refuse_root.
+tk_refuse_root || exit 2
+
 # --- uninstall ---------------------------------------------------------------
 
 if [ "$VERB" = "uninstall" ]; then
@@ -83,21 +87,32 @@ if [ "$VERB" = "uninstall" ]; then
   exit 0
 fi
 
-# --- build -------------------------------------------------------------------
+# --- preflight ---------------------------------------------------------------
+#
+# Everything a stranger's Mac can lack is checked BEFORE anything is built or
+# copied, so "this will not work here" is the first thing said, not the last.
+# Each stop leaves the machine exactly as it was.
+
+refuse() { say "$@"; say 'Nothing was installed.'; exit 1; }
 
 if ! command -v clang >/dev/null 2>&1; then
-  say 'clang not found. Install the Xcode command line tools: xcode-select --install'
-  exit 1
+  refuse 'clang not found. Install the Xcode command line tools: xcode-select --install'
 fi
+
+# m1ddc, which does the DDC writing, supports Apple Silicon only.
+ARCH=$(uname -m)
+if [ "$ARCH" != "arm64" ]; then
+  refuse "this Mac is $ARCH. m1ddc, the tool that talks to the monitors, supports Apple Silicon only."
+fi
+
+if [ ! -x "${M1DDC:-/opt/homebrew/bin/m1ddc}" ]; then
+  refuse "m1ddc not found at ${M1DDC:-/opt/homebrew/bin/m1ddc}. Install it with:  brew install m1ddc"
+fi
+
+# --- build -------------------------------------------------------------------
 
 say 'building'
 make -C "$SRC" -s all
-
-if [ ! -x "${M1DDC:-/opt/homebrew/bin/m1ddc}" ]; then
-  say "m1ddc not found at ${M1DDC:-/opt/homebrew/bin/m1ddc}."
-  say 'Install it with:  brew install m1ddc'
-  say 'Continuing -- everything else installs, but a switch will refuse until it is there.'
-fi
 
 # --- copy --------------------------------------------------------------------
 

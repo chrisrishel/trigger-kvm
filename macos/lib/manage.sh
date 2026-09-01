@@ -85,6 +85,22 @@ cmd_watch() {
 
 tk_domain() { printf 'gui/%s\n' "$(id -u)"; }
 
+# Nothing here may run as root. The boot tier's whole property is that root
+# INSTALLS the daemon and the daemon runs as the user (UserName in the plist);
+# run under sudo, `id -un` is root, so the daemon would be written to run as
+# root on a user-writable config -- a local privilege escalation -- and every
+# file the installer creates would be root-owned, so the user's next
+# `configure` could not write its own config. `sudo ./install.sh` is the first
+# thing a stranger tries, so it is refused, in words, before anything happens.
+tk_refuse_root() {
+  if [ "$(id -u)" -eq 0 ]; then
+    tk_log 'run this as yourself, not with sudo.'
+    tk_log 'It asks for your password itself if you choose to start from boot, and nothing it installs runs as root.'
+    return 1
+  fi
+  return 0
+}
+
 tk_agent_loaded() { "$TK_LAUNCHCTL" print "$(tk_domain)/$TK_LABEL" >/dev/null 2>&1; }
 
 cmd_restart() {
@@ -184,6 +200,7 @@ tk_warn_if_stale() {
 TK_TIER_APPLIED=''
 tk_apply_tier() {
   local CONFIG TMP_DAEMON DOMAIN
+  tk_refuse_root || return 1
   DOMAIN="$(tk_domain)"
   CONFIG="${1:-$TK_SUPPORT/config}"
   [ -f "$CONFIG" ] || { TK_TIER_APPLIED=''; return 0; }

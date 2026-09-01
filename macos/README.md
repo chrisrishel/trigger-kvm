@@ -17,11 +17,16 @@ watcher; the watcher fires `trigger-kvm pull` when a watched device arrives.
 
 ## Requirements
 
+An Apple Silicon Mac — `m1ddc`, which does the DDC writing, does not support
+Intel Macs — with:
+
 ```sh
 brew install m1ddc
 ```
 
-Xcode command line tools for `clang` (you almost certainly already have them).
+and the Xcode command line tools for `clang` (`xcode-select --install`). The
+installer checks all three before it builds or copies anything, and stops with
+the reason if one is missing.
 
 ## Install
 
@@ -29,13 +34,15 @@ Xcode command line tools for `clang` (you almost certainly already have them).
 cd macos && ./install.sh      # build, install, load the agent, walk you through it
 ```
 
+As yourself, never with `sudo` — the installer refuses to run as root. The
+only time a password is involved is if you choose to start from boot, and it
+asks for it itself, once, to install a launchd job that then runs as you.
+
 That is what installing *is*, and it is why there is no `install` verb: installing
 is what produces the command. Upgrading and repairing both mean "fetch the source
 and run its installer", which works because the install is self-contained — the
 installer copies itself alongside the program, so managing and removing keep
 working after the source tree is gone.
-
-Nothing needs `sudo`, at install or at run time.
 
 ```sh
 ./install.sh uninstall        # remove the program; keep the config and the log

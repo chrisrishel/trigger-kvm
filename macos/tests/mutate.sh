@@ -308,6 +308,15 @@ mutate 'revision: this platform falls behind the changelog' SPEC-REVISION spec.t
 mutate 'revision: this platform claims a revision that does not exist' SPEC-REVISION spec.tests.sh \
   's%^revision = [0-9]*%revision = 99%'
 
+# --- the installer's preflight -----------------------------------------------
+
+mutate 'install: a preflight failure does not stop the install' install.sh install.tests.sh \
+  's|^refuse() { say "\$@"; say .Nothing was installed..; exit 1; }|refuse() { say "$@"; }|'
+mutate 'install: runs as root without complaint' lib/manage.sh install.tests.sh \
+  's|  if \[ "\$(id -u)" -eq 0 \]; then|  if false; then|'
+mutate 'switch: a bare trigger-kvm pulls instead of printing usage' trigger-kvm install.tests.sh \
+  's|^\[ \$# -gt 0 \] \|\| usage$|[ $# -gt 0 ] \|\| set -- pull|'
+
 # --- launchd is reached through one name -------------------------------------
 
 mutate 'launchd: a bare launchctl bypasses the seam the suite records through' lib/manage.sh conventions.tests.sh \
