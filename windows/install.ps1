@@ -2393,6 +2393,16 @@ function Invoke-Configure {
 function Invoke-TriggerTest {
     param([string[]]$Devices, $Answers, [string]$This, [switch]$Pull)
 
+    # Nothing to watch for is not a check that fails -- it is a check that cannot
+    # be run. It used to go ahead anyway: the one-shot was handed -Device '',
+    # skipped the empty entry, armed an empty watch list, waited the full 90
+    # seconds and then said the devices might be wrong. Say it now instead.
+    if (@($Devices).Count -eq 0) {
+        Write-Host ''
+        Write-Host '  No trigger devices are chosen yet -- pick some first.'
+        return [PSCustomObject]@{ Ok = $false; Text = 'no devices chosen' }
+    }
+
     $ew = Join-Path $PSScriptRoot 'event-watch.ps1'
     if (-not (Test-Path $ew)) { $ew = $WATCH }
 

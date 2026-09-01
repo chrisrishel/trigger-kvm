@@ -96,6 +96,22 @@ Assert-Equal $false $r.Ok
 Assert-Equal 'no arrival seen' $r.Text
 Assert-Equal 1 $script:calls.Count 'nothing arrived, so nothing may be pulled'
 
+# ---- with nothing chosen, it refuses instead of waiting ----------------------
+#
+# It used to run the check regardless: -Device '' reached the one-shot, which
+# skipped the empty entry and armed an empty watch list, waited the full 90
+# seconds, and then told the person their devices might be wrong. macOS refuses
+# first, and says which row to go to.
+
+$script:calls = @(); $script:exit = 0; $script:watcher = @(); $script:pauseMode = 'can'
+Reset-Printed; Set-Answers @()
+$r = Invoke-TriggerTest -Devices @() -Answers $panels -This 'pc'
+Assert-Equal $false $r.Ok
+Assert-Equal 'no devices chosen' $r.Text 'and the row says which, so the cursor lands on Triggers'
+Assert-Equal 0 $script:calls.Count 'nothing is run, so nobody waits 90 seconds for it'
+Assert-Match (Get-Printed) 'No trigger devices are chosen yet -- pick some first\.'
+Assert-Equal '' ($script:watcher -join ',') 'and the installed watcher is not disturbed for a check that cannot run'
+
 # ---- the installed watcher is stood down for the check -----------------------
 #
 # specs/configure.md 11. On a re-run the live watcher sees the same flip and

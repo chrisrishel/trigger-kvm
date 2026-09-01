@@ -314,6 +314,9 @@ Invoke-Mutation 'names: an underscore survives the character rule' `
 
 # --- the trigger check stands the watcher down --------------------------------
 
+Invoke-Mutation 'trigger check: it runs with no devices chosen' `
+    'install.ps1' 'trigger-check.tests.ps1' `
+    '    if (@($Devices).Count -eq 0) {' '    if ($false) {'
 Invoke-Mutation 'trigger check: the live watcher fires alongside the one-shot' `
     'install.ps1' 'trigger-check.tests.ps1' `
     "        'can' {
