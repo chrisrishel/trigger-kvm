@@ -283,6 +283,54 @@ foreach ($l in (Select-String -LiteralPath $installer -Pattern 'New-ScheduledTas
 }
 Assert-Equal 0 $asWho.Count ("every task principal and logon trigger names `$FORUSER:`n  " + ($asWho -join "`n  "))
 
+# ---- the instruction files fit the tools that load them ----------------------
+#
+# Codex loads the AGENTS.md chain from the git root down to its working
+# directory into ONE budget of project_doc_max_bytes (32768 by default) and
+# truncates the rest silently, mid-line. Measured 2026-08-31; see
+# docs/decisions/002-instruction-files-for-two-agents.md. This is what turns
+# "keep it short" from a hope into a failing test.
+#
+# macos/tests/conventions.tests.sh runs the same check on both chains, so the
+# repo is never unprotected; what this adds is that THIS machine finds out on
+# its own run, which is the whole point of a suite per platform.
+#
+# Raw bytes, not lines, and no normalising: that is what Codex reads, and it is
+# what the macOS check measures, so the two agree about the same repo. A .md
+# written by Set-Content lands as CRLF and counts more here than it does there
+# -- .gitattributes says these files are LF, and a failure that names the size
+# is how a stray CRLF gets noticed.
+
+$RootDir       = Split-Path -Parent $WinDir
+$CODEX_BUDGET  = 32768
+$HEADROOM      = 2048
+$ROOT_CAP      = 20480
+$PLATFORM_CAP  = 10240
+
+$rootBytes = (Get-Item -LiteralPath (Join-Path $RootDir 'AGENTS.md')).Length
+Assert-True ($rootBytes -le $ROOT_CAP) `
+    ("AGENTS.md is $rootBytes bytes; the cap is $ROOT_CAP. Move evidence to " +
+     'docs/measurements.md or a platform AGENTS.md rather than raising this.')
+
+foreach ($platform in 'macos', 'windows') {
+    $platBytes = (Get-Item -LiteralPath (Join-Path $RootDir "$platform\AGENTS.md")).Length
+    $chain     = $rootBytes + $platBytes
+    Assert-True ($platBytes -le $PLATFORM_CAP) `
+        "$platform/AGENTS.md is $platBytes bytes; the cap is $PLATFORM_CAP"
+    Assert-True ($chain -le ($CODEX_BUDGET - $HEADROOM)) `
+        ("AGENTS.md ($rootBytes) + $platform/AGENTS.md ($platBytes) = $chain bytes; " +
+         "Codex loads at most $CODEX_BUDGET and drops the rest without a word")
+}
+
+# Claude Code reads CLAUDE.md, not AGENTS.md; the @ import is how it gets the
+# same instructions. Anything else at the top of a CLAUDE.md is a second copy
+# waiting to drift.
+foreach ($rel in 'CLAUDE.md', 'macos\CLAUDE.md', 'windows\CLAUDE.md') {
+    $first = @(Get-Content -LiteralPath (Join-Path $RootDir $rel) |
+               Where-Object { $_.Trim() }) | Select-Object -First 1
+    Assert-Equal '@AGENTS.md' $first "$rel must begin with @AGENTS.md"
+}
+
 # ---- the check can actually see one ------------------------------------------
 
 # A structural check that cannot fail is decoration, and this one is easy to

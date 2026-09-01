@@ -472,7 +472,7 @@ function Remove-LegacyInstall {
 #
 # This is the gate on the manufacturer sidechannel. A panel absent from this table
 # is offered STANDARD DDC/CI only, never `lg-alt`, because what source 0x50 means on
-# an untested panel is unknown and sweeping it has bricked monitors. See AGENTS.md
+# an untested panel is unknown and sweeping it has bricked monitors. See ..\AGENTS.md
 # hard rule 1.
 # What a MANUFACTURER's panels answer to when the standard channel does not.
 #
@@ -485,7 +485,7 @@ function Remove-LegacyInstall {
 # A dialect is OFFERED, never probed, and only after standard DDC has been shown
 # not to work -- most panels of every make answer 0x60 perfectly well, and reaching
 # for a manufacturer channel that is not needed is how monitors get bricked
-# (AGENTS.md hard rule 1). Values here come from documentation and measurement,
+# (..\AGENTS.md hard rule 1). Values here come from documentation and measurement,
 # never from a search.
 $DIALECTS = @{
     '1E6D' = @{                        # GSM -- LG Electronics
@@ -1015,7 +1015,7 @@ function Send-Input {
 # installer never needs to know which monitor its own window is on, and a wrong
 # guess costs a few seconds of black rather than a stranded session. Confirming
 # visually is the only verification this hardware permits -- reads lie on both
-# panels here (AGENTS.md hard rule 2).
+# panels here (..\AGENTS.md hard rule 2).
 #
 # Returns 0 correct, 1 changed to the WRONG thing, 2 changed and did not come back,
 # 3 nothing happened. Four, because with a computer named the test asserts something
@@ -1563,7 +1563,7 @@ function Get-DisplayMap {
 #
 # OFFERED, NEVER PROBED. Nothing is sent to find out; the choice comes from the
 # documented table or not at all, and the transport still refuses a manufacturer
-# channel to a panel whose EDID vendor does not match. See AGENTS.md hard rule 1b.
+# channel to a panel whose EDID vendor does not match. See ..\AGENTS.md hard rule 1b.
 #
 # Up front rather than only after a failure, since 2026-08-31. Someone who already
 # knows their model needs the alternative should not have to run a check that moves

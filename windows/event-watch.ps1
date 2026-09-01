@@ -50,7 +50,7 @@ Always match the full VID+PID pair.
 
 TRAP: this presence model works for USB and NOT for Bluetooth, where a PAIRED
 device keeps its PnP node whether or not it is connected. Adding Bluetooth needs a
-connection-aware source, not a wider match pattern. See ..\AGENTS.md.
+connection-aware source, not a wider match pattern. See .\AGENTS.md.
 
 Whatever the source, it runs `pull` -- never another computer's name. A name
 other than `computer.this` describes inputs on hardware this computer cannot
@@ -167,7 +167,7 @@ function Write-Log {
 # The classic Win32 Bluetooth API, by P/Invoke -- the same idiom the NVAPI transport
 # uses. WinRT would be the modern route and is unusable here: PowerShell refuses to
 # subscribe to WinRT events, and Add-Type will not reference the .winmd files a C#
-# shim would need. See ..\AGENTS.md.
+# shim would need. See .\AGENTS.md.
 #
 # BLUETOOTH_DEVICE_INFO.fConnected is the field that matters, and it is distinct
 # from fRemembered. PnP presence cannot substitute: a PAIRED device keeps its PnP
@@ -592,7 +592,7 @@ try {
         # Log the rejection rather than dropping it silently. Without this line a
         # quiet log cannot distinguish "no event was delivered" from "an event was
         # delivered and correctly rejected" -- the outcome is the same, the claim is
-        # not, and AGENTS.md asks for exactly this before anyone tries to evidence
+        # not, and .\AGENTS.md asks for exactly this before anyone tries to evidence
         # which happened. Verbose rather than logged: the OS delivers these
         # constantly and the steady state is noise, not news.
         if (-not $arrived) {

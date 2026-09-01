@@ -101,7 +101,7 @@ param(
     # silently. Same shape as event-watch.ps1 -ListBluetooth.
     [switch]$Raw,
 
-    # Move one monitor only, by its configured label. AGENTS.md rule 4 needs this:
+    # Move one monitor only, by its configured label. ..\AGENTS.md rule 4 needs this:
     # moving every monitor at once can take the last display out from under the
     # terminal. 'all' means every configured display.
     [string]$Only = 'all',
@@ -461,7 +461,7 @@ public static class NvDdc {
     //
     // Deliberately NOT correlated against the Windows display list: in session 0
     // user32 reports a phantom monitor rather than nothing, so any such match is
-    // against a fiction. NVAPI is the sole identity source. See ..\AGENTS.md.
+    // against a fiction. NVAPI is the sole identity source. See .\AGENTS.md.
     public static List<NvDisplay> Enumerate() {
         var found = new List<NvDisplay>();
 
