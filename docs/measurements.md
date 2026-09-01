@@ -15,6 +15,22 @@ making a claim about; if you cannot, say that instead of concluding.
 
 ## Detectors
 
+**2026-09-01, Windows -- the paired-arrival case does not appear in this log at
+all.** macOS saw two watched devices arrive 6 s apart on one flip and run `pull`
+twice, and asked whether the same happens here. Over 24 fires spanning
+2026-08-30 to 2026-09-01, EVERY arrival names the same device,
+`usb:1235:820A`; the other configured device, `usb:046D:0843`, never produces an
+arrival edge, though both are reported present at every arm. Two pairs of fires
+fall inside a minute (8 s and 30 s apart, both at 01:50-01:51 on 2026-08-31) and
+both arrivals in each pair name that SAME device, so they are repeated flips
+during a test session rather than a second device arriving late.
+
+What the log CANNOT say is whether the second device is on the switch at all:
+departures, and arrivals rejected by the debounce, are `Write-Verbose` rather
+than logged, deliberately, because one plug is dozens of events. So this is
+evidence that the macOS behaviour is not reproducing here, not evidence that it
+cannot. No shared fix is warranted from this side.
+
 **2026-08-30, Windows -- one USB plug is dozens of events.** Plugging a single
 device in generated 32 `Win32_DeviceChangeEvent` indications in about three
 seconds, and unplugging it another 13. The event carries no device identity, so
