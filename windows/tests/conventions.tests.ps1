@@ -356,12 +356,25 @@ function Get-TransportLine {
       .DESCRIPTION
       Comments removed because they TALK about the sidechannel constantly and
       should go on being allowed to. What must be rare is the code.
+
+      ALL the embedded C#, not one transport's worth. There is deliberately one
+      Add-Type block holding every transport, because a second block would be
+      code this scan cannot see -- and an emitter the scan cannot see is the
+      exact failure hard rule 5 exists to prevent. If a second block is ever
+      added, this function must grow to cover it or the guard below is a lie.
     #>
     param([string]$Path)
 
     $ps = Get-Content -Raw -LiteralPath $Path
-    $m  = [regex]::Match($ps, '(?s)\$NvDdcSource = @''\r?\n(.*?)\r?\n''@')
-    if (-not $m.Success) { throw "$Path no longer holds a `$NvDdcSource block; this check is blind" }
+    $m  = [regex]::Match($ps, '(?s)\$TransportSource = @''\r?\n(.*?)\r?\n''@')
+    if (-not $m.Success) { throw "$Path no longer holds a `$TransportSource block; this check is blind" }
+
+    # One block is the invariant, so prove there is not a second one hiding.
+    $blocks = @([regex]::Matches($ps, '(?m)^\$\w+Source = @''\s*$'))
+    if ($blocks.Count -ne 1) {
+        throw ("$Path holds $($blocks.Count) embedded-source blocks; this check reads one, " +
+               'so the others are unscanned. Merge them or teach Get-TransportLine about them.')
+    }
 
     $cs = [regex]::Replace($m.Groups[1].Value, '(?s)/\*.*?\*/', '')
     return @($cs -split "`r?`n" | ForEach-Object { $_ -replace '//.*$', '' })
@@ -451,6 +464,36 @@ $gateBody = (Get-TransportLine $Switcher)[(Get-CsMethodLine -Lines (Get-Transpor
 Assert-Match $gateBody 'EdidVendor\s*!=\s*EDID_VENDOR_GSM' 'the vendor check lives inside the gate'
 Assert-Match $gateBody 'throw new InvalidOperationException' `
     'and it throws rather than returning a code a caller can ignore'
+
+# ---- the second transport cannot become a second door ------------------------
+#
+# dxva2 was added as a vendor-neutral transport (docs/decisions/003). The reason
+# it is safe to add at all is that it CANNOT express an I2C source byte: the
+# Windows DDC/CI stack hardcodes 0x51 and SetVCPFeature takes a VCP code, not an
+# address. So adding it cannot widen the 0x50 surface -- but only while that
+# stays true of the code, which is what this asserts.
+#
+# Scanned as part of the same $TransportSource block for exactly the reason
+# Get-TransportLine documents: a transport the scan cannot see is the failure.
+
+$dxvaLines = @(Get-TransportLine $Switcher)
+$dxvaAt    = @(0..($dxvaLines.Count - 1) | Where-Object { $dxvaLines[$_] -match '^\s*public\s+static\s+class\s+Dxva\b' })
+Assert-Equal 1 $dxvaAt.Count 'the dxva2 transport class must be found exactly once'
+
+# From that class to the end of the block: everything after it is dxva2's.
+$dxvaBody = @($dxvaLines[$dxvaAt[0]..($dxvaLines.Count - 1)])
+$joined   = $dxvaBody -join "`n"
+
+Assert-NoMatch $joined '0x50' 'the dxva2 transport must not name the LG service channel at all'
+Assert-NoMatch $joined 'LG_I2C_SOURCE' 'nor reach for the constant that spells it'
+Assert-NoMatch $joined 'I2CWrite' 'nor call raw I2C, which is the only thing that could carry a source byte'
+
+foreach ($l in @($dxvaBody | Where-Object { $_ -match '^\s*public\s+static\b.*\(' })) {
+    $p = [regex]::Match($l, '\((.*)\)')
+    if ($p.Success -and $p.Groups[1].Value -match '(?i)\b(source|i2c\w*addr\w*|devaddress)\b') {
+        Assert-True $false ("a dxva2 method takes a source or I2C address: {0}" -f $l.Trim())
+    }
+}
 
 # ---- "is a watcher running" is asked of the lock, not the process table ------
 #

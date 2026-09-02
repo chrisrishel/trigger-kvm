@@ -34,22 +34,38 @@ watcher passes down. Display edits take effect on the next switch; trigger edits
 when the watcher next starts, and `trigger-kvm restart` does that. Nothing is
 baked into the scheduled task but the paths.
 
-Monitors do not all speak the same dialect, but they share one transport:
+Two axes, and they are different questions. WHAT is sent:
 
-  method = standard   standard DDC/CI     -- I2C source 0x51, VCP 0x60
+  method = standard   standard DDC/CI     -- VCP 0x60
   method = lg-alt     LG's sidechannel    -- I2C source 0x50, VCP 0xF4, for panels
                       whose standard input control is stubbed
 
-Both go out as raw I2C through NVAPI, each AIMED at the single GPU output whose
-EDID identifies that panel. Neither is a spray: no other monitor sees either
-packet. See ..\ideas\nvapi-transport.md for the function ids, struct traps and
-provenance.
+and HOW it gets there:
 
-Identity comes from NVAPI alone -- enumerate the GPU's connected outputs, read each
-EDID, match on manufacturer and product. The Windows display list is deliberately
-never consulted: in session 0 it reports a phantom monitor rather than none, so
-matching against it silently resolves to a fiction. That is also why there is no
-dxva2 or user32 code left here, and why this script has no desktop dependency.
+  transport = nvapi   aimed raw I2C at one GPU output. Works with NO DESKTOP, so
+                      it is the only one the boot tier can use -- and the only one
+                      that can carry lg-alt. NVIDIA outputs only.
+  transport = dxva2   Windows' own DDC/CI stack. ANY adapter, which is the point
+                      of it, but it needs a desktop and cannot express an I2C
+                      source byte at all, so it carries `standard` and nothing else.
+
+Absent, transport means nvapi, so configs written before it existed are unchanged.
+Neither is a spray and neither is a fallback: the transport is configuration,
+chosen once and confirmed once by eye, and nothing tries one and falls through to
+the other at switch time. See ..\ideas\nvapi-transport.md for NVAPI's function ids,
+struct traps and provenance, and ..\docs\decisions\003 for why dxva2 exists.
+
+Identity is ONE key for both: the EDID manufacturer and product, which NVAPI reads
+off the GPU output and dxva2 reads out of the PnP interface path. Never the GDI
+name or the full interface path -- moving a cable between adapters changes both
+while the EDID pair holds. Each write is AIMED at the single output that
+identifies as the panel, and anything other than exactly one match is refused.
+
+That refusal is load-bearing for dxva2 specifically. In session 0 user32 reports a
+PHANTOM monitor rather than none, with no interface path at all -- so it fails by
+resolving onto a fiction rather than by erroring. Matching on EDID turns that into
+a clean refusal. NVAPI has no such problem and needs no desktop, which is why a
+dxva2 panel cannot be covered before login and the tier says so.
 
 NEVER verify a switch by reading a VCP value back -- see ..\displays.toml for why.
 Both monitors switched correctly during macOS testing while reads said they had
@@ -179,6 +195,12 @@ function Get-ConfiguredDisplays {
             Product = ConvertTo-Word $Cfg["display.$l.product"]
             Name    = $(if ($Cfg.Contains("display.$l.name")) { $Cfg["display.$l.name"] } else { $l })
             Method  = $(if ($Cfg.Contains("display.$l.method")) { $Cfg["display.$l.method"].ToLower() } else { 'standard' })
+            # Absent means nvapi -- the transport this platform had before there
+            # were two -- so a config written before the key existed is unchanged
+            # and needs no rewrite (specs/config-format.md). An unrecognised value
+            # is NOT defaulted here; Switch-Display refuses it by name, because
+            # defaulting would send the write down a path nobody confirmed by eye.
+            Transport = $(if ($Cfg.Contains("display.$l.transport")) { "$($Cfg["display.$l.transport"])".Trim().ToLower() } else { 'nvapi' })
             # machine name (lower-cased) -> input value. The whole map: which
             # machine is on which input of this panel. `pull` and `to` are the same
             # lookup against it, differing only in which name they look up.
@@ -212,7 +234,7 @@ function Write-Log {
 # an at-startup task after a cold boot. The aimed write itself was confirmed
 # visually, both directions, from an inactive link. See ..\ideas\nvapi-transport.md.
 
-$NvDdcSource = @'
+$TransportSource = @'
 using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
@@ -578,6 +600,173 @@ public static class NvDdc {
         }
     }
 }
+
+// --- dxva2: the vendor-neutral transport, via the desktop ------------------
+//
+// Windows' own DDC/CI stack. It reaches a panel on ANY adapter, which is the
+// whole point of it -- NVAPI sees only panels on the NVIDIA card. Restored from
+// the implementation deleted at 70e5ed4, with ONE correction: identity comes from
+// the EDID vendor+product inside the PnP interface path, never the whole path.
+// Moving a cable between adapters changed the path from
+// DISPLAY\AUS42E0\5&aaaaaaaa&0&UID4352_0 to DISPLAY\AUS42E0\4&bbbbbbbb&0&UID49_0
+// and the GDI name from \\.\DISPLAY1 to \\.\DISPLAY7; only AUS42E0 held.
+//
+// IT CANNOT REACH A SERVICE CHANNEL, and that is a safety property rather than a
+// gap to close: SetVCPFeature takes a VCP code, never an I2C source byte, and the
+// Windows stack hardcodes source 0x51. So no addition here can widen the 0x50
+// surface that ..\AGENTS.md hard rule 5 protects. There is deliberately no entry
+// point that takes a source or an I2C address, and conventions.tests.ps1 asserts
+// it over this class as well as the one above.
+//
+// It needs a DESKTOP. In session 0 user32 reports one phantom named WinDisc with
+// no interface path and no physical monitor handle -- so it MIS-RESOLVES rather
+// than erroring, which is why matching on EDID and refusing anything but exactly
+// one match is load-bearing here and not merely tidy. Measured 2026-09-01.
+public class DxvaDisplay {
+    public IntPtr Handle;
+    public string Device;        // GDI name, e.g. \\.\DISPLAY3 -- NOT an identifier
+    public string InterfacePath;
+    public ushort EdidVendor;
+    public ushort EdidProduct;
+
+    public override string ToString() {
+        return string.Format("device={0} edid=0x{1:X4}:0x{2:X4}", Device, EdidVendor, EdidProduct);
+    }
+}
+
+public static class Dxva {
+    [StructLayout(LayoutKind.Sequential)]
+    public struct RECT { public int left, top, right, bottom; }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    public struct MONITORINFOEX {
+        public int cbSize;
+        public RECT rcMonitor;
+        public RECT rcWork;
+        public uint dwFlags;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string szDevice;
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    public struct DISPLAY_DEVICE {
+        public int cb;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)]  public string DeviceName;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string DeviceString;
+        public uint StateFlags;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string DeviceID;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string DeviceKey;
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    public struct PHYSICAL_MONITOR {
+        public IntPtr hPhysicalMonitor;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string szDescription;
+    }
+
+    public delegate bool MonEnumProc(IntPtr hMon, IntPtr hdc, ref RECT rc, IntPtr data);
+
+    [DllImport("user32.dll")]
+    public static extern bool EnumDisplayMonitors(IntPtr hdc, IntPtr clip, MonEnumProc proc, IntPtr data);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern bool GetMonitorInfo(IntPtr hMon, ref MONITORINFOEX mi);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern bool EnumDisplayDevices(string dev, uint devNum, ref DISPLAY_DEVICE dd, uint flags);
+
+    [DllImport("dxva2.dll", SetLastError = true)]
+    public static extern bool GetNumberOfPhysicalMonitorsFromHMONITOR(IntPtr hMon, ref uint n);
+    [DllImport("dxva2.dll", SetLastError = true)]
+    public static extern bool GetPhysicalMonitorsFromHMONITOR(IntPtr hMon, uint n, [Out] PHYSICAL_MONITOR[] arr);
+    [DllImport("dxva2.dll", SetLastError = true)]
+    public static extern bool DestroyPhysicalMonitors(uint n, PHYSICAL_MONITOR[] arr);
+    [DllImport("dxva2.dll", SetLastError = true)]
+    public static extern bool SetVCPFeature(IntPtr hMonitor, byte code, uint value);
+
+    const uint EDD_GET_DEVICE_INTERFACE_NAME = 1;
+
+    static string InterfacePath(string deviceName) {
+        var dd = new DISPLAY_DEVICE();
+        dd.cb = Marshal.SizeOf(typeof(DISPLAY_DEVICE));
+        if (!EnumDisplayDevices(deviceName, 0, ref dd, EDD_GET_DEVICE_INTERFACE_NAME)) return "";
+        return dd.DeviceID ?? "";
+    }
+
+    static string DeviceOf(IntPtr hMon) {
+        var mi = new MONITORINFOEX();
+        mi.cbSize = Marshal.SizeOf(typeof(MONITORINFOEX));
+        if (!GetMonitorInfo(hMon, ref mi)) return "";
+        return mi.szDevice ?? "";
+    }
+
+    // "AUS42E0" out of \\?\DISPLAY#AUS42E0#5&aaaaaaaa&0&UID4352#{guid}, then split
+    // into the packed 5-bit vendor word and the product id. That word is the same
+    // one the config stores and NvDdc.DecodeMfg renders, so both transports match
+    // on one key and a per-panel transport choice needs no second identity.
+    // Returns false for anything that does not parse -- including the session-0
+    // phantom, whose path is empty.
+    public static bool ParseEdid(string path, out ushort vendor, out ushort product) {
+        vendor = 0; product = 0;
+        if (string.IsNullOrEmpty(path)) return false;
+        string[] parts = path.Split('#');
+        if (parts.Length < 2) return false;
+        string id = parts[1];
+        if (id.Length < 7) return false;
+        string letters = id.Substring(0, 3).ToUpperInvariant();
+        int v = 0;
+        for (int i = 0; i < 3; i++) {
+            int c = letters[i] - 64;
+            if (c < 1 || c > 26) return false;
+            v = (v << 5) | c;
+        }
+        ushort p;
+        if (!ushort.TryParse(id.Substring(3, 4), System.Globalization.NumberStyles.HexNumber,
+                             System.Globalization.CultureInfo.InvariantCulture, out p)) return false;
+        vendor  = (ushort)v;
+        product = p;
+        return true;
+    }
+
+    public static List<DxvaDisplay> Enumerate() {
+        var handles = new List<IntPtr>();
+        EnumDisplayMonitors(IntPtr.Zero, IntPtr.Zero,
+            delegate(IntPtr h, IntPtr hdc, ref RECT rc, IntPtr d) { handles.Add(h); return true; },
+            IntPtr.Zero);
+
+        var found = new List<DxvaDisplay>();
+        foreach (IntPtr h in handles) {
+            string dev  = DeviceOf(h);
+            string path = InterfacePath(dev);
+            ushort vendor, product;
+            // No identity, no entry. A monitor we cannot name is one we must never
+            // aim at, and in session 0 every monitor looks like this.
+            if (!ParseEdid(path, out vendor, out product)) continue;
+            var d2 = new DxvaDisplay();
+            d2.Handle = h; d2.Device = dev; d2.InterfacePath = path;
+            d2.EdidVendor = vendor; d2.EdidProduct = product;
+            found.Add(d2);
+        }
+        return found;
+    }
+
+    // Write only. There is deliberately no GetVCPFeature wrapper: reads on this
+    // hardware produce false negatives and must never gate a switch (hard rule 2).
+    // Returns the number of physical monitors that accepted, or negative on
+    // failure to obtain a handle at all.
+    public static int WriteStandardVcp(DxvaDisplay target, byte code, byte value) {
+        uint n = 0;
+        if (!GetNumberOfPhysicalMonitorsFromHMONITOR(target.Handle, ref n) || n == 0) return -1;
+        var arr = new PHYSICAL_MONITOR[n];
+        if (!GetPhysicalMonitorsFromHMONITOR(target.Handle, n, arr)) return -2;
+        try {
+            int ok = 0;
+            foreach (var pm in arr) {
+                if (SetVCPFeature(pm.hPhysicalMonitor, code, (uint)value)) ok++;
+            }
+            return ok;
+        } finally {
+            DestroyPhysicalMonitors(n, arr);
+        }
+    }
+}
 '@
 
 # Load the transport, once per PowerShell process.
@@ -596,7 +785,7 @@ public static class NvDdc {
 # version in one session is fine and reuses what is loaded. The installed path never
 # reaches any of this -- the task starts a fresh powershell.exe per switch.
 $stampKey = 'trigger-kvm:NvDdcSourceStamp'
-$stamp    = $NvDdcSource.GetHashCode()
+$stamp    = $TransportSource.GetHashCode()
 
 if ('NvDdc' -as [type]) {
     if ([AppDomain]::CurrentDomain.GetData($stampKey) -ne $stamp) {
@@ -606,7 +795,7 @@ if ('NvDdc' -as [type]) {
                "old code while appearing to test the new.")
     }
 } else {
-    Add-Type -ErrorAction Stop -TypeDefinition $NvDdcSource
+    Add-Type -ErrorAction Stop -TypeDefinition $TransportSource
     [AppDomain]::CurrentDomain.SetData($stampKey, $stamp)
 }
 
@@ -624,16 +813,41 @@ if ('NvDdc' -as [type]) {
 # blast radius, so the check is no longer "is anything unrecognised attached" -- it
 # is the narrower and stronger "is the intended panel positively identified". A
 # third monitor being attached is now simply irrelevant.
+#
+# One resolver for both transports. They differ only in how the candidates are
+# enumerated and what a failure to enumerate at all is called; "exactly one EDID
+# match or refuse" is the same rule and must stay one implementation, because it
+# is the rule that turns session 0's phantom into a refusal rather than a mis-aim.
 function Resolve-Panel {
-    param([int]$Vendor, [int]$Product, [string]$Name)
+    param([int]$Vendor, [int]$Product, [string]$Name, [string]$Transport = 'nvapi')
 
-    $status = [NvDdc]::Init()
-    if ($status -ne 'OK') {
-        Write-Log "REFUSING $Name switch: NVAPI unavailable -- $status"
-        return $null
+    $all = $null
+    switch ($Transport) {
+        'nvapi' {
+            $status = [NvDdc]::Init()
+            if ($status -ne 'OK') {
+                Write-Log "REFUSING $Name switch: NVAPI unavailable -- $status"
+                return $null
+            }
+            $all = @([NvDdc]::Enumerate())
+        }
+        'dxva2' {
+            # No Init to fail: user32 always answers. What it answers with in
+            # session 0 is one phantom carrying no interface path, which
+            # Dxva.Enumerate drops for having no identity -- so the failure mode
+            # here is an empty list and a named refusal, not a wrong target.
+            $all = @([Dxva]::Enumerate())
+        }
+        default {
+            # A caller bug, not a config problem: Switch-Display validates the
+            # transport before anything reaches here. Throwing rather than logging
+            # a refusal keeps the two distinguishable -- and keeps the rule about
+            # which transports exist in exactly one place, so a mutation of it
+            # cannot be masked by a second copy here.
+            throw "Resolve-Panel called with an unvalidated transport '$Transport'"
+        }
     }
 
-    $all   = @([NvDdc]::Enumerate())
     $match = @($all | Where-Object {
         $_.EdidVendor -eq $Vendor -and $_.EdidProduct -eq $Product
     })
@@ -642,8 +856,8 @@ function Resolve-Panel {
 
     if ($match.Count -eq 0) {
         $seen = if ($all.Count) { ($all | ForEach-Object { $_.ToString() }) -join '; ' } else { 'nothing' }
-        Write-Log ("REFUSING {0} switch: no output identifies as it (EDID 0x{1:X4}:0x{2:X4}). NVAPI enumerated: {3}" -f `
-                   $Name, $Vendor, $Product, $seen)
+        Write-Log ("REFUSING {0} switch: no output identifies as it (EDID 0x{1:X4}:0x{2:X4}). {3} enumerated: {4}" -f `
+                   $Name, $Vendor, $Product, $Transport.ToUpperInvariant(), $seen)
     } else {
         Write-Log ("REFUSING {0} switch: {1} outputs identify as it, so the target is ambiguous: {2}" -f `
                    $Name, $match.Count, (($match | ForEach-Object { $_.ToString() }) -join '; '))
@@ -653,9 +867,14 @@ function Resolve-Panel {
 
 # Send one panel's input-select packet, twice. DDC is lossy and the writes are
 # idempotent, so a repeat is free and covers a dropped byte.
+#
+# Untyped $Target on purpose: it is an NvDisplay or a DxvaDisplay, and all this
+# needs of either is a ToString() for the log and the ShouldProcess line. Retry,
+# -WhatIf and logging stay HERE rather than in each transport, so the two cannot
+# drift in how a switch is reported or how often it is attempted.
 function Invoke-Switch {
     param(
-        [NvDisplay]$Target,
+        $Target,
         [string]$What,
         [scriptblock]$Write
     )
@@ -685,13 +904,22 @@ function Invoke-Switch {
     return $true
 }
 
-# One display, one input value. The method decides which transport entry point is
-# used, and that is the ONLY thing method changes -- resolution, aiming, retry and
-# logging are identical either way.
+# One display, one input value. Two axes decide which write is sent -- the METHOD
+# (what is sent) and the TRANSPORT (how it gets there) -- and that is ALL either
+# changes. Resolution, aiming, retry, -WhatIf and logging are identical
+# throughout.
 #
-# `lg-alt` does not grant anything: NvDdc.WriteLgInput still refuses a panel whose
-# EDID manufacturer is not GSM. Putting method = lg-alt on a Dell makes the write
-# throw; it does not make it happen.
+# The pairing is a 2x2 with one impossible cell, and the impossible one is a
+# safety property rather than a gap: dxva2 has no way to express an I2C source
+# byte, so it cannot carry lg-alt and cannot be used to reach 0x50 at all. That
+# combination is refused HERE with the reason named, rather than quietly sending
+# the standard command instead -- someone who asked for a sidechannel and silently
+# got something else would confirm by eye that a panel moved, and be wrong about
+# what moved it.
+#
+# `lg-alt` grants nothing on its own axis either: NvDdc.WriteLgInput still refuses
+# a panel whose EDID manufacturer is not GSM. Putting method = lg-alt on a Dell
+# makes the write throw; it does not make it happen.
 function Switch-Display {
     param([PSCustomObject]$Display, [byte]$Value)
 
@@ -700,26 +928,68 @@ function Switch-Display {
         return $false
     }
 
-    $target = Resolve-Panel -Vendor $Display.Vendor -Product $Display.Product -Name $Display.Name
+    # VALIDATE THE PAIRING ONCE, before anything enumerates. Both switch
+    # statements below still carry a default, but they are unreachable defence:
+    # the rule about which transports exist lives here, in one place, so there is
+    # one thing to change and one thing a mutation can prove.
+    if ($Display.Transport -notin @('nvapi', 'dxva2')) {
+        Write-Log ("REFUSING {0}: unknown transport '{1}'. Use 'nvapi' or 'dxva2'." -f $Display.Label, $Display.Transport)
+        return $false
+    }
+
+    if ($Display.Method -eq 'lg-alt' -and $Display.Transport -eq 'dxva2') {
+        Write-Log (("REFUSING {0}: method 'lg-alt' needs an I2C source byte and transport 'dxva2' cannot send one. " +
+                    "Use transport = nvapi for this panel, or method = standard.") -f $Display.Label)
+        return $false
+    }
+
+    $target = Resolve-Panel -Vendor $Display.Vendor -Product $Display.Product `
+                            -Name $Display.Name -Transport $Display.Transport
     if (-not $target) { return $false }
 
-    switch ($Display.Method) {
-        'lg-alt' {
-            $what = '{0} -> src 0x50, VCP 0xF4 = 0x{1:X2} on outputId 0x{2:X8} [{3}]' -f `
-                    $Display.Name, $Value, $target.OutputId, [NvDdc]::PacketForLgInput($Value)
-            return Invoke-Switch -Target $target -What $what -Write {
-                [NvDdc]::WriteLgInput($target, $Value)
+    switch ($Display.Transport) {
+        'nvapi' {
+            switch ($Display.Method) {
+                'lg-alt' {
+                    $what = '{0} -> src 0x50, VCP 0xF4 = 0x{1:X2} on outputId 0x{2:X8} [{3}]' -f `
+                            $Display.Name, $Value, $target.OutputId, [NvDdc]::PacketForLgInput($Value)
+                    return Invoke-Switch -Target $target -What $what -Write {
+                        [NvDdc]::WriteLgInput($target, $Value)
+                    }
+                }
+                'standard' {
+                    $what = '{0} -> src 0x51, VCP 0x60 = 0x{1:X2} on outputId 0x{2:X8} [{3}]' -f `
+                            $Display.Name, $Value, $target.OutputId, [NvDdc]::PacketForStandardVcp([byte]0x60, $Value)
+                    return Invoke-Switch -Target $target -What $what -Write {
+                        [NvDdc]::WriteStandardVcp($target, [byte]0x60, $Value)
+                    }
+                }
+                default {
+                    Write-Log ("REFUSING {0}: unknown method '{1}'. Use 'standard' or 'lg-alt'." -f $Display.Label, $Display.Method)
+                    return $false
+                }
             }
         }
-        'standard' {
-            $what = '{0} -> src 0x51, VCP 0x60 = 0x{1:X2} on outputId 0x{2:X8} [{3}]' -f `
-                    $Display.Name, $Value, $target.OutputId, [NvDdc]::PacketForStandardVcp([byte]0x60, $Value)
+        'dxva2' {
+            # No packet to print: dxva2 builds the DDC frame itself, so what is
+            # logged is the call, not the bytes. Say so rather than inventing a
+            # packet string that would look like the NVAPI ones and be a fiction.
+            if ($Display.Method -ne 'standard') {
+                Write-Log ("REFUSING {0}: unknown method '{1}'. Use 'standard' or 'lg-alt'." -f $Display.Label, $Display.Method)
+                return $false
+            }
+            $what = '{0} -> dxva2 SetVCPFeature, VCP 0x60 = 0x{1:X2} on {2}' -f `
+                    $Display.Name, $Value, $target.Device
             return Invoke-Switch -Target $target -What $what -Write {
-                [NvDdc]::WriteStandardVcp($target, [byte]0x60, $Value)
+                # Returns the number of physical monitors that accepted, or a
+                # negative on failing to get a handle. Invoke-Switch counts 0 as
+                # success, so map anything non-positive to a non-zero failure.
+                $n = [Dxva]::WriteStandardVcp($target, [byte]0x60, $Value)
+                if ($n -gt 0) { 0 } else { $n }
             }
         }
         default {
-            Write-Log ("REFUSING {0}: unknown method '{1}'. Use 'standard' or 'lg-alt'." -f $Display.Label, $Display.Method)
+            Write-Log ("REFUSING {0}: unknown transport '{1}'. Use 'nvapi' or 'dxva2'." -f $Display.Label, $Display.Transport)
             return $false
         }
     }
@@ -734,19 +1004,54 @@ function Switch-Display {
 if (-not $Config) { $Config = Get-ConfigPath }
 
 if ($Command -eq 'list') {
+    # BOTH transports, unioned on the EDID pair -- which is the one key both read
+    # (specs/config-format.md). A panel is not "on" a transport: it is REACHABLE BY
+    # a set of them, often both, and which to use is then a choice someone makes
+    # rather than a fact to discover. That is what makes configure able to offer.
+    #
+    # NVAPI being unavailable is no longer fatal here. A machine with no NVIDIA
+    # card is exactly the machine this transport was added for, and `list` refusing
+    # on it would make the whole walkthrough unreachable there.
+    $rows   = [ordered]@{}
     $status = [NvDdc]::Init()
-    if ($status -ne 'OK') { Write-Log "NVAPI unavailable -- $status"; exit 2 }
+    if ($status -eq 'OK') {
+        foreach ($d in @([NvDdc]::Enumerate())) {
+            $key = '{0:X4}:{1:X4}' -f $d.EdidVendor, $d.EdidProduct
+            $rows[$key] = [PSCustomObject]@{
+                Vendor = $d.EdidVendor; Product = $d.EdidProduct
+                Connector = $d.Connector; Serial = $d.EdidSerial; Name = $d.EdidName
+                Transports = @('nvapi')
+            }
+        }
+    } else {
+        Write-Log "NVAPI unavailable -- $status (continuing; dxva2 does not need it)"
+    }
 
-    $found = @([NvDdc]::Enumerate())
-    if ($found.Count -eq 0) { Write-Log 'no connected displays found on any NVIDIA GPU'; exit 2 }
+    foreach ($d in @([Dxva]::Enumerate())) {
+        $key = '{0:X4}:{1:X4}' -f $d.EdidVendor, $d.EdidProduct
+        if ($rows.Contains($key)) {
+            $rows[$key].Transports = @($rows[$key].Transports) + 'dxva2'
+        } else {
+            # dxva2 knows no connector and no serial -- it reads identity out of the
+            # PnP path, which carries neither. Say '-' rather than inventing one.
+            $rows[$key] = [PSCustomObject]@{
+                Vendor = $d.EdidVendor; Product = $d.EdidProduct
+                Connector = '-'; Serial = 0; Name = ''
+                Transports = @('dxva2')
+            }
+        }
+    }
+
+    $found = @($rows.Values)
+    if ($found.Count -eq 0) { Write-Log 'no connected displays found by any transport'; exit 2 }
 
     if ($Raw) {
         foreach ($d in $found) {
-            # Name last: install.ps1 accepts >= 4 fields, so appending cannot break
-            # a copy of it that predates this.
-            Write-Output ('{0:X4}|{1:X4}|{2}|{3}|{4:X8}|{5}' -f `
-                          $d.EdidVendor, $d.EdidProduct, [NvDdc]::DecodeMfg($d.EdidVendor),
-                          $d.Connector, $d.EdidSerial, $d.EdidName)
+            # Fields append-only: install.ps1 accepts >= 4, so a copy of it that
+            # predates a field still works. Transports last, for that reason.
+            Write-Output ('{0:X4}|{1:X4}|{2}|{3}|{4:X8}|{5}|{6}' -f `
+                          $d.Vendor, $d.Product, [NvDdc]::DecodeMfg($d.Vendor),
+                          $d.Connector, $d.Serial, $d.Name, ($d.Transports -join ','))
         }
         exit 0
     }
@@ -759,23 +1064,25 @@ if ($Command -eq 'list') {
     }
 
     Write-Host ''
-    Write-Host ('  {0,-8} {1,-9} {2,-11} {3,-22} {4}' -f 'vendor', 'product', 'connector', 'name (from the panel)', 'configured as')
-    Write-Host ('  {0,-8} {1,-9} {2,-11} {3,-22} {4}' -f '------', '-------', '---------', '---------------------', '-------------')
+    Write-Host ('  {0,-8} {1,-9} {2,-11} {3,-22} {4,-15} {5}' -f 'vendor', 'product', 'connector', 'name (from the panel)', 'reachable by', 'configured as')
+    Write-Host ('  {0,-8} {1,-9} {2,-11} {3,-22} {4,-15} {5}' -f '------', '-------', '---------', '---------------------', '------------', '-------------')
     foreach ($d in $found) {
-        $key = '{0:X4}:{1:X4}' -f $d.EdidVendor, $d.EdidProduct
-        Write-Host ('  0x{0:X4}   0x{1:X4}    {2,-11} {3,-22} {4}' -f `
-                    $d.EdidVendor, $d.EdidProduct, $d.Connector,
-                    $(if ($d.EdidName) { $d.EdidName } else { '(' + [NvDdc]::DecodeMfg($d.EdidVendor) + ', unnamed)' }),
+        $key = '{0:X4}:{1:X4}' -f $d.Vendor, $d.Product
+        Write-Host ('  0x{0:X4}   0x{1:X4}    {2,-11} {3,-22} {4,-15} {5}' -f `
+                    $d.Vendor, $d.Product, $d.Connector,
+                    $(if ($d.Name) { $d.Name } else { '(' + [NvDdc]::DecodeMfg($d.Vendor) + ', unnamed)' }),
+                    ($d.Transports -join ', '),
                     $(if ($known.Contains($key)) { $known[$key] } else { '-- not in config --' }))
     }
     Write-Host ''
     Write-Host 'To add one, put this in the config and name the input each computer is on:'
     Write-Host ''
     $ex = $found[0]
-    Write-Host ('    display.<label>.vendor  = 0x{0:X4}' -f $ex.EdidVendor)
-    Write-Host ('    display.<label>.product = 0x{0:X4}' -f $ex.EdidProduct)
+    Write-Host ('    display.<label>.vendor  = 0x{0:X4}' -f $ex.Vendor)
+    Write-Host ('    display.<label>.product = 0x{0:X4}' -f $ex.Product)
     Write-Host  '    display.<label>.name    = <a name for logs>'
     Write-Host  '    display.<label>.method  = standard        # or lg-alt, for an LG whose 0x60 is stubbed'
+    Write-Host ('    display.<label>.transport = {0,-8}      # how the bytes get there; omit for nvapi' -f $ex.Transports[0])
     Write-Host  '    display.<label>.input.0x11 = pc           # name each input after what is plugged in'
     Write-Host  '    display.<label>.input.0x0f = mac          # `pull` uses computer.this; `to mac` uses this'
     Write-Host ''

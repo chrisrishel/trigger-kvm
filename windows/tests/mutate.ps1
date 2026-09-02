@@ -506,6 +506,30 @@ Invoke-Mutation 'running: the test-only mutex name reaches the real lock' `
     '    $mutex = New-Object System.Threading.Mutex($false, $MUTEX_GLOBAL)' `
     '    $mutex = New-Object System.Threading.Mutex($false, $(if ($MutexName) { $MutexName[0] } else { $MUTEX_GLOBAL }))'
 
+# --- transport is a second axis, and cannot become a second door --------------
+
+Invoke-Mutation 'transport: dxva2 quietly carries lg-alt instead of refusing' `
+    'trigger-kvm.ps1' 'resolve.tests.ps1' `
+    "    if (`$Display.Method -eq 'lg-alt' -and `$Display.Transport -eq 'dxva2') {" `
+    "    if (`$false) {"
+Invoke-Mutation 'transport: an unknown transport falls back instead of refusing' `
+    'trigger-kvm.ps1' 'resolve.tests.ps1' `
+    "    if (`$Display.Transport -notin @('nvapi', 'dxva2')) {" `
+    "    if (`$false) { `$Display.Transport = 'nvapi' }
+    if (`$false) {"
+Invoke-Mutation 'transport: an absent transport key stops meaning nvapi' `
+    'trigger-kvm.ps1' 'resolve.tests.ps1' `
+    "else { 'nvapi' })" `
+    "else { 'dxva2' })"
+Invoke-Mutation 'transport: dxva2 gains an I2C source parameter' `
+    'trigger-kvm.ps1' 'conventions.tests.ps1' `
+    '    public static int WriteStandardVcp(DxvaDisplay target, byte code, byte value) {' `
+    '    public static int WriteStandardVcp(DxvaDisplay target, byte source, byte code, byte value) {'
+Invoke-Mutation 'transport: a second embedded-source block goes unscanned' `
+    'trigger-kvm.ps1' 'conventions.tests.ps1' `
+    '$TransportSource = @''' `
+    "\$SecondSource = @'`nusing System;`n'@`n`n\$TransportSource = @'"
+
 # --- the LG service channel has one door --------------------------------------
 #
 # The self-test inside conventions.tests.ps1 already proves the CHECK bites, on

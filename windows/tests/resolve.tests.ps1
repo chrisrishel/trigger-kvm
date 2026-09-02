@@ -132,5 +132,55 @@ $r = Invoke-Switcher @('pull', '-WhatIf', '-Config', $cfg)
 Assert-Match   $r.Text 'REFUSING'
 Assert-NoMatch $r.Text 'WHATIF: would send' 'and neither is a missing computer.this'
 
+# ---- transport is a second axis, with one impossible cell --------------------
+#
+# specs/config-format.md, "transport and method are different questions".
+# method says WHAT is sent, transport says HOW it gets there. dxva2 cannot
+# express an I2C source byte at all, so it cannot carry lg-alt -- and that
+# combination must be REFUSED rather than quietly downgraded to the standard
+# command, or someone would confirm a panel moved and be wrong about what moved
+# it (docs/decisions/003).
+
+function Set-OneDisplay {
+    param([string[]]$Lines)
+    @('computer.this = pc') + $Lines | Set-Content -LiteralPath $cfg -Encoding ASCII
+}
+
+$asus = @(
+ 'display.asus.vendor  = 0x06B3'
+ 'display.asus.product = 0x42E0'
+ 'display.asus.name    = ASUS'
+ 'display.asus.input.0x11 = pc'
+ 'display.asus.input.0x0f = mac'
+)
+
+# dxva2 resolves the panel by the SAME EDID key nvapi uses, and says what it will
+# call. No packet bytes: dxva2 builds the DDC frame itself, so printing one would
+# be a fiction dressed as the NVAPI lines.
+Set-OneDisplay ($asus + @('display.asus.method = standard', 'display.asus.transport = dxva2'))
+$r = Invoke-Switcher @('pull', '-WhatIf', '-Config', $cfg)
+Assert-Match $r.Text 'dxva2 SetVCPFeature, VCP 0x60 = 0x11' 'dxva2 resolves and reports the call it would make'
+Assert-NoMatch $r.Text 'src 0x51' 'and does not claim an I2C source it cannot send'
+
+# The impossible cell.
+Set-OneDisplay ($asus + @('display.asus.method = lg-alt', 'display.asus.transport = dxva2'))
+$r = Invoke-Switcher @('pull', '-WhatIf', '-Config', $cfg)
+Assert-Match   $r.Text 'REFUSING'
+Assert-Match   $r.Text 'cannot send one' 'the refusal says WHY the pair is impossible'
+Assert-NoMatch $r.Text 'WHATIF: would send' 'and nothing is sent instead of it'
+
+# An unrecognised transport is refused BY NAME, never defaulted to the usual one:
+# defaulting would send the write down a path nobody confirmed by eye.
+Set-OneDisplay ($asus + @('display.asus.method = standard', 'display.asus.transport = vulkan'))
+$r = Invoke-Switcher @('pull', '-WhatIf', '-Config', $cfg)
+Assert-Match   $r.Text "unknown transport 'vulkan'" 'an unknown transport is named, not defaulted'
+Assert-NoMatch $r.Text 'WHATIF: would send' 'and nothing is sent under it'
+
+# Absent means nvapi, so a config written before the key existed is unchanged --
+# same panel, same packet as the byte-exact assertion at the top of this file.
+Set-OneDisplay ($asus + @('display.asus.method = standard'))
+$r = Invoke-Switcher @('pull', '-WhatIf', '-Config', $cfg)
+Assert-Match $r.Text '51 84 03 60 00 11 C9' 'no transport key still means nvapi, byte for byte'
+
 Remove-Item -LiteralPath $cfg -Force -ErrorAction SilentlyContinue
 exit 0
