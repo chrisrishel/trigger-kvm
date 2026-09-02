@@ -175,9 +175,12 @@ static void i2c_read_vcp60(io_service_t iface, uint32_t types) {
 // panel?". Every way this could become a general-purpose write tool is closed
 // deliberately, and each closure is a rule in ../AGENTS.md:
 //
-//   - the source byte 0x51 is a literal, exactly as in the read above. There is
-//     no parameter, no table and no code path by which this program can emit
-//     0x50. Hard rule 5's channel is not reachable from this file at all.
+//   - the source byte 0x51 is a literal, exactly as in the read above. This
+//     function cannot emit any other source; the service channel has its own
+//     function below and the two share no sender, deliberately -- a helper taking
+//     a ready-made packet would be the generic "write to source N" entry point
+//     hard rule 5 forbids, so the duplication below is the point, not an
+//     oversight.
 //   - the VCP code 0x60 is a literal too. This is not a "write VCP X" tool.
 //   - the value comes from a NAMED allowlist copied from displays.toml, never
 //     from a number the caller supplies. Hard rule 1 forbids walking values at a
@@ -206,17 +209,23 @@ static bool asus_input_value(const char *name, uint8_t *out) {
     return false;
 }
 
-static void i2c_set_asus_input(io_service_t iface, uint8_t value) {
+static bool i2c_set_asus_input(io_service_t iface, long vendor_id, uint8_t value) {
+    if (vendor_id != DDC_VENDOR_AUS) {
+        printf("  REFUSED: target EDID vendor is 0x%04lX, not AUS (0x%04X).\n",
+               vendor_id, DDC_VENDOR_AUS);
+        return false;
+    }
     IOI2CConnectRef conn = NULL;
     kern_return_t kr = IOI2CInterfaceOpen(iface, kNilOptions, &conn);
-    if (kr != KERN_SUCCESS) { printf("  IOI2CInterfaceOpen failed: 0x%x\n", kr); return; }
+    if (kr != KERN_SUCCESS) { printf("  IOI2CInterfaceOpen failed: 0x%x\n", kr); return false; }
 
     uint8_t send[7] = { 0x51, 0x84, 0x03, 0x60, 0x00, value, 0 };
     send[6] = (uint8_t)(0x6E ^ send[0] ^ send[1] ^ send[2] ^ send[3] ^ send[4] ^ send[5]);
 
     printf("  packet:");
     for (size_t i = 0; i < sizeof send; i++) printf(" %02X", send[i]);
-    printf("   (slave 0x6E, source 0x51, VCP 0x60, value 0x%02X)\n", value);
+    printf("   (slave 0x6E, source 0x%02X, VCP 0x%02X, value 0x%02X)\n",
+           send[0], send[3], value);
 
     for (int attempt = 1; attempt <= 2; attempt++) {
         IOI2CRequest req;
@@ -234,14 +243,93 @@ static void i2c_set_asus_input(io_service_t iface, uint8_t value) {
         if (attempt == 1) usleep(50 * 1000);
     }
     IOI2CInterfaceClose(conn, kNilOptions);
+    return true;
+}
+
+// ------------------------------------------- the LG service channel write --
+//
+// THE ONLY function in this program that can emit I2C source 0x50, and the
+// source byte is a literal inside it rather than a parameter -- ../AGENTS.md
+// hard rule 5. It refuses unless the panel's EDID manufacturer is GSM, and
+// main() refuses unless EXACTLY ONE enumerated display is a GSM panel: zero is a
+// refusal and so is more than one, because an ambiguous target cannot be aimed
+// at safely. There is no generic "write to source N" entry point here and none
+// may be added; that is why this shares no sender with the ASUS write above.
+//
+// The two values are the ones this desk exercises daily from the other two
+// platforms. The LG's other documented inputs (hdmi1 0x90, hdmi2 0x91) are
+// deliberately NOT in the table: displays.toml marks them "documented, not
+// exercised", and a service channel is not where a value gets exercised for the
+// first time. Hard rule 1 -- these come from the allowlist, never from a search,
+// a sweep or a range.
+//
+// Expect the panel to flicker on every LG switch, including a re-assert to the
+// input it is already on. That is the link renegotiating, it is normal, and it
+// has been mistaken for a fault here once already.
+
+#define DDC_VENDOR_GSM 0x1E6D
+
+static const struct { const char *name; uint8_t value; } LG_INPUTS[] = {
+    { "displayport", 0xD0 },
+    { "usb-c",       0xD1 },
+};
+
+static bool lg_input_value(const char *name, uint8_t *out) {
+    for (size_t i = 0; i < sizeof LG_INPUTS / sizeof LG_INPUTS[0]; i++) {
+        if (!strcmp(name, LG_INPUTS[i].name)) { *out = LG_INPUTS[i].value; return true; }
+    }
+    return false;
+}
+
+static bool i2c_set_lg_input_alt(io_service_t iface, long vendor_id, uint8_t value) {
+    if (vendor_id != DDC_VENDOR_GSM) {
+        printf("  REFUSED: target EDID vendor is 0x%04lX, not GSM (0x%04X).\n"
+               "  The service channel may only ever be aimed at the LG.\n",
+               vendor_id, DDC_VENDOR_GSM);
+        return false;
+    }
+    IOI2CConnectRef conn = NULL;
+    kern_return_t kr = IOI2CInterfaceOpen(iface, kNilOptions, &conn);
+    if (kr != KERN_SUCCESS) { printf("  IOI2CInterfaceOpen failed: 0x%x\n", kr); return false; }
+
+    uint8_t send[7] = { 0x50, 0x84, 0x03, 0xF4, 0x00, value, 0 };
+    send[6] = (uint8_t)(0x6E ^ send[0] ^ send[1] ^ send[2] ^ send[3] ^ send[4] ^ send[5]);
+
+    printf("  packet:");
+    for (size_t i = 0; i < sizeof send; i++) printf(" %02X", send[i]);
+    // Printed from the packet, never from a literal: a label that repeats the
+    // source byte can drift from the bytes actually sent, and this one names a
+    // service channel. It also keeps the scan in conventions.tests.sh honest --
+    // the emitter below is the ONE non-comment line naming that source.
+    printf("   (slave 0x6E, SERVICE source 0x%02X, VCP 0x%02X, value 0x%02X)\n",
+           send[0], send[3], value);
+
+    for (int attempt = 1; attempt <= 2; attempt++) {
+        IOI2CRequest req;
+        memset(&req, 0, sizeof req);
+        req.sendAddress          = 0x6E;
+        req.sendTransactionType  = kIOI2CSimpleTransactionType;
+        req.sendBuffer           = (vm_address_t)(uintptr_t)send;
+        req.sendBytes            = sizeof send;
+        req.replyTransactionType = kIOI2CNoTransactionType;
+        req.replyBytes           = 0;
+
+        kr = IOI2CSendRequest(conn, kNilOptions, &req);
+        printf("  send %d of 2: IOI2CSendRequest=0x%x  result=0x%x\n",
+               attempt, kr, (unsigned)req.result);
+        if (attempt == 1) usleep(50 * 1000);
+    }
+    IOI2CInterfaceClose(conn, kNilOptions);
+    return true;
 }
 
 // -------------------------------------------------------------------- main --
 
 int main(int argc, char **argv) {
-    bool do_read = false, do_write = false;
+    bool do_read = false, do_write = false, write_is_lg = false;
     uint8_t write_value = 0;
     const char *write_name = NULL;
+    long target_vendor = 0;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--i2c-read")) do_read = true;
         else if (!strcmp(argv[i], "--set-asus-input")) {
@@ -250,11 +338,23 @@ int main(int argc, char **argv) {
                                 "(the names are the allowlist; a raw value is not expressible)\n");
                 return 2;
             }
-            write_name = argv[i];
-            do_write = true;
+            write_name = argv[i]; do_write = true; write_is_lg = false;
+            target_vendor = DDC_VENDOR_AUS;
+        }
+        else if (!strcmp(argv[i], "--set-lg-input")) {
+            if (++i >= argc || !lg_input_value(argv[i], &write_value)) {
+                fprintf(stderr, "--set-lg-input needs one of: displayport usb-c\n"
+                                "(the names are the allowlist; a raw value is not expressible.\n"
+                                " hdmi1/hdmi2 are documented but unexercised and are not offered\n"
+                                " here -- a service channel is not where a value is first tried.)\n");
+                return 2;
+            }
+            write_name = argv[i]; do_write = true; write_is_lg = true;
+            target_vendor = DDC_VENDOR_GSM;
         }
         else {
-            fprintf(stderr, "usage: %s [--i2c-read] [--set-asus-input displayport|hdmi1|hdmi2]\n", argv[0]);
+            fprintf(stderr, "usage: %s [--i2c-read] [--set-asus-input displayport|hdmi1|hdmi2]\n"
+                            "          [--set-lg-input displayport|usb-c]\n", argv[0]);
             return 2;
         }
     }
@@ -290,8 +390,8 @@ int main(int argc, char **argv) {
         return 1;
     }
     int nfb = 0;
-    io_service_t aus_iface[4];
-    int aus_count = 0;
+    io_service_t target_iface[4];
+    int target_count = 0;
     io_service_t fb;
     while ((fb = IOIteratorNext(it))) {
         nfb++;
@@ -337,15 +437,16 @@ int main(int argc, char **argv) {
                    flags);
             if (do_read && external) i2c_read_vcp60(iface, (uint32_t)(types < 0 ? 0 : types));
             else if (do_read) printf("      (built-in or empty framebuffer: no read sent)\n");
-            // The vendor gate. Only an AUS panel is ever a candidate, and the
-            // decision to send waits until every framebuffer has been seen, so
-            // that "exactly one" can be enforced rather than "the first one".
-            if (do_write && external && vendor_id == DDC_VENDOR_AUS) {
-                if (aus_count < (int)(sizeof aus_iface / sizeof aus_iface[0])) {
+            // The vendor gate. Only a panel of the flag's own vendor is ever a
+            // candidate, and the decision to send waits until every framebuffer
+            // has been seen, so that "exactly one" can be enforced rather than
+            // "the first one".
+            if (do_write && external && vendor_id == target_vendor) {
+                if (target_count < (int)(sizeof target_iface / sizeof target_iface[0])) {
                     IOObjectRetain(iface);
-                    aus_iface[aus_count] = iface;
+                    target_iface[target_count] = iface;
                 }
-                aus_count++;
+                target_count++;
             }
             IOObjectRelease(iface);
         }
@@ -356,20 +457,25 @@ int main(int argc, char **argv) {
 
     int rc = 0;
     if (do_write) {
-        printf("\n== SetVCP 0x60 -> %s (0x%02X) ==\n", write_name, write_value);
-        if (aus_count != 1) {
-            printf("  REFUSED: found %d display(s) with EDID vendor 0x%04X (AUS); need exactly one.\n"
+        printf("\n== %s -> %s (0x%02X) ==\n",
+               write_is_lg ? "LG service channel SetVCP 0xF4" : "SetVCP 0x60",
+               write_name, write_value);
+        if (target_count != 1) {
+            printf("  REFUSED: found %d display(s) with EDID vendor 0x%04lX; need exactly one.\n"
                    "  Zero and many are both refusals: an ambiguous target cannot be aimed at safely.\n",
-                   aus_count, DDC_VENDOR_AUS);
+                   target_count, target_vendor);
             rc = 1;
         } else {
-            i2c_set_asus_input(aus_iface[0], write_value);
-            printf("  Sent. This is NOT a confirmation -- a write returning success has lied here\n"
-                   "  before. Look at the monitor; that is the only thing that settles it.\n");
+            bool sent = write_is_lg
+                ? i2c_set_lg_input_alt(target_iface[0], target_vendor, write_value)
+                : i2c_set_asus_input(target_iface[0], target_vendor, write_value);
+            if (!sent) rc = 1;
+            else printf("  Sent. This is NOT a confirmation -- a write returning success has lied here\n"
+                        "  before. Look at the monitor; that is the only thing that settles it.\n");
         }
     }
-    for (int i = 0; i < aus_count && i < (int)(sizeof aus_iface / sizeof aus_iface[0]); i++)
-        IOObjectRelease(aus_iface[i]);
+    for (int i = 0; i < target_count && i < (int)(sizeof target_iface / sizeof target_iface[0]); i++)
+        IOObjectRelease(target_iface[i]);
 
     if (!do_write)
         printf("\nNothing was written to any monitor.%s\n",

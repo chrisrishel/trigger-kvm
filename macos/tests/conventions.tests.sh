@@ -56,6 +56,49 @@ it 'no function takes the channel or a source byte as a parameter'
 assert_no_match "$(cat "$MAC_DIR"/lib/*.sh)" 'ddc_send_raw'
 assert_no_match "$(cat "$MAC_DIR"/lib/*.sh)" '_source=$'
 
+# -----------------------------------------------------------------------------
+# ...and the same, for C, where the source byte is a NUMBER
+# -----------------------------------------------------------------------------
+# The scan above keys on the string `input-alt`, which is m1ddc's spelling of
+# source 0x50. C code emitting that source writes the byte numerically and
+# contains no such string, so the shell scan would count one door and pass while
+# a second existed. Hard rule 5 asks the suite to assert the gate is the only
+# door; without this, that assertion silently stops covering half the tree.
+
+alt_doors_c() {
+  grep -rn '0x50' "$@" 2>/dev/null | grep -vc '^[^:]*:[0-9]*: *//' || true
+}
+
+it 'the byte 0x50 appears in exactly one non-comment line of C'
+hits=$(alt_doors_c "$MAC_DIR"/*.c)
+assert_equal 1 "$hits" 'the numeric service channel must have exactly one door too'
+
+it 'and that C scan can count a second door, and ignores a comment'
+# Same self-test as the shell scan above, for the same reason: without it this
+# passes for exactly as long as the formatting happens to suit the grep.
+probe_c=$(mktemp "$FAKE_DIR/probe.XXXXXX").c
+printf '%s\n' \
+  'uint8_t send[7] = { 0x50, 0x84, 0x03, 0xF4, 0x00, value, 0 };' \
+  '// 0x50 in a comment is documentation, not a door' \
+  '    // and so is an indented one' >"$probe_c"
+assert_equal 1 "$(alt_doors_c "$probe_c")" 'a commented mention is not a door'
+printf '%s\n' 'uint8_t sneak[2] = { 0x50, 0xF4 };' >>"$probe_c"
+assert_equal 2 "$(alt_doors_c "$probe_c")" 'a second emitter must be counted'
+
+it 'and the C door sits in the function holding the GSM vendor check'
+# The emitter and the refusal must be the same function. If they drift apart the
+# byte can be sent to a panel whose vendor was never checked.
+owner_c=$(grep -rln 'DDC_VENDOR_GSM' "$MAC_DIR"/*.c)
+assert_equal "$MAC_DIR/intel-ddc-probe.c" "$owner_c"
+gate_c=$(sed -n '/^static bool i2c_set_lg_input_alt/,/^}/p' "$MAC_DIR/intel-ddc-probe.c")
+assert_match "$gate_c" '0x50' 'the sidechannel byte lives here'
+# The COMPARISON, not the name. DDC_VENDOR_GSM also appears in this function's
+# refusal message, so matching the bare name passes even when the guard has been
+# replaced by `if (0)` -- present but unreachable, which is the thing a
+# structural check exists to catch and which this test did not catch until it
+# was mutated and shown not to.
+assert_match "$gate_c" 'vendor_id != DDC_VENDOR_GSM' 'and the guard on it is a real comparison'
+
 # =============================================================================
 # launchd is reached through exactly one name
 # =============================================================================
