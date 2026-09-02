@@ -553,6 +553,22 @@ function Stop-Watchers {
     }
 }
 
+# IS A WATCHER RUNNING? Asked of event-watch.ps1, which owns the single-instance
+# lock, for the same reason -ListBluetooth and -TestTrigger are asked of it: a
+# second implementation here would be free to disagree with the lock that actually
+# decides. See that script for why the lock and not the process table.
+#
+# This is NOT the question Stop-Watchers asks. That one needs PIDs to kill and runs
+# elevated, where CommandLine is readable; this one needs a yes/no from wherever it
+# is called. Two questions, two answers, deliberately not merged.
+function Test-WatcherRunning {
+    $ew = Join-Path $PSScriptRoot 'event-watch.ps1'
+    if (-not (Test-Path -LiteralPath $ew -PathType Leaf)) { $ew = $WATCH }
+    if (-not (Test-Path -LiteralPath $ew -PathType Leaf)) { return $false }
+    Invoke-Sibling -Script $ew -Arguments @('-IsRunning') | Out-Null
+    return ($LASTEXITCODE -eq 0)
+}
+
 # IS THIS OURS? The rename happened precisely because haimgel/display-switch
 # already owns that name, so "anything called display-switch" is exactly the
 # wrong test: a user who also has that tool -- or a scheduled task they named
@@ -3248,11 +3264,13 @@ if ($Command -eq 'restart') {
     Suspend-Watcher
     Resume-Watcher
     Start-Sleep -Seconds 2
-    $n = @(Get-CimInstance Win32_Process -Property ProcessId,Name,CommandLine -Verbose:$false |
-           Where-Object { $_.CommandLine -and $_.Name -eq 'powershell.exe' -and $_.CommandLine -match '(usb|event)-watch\.ps1' }).Count
-    if ($n -ge 1) { Write-Log 'restarted; the watcher has re-read the config.' }
+    # The lock, not a process count: a boot-tier watcher comes up in session 0,
+    # where an unelevated caller cannot read CommandLine, so counting reported
+    # "no watcher came up" about one that had.
+    $up = Test-WatcherRunning
+    if ($up) { Write-Log 'restarted; the watcher has re-read the config.' }
     else { Write-Log 'restarted, but no watcher came up -- check: trigger-kvm logs' }
-    exit $(if ($n -ge 1) { 0 } else { 1 })
+    exit $(if ($up) { 0 } else { 1 })
 }
 
 if ($Command -eq 'pause') {
@@ -3326,9 +3344,12 @@ if ($Command -eq 'status') {
     Write-Host ("last run : {0} (result 0x{1:X8}){2}" -f $i.LastRunTime, $i.LastTaskResult, $note)
     }
 
-    $n = @(Get-CimInstance Win32_Process -Property ProcessId,Name,CommandLine -Verbose:$false |
-           Where-Object { $_.CommandLine -and $_.Name -eq 'powershell.exe' -and $_.CommandLine -match '(usb|event)-watch\.ps1' }).Count
-    Write-Host ("watchers : {0}{1}" -f $n, $(if ($n -eq 1) { '' } else { '  <- expected exactly 1' }))
+    # From the LOCK, so this reads the same on both tiers. Counting processes was
+    # structurally blind to a session-0 watcher and printed "0  <- expected exactly
+    # 1" about a healthy boot tier, which invites fixing a system that works.
+    # "More than one" is not a state the lock permits, so this is yes or no.
+    Write-Host ("watcher  : {0}" -f $(if (Test-WatcherRunning) { 'running' }
+                                      else { 'NOT running  <- run: trigger-kvm restart' }))
     Write-Host ("log      : {0}" -f $LOG)
     Write-Host ("config   : {0}{1}" -f $CONFIG, $(if (Test-Path -LiteralPath $CONFIG) { '' } else { '  <- MISSING; run: trigger-kvm configure' }))
 

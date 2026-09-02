@@ -602,11 +602,17 @@ point. It says everything it can whether or not a task is registered — a
 computer with no task is exactly where "what does this think is configured?" is
 the question being asked.
 
+`watcher` comes from the single-instance lock, not from counting processes. A
+boot-tier watcher lives in session 0, where an unelevated caller cannot read
+another process's command line at all, so counting reported `0` about a watcher
+that was running and firing. The lock is also what makes a second watcher
+impossible, so this is a state rather than a tally.
+
 ```
 autostart: at boot  (principal=user logon=S4U runlevel=Limited)
            covers: from boot onward -- before first login, while locked, after logoff
 task     : Ready
-watchers : 1
+watcher  : running
 config   : C:\Users\Example\AppData\Local\trigger-kvm\config
 version  : 0.2.0  (installed 2026-09-01 12:00:00, commit abc1234, spec revision 7)
 displays : lg, asus

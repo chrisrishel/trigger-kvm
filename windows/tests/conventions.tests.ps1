@@ -452,6 +452,56 @@ Assert-Match $gateBody 'EdidVendor\s*!=\s*EDID_VENDOR_GSM' 'the vendor check liv
 Assert-Match $gateBody 'throw new InvalidOperationException' `
     'and it throws rather than returning a code a caller can ignore'
 
+# ---- "is a watcher running" is asked of the lock, not the process table ------
+#
+# An unelevated caller cannot read CommandLine across the session boundary, so
+# counting processes is structurally blind to a session-0 watcher: `status` said
+# "watchers : 0" about a live boot-tier one that had just fired (2026-09-02,
+# ..\..\docs\measurements.md). The lock is what MAKES a second watcher
+# impossible, so it is also the honest answer to whether one runs.
+#
+# Structural, because no behavioural test in this suite can reach it: the suite
+# cannot create a session-0 process, which is the only context where the two
+# answers differ. A revert to counting would pass everything else.
+
+$instSrc = @(Get-Content -LiteralPath $installer)
+
+# Stop-Watchers still needs PIDs to kill and runs elevated, so ONE query stays.
+# More than one means a "is it running?" caller has gone back to counting.
+$procAt = @(0..($instSrc.Count - 1) |
+            Where-Object { $instSrc[$_] -match 'Get-CimInstance\s+Win32_Process' })
+Assert-Equal 1 $procAt.Count `
+    ("install.ps1 may enumerate processes in exactly one place (Stop-Watchers, which needs PIDs to kill). " +
+     "Whether a watcher RUNS is the lock's question -- see event-watch.ps1 -IsRunning.")
+
+# ...and it is Stop-Watchers': between that definition and the next function.
+$stopAt = @(0..($instSrc.Count - 1) | Where-Object { $instSrc[$_] -match '^function\s+Stop-Watchers\b' })
+Assert-Equal 1 $stopAt.Count 'Stop-Watchers must be defined exactly once'
+$nextFn = @(0..($instSrc.Count - 1) |
+            Where-Object { $_ -gt $stopAt[0] -and $instSrc[$_] -match '^function\s' })
+$stopEnd = if ($nextFn.Count) { ($nextFn | Measure-Object -Minimum).Minimum } else { $instSrc.Count }
+Assert-True ($procAt[0] -gt $stopAt[0] -and $procAt[0] -lt $stopEnd) `
+    ("the surviving process query must be Stop-Watchers'; it is on line " + ($procAt[0] + 1))
+
+# The -MutexName seam exists so the suite can drive every outcome against a name
+# of its own. It is safe ONLY because it cannot reach the code that takes the
+# lock for real -- a value there could produce two live watchers, which is the
+# single failure the mutex exists to prevent. Pinned, not trusted.
+$watchSrc  = @(Get-Content -LiteralPath (Join-Path $WinDir 'event-watch.ps1'))
+$seamAt    = @(0..($watchSrc.Count - 1) | Where-Object { $watchSrc[$_] -match '\$MutexName' })
+$acquireAt = @(0..($watchSrc.Count - 1) | Where-Object {
+                 $watchSrc[$_] -match 'New-Object System\.Threading\.Mutex' })
+
+Assert-True ($seamAt.Count    -gt 0) 'the -MutexName seam check must have found the seam'
+Assert-True ($acquireAt.Count -gt 0) 'and the lines that take the lock for real'
+
+$firstAcquire = ($acquireAt | Measure-Object -Minimum).Minimum
+$leaked = @($seamAt | Where-Object { $_ -ge $firstAcquire })
+Assert-Equal 0 $leaked.Count `
+    ("-MutexName must not be readable by the code that TAKES the lock; it appears at line(s) " +
+     (($leaked | ForEach-Object { $_ + 1 }) -join ', ') + " at or after the acquisition on line " +
+     ($firstAcquire + 1))
+
 # ---- the instruction files fit the tools that load them ----------------------
 #
 # Codex loads the AGENTS.md chain from the git root down to its working

@@ -426,6 +426,37 @@ Invoke-Mutation 'detector: an empty device list arms and watches nothing' `
     Deny-Startup 'no devices to watch -- run: trigger-kvm configure'
 }" ''
 
+# --- "is a watcher running" comes from the lock -------------------------------
+
+Invoke-Mutation 'running: a lock that exists but is unheld reads as a live watcher' `
+    'event-watch.ps1' 'detector.tests.ps1' `
+    '            if (-not $m.WaitOne(0)) { return $true }' `
+    '            return $true'
+Invoke-Mutation 'running: the check keeps the lock it acquired' `
+    'event-watch.ps1' 'detector.tests.ps1' `
+    "            if (-not `$m.WaitOne(0)) { return `$true }
+            # We got it, so nothing held it -- the name outlived its watcher.
+            `$m.ReleaseMutex()" `
+    '            if (-not $m.WaitOne(0)) { return $true }'
+Invoke-Mutation 'running: a name nobody created reads as a live watcher' `
+    'event-watch.ps1' 'detector.tests.ps1' `
+    '            continue    # the name does not exist: nothing ever created it' `
+    '            return $true'
+Invoke-Mutation 'running: a lock owned by an unreachable token reads as no watcher' `
+    'event-watch.ps1' 'detector.tests.ps1' `
+    '            return $true    # exists, owned by a token we cannot open' `
+    '            continue'
+Invoke-Mutation 'running: install.ps1 goes back to counting processes' `
+    'install.ps1' 'conventions.tests.ps1' `
+    '    Invoke-Sibling -Script $ew -Arguments @(''-IsRunning'') | Out-Null
+    return ($LASTEXITCODE -eq 0)' `
+    '    return (@(Get-CimInstance Win32_Process -Property ProcessId,Name,CommandLine -Verbose:$false |
+        Where-Object { $_.CommandLine -and $_.CommandLine -match ''(usb|event)-watch\.ps1'' }).Count -ge 1)'
+Invoke-Mutation 'running: the test-only mutex name reaches the real lock' `
+    'event-watch.ps1' 'conventions.tests.ps1' `
+    '    $mutex = New-Object System.Threading.Mutex($false, $MUTEX_GLOBAL)' `
+    '    $mutex = New-Object System.Threading.Mutex($false, $(if ($MutexName) { $MutexName[0] } else { $MUTEX_GLOBAL }))'
+
 # --- the LG service channel has one door --------------------------------------
 #
 # The self-test inside conventions.tests.ps1 already proves the CHECK bites, on

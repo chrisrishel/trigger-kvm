@@ -101,6 +101,24 @@ param(
     [Parameter(ParameterSetName = 'TestTrigger')]
     [int]$Timeout = 90,
 
+    # Is a watcher running? Print "running" or "none" and exit 0 / 1. Here for the
+    # same reason -ListBluetooth and -TestTrigger are: this script owns the
+    # single-instance lock, so it owns the question "is one running", and a second
+    # implementation in the installer would be free to disagree with the lock that
+    # actually decides. Takes the lock only momentarily and never keeps it.
+    [Parameter(Mandatory = $true, ParameterSetName = 'IsRunning')]
+    [switch]$IsRunning,
+
+    # Which lock to ASK ABOUT. Exists so the suite can drive all four outcomes
+    # against a name of its own -- the real watcher is usually running while the
+    # tests are, and would answer for every case.
+    #
+    # SAFE because it is confined to the read-only parameter set: the code that
+    # TAKES the lock for real never reads it, so no value here can produce two
+    # live watchers. conventions.tests.ps1 asserts that, rather than trusting it.
+    [Parameter(ParameterSetName = 'IsRunning')]
+    [string[]]$MutexName,
+
     [Parameter(ParameterSetName = 'Watch')]
     [double]$Debounce = 3.0,
     [Parameter(ParameterSetName = 'Watch')]
@@ -158,6 +176,64 @@ $SOURCE = 'TriggerKvmDeviceChange'
 # what the OS permits and what is already running, not about who launched us.
 $MUTEX_GLOBAL = 'Global\trigger-kvm-usb-watch'
 $MUTEX_LOCAL  = 'Local\trigger-kvm-usb-watch'
+
+# IS A WATCHER RUNNING? Answered from the LOCK, never by counting processes.
+#
+# Placed here because it needs the mutex names and nothing else -- deliberately
+# before anything that reads a config, arms a source or takes the lock for real.
+#
+# Counting `powershell.exe` processes whose CommandLine matches this script CANNOT
+# answer this for the boot tier: an unelevated caller reads CommandLine as EMPTY
+# across the session boundary, so every session-0 process is invisible and the
+# count is structurally 0 whatever is running. Measured 2026-09-02 -- 183 of 183
+# session-0 processes came back blank against 98 of 130 in the caller's own
+# session, while `status` printed "watchers : 0" about a live watcher that had
+# fired 40 minutes earlier.
+#
+# The lock is what MAKES a second watcher impossible, so it is also the honest
+# answer to whether one is running: a state, not a tally that can disagree with
+# itself. Four outcomes, and access-denied is a POSITIVE one -- the name exists
+# under a token we cannot open, which is exactly what a session-0 watcher looks
+# like from a desktop session.
+#
+# It must never keep what it takes. Acquiring the mutex here and holding it would
+# lock the real watcher out of its own name at its next restart.
+function Test-WatcherRunning {
+    param([string[]]$Names = @($MUTEX_GLOBAL, $MUTEX_LOCAL))
+    foreach ($name in $Names) {
+        $m = $null
+        try {
+            $m = [System.Threading.Mutex]::OpenExisting($name)
+        } catch [System.Threading.WaitHandleCannotBeOpenedException] {
+            continue    # the name does not exist: nothing ever created it
+        } catch [System.UnauthorizedAccessException] {
+            return $true    # exists, owned by a token we cannot open
+        } catch {
+            continue
+        }
+        try {
+            # Held by someone else, so WaitOne(0) fails: a watcher is alive.
+            if (-not $m.WaitOne(0)) { return $true }
+            # We got it, so nothing held it -- the name outlived its watcher.
+            $m.ReleaseMutex()
+        } catch [System.Threading.AbandonedMutexException] {
+            # A watcher died holding it. WaitOne SUCCEEDED and we own it now, so
+            # this is "not running" -- but it has to be handed straight back.
+            try { $m.ReleaseMutex() } catch { }
+        } catch {
+        } finally {
+            $m.Dispose()
+        }
+    }
+    return $false
+}
+
+if ($IsRunning) {
+    $names = if ($MutexName) { $MutexName } else { @($MUTEX_GLOBAL, $MUTEX_LOCAL) }
+    if (Test-WatcherRunning -Names $names) { Write-Host 'running'; exit 0 }
+    Write-Host 'none'
+    exit 1
+}
 
 function Write-Log {
     param([string]$Message)

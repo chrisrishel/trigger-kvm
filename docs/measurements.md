@@ -523,6 +523,34 @@ resumed at offset 0 with zero NUL bytes in the file.
 
 ## PowerShell console and language
 
+**2026-09-02, Windows -- an unelevated caller reads `Win32_Process.CommandLine`
+as EMPTY across the session boundary, so counting processes cannot see a
+session-0 watcher.** From an interactive session-3 shell: **183 of 183 session-0
+processes returned a blank `CommandLine`**, against 98 of 130 populated in the
+caller's own session. Nothing is thrown and no error is set -- the property is
+simply empty, so a `Where-Object { $_.CommandLine -match ... }` filter drops the
+process silently.
+
+The consequence was live: `trigger-kvm status` printed `watchers : 0  <- expected
+exactly 1` while the boot-tier watcher (pid 14008) was running and had fired
+`pull` 40 minutes earlier. `restart` shared the filter and would have reported
+"no watcher came up" about one that had. **A false alarm pointing at the healthy
+steady state**, which invites someone to fix a system that works.
+
+**The lock answers what the process table cannot.** `OpenExisting` on the
+watcher's named mutex distinguishes four states from any session, unelevated, and
+the one that matters is `UnauthorizedAccessException`: the name EXISTS under a
+token the caller cannot open, which is exactly what a session-0 watcher looks
+like from a desktop session -- a POSITIVE result, not a failure.
+`WaitHandleCannotBeOpenedException` is the genuine "nothing ever created it".
+Since the mutex is also what makes a second watcher impossible, the answer is a
+state rather than a tally that can disagree with itself.
+
+Measured the same day: **a mutex created with a DENY ace for the caller
+reproduces the access-denied case in-process**, so the branch is testable without
+a second logon session. The creating handle keeps working, because the access
+check happened when it was created.
+
 **2026-09-01 -- the .NET user-environment API cannot round-trip a PATH.**
 `[Environment]::SetEnvironmentVariable('X','C:\a;%USERPROFILE%\b','User')`
 stores the value as **REG_SZ**, not REG_EXPAND_SZ, even though it contains a
