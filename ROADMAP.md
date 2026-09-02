@@ -107,15 +107,22 @@ generalisation story rather than a fallback, the boot-tier limitation on Intel
 hardware is permanent, and **the watcher handover is more likely to be needed,
 not less.**
 
-### N2. Test the boot tier at the actual logon screen
+### ~~N2. Test the boot tier at the actual logon screen~~ — passed 2026-09-02
 
-**The only untested step in the pre-login path**, flagged in
-[`ideas/nvapi-transport.md`](ideas/nvapi-transport.md) and stranded there. Every
-session-0 result so far was taken with a user logged in — session 0 had no
-desktop, but the machine was not empty of a session. The headline claim of the
-whole boot tier has therefore never been tested in the state it exists for.
+The last untested step in the pre-login path, and it holds. Between a logoff at
+01:00:14 and the next logon at 01:01:00 — no interactive user on the machine at
+all — the session-0 watcher detected a USB arrival, fired `pull`, and the display
+that was showing the Mac came back to the PC, confirmed by eye. Evidence, the
+false-edge hypothesis it had to rule out first, and why only one panel had
+anywhere to come back *from*, in [`docs/measurements.md`](docs/measurements.md).
 
-Cheap: log out, flip the switch, watch the panels, log back in and read the log.
+So the boot tier now delivers what it was built for, measured rather than argued:
+**a rebooted or logged-out PC can take its own displays back with nobody signed
+in.** Nothing in the design changes; a claim stops being provisional.
+
+One incidental finding of the same run: the second watched device is on the
+switch after all, absorbed by the settle rather than the debounce, which closes
+the question the 2026-09-01 detector entry left open for macOS.
 
 ### N3. Say plainly that the input map cannot be verified
 

@@ -206,12 +206,18 @@ Note what it took to be able to say this: enumeration working in session 0 (phas
 did **not** imply writing would, and phase 1 deliberately could not answer it because
 it sent nothing. The two had to be tested separately.
 
-## Still unproven
+## Nothing left unproven
 
-- Whether this holds at the actual logon screen, before any user has logged in. The
-  session-0 test above ran while a user was logged on; session 0 was empty of a
-  desktop, but the machine was not empty of a session. See also the caveat on the
-  boot row. This is now the ONLY untested step in the pre-login path.
+The last open item here was whether this holds at the **actual logon screen**,
+before any user has logged in -- the session-0 tests above all ran while a user
+was logged on, so session 0 was empty of a desktop but the machine was not empty
+of a session.
+
+Measured 2026-09-02 and it holds: between a logoff and the next logon, the
+session-0 watcher detected an arrival, fired `pull`, and the panel that was
+showing the Mac came back to the PC, confirmed visually. The reading -- including
+why only one panel had anywhere to come back from -- is in
+`docs/measurements.md`; the trajectory it closes is `ROADMAP.md` N2.
 
 ## Licence
 

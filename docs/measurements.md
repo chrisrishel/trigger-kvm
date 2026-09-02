@@ -15,6 +15,62 @@ making a claim about; if you cannot, say that instead of concluding.
 
 ## Detectors
 
+**2026-09-02, Windows -- the boot tier fires at an empty logon screen.** The one
+untested step in the pre-login path: every earlier session-0 result was taken
+with a user logged in, so session 0 had no desktop but the machine was not empty
+of a session. The watcher under test was the session-0 one armed 2026-09-01
+22:36:38 (`sessionId=0 interactive=False lock=Global`); it survived a full logoff
+and was still alive and holding the mutex afterwards.
+
+Winlogon logged the logoff at 01:00:14 and the next logon at 01:01:00. Between
+them, with no interactive user on the machine, the watcher logged `arrival
+usb:1235:820A`, settled 0.75 s, and fired `pull` at 01:00:49; both writes were
+emitted (LG `0xF4 = 0xD0`, PG42UQ `0x60 = 0x11`).
+
+Two claims, kept apart, because only one of them is a log's to make. The log
+proves the watcher fired and the switcher emitted both writes with no session on
+the machine. The owner separately confirmed **by eye** that the displays came
+back to the PC -- the half no log can carry (hard rule 3).
+
+**The panel that demonstrably MOVED is the ASUS**, and the run says so honestly:
+the Mac's Thunderbolt-to-USB-C cable -- its video leg to the LG -- was
+disconnected at the time, so when the peripherals reached the Mac only the ASUS
+followed. The LG had therefore never left the PC, and the PC's write to it was a
+re-assert rather than a visible move. The measurement stands either way, because
+what was under test is whether a session-0 watcher fires and drives a panel with
+nobody signed in, and a panel that was genuinely displaying the other machine
+came back. State it this way rather than "both panels moved", which the eye did
+not witness.
+
+**Incidentally, the Mac failed closed exactly as designed.** With no link to the
+LG at all, zero enumerated outputs identify as the LG, and hard rule 5 makes zero
+a refusal -- so the LG was left alone rather than aimed at on a guess. Inferred
+from the cabling and the rule, not read from the Mac's log.
+
+**The arrival was real, not an artefact of logoff churn.** Worth killing rather
+than assuming: `Test-UsbPresent` reads a failed CIM query as an absence, so two
+bad sweeps across a logoff would manufacture an absent -> present edge and yank
+the displays with nothing physical behind it. Every watched device's
+`DEVPKEY_Device_LastArrivalDate` reads 01:00:47-49, so the peripherals really did
+re-enumerate when the watcher said they did. (That property does not conflict
+with the hibernate rule below: `LastArrivalDate` tracks a PnP arrival, which a
+switch flip is, and not bus power cycling, which is what it fails to track.)
+
+**2026-09-02, Windows -- the second watched device IS on the switch, and is
+swallowed by the SETTLE, not the debounce.** This answers the open question in
+the entry below, which could not say whether `usb:046D:0843` was on the switch at
+all. On this flip the OS recorded `1235:820A` arriving at 01:00:48 and
+`046D:0843` at 01:00:49, so both are on it and both arrive. The log still named
+only `1235:820A`, and the mechanism is worth being exact about: the sweep at
+01:00:48 saw the webcam still absent, so it was not in `$arrived`; the settle
+re-check a second later reassigns `$present` **wholesale**, adopting the webcam
+as baseline. Its arrival never reaches the debounce check at all -- there is no
+later edge left to reject.
+
+So the paired arrival macOS asked about does happen here. It is absorbed one step
+earlier than that entry assumed, and correctly: the fire it would have caused is
+the one the debounce exists to suppress.
+
 **2026-09-01, Windows -- the paired-arrival case does not appear in this log at
 all.** macOS saw two watched devices arrive 6 s apart on one flip and run `pull`
 twice, and asked whether the same happens here. Over 24 fires spanning

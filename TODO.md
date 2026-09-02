@@ -9,14 +9,6 @@
   failing on one. Check: task principal is the standard user, files land in that user's
   `%LOCALAPPDATA%`, and their `PATH` (not the admin's) gains `bin`.
 
-- **Test the boot tier at the actual logon screen.** `ideas/nvapi-transport.md`
-  calls this the only untested step in the pre-login path: every session-0 result
-  so far was taken with a user logged in, so session 0 had no desktop but the
-  machine was not empty of a session. The boot tier's headline claim has never
-  been tested in the state it exists for. Log out, flip the switch, watch the
-  panels, log back in and read the log. Trigger: next time the machine can be
-  logged out of. See `ROADMAP.md` N2.
-
 - **Say plainly, in `status`, that the input map is unverifiable -- and that
   re-running `configure` is the fix.** If a computer's cable moves to a different
   input ON THE MONITOR, a panel with a stable EDID product id (the ASUS reports
