@@ -493,6 +493,40 @@ There is already a monitor called
 - Looking at the list and changing nothing is **not** an edit, and must not
   invalidate a pass.
 
+### 6.3 Choosing how the bytes get there
+
+**Shown only where a choice exists** — where this panel enumerated through more
+than one of the platform's transports. A platform with one transport, or a panel
+only one transport can see, asks nothing and stores the transport it used.
+
+**It comes before §6.2**, because the transport decides which dialects are even
+available: a transport that cannot address an I2C source byte cannot carry a
+manufacturer sidechannel, so offering that dialect first and refusing it second
+would be asking a question whose answer was already fixed.
+
+**Enumerating is not probing.** `AGENTS.md` 1b forbids probing a *monitor* —
+sending it values to see what it does. Listing the platform's adapters and
+reading the EDID each one reports sends nothing to any monitor, so building the
+offer from what enumerated is not a probe. The distinction is worth keeping
+sharp: what is forbidden is discovering a monitor's behaviour by experiment, not
+discovering which of this computer's own APIs can see it.
+
+**The platform's original transport is the default**, and the cursor starts
+there. Where transports differ in what they can cover, the default is the one
+that covers more — a person who does not have an opinion should land on the one
+with fewer consequences.
+
+**Name the consequence where the choice is made**, per §2. Where a transport
+cannot cover a tier the other one can — a transport that needs a desktop cannot
+switch a panel before anyone has logged in — that is what the row says, in terms
+of what the person will experience: this monitor will not follow the switch
+until someone logs in. Not the mechanism, and not a reassurance.
+
+**No wording here is normative.** A platform with a single transport never shows
+this question, and pinning a string would make it owe text for a menu it does not
+have. What is binding is the shape above and the `transport` key in
+[`config-format.md`](config-format.md).
+
 ### 6.2 Choosing how to talk to the monitor
 
 Shown **only** when the panel's EDID vendor has a documented alternative. This is
@@ -677,6 +711,19 @@ later that switching does nothing until they log in.
 ```normative
 falling back to starting at login
 ```
+
+**A configured transport can be the reason a tier is unavailable**, and it takes
+the same shape: where any configured panel uses a transport that cannot switch it
+before login, the `From boot` row is drawn **disabled**, and its detail says
+which panel and why. It is a property of the panel's transport, not of the
+account, so the two disabled cases read differently and must not be merged.
+
+Where an existing config already chose that tier and a panel is then given such a
+transport, the tier **falls back to login and says so** — the same shape as a
+declined elevation. **Record the fallback only once it has taken effect.** A
+downgrade written before the install that applies it has succeeded leaves the
+config disagreeing with what is registered, and the next install acts on the
+config.
 
 Where the account **cannot** elevate at all — it is not an administrator — the
 `From boot` row is drawn disabled, and its detail says so, before anything is

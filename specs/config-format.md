@@ -77,10 +77,11 @@ install.autostart = boot          # boot | login | no
 
 computer.this = mac               # what THIS computer is called below
 
-display.lg.vendor  = 0x1E6D       # EDID manufacturer id
-display.lg.product = 0x9E9D       # EDID product id
-display.lg.name    = LG ULTRAGEAR+
-display.lg.method  = lg-alt       # standard | lg-alt
+display.lg.vendor    = 0x1E6D     # EDID manufacturer id
+display.lg.product   = 0x9E9D     # EDID product id
+display.lg.name      = LG ULTRAGEAR+
+display.lg.transport = nvapi      # HOW the bytes get there. Platform vocabulary
+display.lg.method    = lg-alt     # WHAT is sent: standard | lg-alt
 display.lg.input.0xD0 = pc        # which computer is on which input
 display.lg.input.0xD1 = mac
 
@@ -102,6 +103,42 @@ refused by name** where the list is consumed ([`detector.md`](detector.md) §4)
 `trigger.debounce` and `trigger.settle` are non-negative decimals — digits, or
 digits `.` digits. A malformed value is refused by name, never read as zero: a
 debounce of zero fires on every event in a plug's burst.
+
+## `transport` and `method` are different questions
+
+**`method` is WHAT is sent** — which VCP dialect, and therefore which values are
+legal. **`transport` is HOW it gets there** — which driver API carries the bytes.
+They were one key while every platform had exactly one transport, and separating
+them is what lets a platform have two without the values on offer changing
+meaning.
+
+**`transport` absent means the platform's original transport**, so a config
+written before this key existed keeps working untouched and unrewritten.
+
+**The key is shared; the vocabulary is each platform's.** Transports are named
+after the API that carries them — Windows has `nvapi` and `dxva2` — and a
+platform with one transport has one name. **No platform is required to have
+two.** A config is machine-local and never copied between hosts
+(below), so a name that means nothing on another platform can never arrive there
+by a supported route.
+
+**An unrecognised transport is REFUSED BY NAME, never defaulted.** This is the
+rule that makes the shared key safe. Defaulting to the platform's usual
+transport would send the write down a path nobody verified — and a transport,
+like an input value, is confirmed exactly once by a human looking at the panel
+(`../AGENTS.md` hard rule 3). A config naming a transport this platform does not
+have is a config for a different machine, and the honest answer is to say so.
+
+**Not every dialect is available on every transport, and the transport decides.**
+A transport that cannot address an I2C source byte cannot carry a manufacturer
+sidechannel at all; asking for one is refused, naming the reason rather than
+silently sending the standard command instead. The refusal belongs at the
+transport, with the rest of the source-byte gating (`../AGENTS.md` hard rule 5).
+
+**A transport is never a fallback.** Nothing tries one and falls through to
+another at switch time. Which transport a panel uses is configuration, chosen
+once and verified once; a silent fallback would mean the packet that moved the
+panel on the day it was checked is not the packet sent afterwards.
 
 ## `display.<label>.input.<value> = <computer>` is the whole map
 

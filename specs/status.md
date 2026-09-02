@@ -104,3 +104,23 @@ the implementation gives elsewhere, and omit the warning.
   There is no signal behind such a claim.
 - It must not offer to check the map. Nothing can.
 - It must not suggest reading the current input back as a way to confirm it.
+
+## 4. Coverage a transport takes away
+
+Where a panel's configured transport cannot switch it under the installed
+autostart tier, `status` MUST say so, naming the panel.
+
+§2 already requires `status` to state what the tier covers. That statement is
+about the *tier*, and a transport can make it untrue for one panel while it
+stays true for the others — a machine can be installed from boot, correctly
+report that it covers the login screen, and still have one monitor that will not
+move until someone logs in. Reporting only the tier would be accurate and
+misleading at once.
+
+This is the same fact `configure` names when the transport is chosen
+([`configure.md`](configure.md) §6.3 and §8); `status` is where someone looks
+afterwards, when they have forgotten choosing it, or inherited the machine.
+
+**Nothing is normative here**, for the reason §6.3 gives: a platform with one
+transport has no panel this can be true of, and must not owe wording for a case
+it cannot reach.
