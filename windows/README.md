@@ -617,8 +617,23 @@ config   : C:\Users\Example\AppData\Local\trigger-kvm\config
 version  : 0.2.0  (installed 2026-09-01 12:00:00, commit abc1234, spec revision 7)
 displays : lg, asus
 computers: pc (this one), mac   (trigger-kvm to <name>; only pull is automatic)
+inputs   : (which computer is on which input of each monitor)
+           lg       0xd0 = pc (this one), 0xd1 = mac
+           asus     0x11 = pc (this one), 0x0f = mac
+           ^ asserted, never verified. If a cable moved to another input on
+             the monitor, pull switches that panel to a dead input and it goes
+             black, with a success in the log. Fix: trigger-kvm configure
 triggers : usb:046d:0843, bt:0011223344ff
 ```
+
+**`inputs` is the one thing `status` says that nothing else can.** The map is an
+assertion about which socket each computer's cable is in, and the tool has no way
+to check it — reading the input back is forbidden here, and a success code proves
+nothing. If a cable moves to a different input *on the monitor*, a panel whose
+EDID product id is the same on every input (the ASUS) still resolves, so `pull`
+sends the old value and the panel goes black with a success in the log. A panel
+whose id differs per input (the LG) refuses instead. Since the failure cannot be
+detected, `status` makes it legible: re-running `configure` is the fix.
 
 **The tier is a property of the host, not of the switcher.** All tier logic lives in
 `install.ps1`. Neither `trigger-kvm.ps1` nor `event-watch.ps1` knows or asks which

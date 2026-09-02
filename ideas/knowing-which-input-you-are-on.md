@@ -99,12 +99,12 @@ four inputs (measured). *Verdict:* solves a different problem. Might still be
 worth it against "someone swapped the monitor for an identical model", which is
 the case `Resolve-Panel`'s ambiguity refusal half-covers today.
 
-**D. Make the failure cheap to recover instead of impossible to detect.** Since
-detection is barred, put the effort into the recovery path: `status` could state,
-in words, which input each computer is asserted to be on and that the tool cannot
-verify it; a failed pull is a black screen, and the person needs to know that
-re-running `configure` is the fix. *Verdict:* the most honest option, cheapest,
-and the only one that helps the ASUS. Probably where to start.
+**D. Make the failure cheap to recover instead of impossible to detect.** —
+**SHIPPED 2026-09-02.** `status` states which input each computer is asserted to
+be on and that the tool cannot verify it, with `configure` named as the fix. The
+contract is now `specs/status.md` §3 (revision 8); it is normative because the
+wording IS the remedy, and it moved there rather than staying here. Nothing about
+D remains to design.
 
 **E. Ask the panel to switch to "whoever is talking", not to a named input.**
 This is the appealing one, and it does not exist. See below.

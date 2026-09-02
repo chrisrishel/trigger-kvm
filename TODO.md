@@ -23,20 +23,6 @@
   lock is still held after a suspend. Trigger: next time `pause` is used on the boot
   tier, or when `Suspend-Watcher` is next touched.
 
-- **Say plainly, in `status`, that the input map is unverifiable -- and that
-  re-running `configure` is the fix.** If a computer's cable moves to a different
-  input ON THE MONITOR, a panel with a stable EDID product id (the ASUS reports
-  `0x42E0` on every input) still resolves, and `pull` then sends the old input
-  value: the panel switches to a dead input and goes black, silently, with a
-  success in the log. Detection is barred -- rule 2 forbids reading the value
-  back, rule 3 says the success code proves nothing -- so the only move left is
-  making the failure legible and cheap to recover. A panel with a per-input
-  product id (the LG) already fails safe by refusing. Reasoning, the cases it
-  does NOT affect, and why no protocol-level "switch to whoever is talking"
-  exists are in `ideas/knowing-which-input-you-are-on.md`. Trigger: when `status`
-  or `configure` output is next touched, or when someone reports a pull that
-  blanked a monitor.
-
 - **Measure a same-GPU, different-port re-plug.** The 2026-09-01 cable move
   changed GPU and adapter together, so "same card, different socket" is argued
   from the code and never measured. Clean test: move only the GPU end of the LG's

@@ -452,6 +452,41 @@ Invoke-Mutation 'running: install.ps1 goes back to counting processes' `
     return ($LASTEXITCODE -eq 0)' `
     '    return (@(Get-CimInstance Win32_Process -Property ProcessId,Name,CommandLine -Verbose:$false |
         Where-Object { $_.CommandLine -and $_.CommandLine -match ''(usb|event)-watch\.ps1'' }).Count -ge 1)'
+# --- the input map says it cannot be verified ---------------------------------
+
+Invoke-Mutation 'inputs: the map is shown without saying nothing can check it' `
+    'install.ps1' 'install.tests.ps1' `
+    "    `$out += '           ^ asserted, never verified. If a cable moved to another input on'
+    `$out += '             the monitor, pull switches that panel to a dead input and it goes'
+    `$out += '             black, with a success in the log. Fix: trigger-kvm configure'" ''
+Invoke-Mutation 'inputs: the warning drops what actually goes wrong' `
+    'install.ps1' 'install.tests.ps1' `
+    "    `$out += '             the monitor, pull switches that panel to a dead input and it goes'" `
+    "    `$out += '             the monitor this will not work.'"
+Invoke-Mutation 'inputs: the warning stops saying how to fix it' `
+    'install.ps1' 'install.tests.ps1' `
+    "    `$out += '             black, with a success in the log. Fix: trigger-kvm configure'" `
+    "    `$out += '             black, with a success in the log.'"
+Invoke-Mutation 'inputs: the map sorts by input value, so two panels disagree' `
+    'install.ps1' 'install.tests.ps1' `
+    "        `$map = @(`$rows |
+            Sort-Object @{ Expression = {
+                `$i = [array]::IndexOf([string[]]`$Computers, `$_.Who)
+                if (`$i -lt 0) { [int]::MaxValue } else { `$i } } }, Value |" `
+    "        `$map = @(`$rows |
+            Sort-Object Value |"
+Invoke-Mutation 'inputs: this computer is not marked, so the map reads as somebody else''s' `
+    'install.ps1' 'install.tests.ps1' `
+    "                    `$(if (`$_.Who -eq `$This) { ' (this one)' } else { '' })" `
+    "                    ''"
+Invoke-Mutation 'inputs: a panel with no inputs mapped prints an empty row' `
+    'install.ps1' 'install.tests.ps1' `
+    "                 `$(if (`$map) { `$map -join ', ' } else { 'no inputs mapped' }))" `
+    "                 (`$map -join ', '))"
+Invoke-Mutation 'inputs: the whole block is dropped from status' `
+    'install.ps1' 'spec.tests.ps1' `
+    "    `$out += '           ^ asserted, never verified. If a cable moved to another input on'" ''
+
 Invoke-Mutation 'running: the test-only mutex name reaches the real lock' `
     'event-watch.ps1' 'conventions.tests.ps1' `
     '    $mutex = New-Object System.Threading.Mutex($false, $MUTEX_GLOBAL)' `

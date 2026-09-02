@@ -67,6 +67,57 @@ it does not have. It is blind to two things, and this closes them:
 
 ---
 
+## Revision 8 — 2026-09-02
+
+**`status` must show the input map and say that nothing can verify it.**
+
+Sections: **new [`status.md`](status.md)**; [`README.md`](README.md) "Knowing you
+are behind".
+
+**FIRST: add `status.md` to your conformance loop.** Each suite loops over a list
+of spec names it holds itself, so a new spec file is checked by NOBODY until it
+is added — the revision is what tells you it exists, and this entry is the only
+place that can name it. Windows added it to `windows/tests/spec.tests.ps1`. Do
+the equivalent before reading the rest of this entry, or you will bump your
+revision with the strings unchecked.
+
+**Act on (macOS):**
+
+1. **`status.md` §3 — `status` shows the configured input map, and says in words
+   that the tool cannot verify it.** Four normative fragments: `inputs   :`,
+   `asserted, never verified`, `switches that panel to a dead input`, and
+   `Fix: trigger-kvm configure`. Every configured panel, each of its input values
+   and the computer that value names, with `computer.this` marked as this one.
+
+2. **`status.md` §3.1 — order each panel's inputs BY COMPUTER, not by input
+   value.** Sorting on the hex puts the same two computers in opposite orders on
+   two panels, purely by which socket each happened to be plugged into. This is
+   the rule `config-format.md` "Ordering" already applies when writing the file;
+   it now applies to showing it, so the block and the `computers` line agree.
+
+3. **`status.md` §3.1 — with no display configured, print the label with your
+   usual "none configured" answer and OMIT the warning.** An empty map asserts
+   nothing, so the warning would be noise.
+
+4. **`status.md` §2 — answer "is a watcher running" from the LOCK, not by
+   counting processes.** A lock that exists but cannot be OPENED by the caller is
+   a RUNNING watcher, not an absent one. On Windows this was live: an unelevated
+   caller reads `Win32_Process.CommandLine` as empty across the session boundary,
+   so `status` reported no watcher while a session-0 one was running and firing.
+   macOS should check whether its own answer holds for a LaunchDaemon watcher
+   seen from a user session; if it already does, nothing to do but say so.
+
+**Why.** The input map is an assertion about physical cabling. When a cable moves
+to a different input **on the monitor**, a panel whose EDID product id is stable
+across its inputs still resolves perfectly, `pull` sends the old value, and the
+panel switches to an input with nothing on it — **black, silently, with a success
+in the log.** Detection is barred rather than unimplemented: reading the value
+back is forbidden by hard rule 2 and answers the wrong question anyway, a success
+code proves nothing under hard rule 3, and no protocol command means "switch to
+whoever is talking" (`../ideas/knowing-which-input-you-are-on.md`). So the only
+remedy available is legibility, which makes this wording a behaviour rather than
+a nicety — and therefore something both implementations must have.
+
 ## Revision 7 — 2026-09-01
 
 **The detector has a contract; the config reader has a shared fixture; the

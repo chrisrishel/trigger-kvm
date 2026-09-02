@@ -9,7 +9,7 @@ $ErrorActionPreference = 'Stop'
 
 Import-Subject -Script 'install.ps1'     -Functions @(
     'Get-WatcherCommand', 'Test-OurLegacyDir', 'Test-OurLegacyTask',
-    'Get-PathValueKind', 'Get-UserPath', 'Set-UserPath')
+    'Get-PathValueKind', 'Get-UserPath', 'Set-UserPath', 'Get-InputMapReport')
 Import-Subject -Script 'event-watch.ps1' -Functions @('Get-SwitcherArguments')
 
 # ---- the task action carries every path, the config included -----------------
@@ -150,6 +150,59 @@ Assert-Equal 'ExpandString' (Get-PathValueKind -Value 'C:\a;C:\b'    -Current 'E
     'and a PATH that was already REG_EXPAND_SZ is not downgraded'
 Assert-Equal 'String'       (Get-PathValueKind -Value 'C:\a;C:\b'    -Current 'String') `
     'while a plain one is left plain rather than gratuitously changed'
+
+# ---- the input map, and the warning that is the point of it ------------------
+#
+# specs/status.md 3. The map is an assertion about which socket each computer's
+# cable is in, and NOTHING can check it: a panel whose EDID product id is stable
+# across its inputs still resolves after a cable moves, so `pull` sends the old
+# value and the panel goes black with a success in the log. Detection is barred by
+# hard rules 2 and 3, so legibility is the whole remedy -- which makes the warning
+# a behaviour with a test, not a comment.
+
+$cfg = @{
+    'computer.this'            = 'pc'
+    'display.lg.vendor'        = '0x1E6D'
+    'display.lg.input.0xd0'    = 'pc'
+    'display.lg.input.0xd1'    = 'mac'
+    'display.asus.vendor'      = '0x06B3'
+    'display.asus.input.0x0f'  = 'mac'
+    'display.asus.input.0x11'  = 'pc'
+}
+$rep = @(Get-InputMapReport -Cfg $cfg -Labels @('lg','asus') -This 'pc' -Computers @('pc','mac'))
+$all = $rep -join "`n"
+
+Assert-Match $all 'asserted, never verified' 'the map must say it cannot be checked'
+Assert-Match $all 'switches that panel to a dead input' 'and what goes wrong when it is stale'
+Assert-Match $all 'Fix: trigger-kvm configure' 'and the one thing that fixes it'
+Assert-Match $all '0xd0 = pc \(this one\)' 'each input names its computer, marking this one'
+Assert-Match $all '0xd1 = mac'
+
+# ORDERED BY COMPUTER, NOT BY INPUT VALUE (specs/config-format.md, "Ordering").
+# Sorting on the hex puts the same two computers in opposite orders on two panels
+# -- asus would read "mac, pc" while lg read "pc, mac" -- purely by which socket
+# each happened to be in. This is the assertion that pins it.
+$asus = @($rep | Where-Object { $_ -match '\basus\b' })
+Assert-Equal 1 $asus.Count 'the asus row is one line'
+Assert-Match $asus[0] '0x11 = pc \(this one\).*0x0f = mac' `
+    'the computer order decides, so this panel reads pc then mac like the other one'
+
+# A computer the map does not name is not this one, and must not be marked as it.
+$rep2 = @(Get-InputMapReport -Cfg $cfg -Labels @('lg') -This 'mac' -Computers @('mac','pc'))
+Assert-Match ($rep2 -join "`n") '0xd1 = mac \(this one\)' 'the marking follows computer.this'
+Assert-NoMatch ($rep2 -join "`n") '0xd0 = pc \(this one\)' 'and marks only that one'
+
+# Nothing configured: the map asserts nothing, so the warning would be noise.
+$none = @(Get-InputMapReport -Cfg @{} -Labels @() -This '' -Computers @())
+Assert-Match   ($none -join "`n") 'none configured'
+Assert-NoMatch ($none -join "`n") 'asserted, never verified' `
+    'with no display configured there is no assertion to warn about'
+
+# A panel carrying no input keys at all says so, rather than printing an empty row
+# that reads as "nothing is wrong".
+$bare = @(Get-InputMapReport -Cfg @{ 'display.lg.vendor' = '0x1E6D' } -Labels @('lg') `
+                             -This 'pc' -Computers @('pc'))
+Assert-Match ($bare -join "`n") 'no inputs mapped'
 
 Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
 exit 0

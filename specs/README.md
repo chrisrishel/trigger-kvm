@@ -11,6 +11,7 @@ no code. Everything they must agree on lives here.
 | [`config-format.md`](config-format.md) | the flat `key = value` file both platforms read and write, and the shared fixture both readers must reproduce |
 | [`configure.md`](configure.md) | the `configure` walkthrough: its UI grammar, every menu, and the two checks |
 | [`detector.md`](detector.md) | the watcher: what fires, what never does, the one-shot, and what it refuses at startup |
+| [`status.md`](status.md) | what `status` reports — chiefly that the input map is an assertion nothing can verify |
 | [`CHANGELOG.md`](CHANGELOG.md) | behaviour changes implementations must act on, and the revision each is at |
 
 ## What does NOT belong here
@@ -150,11 +151,17 @@ and it is the same duplication that `specs/` exists to prevent — the one in
 ## Knowing you are behind
 
 The conformance check tells a platform when the spec adds a string it does not
-have. It is blind to two things:
+have. It is blind to three things:
 
 - **a behavioural change with no new wording** — nothing to grep for
 - **a removed or renamed string** — the check tests presence only, so old wording
   survives and the suite stays green
+- **a whole new spec FILE** — each platform's suite loops over a list of spec
+  names it holds itself, so a file nobody has added to that list is checked by
+  nobody. The revision still catches it, but only if the changelog entry **names
+  the new file and says to add it**; an entry that just describes the behaviour
+  gets the revision bumped and the strings skipped. First hit by `status.md` at
+  revision 8, which is also the first spec file added since these checks existed.
 
 [`CHANGELOG.md`](CHANGELOG.md) closes both. Its newest entry number is the spec
 revision; each implementation records the revision it implements in its own

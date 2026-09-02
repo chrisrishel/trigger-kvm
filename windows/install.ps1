@@ -553,6 +553,59 @@ function Stop-Watchers {
     }
 }
 
+# THE INPUT MAP, AND THE FACT THAT NOTHING CAN CHECK IT -- specs/status.md 3.
+#
+# The map is an assertion about which physical socket each computer's cable is in.
+# If a cable moves to a different input ON THE MONITOR, a panel whose EDID product
+# id is stable across its inputs (the ASUS reports 0x42E0 on every one) still
+# resolves perfectly, so `pull` sends the old value and the panel switches to an
+# input with nothing on it: black screen, silently, with a success in the log. A
+# panel with a per-input product id refuses instead, and fails safe.
+#
+# Detection is BARRED, not merely unimplemented -- reading the value back is
+# forbidden (..\AGENTS.md hard rule 2) and answers the wrong question anyway, and a
+# success code proves nothing (hard rule 3). See
+# ..\ideas\knowing-which-input-you-are-on.md for why no "switch to whoever is
+# talking" command exists to sidestep it. So the only move left is making the
+# failure legible and cheap to recover, which is all this is.
+#
+# Returns the lines rather than printing them, so the suite can reach the decision
+# without a status run -- same shape as Get-WatcherCommand.
+function Get-InputMapReport {
+    param($Cfg, [string[]]$Labels, [string]$This, [string[]]$Computers)
+
+    if (-not $Labels) { return @('inputs   : none configured') }
+
+    $out = @('inputs   : (which computer is on which input of each monitor)')
+    foreach ($label in $Labels) {
+        # In the order the computers were listed, NOT by input value
+        # (specs/config-format.md, "Ordering"): sorting on the hex puts the same two
+        # computers in opposite orders on two panels, purely by which socket each
+        # happened to be in. Ordered this way, this block and `computers` agree.
+        $rows = @($Cfg.Keys |
+            Where-Object { $_ -match ('^display\.' + [regex]::Escape($label) + '\.input\.(.+)$') } |
+            ForEach-Object {
+                [pscustomobject]@{ Value = $Matches[1]; Who = "$($Cfg[$_])".Trim().ToLower() }
+            })
+        $map = @($rows |
+            Sort-Object @{ Expression = {
+                $i = [array]::IndexOf([string[]]$Computers, $_.Who)
+                if ($i -lt 0) { [int]::MaxValue } else { $i } } }, Value |
+            ForEach-Object {
+                '{0} = {1}{2}' -f $_.Value, $_.Who,
+                    $(if ($_.Who -eq $This) { ' (this one)' } else { '' })
+            })
+        $out += ("           {0,-8} {1}" -f $label,
+                 $(if ($map) { $map -join ', ' } else { 'no inputs mapped' }))
+    }
+    # specs/status.md 3.1. The warning is the point of the block; the map above it
+    # is only what the warning is about.
+    $out += '           ^ asserted, never verified. If a cable moved to another input on'
+    $out += '             the monitor, pull switches that panel to a dead input and it goes'
+    $out += '             black, with a success in the log. Fix: trigger-kvm configure'
+    return $out
+}
+
 # IS A WATCHER RUNNING? Asked of event-watch.ps1, which owns the single-instance
 # lock, for the same reason -ListBluetooth and -TestTrigger are asked of it: a
 # second implementation here would be free to disagree with the lock that actually
@@ -3377,6 +3430,9 @@ if ($Command -eq 'status') {
         (@($computers | ForEach-Object { if ($_ -eq $this) { "$_ (this one)" } else { $_ } }) -join ', ') +
         '   (trigger-kvm to <name>; only pull is automatic)'
     } else { 'none' }))
+    Get-InputMapReport -Cfg $c -Labels $labels -This $this -Computers $computers |
+        ForEach-Object { Write-Host $_ }
+
     # What the watcher is actually waiting for. Without this line, "it is running"
     # and "it will fire" looked like the same claim.
     $devices = @()

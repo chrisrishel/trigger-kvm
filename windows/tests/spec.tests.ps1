@@ -112,7 +112,12 @@ Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
 # talks to a log, not to a person -- so the check passes on it trivially. It is
 # in the loop anyway, because the day it grows a normative string is the day
 # nobody will think to add it here.
-foreach ($spec in 'configure', 'config-format', 'detector') {
+#
+# status.md since revision 8, and it is why THIS LIST is a hazard of its own: a
+# new spec file is checked by nobody until someone adds it here, so the changelog
+# entry has to name the file and say to. Recorded as the conformance check's third
+# blind spot in ..\..\specs\README.md, "Knowing you are behind".
+foreach ($spec in 'configure', 'config-format', 'detector', 'status') {
     $r = Invoke-Checker (Join-Path $Specs "$spec.md")
     Assert-Equal 0 $r.Code "windows does not conform to specs/$spec.md:`n$($r.Text)"
 }

@@ -129,16 +129,31 @@ the question the 2026-09-01 detector entry left open for macOS — and a departu
 is `Write-Verbose`, so correlating a flip against the log needs the OS's PnP
 arrival timestamps rather than the log alone.
 
-### N3. Say plainly that the input map cannot be verified
+### ~~N3. Say plainly that the input map cannot be verified~~ — landed 2026-09-02
 
-The one item from the re-plug work that touches the dangerous case. Shared
-behaviour, so it is **spec-first**. Reasoning:
-[`ideas/knowing-which-input-you-are-on.md`](ideas/knowing-which-input-you-are-on.md);
-task and trigger in [`TODO.md`](TODO.md).
+`status` now shows the input map and states that nothing can verify it, with the
+recovery (`configure`) beside the warning. Idea **D** of
+[`ideas/knowing-which-input-you-are-on.md`](ideas/knowing-which-input-you-are-on.md)
+— the only option that helps the panel which fails dangerously, since detection
+is barred rather than unimplemented.
 
-Sequenced after N1 because both this and a transport milestone edit what `status`
-reports and what `configure` asks. Specified together that is one revision bump
-and one fan-out to the other platform; separately it is two, for adjacent reasons.
+Spec-first, in the new [`specs/status.md`](specs/status.md): status had no
+normative home before this, and the map's unverifiability is shared behaviour,
+not a Windows detail. Revision 8; Windows implements it, macOS owes it.
+
+**The roadmap said to bundle this with a transport milestone** to save a revision
+bump and one fan-out. That argument was written while the transport milestone
+might have been IGCL-shaped and small. N1 ruled IGCL out, so the milestone is now
+the `dxva2` build — large and open-ended — and bundling would have parked a
+safety-legibility item behind it. Specifying `dxva2` without building it is worse
+still: it would leave macOS owing conformance strings for something nobody
+implemented. Two bumps, taken deliberately.
+
+Found and fixed alongside it, because it lives in the same command: **`status`
+could not see a boot-tier watcher at all** and reported none while one was
+running and firing. It now asks the single-instance lock instead of counting
+processes, which an unelevated caller cannot do across a session boundary.
+Evidence in [`docs/measurements.md`](docs/measurements.md).
 
 ---
 
