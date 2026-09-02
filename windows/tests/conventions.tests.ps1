@@ -604,5 +604,70 @@ Assert-Match ($c -join "`n") 'takes a source or I2C address'
 # comparison rather than as three ways of saying yes.
 Assert-Equal 0 @(Get-SourceGateComplaint (Join-Path $WinDir 'trigger-kvm.ps1')).Count
 
+# ---- a test that did not run is never reported as one that passed -------------
+#
+# run.ps1 prints a passing file's output only under -Verbose, so a skip written
+# inside a file that then passed was SWALLOWED and the run said all green. The
+# file-level half of that was closed in 5febeec; the case-level half survived it,
+# because the `^SKIPPED` filter ran in the exit-2 branch only.
+#
+# Driven end to end against throwaway probes in a COPY of the harness: the bug is
+# in the RENDERING, so asserting Skip-Case and Exit-Skipped alone would not have
+# caught it. The copy is also why no probe file is ever left in the real tests
+# directory, where the next run would pick it up.
+$probeDir = Join-Path $tmp 'harness'
+New-Item -ItemType Directory -Force -Path $probeDir | Out-Null
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'run.ps1') -Destination $probeDir
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'lib.ps1') -Destination $probeDir
+
+function New-Probe {
+    param([string]$Name, [string]$Body)
+    ". (Join-Path `$PSScriptRoot 'lib.ps1')`n$Body" |
+        Set-Content -LiteralPath (Join-Path $probeDir $Name) -Encoding ASCII
+}
+New-Probe 'pass.tests.ps1'      "Assert-Equal a a`nexit 0"
+New-Probe 'filelevel.tests.ps1' "Exit-Skipped 'PROBE-WHOLE-FILE'"
+New-Probe 'caselevel.tests.ps1' "Assert-Equal a a`nSkip-Case 'one that cannot' 'PROBE-ONE-CASE'`nexit 0"
+
+function Invoke-Probes {
+    param([string]$Filter = '')
+    $o = & powershell.exe -NoProfile -ExecutionPolicy Bypass `
+                          -File (Join-Path $probeDir 'run.ps1') $Filter *>&1 |
+         ForEach-Object { "$_" }
+    return [pscustomobject]@{ Out = ($o -join "`n"); Code = $LASTEXITCODE }
+}
+
+$probeRun = Invoke-Probes
+
+# A file that could not run reports SKIP, with its reason, and never PASS.
+Assert-Match   $probeRun.Out 'SKIP  filelevel\.tests\.ps1'
+Assert-Match   $probeRun.Out 'PROBE-WHOLE-FILE' 'the reason must be printed every time'
+Assert-NoMatch $probeRun.Out 'PASS  filelevel\.tests\.ps1'
+Assert-Match   $probeRun.Out 'did NOT run on this machine and proved nothing'
+
+# The swallowing bug in one line: this file exits 0, so its output was hidden.
+Assert-Match $probeRun.Out 'PASS  caselevel\.tests\.ps1' 'a file that skipped one case still ran the rest'
+Assert-Match $probeRun.Out 'PROBE-ONE-CASE'              'and its skip must be surfaced under that PASS'
+Assert-Match $probeRun.Out '1 case\(s\) inside the files that did run were skipped'
+
+# A skip is a fact about the machine, not a failure, so it does not raise the code
+# -- and the count of files that passed excludes the one that did not run. Three
+# probes, one skipped: "all 3 passed" is the false claim.
+Assert-Equal 0 $probeRun.Code
+Assert-Match $probeRun.Out 'all 2 test files passed'
+
+# A skipped case reaches the summary from a file that FAILED too, where the whole
+# output is dumped anyway -- the count is what carries it.
+New-Probe 'red.tests.ps1' "Skip-Case 'one that cannot' 'PROBE-RED-SKIP'`nAssert-Equal a b"
+$probeRed = Invoke-Probes 'red'
+Assert-Match $probeRed.Out 'FAIL  red\.tests\.ps1'
+Assert-Equal 1 $probeRed.Code 'the probe harness can still go red, so the assertions above are not vacuous'
+Assert-Match $probeRed.Out '1 case\(s\) inside the files that did run were skipped'
+
+# ...and with nothing skipped, neither summary line appears at all.
+$probeClean = Invoke-Probes 'pass'
+Assert-NoMatch $probeClean.Out 'case\(s\) inside the files'
+Assert-NoMatch $probeClean.Out 'proved nothing'
+
 Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
 exit 0

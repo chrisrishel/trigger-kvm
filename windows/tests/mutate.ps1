@@ -468,6 +468,28 @@ Invoke-Mutation 'monitors: the list disables a row it does not own' `
     '        $pick = Select-One -Items $items -Detail $detail -Default $land -Escapable' `
     '        $pick = Select-One -Items $items -Detail $detail -Default $land -Disabled $off -Escapable'
 
+# --- a skip is never a pass ---------------------------------------------------
+#
+# The harness itself is the subject here. conventions.tests.ps1 copies run.ps1
+# and lib.ps1 into a temp directory and runs probe files through them, so a
+# mutation to the real run.ps1 travels into that copy -- which is the point: the
+# bug these catch was in the rendering, not in Skip-Case.
+
+Invoke-Mutation 'skips: a skipped case is swallowed by the file that passed' `
+    'tests\run.ps1' 'conventions.tests.ps1' `
+    '
+        else                      { Show-Skips $out }' `
+    ''
+
+Invoke-Mutation 'skips: the summary does not count them' `
+    'tests\run.ps1' 'conventions.tests.ps1' `
+    @'
+if ($skippedCases -gt 0) {
+    Write-Host ("{0} case(s) inside the files that did run were skipped -- see SKIPPED above" -f $skippedCases)
+}
+'@ `
+    ''
+
 # =============================================================================
 
 Write-Host ''

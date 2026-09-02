@@ -91,11 +91,30 @@ function Reset-Printed { $script:Printed = @(); $script:Partial = '' }
 # so on every machine but the reference desk, the only tests of the exact packets
 # and of every refusal quietly did not run and the suite reported all green.
 #
-# 2 rather than 1, so run.ps1 can tell "did not run" from "ran and failed".
+# Both halves below print a line beginning `SKIPPED:`, which is the string run.ps1
+# surfaces WHATEVER the verdict -- so a file that skipped part of itself cannot read
+# as one that ran.
+
+# The whole FILE cannot run here. 2 rather than 1, so run.ps1 can tell "did not run"
+# from "ran and failed".
 function Exit-Skipped {
     param([string]$Why)
     Write-Host "SKIPPED: $Why"
     exit 2
+}
+
+# One CASE cannot run here. The file goes on to pass or fail on everything else, so
+# this is a printed line and nothing more: an exit code would report a file that
+# mostly ran as one that did not.
+#
+# No tally to go with it, unlike macOS. There, `finish` prints a count and run.sh
+# reads it, because exit_skipped writes a `SKIPPED:` line too and the two have to be
+# told apart. Here there is no per-file end hook to hang a count on -- and none is
+# needed: a file that did not exit 2 never calls Exit-Skipped, so in its output one
+# `SKIPPED:` line is exactly one skipped case, and run.ps1 counts lines.
+function Skip-Case {
+    param([string]$Case, [string]$Why)
+    Write-Host "SKIPPED: $Case -- $Why"
 }
 
 # ---- assertions -------------------------------------------------------------

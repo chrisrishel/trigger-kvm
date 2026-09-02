@@ -108,32 +108,3 @@ Verified: nothing -- this is the brief for taking the measurement. Written on
           the Mac from the repo's own records (decision 001, windows/AGENTS.md
           session-0 findings, the deleted dxva2 code). The BIOS location and
           the iGPU model were reported by the owner from the machine.
-
-## Surface a skipped CASE from a file that still passed
-
-Kind:     defect report
-Spec:     n/a -- the property run.ps1's own header states: a test that did not
-          run on this machine is never counted as one that passed
-Why:      5febeec closed the FILE-level half of that; a skip inside a file that
-          still exits 0 is swallowed exactly as before it
-Owed:     run.ps1:47-56 emits the `^SKIPPED` filter only in the exit-2 branch,
-          so a file that skips some of its cases and passes the rest shows a
-          bare PASS and the summary says nothing. Two lines: run the same
-          filter in the exit-0 branch, and count those cases in the summary.
-
-          This is LATENT here, not live: `Exit-Skipped` is used twice, both at
-          the top of resolve.tests.ps1, so no file currently skips a case and
-          carries on. It fires the moment anyone adds a per-case skip -- which
-          is a natural thing to add to a file that is mostly hardware-free with
-          two cases that are not.
-
-          macOS did both halves this session, if the shape is useful:
-          `exit_skipped` is Exit-Skipped's equivalent (also exit 2), and
-          `skip_case` tallies into a counter that `finish` reports as a
-          `SKIPPED:` line, which run.sh surfaces WHATEVER the verdict -- so a
-          passing file cannot hide one. macos/tests/lib.sh, macos/tests/run.sh,
-          and the end-to-end assertions in macos/tests/conventions.tests.sh.
-Verified: read on macOS against commit 8dedf09; run.ps1:47-56 and both
-          Exit-Skipped call sites quoted from source. NOT executed -- there is
-          no Windows here. "Nothing currently skips a case" is a grep over
-          windows/tests, not a run.

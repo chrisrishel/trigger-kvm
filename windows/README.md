@@ -103,6 +103,12 @@ exact packets and of every refusal quietly did not run and the suite reported al
 green. The converters those two were the only cover for are unit-tested in
 `config.tests.ps1`, which skips nowhere.
 
+That holds a **case** at a time as well as a file at a time. A file that can run
+most of itself calls `Skip-Case` and carries on; `run.ps1` prints every `SKIPPED:`
+line whatever the verdict — under a PASS as readily as under a FAIL — and counts
+them in the summary. A file that passed everything it ran is still not a file that
+ran, and the rendering is what decides whether you can tell.
+
 **They are mutation-checked**, by `.\mutate.ps1`. Passing tests prove nothing
 until they can fail, so every regression the suite is meant to catch gets
 reintroduced deliberately and the test has to go red. A mutation whose suite is
