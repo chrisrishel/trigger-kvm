@@ -291,6 +291,130 @@ a different framebuffer driver, so none of this transfers to it. The LG's
 without a logged-in session, so the Intel equivalent of the LaunchDaemon result
 above is unknown.
 
+## The dxva2 route on the onboard Intel GPU (Windows)
+
+All taken 2026-09-01 on the Windows PC (i9-13900K / UHD 770, ROG STRIX Z790-A
+GAMING WIFI BIOS 0805, RTX 4090), with `iGPU Multi-Monitor` newly enabled in
+BIOS and **the ASUS PG42UQ's PC cable moved from the 4090 to the motherboard
+HDMI output**. The LG stayed on the 4090 throughout, per hard rule 4. The
+instrument is `C:\ProgramData\trigger-kvm\dxva2-intel-probe.ps1` -- not in the
+repo, not installed, and not shipping code; it lifts the `SetVCPFeature` call
+from the dxva2 implementation deleted at `70e5ed4`. It can send only VCP `0x60`,
+only the values `0x0F` and `0x11` already documented for this panel, and only to
+a monitor whose PnP interface path carries the EDID vendor+product it was told
+to aim at. There is no I2C source byte anywhere in it, so it cannot reach `0x50`.
+
+**The iGPU carries DDC, and dxva2 switches a standard panel over it -- both
+directions, including from an inactive link.** With the ASUS on the motherboard
+HDMI at 3840x2160 @ 60 Hz (the 4090 was driving it at 138 Hz; the cap is the
+motherboard output and is expected, not a fault):
+
+| write | link at the time | accepted | elapsed, both sends | panel moved |
+|---|---|---|---|---|
+| `SetVCPFeature(0x60, 0x0F)` -- to the Mac | active (showing the PC) | 1 + 1 | 127 ms | yes, confirmed visually |
+| `SetVCPFeature(0x60, 0x11)` -- back to the PC | **inactive** (showing the Mac) | 1 + 1 | 140 ms | yes, confirmed visually |
+
+The second row is the one that matters: `pull` always fires from an inactive
+link, and this is where a transport that only works while it owns the panel
+would have failed. It did not. Both writes were sent twice, as the bus is lossy;
+both sends were accepted each time. Confirmation is the owner looking at the
+panel -- the success codes are recorded above only because they were *also* true,
+and they prove nothing on their own.
+
+**The link stays fully enumerated while inactive.** Immediately after the ASUS
+had switched away to the Mac, `EnumDisplayMonitors` still returned it with the
+same `hMonitor` (`0x6008F`), the same `\\.\DISPLAY7`, the same interface path,
+and `GetPhysicalMonitorsFromHMONITOR` still handed back one physical monitor.
+The enumeration is indistinguishable from the active-link case.
+
+**2026-09-01, Windows -- NVAPI cannot see a panel on another adapter, and the
+switcher refuses it by name.** With the ASUS on the Intel output,
+`nvapi-probe.ps1` reported `gpus=1` and `connected displays = 1` -- the LG alone
+(`displayId=0x80061082 outputId=0x00000200 connector=DisplayPort edid=GSM(0x1E6D)
+product=0x9E9D`). The ASUS was absent entirely, as expected: it is on a different
+adapter. `trigger-kvm list` correspondingly showed one row, and
+`trigger-kvm pull -WhatIf` refused with
+
+```
+REFUSING PG42UQ switch: no output identifies as it (EDID 0x06B3:0x42E0).
+NVAPI enumerated: outputId=0x00000200 connector=DisplayPort edid=0x1E6D:0x9E9D serial=0x00001111
+```
+
+which is the correct behaviour -- it declined rather than mis-aiming -- but it is
+also the whole limitation: today an NVAPI-only Windows install covers only
+panels on the NVIDIA card.
+
+**2026-09-01, Windows -- session 0 gives dxva2 no usable handle, with the ASUS
+on the Intel output.** From an unelevated S4U on-demand task (`tk-dxva2-s0`,
+principal `rishe`, `LogonType S4U`, `RunLevel Limited`, `LastTaskResult 0`),
+running as `sessionId=0 interactive=False`:
+
+```
+user32 EnumDisplayMonitors sees 1 monitor(s)
+  monitor[0] hMonitor=0x10001 device='WinDisc' physicalCount=-1
+             err=GetNumberOfPhysicalMonitorsFromHMONITOR failed, GetLastError=-1071241755
+  monitor[0] interfacePath=''
+matched 'AUS42E0': 0 monitor(s)
+```
+
+`-1071241755` is `0xC02625E5`, which Windows renders as *"The function failed
+because the specified GDI device did not have any monitors associated with it"*.
+So this is the 2026-08-30 phantom again, now characterised one level further: the
+phantom is named `WinDisc`, it carries **no interface path at all** (so no EDID
+identity), and it yields **no physical monitor handle** -- the failure is at
+`GetNumberOfPhysicalMonitorsFromHMONITOR`, before any question of writing arises.
+The moving of the ASUS to the Intel adapter changed none of this. Compare NVAPI,
+which enumerates *and writes* from session 0 (above, 2026-08-30).
+
+This is the reading that bounds the tier: **a dxva2 panel cannot be covered by
+the boot tier.** It is a limitation to state, never a fallback to reach for --
+an identity check that trusts `user32` in a non-interactive context does not
+fail loudly, it silently mis-resolves onto the phantom.
+
+**The gate is what stops that being dangerous, and it held.** In the session-0
+run the probe matched 0 monitors and wrote nothing. Exercised directly against a
+target that is not present (`-Target XXX0000`, interactive), it refused in the
+same words: `need exactly ONE monitor whose interface path carries 'XXX0000',
+found 0`. Matching on EDID vendor+product and refusing anything but exactly one
+match is what makes an unidentifiable phantom a refusal rather than a mis-aimed
+write.
+
+**2026-09-01, Windows -- one EDID key does serve both transports, and the rest
+of the PnP path does not.** Moving the ASUS between adapters changed its PnP
+instance path from `DISPLAY\AUS42E0\5&aaaaaaaa&0&UID4352_0` to
+`DISPLAY\AUS42E0\4&bbbbbbbb&0&UID49_0`, and its GDI name from `\\.\DISPLAY1` to
+`\\.\DISPLAY7`. The `AUS42E0` component -- EDID vendor `AUS` (`0x06B3`) plus
+product `0x42E0` -- was unchanged, as was the EDID serial `AS0000000001`. Putting
+the cable back on the 4090 restored the PnP path exactly, but **not** the GDI
+name: the ASUS came back as `\\.\DISPLAY3`, a third value, having been
+`\\.\DISPLAY1` before the move and `\\.\DISPLAY7` during it. Restoring the
+original cabling did not restore the original index. For the
+LG, all three sources agree: NVAPI reads `GSM(0x1E6D) product=0x9E9D`,
+`WmiMonitorID` reports `GSM` / `9E9D`, and the dxva2 interface path carries
+`GSM9E9D`. WMI's three-letter code is the 5-bit packing of the same EDID vendor
+word the config already stores, exactly (`AUS` -> `0x06B3`, `GSM` -> `0x1E6D`).
+
+So EDID vendor+product is a single identity key across NVAPI, WMI and dxva2, and
+a per-panel transport choice needs no second key. **The full interface path is
+not that key** -- the deleted dxva2 code matched on the whole string, which this
+move would have broken. `displays.toml`'s standing warning holds here too: the
+LG's product id is per-input, so this only means the key is *shape*-compatible,
+never that a value may be copied between hosts.
+
+Also recorded, since dxva2 descriptions came up: on the Intel output the ASUS
+reports its real `szDescription` of `PG42UQ`, while the LG on the 4090 still
+reports the generic `Generic PnP Monitor` -- the reason the deleted code did not
+key on the description. The `hPhysicalMonitor` values themselves are ephemeral
+(`0x0` on one call, `0x2` on the next, for both panels) and are not an identifier.
+
+**Not measured.** Intel's own I2C API (IGCL) was not touched -- it is a third
+transport and a separate decision. Nothing was sent to the LG over the Intel
+route, and the LG's `0x50` service channel remains reachable only through
+`NvDdc.WriteLgInput`. The ASUS's `hdmi2` value `0x12` was still never exercised.
+No DisplayPort motherboard output was tried, only HDMI. And this says nothing
+about a machine with **no** NVIDIA card at all: the LG's own switch still needs
+NVAPI here, so this desk cannot be run from the iGPU alone.
+
 ## The LG service channel
 
 **2026-08-30, Windows -- what `0xF4` does to a PG42UQ.** With the old spraying

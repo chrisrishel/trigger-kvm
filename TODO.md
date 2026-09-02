@@ -39,4 +39,5 @@
   StrictMode note, and `Start-Process -PassThru` never populating `.ExitCode`
   (~1.5 KB). They only bite when writing tests, which is exactly when that
   directory is in play. Trigger: when `windows/AGENTS.md` next needs a rule added
-  and there is no room. Outcome is an amendment to decision 002, or 003.
+  and there is no room. Outcome is an amendment to decision 002, or a new
+  decision record of its own — 003 is taken.

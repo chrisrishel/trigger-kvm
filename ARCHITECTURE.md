@@ -202,6 +202,18 @@ That the ASUS *could* be driven by the vendor-neutral `dxva2` and deliberately i
 not is a trade-off with consequences for anyone without an NVIDIA GPU; see
 `docs/decisions/001-nvapi-as-the-only-windows-transport.md`.
 
+**That "could" is now measured, and it too is proven but not built.** On
+2026-09-01 the ASUS was moved to this machine's onboard Intel UHD 770 and
+switched through `dxva2` in both directions, including the case that matters —
+a pull back from an *inactive* link. So a standard-DDC panel can be driven on any
+GPU, and the NVIDIA requirement is really a requirement *for a panel whose input
+needs raw I2C*. Two things bound it: session 0 gives `dxva2` no monitor handle at
+all, so such a panel is login-tier only; and it does not help this desk, because
+the LG's `0x50` input still forces NVAPI. The shape it would take — a transport
+chosen per panel at configure time, never a fallback tried at switch time — is in
+`docs/decisions/003-dxva2-as-a-second-windows-transport.md`; the readings are in
+`docs/measurements.md`.
+
 The LG accepts `VCP 0x60` writes, returns success, and discards them; reads always
 return `0x0F` regardless of what is displayed. Recent LG monitors moved input
 control to a manufacturer sidechannel ("DDC2AB"). This is not a workaround for a
@@ -291,7 +303,9 @@ local privilege escalation, and is not what this is.
 
 **On Windows the desktop dependency is gone.** This section used to argue that
 session 0 blocked Windows too, because it has no desktop and therefore no
-`HMONITOR` — true of the `dxva2` path, which is why that path no longer exists. It
+`HMONITOR` — true of the `dxva2` path, which is why that path no longer exists,
+and re-measured directly on 2026-09-01: there `user32` offers one phantom monitor
+with no EDID identity and `dxva2` refuses it a handle outright. It
 also predicted NVAPI would fail "for the same reason". That prediction was wrong:
 measured 2026-08-30, NVAPI enumerates and identifies both panels from session 0, as
 SYSTEM and as an unelevated S4U task, and again from an at-startup task after a cold
