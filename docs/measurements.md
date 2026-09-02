@@ -551,6 +551,32 @@ reproduces the access-denied case in-process**, so the branch is testable withou
 a second logon session. The creating handle keeps working, because the access
 check happened when it was created.
 
+**2026-09-02, Windows -- an install did not replace the running watcher, and said
+nothing.** Read out of the log rather than staged: every time a watcher arms it
+writes `watching N device(s)` and a `context:` line, and the whole log carries
+just three arms -- `2026-08-30 20:52:05`, `2026-08-30 20:53:40`, and
+`2026-09-01 22:36:38`.
+
+**The install of 2026-08-31 23:53:25 falls in that gap and produced no arm at
+all.** The watcher from 08-30 20:53:40 kept running across it and went on firing
+(`23:20:35`, `23:26:01`, `00:29:07`), so for about 23 hours the installed files
+and the running watcher were different versions, with nothing saying so.
+
+The mechanism was already written down in `windows/install.ps1` as the reason
+`Stop-Watchers` exists -- the watcher is a grandchild (task -> `wscript` ->
+`powershell`) and outlives the task being stopped, so it keeps the
+single-instance mutex, the newly installed watcher exits on it, and the upgrade
+silently goes on running the old code. The install path simply never called it:
+`Stop-Watchers` was reachable only from `Suspend-Watcher` (`pause`, `restart`,
+the trigger check) and from `uninstall`.
+
+**Why it stayed invisible.** The new watcher's stand-down line -- `another watcher
+is already running (Global scope); exiting` -- is also what the 1-minute self-heal
+tick writes every minute in the healthy steady state. The failure and the normal
+case produce the same log line, and only the ABSENCE of an arm distinguishes
+them. `install` now clears the watchers before it registers, and states plainly
+when the task is registered with nothing watching.
+
 **2026-09-01 -- the .NET user-environment API cannot round-trip a PATH.**
 `[Environment]::SetEnvironmentVariable('X','C:\a;%USERPROFILE%\b','User')`
 stores the value as **REG_SZ**, not REG_EXPAND_SZ, even though it contains a

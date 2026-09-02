@@ -452,6 +452,20 @@ Invoke-Mutation 'running: install.ps1 goes back to counting processes' `
     return ($LASTEXITCODE -eq 0)' `
     '    return (@(Get-CimInstance Win32_Process -Property ProcessId,Name,CommandLine -Verbose:$false |
         Where-Object { $_.CommandLine -and $_.CommandLine -match ''(usb|event)-watch\.ps1'' }).Count -ge 1)'
+# --- installing clears the watcher it replaces --------------------------------
+
+Invoke-Mutation 'install: the watcher under the task survives the upgrade' `
+    'install.ps1' 'conventions.tests.ps1' `
+    "    Stop-Watchers
+    try {
+        Unregister-ScheduledTask -TaskName `$TASK -Confirm:`$false -ErrorAction Stop" `
+    "    try {
+        Unregister-ScheduledTask -TaskName `$TASK -Confirm:`$false -ErrorAction Stop"
+Invoke-Mutation 'install: a registered task with nothing watching reads as success' `
+    'install.ps1' 'conventions.tests.ps1' `
+    "        Write-Log 'WARNING: the task is registered but NO WATCHER is running.'" `
+    "        Write-Log 'installed.'"
+
 # --- the input map says it cannot be verified ---------------------------------
 
 Invoke-Mutation 'inputs: the map is shown without saying nothing can check it' `

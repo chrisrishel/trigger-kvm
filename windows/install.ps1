@@ -3827,6 +3827,22 @@ $settings.StopIfGoingOnBatteries     = $false
 # like a broken installer rather than a fixable permission.
 if (Get-ScheduledTask -TaskName $TASK -ErrorAction SilentlyContinue) {
     Stop-ScheduledTask -TaskName $TASK -ErrorAction SilentlyContinue
+    # AND THE WATCHER UNDERNEATH IT, which stopping the task does not touch: it is a
+    # grandchild (task -> wscript -> powershell) and outlives its launcher. Left
+    # behind it keeps holding the single-instance mutex, so the freshly installed
+    # watcher starts, finds the lock held, logs "another watcher is already running"
+    # and exits -- and the upgrade silently goes on running the OLD code, which is
+    # exactly what Stop-Watchers says it exists to prevent.
+    #
+    # It was missing here, and it bit: across the install of 2026-08-31 23:53 no
+    # watcher armed at all (the log records every arm), and the one from the day
+    # before kept running for another 23 hours. See docs/measurements.md.
+    #
+    # Here rather than earlier because this branch is where a task already exists,
+    # which is the only case that can have a live watcher of ours. Elevated on the
+    # boot tier -- the install path asks for elevation -- so this can see and kill a
+    # watcher in session 0, which pause and restart cannot (TODO.md).
+    Stop-Watchers
     try {
         Unregister-ScheduledTask -TaskName $TASK -Confirm:$false -ErrorAction Stop
     } catch {
@@ -3897,6 +3913,24 @@ Write-Log ("registered and started task '{0}' ({1})" -f $TASK, `
                's4u'    { 'starts at boot' }
                'manual' { 'no autostart' }
                default  { 'starts when you log in' } }))
+
+# DID ONE ACTUALLY COME UP? "Registered and started" is a claim about the task, not
+# about the watcher, and the two came apart silently for a whole day: a surviving
+# watcher held the lock, the new one exited on it, and this line still said what it
+# says above. A registered task with nothing watching is the failure shape that
+# looks most like success, so it gets its own sentence.
+#
+# Not for the manual tier, which has no autostart and is not expected to be running.
+if ($EffectiveTier -ne 'manual') {
+    Start-Sleep -Seconds 2
+    if (Test-WatcherRunning) {
+        Write-Log 'a watcher is running.'
+    } else {
+        Write-Log 'WARNING: the task is registered but NO WATCHER is running.'
+        Write-Log 'nothing will switch until one starts. Check:  trigger-kvm logs'
+        Write-Log 'then try:  trigger-kvm restart'
+    }
+}
 
 # Skipped when this process is the elevated child of a standard account: that
 # user's PATH is not in this process's HKCU, and the parent does it instead.

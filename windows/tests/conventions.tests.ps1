@@ -502,6 +502,56 @@ Assert-Equal 0 $leaked.Count `
      (($leaked | ForEach-Object { $_ + 1 }) -join ', ') + " at or after the acquisition on line " +
      ($firstAcquire + 1))
 
+# ---- installing clears the watcher it is replacing ---------------------------
+#
+# Stopping the task does NOT stop the watcher: it is a grandchild (task ->
+# wscript -> powershell) and outlives its launcher. Left behind it holds the
+# single-instance mutex, the newly installed watcher exits on it, and the upgrade
+# goes on running the OLD code while reporting success.
+#
+# This is not hypothetical -- it bit across the install of 2026-08-31 23:53, where
+# no watcher armed at all and the previous day's kept running for 23 hours
+# (..\..\docs\measurements.md). Structural, because the suite must not register a
+# task or kill a real watcher, so the behaviour itself is out of reach.
+
+# The invariant is about STARTING one, not about unregistering: no watcher of ours
+# may still be alive when a new one starts, or the new one exits on the lock. So
+# the install path's Start-ScheduledTask -- the last one in the file; the other is
+# Resume-Watcher's -- must have a Stop-Watchers before it.
+$startAt = @(0..($instSrc.Count - 1) |
+             Where-Object { $instSrc[$_] -match 'Start-ScheduledTask\s+-TaskName\s+\$TASK' })
+Assert-True ($startAt.Count -ge 1) 'the install check must have found a Start-ScheduledTask'
+$installStart = ($startAt | Measure-Object -Maximum).Maximum
+
+$stopAt = @(0..($instSrc.Count - 1) | Where-Object { $instSrc[$_] -match '^\s*Stop-Watchers\s*$' })
+
+# Anchored to the INSTALL path's own task-replacement block, not merely to
+# "somewhere earlier in the file": uninstall has a Stop-Watchers of its own, and it
+# sits before this line while being unreachable from here -- so a laxer check
+# passed with the install path's call deleted. That mutation is in mutate.ps1.
+$replaceAt = @(0..($instSrc.Count - 1) |
+               Where-Object { $instSrc[$_] -match '^if \(Get-ScheduledTask -TaskName \$TASK' })
+Assert-True ($replaceAt.Count -ge 1) 'the install check must have found the task-replacement block'
+$installReplace = ($replaceAt | Measure-Object -Maximum).Maximum
+
+Assert-True (@($stopAt | Where-Object { $_ -gt $installReplace -and $_ -lt $installStart }).Count -gt 0) `
+    ("the install path replaces the task on line " + ($installReplace + 1) + " and starts a watcher on line " +
+     ($installStart + 1) + " with no Stop-Watchers between: a surviving watcher holds the lock, " +
+     "the new one exits on it, and the upgrade keeps running the old code")
+
+# Uninstall clears them too -- order does not matter there, since nothing is
+# started afterwards, only that no watcher outlives the files it runs from.
+$uninstallAt = @(0..($instSrc.Count - 1) |
+                 Where-Object { $instSrc[$_] -match "^if \(\`$Command -eq 'uninstall'\)" })
+Assert-Equal 1 $uninstallAt.Count 'the uninstall command must be found exactly once'
+Assert-True (@($stopAt | Where-Object { $_ -gt $uninstallAt[0] -and $_ -lt $installStart }).Count -gt 0) `
+    'uninstall must stop the watchers before removing the files they run from'
+
+# And the install says so when nothing came up, because "registered and started"
+# is a claim about the TASK -- the two came apart silently for a whole day.
+Assert-Match ($instSrc -join "`n") 'the task is registered but NO WATCHER is running' `
+    'a registered task with nothing watching must be stated, not implied'
+
 # ---- the instruction files fit the tools that load them ----------------------
 #
 # Codex loads the AGENTS.md chain from the git root down to its working
