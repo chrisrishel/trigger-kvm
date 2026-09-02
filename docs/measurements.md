@@ -128,11 +128,13 @@ as uid 501 with both writes sent.
 
 All taken 2026-09-01 on a MacBook Pro 16" (`MacBookPro16,1`, Core i9-9880H,
 macOS 15.3.2 / 24D81) against this desk's two panels, with
-`macos/intel-ddc-probe`. That instrument is read-only: it enumerates, and with
-`--i2c-read` sends ONE standard `GetVCP 0x60` on source `0x51` per external
-framebuffer. **No value was written to any monitor from that machine, and
-nothing was ever sent on source `0x50`.** The MacBook's own screen held the
-terminal throughout, so hard rule 4 was never in play.
+`macos/intel-ddc-probe`. That instrument enumerates; with `--i2c-read` it sends
+ONE standard `GetVCP 0x60` on source `0x51` per external framebuffer; and with
+`--set-asus-input` it sends ONE standard `SetVCP 0x60` to an AUS panel, from a
+named allowlist, gated on the EDID vendor. **Nothing was ever sent on source
+`0x50` from that machine, and the LG was never written to at all** -- `0x50` and
+`0xF4` do not appear anywhere in that program outside a comment. The MacBook's
+own screen held the terminal throughout, so hard rule 4 was never in play.
 
 This machine has two GPUs: the Intel UHD 630 drives the built-in panel and the
 AMD Radeon Pro 5500M drives externals, so the framebuffer class here is
@@ -174,6 +176,29 @@ both times. The existing "the PG42UQ answers 0 to everything" note was measured
 on luminance, contrast, volume and max luminance; `0x60` is not those. Even here
 the ASUS's `max` field came back `0x0005`, nonsense for input select, so the
 current field was right while the max field beside it was garbage.
+
+**The route WRITES, and a write framed on it moved a real panel in both
+directions.** A standard `SetVCP 0x60` through `IOI2CSendRequest` to the ASUS on
+HDMI 2, sent twice, with a person watching the screen each time:
+
+| Sent | Packet | `result` | What the human saw |
+|---|---|---|---|
+| `hdmi2` (`0x12`) | `51 84 03 60 00 12 CA` | `0x0`, both sends | the ASUS left DisplayPort and showed the MacBook |
+| `displayport` (`0x0F`) | `51 84 03 60 00 0F D7` | `0x0`, both sends | the ASUS returned to the Mac Studio |
+
+The `displayport` packet is byte-for-byte the string `displays.toml` already
+documents for `ASUS -> DisplayPort`, which is worth more than the switch itself:
+it shows the framing this route generates matches the allowlist exactly rather
+than merely resembling it. **That is the finding that matters for any future
+sidechannel work.** The hazard in aiming a packet at the LG's `0x50` was never
+the values -- `0xD0`/`0xD1` are documented and this desk sends them daily from
+two other platforms -- but a brand-new transport mangling a packet into a service
+channel. Framing on this route is now measured, on a channel where a wrong
+packet is harmless.
+
+`result=0x0` is still not the evidence here; the person is. This panel family
+returns success for writes it ignores, which is why the LG's stubbed `0x60`
+looks identical to a working one on the wire.
 
 **Enumerating proves nothing about whether a panel is there. Three separate ways
 it lies:** with NOTHING attached, all five AMD framebuffers already advertised a
@@ -219,9 +244,21 @@ programs compile clean under `-Wall -Wextra` on x86_64, and `event-watch --list`
 enumerated USB through IOKit and Bluetooth through `system_profiler` correctly:
 **the detector is arch-neutral, and only the switcher is Apple-Silicon-bound.**
 
-**Not measured, deliberately.** No VCP value was written from the MacBook, so
-nothing here says the route can *switch* a panel -- only that reads reach it, and
-a write is a separate decision that a person has to watch happen (hard rule 3).
+**Not measured, deliberately -- and the LG is the whole of it.** Everything above
+is the STANDARD channel. Nothing was sent on source `0x50`, so **whether the LG
+accepts `0xF4` over this route is unknown**, and that is the question Intel
+support actually turns on: the LG's standard `0x60` is stubbed in the panel, so
+the sidechannel is the only way to move it and no amount of standard-DDC success
+substitutes. A machine that could switch the ASUS and not the LG would be the
+half-switching setup that presents as a hardware fault.
+
+One more thing the ASUS write did NOT prove: `tests/conventions.tests.sh`, which
+asserts hard rule 5's gate is the only door, scans `lib/` and `trigger-kvm` --
+**shell only** -- and keys on the literal string `input-alt`, m1ddc's spelling. C
+code emitting the source byte numerically would contain no such string, so the
+scan would count one door and pass while a second existed. Extending that scan is
+a precondition of any Intel write path, not a follow-up to one.
+
 The USB-C-to-DisplayPort-direct reading the brief asked for was not taken: it was
 the tie-breaker for an ambiguous result, nothing was ambiguous once both DP Alt
 Mode and an HDMI protocol converter carried DDC, and it is the only one of the

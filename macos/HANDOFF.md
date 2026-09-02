@@ -82,10 +82,26 @@ Owed:     decision record 004, proposing or declining an Intel transport --
           - resolve by EDID, never by framebuffer: the gMux migrates a display
             between the Intel and AMD framebuffers on hotplug.
 
-          Still NOT measured, and a write is the gating unknown: nothing was
-          ever written from the Intel Mac, so nothing shows the route can
-          SWITCH a panel. That reading needs a person watching the screen
-          (hard rule 3) and must not be taken as a by-product of building.
-Verified: all of the above was run on the Intel Mac. The write path was not,
-          deliberately. The 13" 2019 model drives externals from the Intel GPU
+          - conventions.tests.sh must be extended FIRST. It scans lib/ and
+            trigger-kvm -- shell only -- and keys on the string `input-alt`.
+            C code emitting the source byte numerically contains no such
+            string, so the scan would count one door and pass while a second
+            existed. That is a precondition, not a follow-up.
+
+          The STANDARD channel is now measured end to end: a SetVCP 0x60 framed
+          by intel-ddc-probe and sent over IOI2CSendRequest moved the ASUS in
+          both directions, watched, and its bytes match displays.toml exactly.
+          So the route writes and the framing is right.
+
+          The gating unknown is now ONLY the LG: whether it accepts 0xF4 on
+          source 0x50 over this route is untested, and its standard 0x60 is
+          stubbed in the panel, so the sidechannel is the only way to move it.
+          Standard-DDC success does not substitute -- a machine that switched
+          the ASUS and not the LG is the half-switching setup that presents as
+          a hardware fault. Taking that reading means sending on the service
+          channel, with a person watching (hard rule 3), and is its own
+          decision -- not a by-product of building.
+Verified: all of the above was run on the Intel Mac, the ASUS write visually
+          confirmed in both directions by the user. Nothing was ever sent on
+          source 0x50. The 13" 2019 model drives externals from the Intel GPU
           rather than the AMD one and was not tested at all.

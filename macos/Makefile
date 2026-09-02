@@ -16,9 +16,12 @@ display-probe: display-probe.c
 event-watch: event-watch.c
 	clang $(CFLAGS) -o $@ $< -framework IOKit -framework CoreFoundation
 
-# A READ-ONLY survey of the Intel-Mac DDC route (framebuffer I2C), for deciding
-# whether to build a transport on it. Not part of `all`: it is a measuring
-# instrument, not a component. See macos/HANDOFF.md for how to take the reading.
+# A survey of the Intel-Mac DDC route (framebuffer I2C), for deciding whether to
+# build a transport on it. Enumeration and reads are the default; --set-asus-input
+# is the one thing that moves a panel, and it can only ever emit standard source
+# 0x51 at an AUS panel from a named allowlist -- 0x50 is not expressible in it.
+# Not part of `all`: it is a measuring instrument, not a component. See
+# macos/HANDOFF.md for how to take the reading.
 intel-ddc-probe: intel-ddc-probe.c
 	clang $(CFLAGS) -o $@ $< -framework IOKit -framework CoreFoundation -framework ApplicationServices
 

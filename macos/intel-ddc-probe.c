@@ -1,4 +1,4 @@
-// intel-ddc-probe -- a READ-ONLY survey of the Intel-Mac DDC/CI route.
+// intel-ddc-probe -- a survey of the Intel-Mac DDC/CI route.
 //
 // The macOS switcher reaches monitors through m1ddc, which uses IOAVService --
 // an interface Apple Silicon has and Intel Macs do not. Intel Macs expose DDC/CI
@@ -7,7 +7,7 @@
 // whether to build a transport on that route, measure whether it exists on the
 // Mac at hand and whether it reaches the panels through the cabling in use.
 //
-// This program MOVES NOTHING. By default it only enumerates: every IOFramebuffer,
+// By default this program MOVES NOTHING. It only enumerates: every IOFramebuffer,
 // its I2C buses and what they support, the EDID identity it carries, and how
 // CoreGraphics' display ids map onto those framebuffers. With --i2c-read it
 // additionally sends ONE standard DDC/CI GetVCP request for code 0x60 (input
@@ -17,9 +17,18 @@
 // Hard rule 2 (AGENTS.md) still applies to what comes back: a read is
 // evidence that the I2C path REACHES the panel, not of which input it shows.
 //
+// --set-asus-input is the one thing here that MOVES a panel, and it exists to
+// answer a single question: is a standard DDC/CI SetVCP, framed by this program
+// and sent over IOI2CSendRequest, actually accepted by a monitor? That has to be
+// settled on the SAFE channel before anyone considers aiming a packet at the LG's
+// service channel, because the risk there is not the value -- 0xD0/0xD1 are
+// documented and this desk sends them daily from two other platforms -- but a
+// brand-new transport framing a packet wrongly. See macos/HANDOFF.md.
+//
 //   make intel-ddc-probe
 //   ./intel-ddc-probe               enumerate only; no I2C traffic
 //   ./intel-ddc-probe --i2c-read    also one GetVCP 0x60 per external display
+//   ./intel-ddc-probe --set-asus-input hdmi2       move the ASUS (see below)
 //
 // On Apple Silicon it reports that there are no IOFramebuffer services, which is
 // the expected answer there and is why m1ddc exists.
@@ -32,6 +41,7 @@
 #include <string.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <unistd.h>
 #include <sys/utsname.h>
 #include <CoreFoundation/CoreFoundation.h>
 #include <IOKit/IOKitLib.h>
@@ -159,13 +169,94 @@ static void i2c_read_vcp60(io_service_t iface, uint32_t types) {
     }
 }
 
+// ------------------------------------------------- the ASUS input write --
+//
+// The narrowest aperture that can answer "does a SetVCP framed here move a
+// panel?". Every way this could become a general-purpose write tool is closed
+// deliberately, and each closure is a rule in ../AGENTS.md:
+//
+//   - the source byte 0x51 is a literal, exactly as in the read above. There is
+//     no parameter, no table and no code path by which this program can emit
+//     0x50. Hard rule 5's channel is not reachable from this file at all.
+//   - the VCP code 0x60 is a literal too. This is not a "write VCP X" tool.
+//   - the value comes from a NAMED allowlist copied from displays.toml, never
+//     from a number the caller supplies. Hard rule 1 forbids walking values at a
+//     monitor; this cannot express a value that is not already documented.
+//   - it refuses a panel whose EDID vendor is not AUS, and refuses unless the
+//     enumeration found EXACTLY ONE of them -- zero and many are both refusals,
+//     because an ambiguous target cannot be aimed at safely.
+//
+// It sends twice, because the bus is lossy and the write is idempotent, and it
+// reads NOTHING back. Hard rule 2: these panels lie on reads and a verify-then-
+// retry loop would fire spurious retries. Hard rule 3: the only confirmation
+// that this worked is a person looking at the monitor.
+
+#define DDC_VENDOR_AUS 0x06B3
+
+static const struct { const char *name; uint8_t value; } ASUS_INPUTS[] = {
+    { "displayport", 0x0F },
+    { "hdmi1",       0x11 },
+    { "hdmi2",       0x12 },
+};
+
+static bool asus_input_value(const char *name, uint8_t *out) {
+    for (size_t i = 0; i < sizeof ASUS_INPUTS / sizeof ASUS_INPUTS[0]; i++) {
+        if (!strcmp(name, ASUS_INPUTS[i].name)) { *out = ASUS_INPUTS[i].value; return true; }
+    }
+    return false;
+}
+
+static void i2c_set_asus_input(io_service_t iface, uint8_t value) {
+    IOI2CConnectRef conn = NULL;
+    kern_return_t kr = IOI2CInterfaceOpen(iface, kNilOptions, &conn);
+    if (kr != KERN_SUCCESS) { printf("  IOI2CInterfaceOpen failed: 0x%x\n", kr); return; }
+
+    uint8_t send[7] = { 0x51, 0x84, 0x03, 0x60, 0x00, value, 0 };
+    send[6] = (uint8_t)(0x6E ^ send[0] ^ send[1] ^ send[2] ^ send[3] ^ send[4] ^ send[5]);
+
+    printf("  packet:");
+    for (size_t i = 0; i < sizeof send; i++) printf(" %02X", send[i]);
+    printf("   (slave 0x6E, source 0x51, VCP 0x60, value 0x%02X)\n", value);
+
+    for (int attempt = 1; attempt <= 2; attempt++) {
+        IOI2CRequest req;
+        memset(&req, 0, sizeof req);
+        req.sendAddress          = 0x6E;
+        req.sendTransactionType  = kIOI2CSimpleTransactionType;
+        req.sendBuffer           = (vm_address_t)(uintptr_t)send;
+        req.sendBytes            = sizeof send;
+        req.replyTransactionType = kIOI2CNoTransactionType;
+        req.replyBytes           = 0;
+
+        kr = IOI2CSendRequest(conn, kNilOptions, &req);
+        printf("  send %d of 2: IOI2CSendRequest=0x%x  result=0x%x\n",
+               attempt, kr, (unsigned)req.result);
+        if (attempt == 1) usleep(50 * 1000);
+    }
+    IOI2CInterfaceClose(conn, kNilOptions);
+}
+
 // -------------------------------------------------------------------- main --
 
 int main(int argc, char **argv) {
-    bool do_read = false;
+    bool do_read = false, do_write = false;
+    uint8_t write_value = 0;
+    const char *write_name = NULL;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--i2c-read")) do_read = true;
-        else { fprintf(stderr, "usage: %s [--i2c-read]\n", argv[0]); return 2; }
+        else if (!strcmp(argv[i], "--set-asus-input")) {
+            if (++i >= argc || !asus_input_value(argv[i], &write_value)) {
+                fprintf(stderr, "--set-asus-input needs one of: displayport hdmi1 hdmi2\n"
+                                "(the names are the allowlist; a raw value is not expressible)\n");
+                return 2;
+            }
+            write_name = argv[i];
+            do_write = true;
+        }
+        else {
+            fprintf(stderr, "usage: %s [--i2c-read] [--set-asus-input displayport|hdmi1|hdmi2]\n", argv[0]);
+            return 2;
+        }
     }
 
     struct utsname u;
@@ -199,6 +290,8 @@ int main(int argc, char **argv) {
         return 1;
     }
     int nfb = 0;
+    io_service_t aus_iface[4];
+    int aus_count = 0;
     io_service_t fb;
     while ((fb = IOIteratorNext(it))) {
         nfb++;
@@ -209,8 +302,10 @@ int main(int argc, char **argv) {
 
         CFDictionaryRef info = IODisplayCreateInfoDictionary(fb, kIODisplayOnlyPreferredName);
         bool external = true;
+        long vendor_id = -1;
         if (info) {
             long v = cfnum(info, "DisplayVendorID"), p = cfnum(info, "DisplayProductID"), s = cfnum(info, "DisplaySerialNumber");
+            vendor_id = v;
             printf("    IODisplay: vendor 0x%04lX product 0x%04lX serial 0x%08lX\n", v, p, s);
             CFTypeRef edid = CFDictionaryGetValue(info, CFSTR("IODisplayEDID"));
             if (edid && CFGetTypeID(edid) == CFDataGetTypeID()) print_edid((CFDataRef)edid);
@@ -242,6 +337,16 @@ int main(int argc, char **argv) {
                    flags);
             if (do_read && external) i2c_read_vcp60(iface, (uint32_t)(types < 0 ? 0 : types));
             else if (do_read) printf("      (built-in or empty framebuffer: no read sent)\n");
+            // The vendor gate. Only an AUS panel is ever a candidate, and the
+            // decision to send waits until every framebuffer has been seen, so
+            // that "exactly one" can be enforced rather than "the first one".
+            if (do_write && external && vendor_id == DDC_VENDOR_AUS) {
+                if (aus_count < (int)(sizeof aus_iface / sizeof aus_iface[0])) {
+                    IOObjectRetain(iface);
+                    aus_iface[aus_count] = iface;
+                }
+                aus_count++;
+            }
             IOObjectRelease(iface);
         }
         IOObjectRelease(fb);
@@ -249,7 +354,25 @@ int main(int argc, char **argv) {
     IOObjectRelease(it);
     if (nfb == 0) printf("  none. This Mac has no framebuffer I2C route.\n");
 
-    printf("\nNothing was written to any monitor.%s\n",
-           do_read ? " One GetVCP 0x60 read was sent per external framebuffer, source 0x51." : "");
-    return 0;
+    int rc = 0;
+    if (do_write) {
+        printf("\n== SetVCP 0x60 -> %s (0x%02X) ==\n", write_name, write_value);
+        if (aus_count != 1) {
+            printf("  REFUSED: found %d display(s) with EDID vendor 0x%04X (AUS); need exactly one.\n"
+                   "  Zero and many are both refusals: an ambiguous target cannot be aimed at safely.\n",
+                   aus_count, DDC_VENDOR_AUS);
+            rc = 1;
+        } else {
+            i2c_set_asus_input(aus_iface[0], write_value);
+            printf("  Sent. This is NOT a confirmation -- a write returning success has lied here\n"
+                   "  before. Look at the monitor; that is the only thing that settles it.\n");
+        }
+    }
+    for (int i = 0; i < aus_count && i < (int)(sizeof aus_iface / sizeof aus_iface[0]); i++)
+        IOObjectRelease(aus_iface[i]);
+
+    if (!do_write)
+        printf("\nNothing was written to any monitor.%s\n",
+               do_read ? " One GetVCP 0x60 read was sent per external framebuffer, source 0x51." : "");
+    return rc;
 }
