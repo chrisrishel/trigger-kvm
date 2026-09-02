@@ -9,6 +9,20 @@
   failing on one. Check: task principal is the standard user, files land in that user's
   `%LOCALAPPDATA%`, and their `PATH` (not the admin's) gains `bin`.
 
+- **Check whether `pause` actually stands a BOOT-TIER watcher down.** `Stop-Watchers`
+  (`windows/install.ps1`) finds watchers to kill by matching `Win32_Process.CommandLine`,
+  and an unelevated caller reads that as empty across the session boundary -- the same
+  blindness that made `status` report `watchers : 0` (fixed 2026-09-02, commit `69d8e1e`;
+  evidence in `docs/measurements.md`). So `pause` run unelevated may disable the task,
+  kill nothing, and leave the session-0 watcher alive holding the mutex -- after which
+  the "run one by hand now" it prints fails with "another watcher is already running",
+  and the user has no idea why.
+  **Not verified**: confirming it means pausing the live watcher, which was out of scope
+  for the status fix. `Stop-Watchers` needs PIDs, not a yes/no, so `Test-WatcherRunning`
+  is not the fix -- but it is now available to make `pause` *report* honestly when the
+  lock is still held after a suspend. Trigger: next time `pause` is used on the boot
+  tier, or when `Suspend-Watcher` is next touched.
+
 - **Say plainly, in `status`, that the input map is unverifiable -- and that
   re-running `configure` is the fix.** If a computer's cable moves to a different
   input ON THE MONITOR, a panel with a stable EDID product id (the ASUS reports
