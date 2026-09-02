@@ -163,6 +163,7 @@ code**, update whichever of these the change affects:
 |---|---|
 | `README.md` | The front door changes -- what it does, install, or the top-level gotchas |
 | `ARCHITECTURE.md` | The *shape* changes -- components, data flow, a design decision or its rationale. Not for detail churn. |
+| `ROADMAP.md` | A milestone lands, or the trajectory changes. Milestones only -- tasks go to `TODO.md` |
 | `displays.toml` | A documented monitor model, input value or DDC method changes -- and the dialect table on BOTH platforms in the same commit |
 | `macos/README.md`, `windows/README.md` | That platform's install, components, or behaviour changes |
 | `AGENTS.md` | A new constraint every session on either platform must respect |

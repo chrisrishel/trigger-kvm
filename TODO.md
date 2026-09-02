@@ -10,6 +10,27 @@
   failing on one. Check: task principal is the standard user, files land in that user's
   `%LOCALAPPDATA%`, and their `PATH` (not the admin's) gains `bin`.
 
+- **Measure whether IGCL reaches a display from session 0.** Intel's own control
+  library (`ctlI2CAccess`, shipped with the graphics driver, Alder Lake-P and
+  newer) is a driver-level interface rather than a desktop one, so it may work
+  where `dxva2` provably cannot. This is the measurement that scopes phase 3: if
+  it works in session 0 there is no boot-tier limitation on Intel systems and no
+  watcher handover is needed there. Run it the way the NVAPI and dxva2 probes
+  were -- an unelevated S4U on-demand task, instrument in
+  `C:\ProgramData\trigger-kvm\`, never in the repo -- and confirm any switch by
+  eye. Same refusals as every probe here: no I2C source `0x50` by any route but
+  `NvDdc.WriteLgInput`, no sweeps, only the two documented ASUS values. Known
+  risk: third-party reports show IGCL support varying by CPU generation. Trigger:
+  before scoping the phase 3 transport work. See `ROADMAP.md` N1.
+
+- **Test the boot tier at the actual logon screen.** `ideas/nvapi-transport.md`
+  calls this the only untested step in the pre-login path: every session-0 result
+  so far was taken with a user logged in, so session 0 had no desktop but the
+  machine was not empty of a session. The boot tier's headline claim has never
+  been tested in the state it exists for. Log out, flip the switch, watch the
+  panels, log back in and read the log. Trigger: next time the machine can be
+  logged out of. See `ROADMAP.md` N2.
+
 - **Say plainly, in `status`, that the input map is unverifiable -- and that
   re-running `configure` is the fix.** If a computer's cable moves to a different
   input ON THE MONITOR, a panel with a stable EDID product id (the ASUS reports

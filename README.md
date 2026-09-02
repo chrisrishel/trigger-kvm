@@ -244,6 +244,7 @@ there is always a path to command it back. The reasoning is in
 | [`macos/`](macos/README.md), [`windows/`](windows/README.md) | The two implementations. Same verbs, same config, same walkthrough; no shared code. |
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | The design and why it is shaped this way |
 | [`specs/`](specs/README.md) | What both implementations are built from: the config format and the walkthrough |
+| [`ROADMAP.md`](ROADMAP.md) | Where this has been and where it is going: what is built, what is next, what is deferred and why |
 | [`displays.toml`](displays.toml) | Reference values for the two monitors this was developed against: methods, input codes, known-safe values |
 | [`docs/`](docs/) | Decision records and the dated hardware measurements the rules rest on |
 | [`AGENTS.md`](AGENTS.md) | Instructions for anyone changing this repo, including AI agents: the safety rules for the monitors' control channels and the order a change to shared behaviour lands in. Read it before contributing. |
