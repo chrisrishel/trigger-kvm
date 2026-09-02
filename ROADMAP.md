@@ -109,20 +109,25 @@ not less.**
 
 ### ~~N2. Test the boot tier at the actual logon screen~~ — passed 2026-09-02
 
-The last untested step in the pre-login path, and it holds. Between a logoff at
-01:00:14 and the next logon at 01:01:00 — no interactive user on the machine at
-all — the session-0 watcher detected a USB arrival, fired `pull`, and the display
-that was showing the Mac came back to the PC, confirmed by eye. Evidence, the
-false-edge hypothesis it had to rule out first, and why only one panel had
-anywhere to come back *from*, in [`docs/measurements.md`](docs/measurements.md).
+The last untested step in the pre-login path, and it holds. Twice, 30 minutes
+apart, both with no interactive user on the machine at all: the session-0 watcher
+detected a USB arrival, fired `pull`, and the panels came back to the PC,
+confirmed by eye. The first run (01:00) could only witness the ASUS move, because
+the Mac's video leg to the LG was unplugged; the second (01:30) was the full
+round trip with that cable connected — **both panels to the Mac, both back** —
+between a logoff at 01:30:02 and the next logon at 01:30:52. Evidence, and the
+false-edge hypothesis each had to rule out first, in
+[`docs/measurements.md`](docs/measurements.md).
 
 So the boot tier now delivers what it was built for, measured rather than argued:
 **a rebooted or logged-out PC can take its own displays back with nobody signed
 in.** Nothing in the design changes; a claim stops being provisional.
 
-One incidental finding of the same run: the second watched device is on the
-switch after all, absorbed by the settle rather than the debounce, which closes
-the question the 2026-09-01 detector entry left open for macOS.
+Two incidental findings of the same runs: the second watched device is on the
+switch after all, absorbed by the settle rather than the debounce — which closes
+the question the 2026-09-01 detector entry left open for macOS — and a departure
+is `Write-Verbose`, so correlating a flip against the log needs the OS's PnP
+arrival timestamps rather than the log alone.
 
 ### N3. Say plainly that the input map cannot be verified
 

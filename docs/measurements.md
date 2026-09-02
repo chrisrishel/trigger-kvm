@@ -15,6 +15,42 @@ making a claim about; if you cannot, say that instead of concluding.
 
 ## Detectors
 
+**2026-09-02, Windows -- the round trip: BOTH panels, in both directions, with
+nobody logged in.** The 01:00 run below left exactly one thing unwitnessed --
+the Mac's video leg to the LG was unplugged, so only the ASUS ever had anywhere
+to come back from. Re-run 30 minutes later with that cable connected. Same
+session-0 watcher, deliberately untouched in between (pid 14008, armed
+2026-09-01 22:36:36, still alive afterwards and still the only one on the
+machine).
+
+Winlogon logged the logoff at 01:30:02 and the next logon at 01:30:52. Inside
+that window, with no interactive user on the machine at any point, the owner
+flipped the USB switch to the Mac, **both panels followed it there**, waited,
+flipped back, and **both came back to the PC**. Both halves are the owner's, by
+eye; neither is a log's to make (hard rule 3). So the whole round trip fits in
+the 50 s between a logoff and the next logon.
+
+The log carries only the PC's half of that, and only as far as the writes:
+`arrival usb:1235:820A` at 01:30:40, settled 0.75 s, `pull` fired at 01:30:41,
+LG `0xF4 = 0xD0` and PG42UQ `0x60 = 0x11` emitted. **One fire, not two.**
+
+**The flip TO the Mac left no line at all, and cannot.** A departure is
+`Write-Verbose` (`windows/event-watch.ps1`), so this log can never show the
+peripherals leaving; the evidence that they left is the re-arrival implying a
+removal. Correlating a flip against the log therefore needs the OS's PnP
+timestamps, every time.
+
+**Real edge again, killed the same way.** Every watched device's
+`DEVPKEY_Device_LastArrivalDate` reads 01:30:39-40, so the peripherals
+physically re-enumerated when the watcher said they did rather than
+`Test-UsbPresent` manufacturing an edge out of failed queries.
+
+**And the settle-absorbs reading holds under a harder case.** Here PnP stamps
+`1235:820A` and `046D:0843` in the SAME second, 01:30:40 -- yet the log still
+names only `1235:820A`. Second-granularity timestamps cannot separate the two
+arrivals, but the sweep did, which is the entry below's mechanism rather than a
+coincidence of its one-second gap.
+
 **2026-09-02, Windows -- the boot tier fires at an empty logon screen.** The one
 untested step in the pre-login path: every earlier session-0 result was taken
 with a user logged in, so session 0 had no desktop but the machine was not empty
@@ -40,7 +76,8 @@ re-assert rather than a visible move. The measurement stands either way, because
 what was under test is whether a session-0 watcher fires and drives a panel with
 nobody signed in, and a panel that was genuinely displaying the other machine
 came back. State it this way rather than "both panels moved", which the eye did
-not witness.
+not witness. **The round-trip entry above closed that gap 30 minutes later**, so
+the caveat is this run's, not the boot tier's.
 
 **Incidentally, the Mac failed closed exactly as designed.** With no link to the
 LG at all, zero enumerated outputs identify as the LG, and hard rule 5 makes zero

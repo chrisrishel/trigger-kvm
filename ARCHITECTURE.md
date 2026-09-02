@@ -340,10 +340,10 @@ What remains is the permission trade, which is real and is the user's to make:
 
   **The logoff case is now measured, not argued.** On 2026-09-02, between a
   logoff and the next logon — no interactive session on the machine at all — the
-  session-0 watcher fired and pulled the display that was showing the Mac back to
-  the PC, confirmed by eye. Until then every session-0 result had been taken with
-  a user still logged on, which made this the last provisional claim in the
-  pre-login path.
+  session-0 watcher fired and pulled **both** displays back from the Mac to the
+  PC, confirmed by eye, on a round trip that also saw both go to the Mac in the
+  first place. Until then every session-0 result had been taken with a user still
+  logged on, which made this the last provisional claim in the pre-login path.
 
 See `ideas/nvapi-transport.md`.
 

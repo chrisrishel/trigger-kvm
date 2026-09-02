@@ -213,11 +213,12 @@ before any user has logged in -- the session-0 tests above all ran while a user
 was logged on, so session 0 was empty of a desktop but the machine was not empty
 of a session.
 
-Measured 2026-09-02 and it holds: between a logoff and the next logon, the
-session-0 watcher detected an arrival, fired `pull`, and the panel that was
-showing the Mac came back to the PC, confirmed visually. The reading -- including
-why only one panel had anywhere to come back from -- is in
-`docs/measurements.md`; the trajectory it closes is `ROADMAP.md` N2.
+Measured 2026-09-02 and it holds, twice: between a logoff and the next logon the
+session-0 watcher detected an arrival, fired `pull`, and the panels came back to
+the PC, confirmed visually. The second run was the full round trip with every
+cable connected -- both panels to the Mac, both back -- so the headline claim is
+witnessed and not inferred. The reading is in `docs/measurements.md`; the
+trajectory it closes is `ROADMAP.md` N2.
 
 ## Licence
 

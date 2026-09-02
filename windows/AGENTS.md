@@ -64,7 +64,9 @@ watcher survives hibernation as a live process holding its `$present` map; bus
 power cycles underneath it, the map and `Get-PresenceMap` agree on "present", and
 nothing fires. Flipping the switch to this PC *while it hibernates* does fire on
 resume, correctly. `DEVPKEY_Device_LastArrivalDate` does **not** track bus power
-cycling -- do not reach for it to answer "did USB come back?".
+cycling -- do not reach for it to answer "did USB come back?" across a resume. It
+DOES track a switch flip's PnP arrival, and since a departure is only
+`Write-Verbose`, it is how you correlate a flip against the log.
 
 **S3 standby HANGS this machine. Do not test it again; use hibernate.** Entered
 S3 once and never resumed: hard reboot, no crash dump, no bugcheck. Nothing in
