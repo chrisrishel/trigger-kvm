@@ -129,12 +129,12 @@ as uid 501 with both writes sent.
 All taken 2026-09-01 on a MacBook Pro 16" (`MacBookPro16,1`, Core i9-9880H,
 macOS 15.3.2 / 24D81) against this desk's two panels, with
 `macos/intel-ddc-probe`. That instrument enumerates; with `--i2c-read` it sends
-ONE standard `GetVCP 0x60` on source `0x51` per external framebuffer; and with
-`--set-asus-input` it sends ONE standard `SetVCP 0x60` to an AUS panel, from a
-named allowlist, gated on the EDID vendor. **Nothing was ever sent on source
-`0x50` from that machine, and the LG was never written to at all** -- `0x50` and
-`0xF4` do not appear anywhere in that program outside a comment. The MacBook's
-own screen held the terminal throughout, so hard rule 4 was never in play.
+ONE standard `GetVCP 0x60` on source `0x51`; with `--set-asus-input` ONE standard
+`SetVCP 0x60` to an AUS panel; and with `--set-lg-input` ONE `SetVCP 0xF4` on the
+service source `0x50` to a GSM panel. Every value comes from a named allowlist
+copied from `displays.toml` -- no number a caller supplies is expressible, so
+nothing here sweeps or walks a channel. The MacBook's own screen held the
+terminal throughout, so hard rule 4 was never in play.
 
 This machine has two GPUs: the Intel UHD 630 drives the built-in panel and the
 AMD Radeon Pro 5500M drives externals, so the framebuffer class here is
@@ -200,6 +200,27 @@ packet is harmless.
 returns success for writes it ignores, which is why the LG's stubbed `0x60`
 looks identical to a working one on the wire.
 
+**The LG accepts its service channel over this route, in both directions,
+including while displaying the other machine.** `SetVCP 0xF4` on source `0x50`,
+to the LG on its USB-C input, sent twice, each direction watched:
+
+| Sent | Packet | `result` | What the human saw |
+|---|---|---|---|
+| `displayport` (`0xD0`) | `50 84 03 F4 00 D0 9D` | `0x0`, both sends | the LG left the MacBook and showed the PC |
+| `usb-c` (`0xD1`) | `50 84 03 F4 00 D1 9C` | `0x0`, both sends | the LG came back to the MacBook |
+
+Both packets are byte-for-byte the strings `displays.toml` documents. **The
+second one is the whole finding**: it was sent while the LG was displaying the
+PC, so the Intel route can command a panel that is showing another machine on
+the manufacturer sidechannel. That is exactly what `pull` does, and with the
+ASUS result above it means both of this desk's panels are reachable from an
+Intel Mac by the same operations the Apple Silicon and Windows switchers use.
+
+Only `0xD0` and `0xD1` were ever sent. The LG's documented `hdmi1` (`0x90`) and
+`hdmi2` (`0x91`) remain unexercised and were deliberately kept out of the
+instrument's allowlist: a service channel is not where a value is tried for the
+first time.
+
 **Enumerating proves nothing about whether a panel is there. Three separate ways
 it lies:** with NOTHING attached, all five AMD framebuffers already advertised a
 bus with transaction types `0x1F` (simple + DDCci + combined);
@@ -244,26 +265,31 @@ programs compile clean under `-Wall -Wextra` on x86_64, and `event-watch --list`
 enumerated USB through IOKit and Bluetooth through `system_profiler` correctly:
 **the detector is arch-neutral, and only the switcher is Apple-Silicon-bound.**
 
-**Not measured, deliberately -- and the LG is the whole of it.** Everything above
-is the STANDARD channel. Nothing was sent on source `0x50`, so **whether the LG
-accepts `0xF4` over this route is unknown**, and that is the question Intel
-support actually turns on: the LG's standard `0x60` is stubbed in the panel, so
-the sidechannel is the only way to move it and no amount of standard-DDC success
-substitutes. A machine that could switch the ASUS and not the LG would be the
-half-switching setup that presents as a hardware fault.
+**What this settles, and what it does not.** It settles CAPABILITY: every
+operation the two existing switchers perform has now been performed from an Intel
+Mac -- both panels, both channels, both directions, each confirmed by a person
+looking. It settles nothing about whether the transport should be BUILT, which is
+a judgement about this desk rather than a reading, and is what decision 004 owes.
 
-One more thing the ASUS write did NOT prove: `tests/conventions.tests.sh`, which
-asserts hard rule 5's gate is the only door, scans `lib/` and `trigger-kvm` --
-**shell only** -- and keys on the literal string `input-alt`, m1ddc's spelling. C
-code emitting the source byte numerically would contain no such string, so the
-scan would count one door and pass while a second existed. Extending that scan is
-a precondition of any Intel write path, not a follow-up to one.
+`tests/conventions.tests.sh` was extended in the same session and for this
+reason. It asserts hard rule 5's gate is the only door, but it scanned `lib/` and
+`trigger-kvm` -- **shell only** -- keying on the string `input-alt`, m1ddc's
+spelling. C emitting the source byte numerically contains no such string, so the
+scan would have counted one door and passed while a second existed. It now scans
+the C as well. Its first version was itself wrong and only mutation caught it:
+asserting the emitter's function contains `DDC_VENDOR_GSM` passed even with the
+guard replaced by `if (0)`, because that name also appears in the refusal
+message -- present but unreachable. It now asserts the comparison.
 
-The USB-C-to-DisplayPort-direct reading the brief asked for was not taken: it was
-the tie-breaker for an ambiguous result, nothing was ambiguous once both DP Alt
-Mode and an HDMI protocol converter carried DDC, and it is the only one of the
-cablings that would have cost the PC its LG connection. The 13" 2019 model's
-Intel-GPU framebuffer path is untested. Nothing was tried on source `0x50`.
+**Still not measured.** The USB-C-to-DisplayPort-direct reading the brief asked
+for was not taken: it was the tie-breaker for an ambiguous result, nothing was
+ambiguous once both DP Alt Mode and an HDMI protocol converter carried DDC, and
+it is the only one of the cablings that would have cost the PC its LG
+connection. The 13" 2019 model's Intel-GPU framebuffer path is untested -- it is
+a different framebuffer driver, so none of this transfers to it. The LG's
+`hdmi1`/`hdmi2` sidechannel values were never sent. And nothing here was run
+without a logged-in session, so the Intel equivalent of the LaunchDaemon result
+above is unknown.
 
 ## The LG service channel
 

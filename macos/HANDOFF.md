@@ -88,20 +88,22 @@ Owed:     decision record 004, proposing or declining an Intel transport --
             string, so the scan would count one door and pass while a second
             existed. That is a precondition, not a follow-up.
 
-          The STANDARD channel is now measured end to end: a SetVCP 0x60 framed
-          by intel-ddc-probe and sent over IOI2CSendRequest moved the ASUS in
-          both directions, watched, and its bytes match displays.toml exactly.
-          So the route writes and the framing is right.
+          There is no longer a capability unknown. BOTH channels are measured
+          end to end from the Intel Mac: a standard SetVCP 0x60 moved the ASUS
+          both ways, and SetVCP 0xF4 on service source 0x50 moved the LG both
+          ways -- including a pull back to the MacBook sent while the LG was
+          displaying the PC, which is precisely what `pull` does. Every packet
+          matched displays.toml byte for byte. So the question is purely
+          whether this desk wants a second transport, not whether one could
+          work.
 
-          The gating unknown is now ONLY the LG: whether it accepts 0xF4 on
-          source 0x50 over this route is untested, and its standard 0x60 is
-          stubbed in the panel, so the sidechannel is the only way to move it.
-          Standard-DDC success does not substitute -- a machine that switched
-          the ASUS and not the LG is the half-switching setup that presents as
-          a hardware fault. Taking that reading means sending on the service
-          channel, with a person watching (hard rule 3), and is its own
-          decision -- not a by-product of building.
-Verified: all of the above was run on the Intel Mac, the ASUS write visually
-          confirmed in both directions by the user. Nothing was ever sent on
-          source 0x50. The 13" 2019 model drives externals from the Intel GPU
-          rather than the AMD one and was not tested at all.
+          conventions.tests.sh has ALREADY been extended to scan C for a
+          numeric 0x50 (commit cc8b2d5), so that precondition is met rather
+          than owed.
+Verified: all of the above was run on the Intel Mac and every switch was
+          confirmed visually by the user, in both directions, on both panels.
+          Only the four allowlisted values were ever sent; the LG's hdmi1/hdmi2
+          sidechannel values remain unexercised. The 13" 2019 model drives
+          externals from the Intel GPU rather than the AMD one and was not
+          tested at all, so none of this transfers to it. Nothing was run
+          without a logged-in session.
