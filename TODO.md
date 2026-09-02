@@ -39,8 +39,9 @@
 
 - **Measure whether a directory-scoped `AGENTS.md` is loaded by both tools, and if
   so move the test-harness hazards into `windows/tests/AGENTS.md`.** The instruction
-  files are near their caps (`windows/AGENTS.md` has ~300 bytes spare of 10240) and
-  the next hazard learned has nowhere to go. The tempting fix — an `agents/` folder
+  files are near their caps (`windows/AGENTS.md` has **~150 bytes spare of 10240**,
+  down from ~300 -- the 2026-09-02 round-trip run spent half the remaining headroom
+  on one clause) and the next hazard learned has nowhere to go. The tempting fix — an `agents/` folder
   of instructions loaded on demand — does NOT work by `@`-import:
   `docs/decisions/002` measured that Codex reads the `AGENTS.md` chain by PATH and
   never sees `CLAUDE.md` or anything it imports, so the two agents would silently
