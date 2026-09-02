@@ -75,31 +75,37 @@ This reframing is recent and is what the next phase turns on. The old frame was
 "NVIDIA versus everyone else". The real split is **vendor-specific raw I2C, which
 works without a desktop**, versus **vendor-neutral `dxva2`, which does not**.
 
-| route | vendor-neutral | works in session 0 | status |
-|---|---|---|---|
-| NVAPI | no | **yes** — measured | built |
-| ADL (AMD) | no | unknown | exists; a third-party tool uses it for the LG service channel |
-| IGCL (Intel) | no | **unknown — measurable on this desk** | exists, ships with the Intel driver |
-| `dxva2` | **yes** | **no** — measured | proven, unbuilt |
+| route | vendor-neutral | needs admin to write | works in session 0 | status |
+|---|---|---|---|---|
+| NVAPI | no | no | **yes** — measured | built |
+| ADL (AMD) | no | not documented | unknown | exists; a third-party tool uses it for the LG service channel |
+| IGCL (Intel) | no | **yes — documented** | moot | **ruled out**, [`005`](docs/decisions/005-igcl-ruled-out-by-its-elevation-requirement.md) |
+| `dxva2` | **yes** | no | **no** — measured | proven, unbuilt |
 
 The `dxva2` row is why the boot tier and the transport question are entangled: a
 panel driven that way cannot be switched before login, because a session-0
 process never sees a desktop's monitors — not even after someone logs in.
 
+The IGCL row is settled and was the surprise. Every IGCL write path requires
+administrator privileges, and it exposes no input-select API that avoids raw
+I2C — so it cannot run on a switch path that is unelevated by construction, and
+whether it works in session 0 no longer matters.
+
 ---
 
 ## Next
 
-### N1. Measure IGCL from session 0 — the gating measurement
+### ~~N1. Measure IGCL from session 0~~ — answered 2026-09-02, without measuring
 
-`ctlI2CAccess` ships with the Intel graphics driver and covers Alder Lake-P and
-newer, so the UHD 770 on this desk qualifies. **If it works in session 0, there is
-no boot-tier limitation on Intel systems and no watcher handover is needed there**;
-`dxva2` drops from "the generalisation story" to "the fallback for AMD and older
-Intel". If it does not, the handover design below is justified.
+Closed on a cheaper observation, on a different axis than expected: **IGCL
+requires admin for every write**, and offers no input-select API that avoids raw
+I2C. It cannot sit on an unelevated switch path, so the session-0 question is
+moot. [`005`](docs/decisions/005-igcl-ruled-out-by-its-elevation-requirement.md).
 
-Everything else in this section is scoped by the answer, so it goes first. Known
-risk: third-party reports show IGCL support varying by CPU generation.
+Consequences, which run *opposite* to what this entry assumed: `dxva2` is the
+generalisation story rather than a fallback, the boot-tier limitation on Intel
+hardware is permanent, and **the watcher handover is more likely to be needed,
+not less.**
 
 ### N2. Test the boot tier at the actual logon screen
 
@@ -143,29 +149,39 @@ excluding *current mainstream* hardware — every AMD desktop, every Intel lapto
 anything without an NVIDIA card, all of which `windows/README.md` turns away
 today. Different in kind, not degree.
 
-Scope is deliberately not fixed until N1 reports. The candidates:
+With N1 answered, the scope narrows to one certain piece and one open one:
 
-- **A `dxva2` transport**, chosen per panel at configure time, offered and never
-  probed, gated at the transport by EDID vendor+product. Shape in
+- **A `dxva2` transport** — now the whole generalisation story for Windows, not a
+  fallback. Chosen per panel at configure time, offered and never probed, gated
+  at the transport by EDID vendor+product. Shape in
   [`003`](docs/decisions/003-dxva2-as-a-second-windows-transport.md).
-- **An ADL transport for AMD.** `ADL_Display_WriteAndReadI2C` is a raw I2C path,
-  and a third-party tool already uses ADL to drive an LG's `0x50` / `0xF4`
-  sidechannel with the same values [`displays.toml`](displays.toml) records — on
-  a different LG model, which independently corroborates keying the dialect table
-  on **vendor** rather than vendor:product.
-- **An IGCL transport for Intel**, whose value depends entirely on N1.
+- **An ADL transport for AMD** — open. `ADL_Display_WriteAndReadI2C` is a raw
+  I2C path, and a third-party tool already uses ADL to drive an LG's `0x50` /
+  `0xF4` sidechannel with the same values [`displays.toml`](displays.toml)
+  records — on a different LG model, which independently corroborates keying the
+  dialect table on **vendor** rather than vendor:product. Its docs state no
+  privilege requirement, but that is weaker than Intel's explicit one and there
+  is no AMD hardware here to measure. It would matter because, unlike `dxva2`, a
+  raw-I2C route can reach a sidechannel panel *and* may work in session 0.
+- ~~An IGCL transport for Intel~~ — ruled out,
+  [`005`](docs/decisions/005-igcl-ruled-out-by-its-elevation-requirement.md).
 
 **Accepted as a property of any `dxva2` panel, not a defect to fix later:** it is
-login-tier only.
+login-tier only. On Intel hardware that is now the only option, so it is the
+whole story there.
 
-### The watcher handover — held
+### The watcher handover — no longer held
 
 If a configured panel needs a desktop, the watcher could run in session 0 before
 login and hand over to a session watcher after it, so the boot tier stays
 selectable and its cost is stated truthfully rather than the row being disabled.
 
-Held until N1, because IGCL working in session 0 would remove the need on Intel
-hardware entirely. Two things to settle if it is built, both already identified:
+This was held pending N1, on the theory that IGCL might remove the need on Intel
+hardware. It does not, so the question is live: on any machine with a `dxva2`
+panel, a handover is the only way the boot tier covers anything at all. Whether
+that earns its complexity is the open design call — the alternative remains the
+disabled row that [`specs/configure.md`](specs/configure.md) §8 already provides
+for. Two things to settle if it is built, both already identified:
 
 - The general form is *"the watcher runs in the context its configured transports
   need, decided at configure time"* — which collapses to exactly today's
