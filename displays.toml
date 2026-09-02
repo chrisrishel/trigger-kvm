@@ -29,10 +29,13 @@ osd_auto_input = "Auto Input Switch"   # MUST be OFF. On, the panel defects to t
                                        # from software.
 
 # This panel does NOT have one EDID product id. It reports a different one per
-# input (three consecutive values measured on one panel, one per physical path),
-# so there is no single correct value and it cannot be a shared constant. A host
-# may only use the value it measures on ITS OWN input, and must never copy one
-# from another host or another cable. The ASUS below shows no such behaviour.
+# input (four consecutive values measured on one panel, one per physical path),
+# so there is no single correct value and it cannot be a shared constant. The
+# INPUT decides the value, not the host: two different Macs on the same input
+# read the same id. A host may only use the value it measures on ITS OWN input,
+# and must never copy one from another host or another cable. The EDID serial is
+# stable across inputs; the id, the EDID's length and the CoreGraphics UUID
+# derived from the id are not. The ASUS below shows no such behaviour.
 edid_product   = "per-input; use what `trigger-kvm list` shows on this computer"
 
 # Standard DDC/CI VCP 0x60 is STUBBED on this panel: writes return success and are

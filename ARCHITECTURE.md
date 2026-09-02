@@ -338,9 +338,9 @@ the installed binary: `IOAVServiceCreate`, `IOAVServiceCreateWithService`,
 real source — never memory.
 
 **Do not key that on the EDID product ID without checking it first.** The LG reports
-a *different product ID on every input* — three consecutive values have been
-measured on this one panel, one per path (see `displays.toml`). Each host sees a
-stable value for the input it is plugged into, so it is usable as a local key, but
-it is meaningless as a shared constant and must never be copied between hosts. The
-ASUS does not behave this way, which makes it easy to assume the field is stable
-when it is not.
+a *different product ID on every input* — four consecutive values have been
+measured on this one panel, one per path (see `displays.toml`). The input decides
+the value, not the host: two different Macs plugged into the same input read the
+same ID. So it is usable as a local key, but it is meaningless as a shared
+constant and must never be copied between hosts. The ASUS does not behave this
+way, which makes it easy to assume the field is stable when it is not.

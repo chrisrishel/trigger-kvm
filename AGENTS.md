@@ -126,11 +126,12 @@ were once "measured" here and were wrong).
   random is the worst failure this system can have. Known gap, accepted: drift
   while the machine is *awake* still strands you until the switch next moves.
 - **Both switchers address exactly one display**, resolved by EDID at runtime.
-- **The LG's EDID product id is per-input, so it is not a shared constant.** Three
-  values have been measured on the one panel. Each host sees a stable value for
-  its own input, so it works as a *local* key; copying one host's value to
-  another, or treating `displays.toml`'s field as authoritative, silently matches
-  nothing.
+- **The LG's EDID product id is per-input, so it is not a shared constant.** Four
+  values have been measured on the one panel. The INPUT decides it, not the host:
+  two different Macs on the same input read the same value. So it works as a
+  *local* key; copying one host's value to another, or treating `displays.toml`'s
+  field as authoritative, silently matches nothing. The EDID serial is stable
+  across inputs and the derived CoreGraphics UUID is not.
 - **Both platforms rotate their log at watcher startup, after the single-instance
   lock, and nowhere else** -- so a redundant start never rotates while a watcher
   is alive, and the switcher (a separate process writing the same file) can never

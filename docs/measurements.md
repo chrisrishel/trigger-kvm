@@ -103,14 +103,130 @@ session, no deliberate change between. `isConnected` was stable throughout.
 hibernate cycle (not observed separately). dxva2 describes the LG as `Generic PnP
 Monitor`. Nothing broke, because the switcher resolves by EDID.
 
-**The LG's EDID product id is per-input.** `0x9e9d` (Windows, DP), `0x9e9f` (Mac,
-USB-C), `0x9ea0` (Mac, through the old KVM), each stable for its own host. The
-ASUS reports `0x42e0` everywhere.
+**The LG's EDID product id is per-INPUT, and not per-host.** Four consecutive
+values on the one panel: `0x9e9d` (Windows, DP), `0x9e9e` (Intel Mac, HDMI 1),
+`0x9e9f` (Mac, USB-C), `0x9ea0` (Mac, through the old KVM). It was once recorded
+here as "each stable for its own host", which left open whether the id followed
+the input or the machine. On 2026-09-01 the Intel MacBook, on the LG's USB-C
+input, read `0x9e9f` -- the same value the Mac Studio reads on that same input.
+So the input decides it, and a host still may only use the value it measures on
+its own input.
+
+Around it: the EDID *serial* (`0x00001111`) is stable across all of them, while
+the EDID's own length is not -- 384 bytes on USB-C, 512 on HDMI 1. And because
+`CGDisplayCreateUUIDFromDisplayID` derives from the product id, the UUID m1ddc
+keys on is per-input as well (`aaaaaaaa...` USB-C, `bbbbbbbb...` HDMI 1). The
+ASUS reports `0x42e0` everywhere, and its UUID was correspondingly identical
+across two readings on one input.
 
 **2026-08-31, macOS -- display identity needs no session.** From a LaunchDaemon
 with `UserName` set and no logged-in session: IOKit display identity worked with
 no CoreGraphics, `m1ddc display list` worked, and a full `trigger-kvm pull` ran
 as uid 501 with both writes sent.
+
+## Intel DDC route
+
+All taken 2026-09-01 on a MacBook Pro 16" (`MacBookPro16,1`, Core i9-9880H,
+macOS 15.3.2 / 24D81) against this desk's two panels, with
+`macos/intel-ddc-probe`. That instrument is read-only: it enumerates, and with
+`--i2c-read` sends ONE standard `GetVCP 0x60` on source `0x51` per external
+framebuffer. **No value was written to any monitor from that machine, and
+nothing was ever sent on source `0x50`.** The MacBook's own screen held the
+terminal throughout, so hard rule 4 was never in play.
+
+This machine has two GPUs: the Intel UHD 630 drives the built-in panel and the
+AMD Radeon Pro 5500M drives externals, so the framebuffer class here is
+`AMDRadeonX6000_AmdRadeonFramebuffer`. The 13" 2019 model drives externals from
+the Intel GPU instead and is a different driver; none of this was measured there.
+
+**The framebuffer I2C route exists on Intel and reaches both panels, direct and
+through Apple's HDMI adapter.** Three cablings, three well-formed DDC/CI replies:
+
+| Cabling | Panel / input | Reply | `result` |
+|---|---|---|---|
+| USB-C to USB-C, direct (DP Alt Mode) | LG, USB-C | `6E 88 02 00 60 00 00 12 00 0F C9` | `0x0` |
+| Apple USB-C Digital AV Multiport Adapter (`05AC:1460`) | LG, HDMI 1 | `6E 88 02 00 60 00 00 12 00 0F C9` | `0x0` |
+| the same adapter | ASUS, HDMI 2 | `6E 88 02 00 60 00 00 05 00 12 C3` | `0x0` |
+
+The adapter is an old one, contemporary with the 2019 machine, and its picture
+was visibly degraded on the LG -- wrong colour, wrong resolution, a TMDS
+bandwidth limit against a 5120x2160 panel. **DDC was unaffected**: the reply
+through it was byte-identical to the direct DP Alt Mode link. Picture quality and
+the display data channel are independent, and a bad picture is not evidence
+against the route.
+
+**The ASUS answers DDC on an input it is not displaying, on this route too.**
+With the adapter left on HDMI 2 and the panel switched back to DisplayPort, it
+replied `6E 88 02 00 60 00 00 05 00 0F DE` -- current `0x0F`, DisplayPort, which
+is the input it was in fact showing. So its DDC responder is panel-global, not
+per-input. This is the case a switcher actually depends on, since a switch always
+addresses a monitor that is currently showing the other machine; every other
+reading in this section was taken on an actively displayed input.
+
+**Read VALUES still behave as hard rule 2 says, and the two panels differ.** The
+LG returned `0x0F` on both of its cablings while genuinely on USB-C and then on
+HDMI 1 -- the stub `displays.toml` documents, confirmed now from a third host and
+a different OS route. The ASUS reported its true input twice and tracked a real
+change (`0x12` on HDMI 2 while showing HDMI 2, `0x0F` after being switched to
+DisplayPort). That does not license reading back: it is two correct reads on the
+panel that never needed the sidechannel, while the panel that does need it lied
+both times. The existing "the PG42UQ answers 0 to everything" note was measured
+on luminance, contrast, volume and max luminance; `0x60` is not those. Even here
+the ASUS's `max` field came back `0x0005`, nonsense for input select, so the
+current field was right while the max field beside it was garbage.
+
+**Enumerating proves nothing about whether a panel is there. Three separate ways
+it lies:** with NOTHING attached, all five AMD framebuffers already advertised a
+bus with transaction types `0x1F` (simple + DDCci + combined);
+`IODisplayCreateInfoDictionary` returns a NON-NULL but empty dictionary for a
+vacant framebuffer, so four empty ones were probed on every run; and the
+built-in panel returned `IOI2CSendRequest=0x0` with `result=0x0` and a reply of
+pure garbage (`E8 0C D0 15 ...`), because an internal eDP panel has no DDC/CI
+responder. Only the `6E 88` framing distinguishes an answer from a non-answer.
+The failures are at least distinct: `0xe00002d7` (`kIOReturnOffline`) from vacant
+AMD framebuffers, `0xe00002c7` (`kIOReturnUnsupported`) from the Intel
+framebuffer, whose bus advertises `0x13` -- no DDCci bit.
+
+**The gMux moves a display between framebuffers under you.** With nothing
+attached the built-in panel sat on `AppleIntelFramebuffer@0`; the moment an
+external arrived it migrated to `AMDRadeonX6000...ATY,Boa@0` and the Intel
+framebuffer held no display at all. So on Intel the framebuffer a panel lives on
+is not stable across a hotplug -- the same hazard as the Windows index swap,
+reached from a different direction, and the same answer: resolve by EDID.
+
+**`display-probe` loses two fields on Intel, and the cause is the EDID lookup.**
+It printed `1E6D|9E9E|GSM||00001111|<uuid>|` for the format
+`vendor|product|mfg|connector|serial|uuid|name`: **connector and name both
+empty**, on both panels, on every reading. `collect_edids()` walks the registry
+for a property literally named `EDID` and reads `Metadata`/`DFP Type
+Description` beside it. On this Mac: **0** nodes carry `EDID`, **2** carry
+`IODisplayEDID`, and there are **0** `IOPortTransportStateDisplayPort` nodes and
+**0** `DFP Type Description` properties anywhere in the registry. Vendor,
+product, serial and UUID survive because they come from CoreGraphics. The name
+does not -- and `displays.toml` matches panels by `edid_name`. The same EDID that
+`display-probe` could not find was decoded without trouble by `intel-ddc-probe`
+through `IODisplayCreateInfoDictionary`, so the data is there; only the route to
+it is Apple-Silicon-shaped.
+
+**The suite runs on Intel; the install half cannot.** 10 of 11 files pass. All 26
+failures are in `install.tests.sh`, and every one is the arch preflight refusing
+first -- "this Mac is x86_64. m1ddc ... supports Apple Silicon only" -- including,
+notably, the case that asserts the *m1ddc-missing* refusal, which the preflight
+preempts. That refusal is correct; the consequence is that no install behaviour
+is exercised on Intel at all. `shellcheck` was not installed on this machine and
+its half was skipped. No `skip_case` skips anywhere. Separately, all three C
+programs compile clean under `-Wall -Wextra` on x86_64, and `event-watch --list`
+enumerated USB through IOKit and Bluetooth through `system_profiler` correctly:
+**the detector is arch-neutral, and only the switcher is Apple-Silicon-bound.**
+
+**Not measured, deliberately.** No VCP value was written from the MacBook, so
+nothing here says the route can *switch* a panel -- only that reads reach it, and
+a write is a separate decision that a person has to watch happen (hard rule 3).
+The USB-C-to-DisplayPort-direct reading the brief asked for was not taken: it was
+the tie-breaker for an ambiguous result, nothing was ambiguous once both DP Alt
+Mode and an HDMI protocol converter carried DDC, and it is the only one of the
+cablings that would have cost the PC its LG connection. The 13" 2019 model's
+Intel-GPU framebuffer path is untested. Nothing was tried on source `0x50`.
 
 ## The LG service channel
 
