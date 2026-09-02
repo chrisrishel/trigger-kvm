@@ -337,6 +337,17 @@ the installed binary: `IOAVServiceCreate`, `IOAVServiceCreateWithService`,
 `IOAVServiceReadI2C`, `IOAVServiceWriteI2C`. Their signatures would still need a
 real source — never memory.
 
+**Intel Macs have no `IOAVService`, and the route they do have is proven but not
+built.** The framebuffer I2C interface (`IOFBCopyI2CInterfaceForBus` +
+`IOI2CSendRequest`) was measured on 2026-09-01 to reach both panels on both
+channels in both directions, including the LG's service channel. It is not
+implemented, and `README.md` still says Apple Silicon because that is what is
+supported. The decision, the seams it would touch and everything the measurement
+learned are in `docs/decisions/004-intel-mac-ddc-proven-not-built.md`; the
+readings are in `docs/measurements.md`. The shape it would take matters here:
+the arch would pick the *tool* on one line of `ddc_send`, never the *policy*, so
+the single service-channel gate does not move.
+
 **Do not key that on the EDID product ID without checking it first.** The LG reports
 a *different product ID on every input* — four consecutive values have been
 measured on this one panel, one per path (see `displays.toml`). The input decides

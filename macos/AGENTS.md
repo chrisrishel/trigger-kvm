@@ -11,6 +11,9 @@ can name `input-alt` (what m1ddc calls I2C source `0x50`), the source is chosen
 from the configured method inside it, and it refuses unless the vendor is
 `DDC_VENDOR_GSM`. `tests/conventions.tests.sh` asserts that `input-alt` appears in
 exactly one non-comment line and that no function takes a source byte. Keep it so.
+The OTHER emitter is `i2c_set_lg_input_alt` in `intel-ddc-probe.c`: numeric, so
+the `input-alt` scan cannot see it and a second scan covers `*.c`. Instrument
+only, never installed, gated on GSM itself. Decision 004.
 
 **Bluetooth presence comes from `system_profiler`, and the reason is a PERMISSION
 GATE, not a broken API.** IOBluetooth needs TCC Bluetooth permission, granted PER
@@ -21,9 +24,9 @@ install: the watcher's first sweep would block with the process still ALIVE, so
 `KeepAlive` would not restart it and the trigger would silently never fire. A
 background watcher must not wait on a human. `system_profiler SPBluetoothDataType
 -xml` never raises that prompt (Apple-signed, own entitlement), costs about 60ms,
-and is a property list, so CoreFoundation parses it with no JSON dependency. There
-is nothing to subscribe to on that route, so Bluetooth is POLLED -- and only when a
-`bt:` device is configured, so a USB-only setup pays nothing.
+and is a plist, so CoreFoundation parses it with no JSON dependency. Nothing
+subscribes on that route, so Bluetooth is POLLED -- and only when a `bt:` device
+is configured, so a USB-only setup pays nothing.
 
 **A hang under TCC is indistinguishable from a slow prompt. Do not conclude
 anything about a permission-gated API from a timeout.** The entry above was wrong
@@ -102,10 +105,10 @@ cd macos && bash tests/run.sh          # or: make test
 ```
 
 The suite **cannot move a monitor**: `M1DDC` points at a recorder and
-`display-probe` at a fixture, so even a test that drives the whole program through
-a path nobody anticipated writes a line to a file instead of a packet to a panel.
-That is deliberately stronger than stubbing one function. The harness runs
-`set -euo pipefail` and `shellcheck`, because the scripts do.
+`display-probe` at a fixture, so even a test driving the program through a path
+nobody anticipated writes a line to a file, not a packet to a panel -- stronger
+than stubbing one function. The harness runs `set -euo pipefail` and
+`shellcheck`, because the scripts do.
 
 **A test that did not run is never reported as one that passed.** `run.sh` shows
 a file's output only on FAIL, so a skip written to stderr was swallowed and its

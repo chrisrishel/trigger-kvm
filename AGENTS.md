@@ -78,12 +78,19 @@ monitor the terminal is on, have the user drag the terminal to the other one fir
 **5. The LG service channel may only ever be aimed at the LG.**
 I2C source `0x50` carries VCP `0xF4`, and what that means on a non-LG panel is
 unknown. The rule is enforced in code, at the transport, not by caller discipline:
-on each platform exactly ONE function can emit source `0x50`, the source byte is
-not a parameter, and it refuses unless the target's EDID manufacturer is GSM
-(`0x1E6D`). There is no generic "write to source N" entry point, so no caller can
-aim it at another vendor's panel, including by accident. Do not add one. Each
-platform's `AGENTS.md` names its gate, and each suite asserts -- self-testedly --
-that the gate is the only door.
+EVERY function that can emit source `0x50` takes no source byte as a parameter,
+and refuses unless the target's EDID manufacturer is GSM (`0x1E6D`). There is no
+generic "write to source N" entry point, so no caller can aim it at another
+vendor's panel, including by accident. Do not add one.
+
+A platform's SHIPPING path has exactly ONE such function. A measuring instrument
+may carry its own only if it is never installed and not built by default, is
+gated the same way, and is covered by the same self-tested scan -- macOS has one
+(`intel-ddc-probe`, decision 004). Each platform's `AGENTS.md` names EVERY
+emitter it has, and each suite asserts -- self-testedly -- that there are no
+others. An emitter the scan cannot see is the failure this rule exists to
+prevent: a scan keyed on one language's spelling silently stops covering the
+rest of the tree.
 
 The switcher also refuses the LG switch unless exactly one enumerated output
 identifies as the LG -- zero is a refusal, and so is more than one, because an
