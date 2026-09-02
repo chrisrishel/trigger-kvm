@@ -577,6 +577,23 @@ case produce the same log line, and only the ABSENCE of an arm distinguishes
 them. `install` now clears the watchers before it registers, and states plainly
 when the task is registered with nothing watching.
 
+**Then confirmed live, and fixed.** An install attempt the same morning left the
+new scripts on disk with the 09-01 22:36:38 watcher still holding the lock and
+still running August's code -- the defect in the open, with the self-heal ticking
+`already running` against it once a minute. Re-run with the fix and with
+elevation granted, `06:43:12` logged the first new arm since 09-01
+(`sessionId=0 interactive=False lock=Global`, so the boot tier survived), the old
+process was gone, and the version stamp moved from `3ac7d49, spec revision
+unrecorded` to `4ee77df, spec revision 8`.
+
+**Incidental, and its own defect: a declined UAC prompt recorded a downgrade that
+did not happen.** `install.ps1:370` writes `install.autostart = login` the moment
+elevation is declined, before any task work; the task replacement then failed as
+well, leaving the config saying `login` while the registered task was still S4U.
+`Get-EffectiveTier` reads that config, so the next bare `install` would have
+demoted a working boot tier without anyone asking. Recorded in `TODO.md`; the
+fallback is right, writing it before the install succeeds is not.
+
 **2026-09-01 -- the .NET user-environment API cannot round-trip a PATH.**
 `[Environment]::SetEnvironmentVariable('X','C:\a;%USERPROFILE%\b','User')`
 stores the value as **REG_SZ**, not REG_EXPAND_SZ, even though it contains a

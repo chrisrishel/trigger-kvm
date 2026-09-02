@@ -9,6 +9,19 @@
   failing on one. Check: task principal is the standard user, files land in that user's
   `%LOCALAPPDATA%`, and their `PATH` (not the admin's) gains `bin`.
 
+- **A declined UAC prompt records a tier downgrade that did not happen.** Observed
+  2026-09-02: `install.ps1:370` writes `install.autostart = login` the moment elevation
+  is declined, BEFORE any task work. On this machine the task replacement then failed
+  too ("the task was left exactly as it was"), so the config said `login` while the
+  registered task was still S4U -- and `Get-EffectiveTier` reads that config, so the
+  next bare `install` would have silently demoted a working boot tier. Restored by hand;
+  backup at `%LOCALAPPDATA%\trigger-kvm\config.pre-uac-decline.bak`.
+  The fallback itself is correct and required (`specs/configure.md` 8: fall back, say so,
+  record it) -- what is wrong is recording it before the install it describes has
+  succeeded. Likely fix: write the tier once, where the other tier facts are written,
+  after registration succeeds. Check `specs/configure.md` 8 still reads true of that.
+  Trigger: when the elevation path or `Get-EffectiveTier` is next touched.
+
 - **Check whether `pause` actually stands a BOOT-TIER watcher down.** `Stop-Watchers`
   (`windows/install.ps1`) finds watchers to kill by matching `Win32_Process.CommandLine`,
   and an unelevated caller reads that as empty across the session boundary -- the same
