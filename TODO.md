@@ -10,6 +10,28 @@
   failing on one. Check: task principal is the standard user, files land in that user's
   `%LOCALAPPDATA%`, and their `PATH` (not the admin's) gains `bin`.
 
+- **Say plainly, in `status`, that the input map is unverifiable -- and that
+  re-running `configure` is the fix.** If a computer's cable moves to a different
+  input ON THE MONITOR, a panel with a stable EDID product id (the ASUS reports
+  `0x42E0` on every input) still resolves, and `pull` then sends the old input
+  value: the panel switches to a dead input and goes black, silently, with a
+  success in the log. Detection is barred -- rule 2 forbids reading the value
+  back, rule 3 says the success code proves nothing -- so the only move left is
+  making the failure legible and cheap to recover. A panel with a per-input
+  product id (the LG) already fails safe by refusing. Reasoning, the cases it
+  does NOT affect, and why no protocol-level "switch to whoever is talking"
+  exists are in `ideas/knowing-which-input-you-are-on.md`. Trigger: when `status`
+  or `configure` output is next touched, or when someone reports a pull that
+  blanked a monitor.
+
+- **Measure a same-GPU, different-port re-plug.** The 2026-09-01 cable move
+  changed GPU and adapter together, so "same card, different socket" is argued
+  from the code and never measured. Clean test: move only the GPU end of the LG's
+  cable to another 4090 DisplayPort socket, same cable, same LG input; terminal
+  on the ASUS first (hard rule 4). Expect no change -- EDID vendor+product are
+  unaffected and `outputId` is resolved fresh. Trigger: next time the machine is
+  open, or before anyone documents the re-plug behaviour as a guarantee.
+
 - **Write up the deferred advanced escape hatch** (one specific I2C address, one specific
   value, typed by the user, behind a strong disclaimer; never a sweep across a range of
   either). It is step 4 of the ladder in `ideas/unknown-monitor-discovery.md` and the only
