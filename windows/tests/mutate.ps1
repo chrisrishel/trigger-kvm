@@ -585,6 +585,62 @@ Invoke-Mutation 'transport: the walkthrough may offer one the switcher refuses' 
     "    return `$(if (`$pick -eq 1) { 'dxva2' } else { 'nvapi' })" `
     "    return `$(if (`$pick -eq 1) { 'adl' } else { 'nvapi' })"
 
+# --- naming a device, when Windows would rather not ---------------------------
+#
+# Three rows read `USB Input Device` on the reference desk, and two of them could
+# never travel. These are the assertions that stop it going back.
+
+Invoke-Mutation 'naming: a generic name wins again' `
+    'install.ps1' 'install.tests.ps1' `
+    '    $named = @($all | Where-Object { $_ -notmatch $GENERIC_NAMES -and $_ -notmatch ''^USB '' })' `
+    '    $named = @($all)'
+Invoke-Mutation 'naming: a bus-prefixed name stops losing to a real one' `
+    'install.ps1' 'install.tests.ps1' `
+    '    $named = @($all | Where-Object { $_ -notmatch $GENERIC_NAMES -and $_ -notmatch ''^USB '' })' `
+    '    $named = @($all | Where-Object { $_ -notmatch $GENERIC_NAMES })'
+Invoke-Mutation 'naming: "USB " becomes a veto rather than a preference' `
+    'install.ps1' 'install.tests.ps1' `
+    '    $good = @($all | Where-Object { $_ -notmatch $GENERIC_NAMES })
+    if ($good.Count -gt 0) { return $good[0] }' `
+    ''
+Invoke-Mutation 'naming: the device is never asked what it calls itself' `
+    'install.ps1' 'install.tests.ps1' `
+    '            BusName = Get-BusReportedName -InstanceId $d.InstanceId' `
+    "            BusName = ''"
+Invoke-Mutation 'naming: a bare HIDClass child counts as an input role' `
+    'install.ps1' 'install.tests.ps1' `
+    "        if (`$d.Class -notin @('Mouse', 'Keyboard')) { continue }" `
+    "        if (-not `$d.Class) { continue }"
+Invoke-Mutation 'naming: roles stop reaching the row' `
+    'install.ps1' 'install.tests.ps1' `
+    '    if ($Candidate.Roles) { $s += (''  ({0})'' -f (@($Candidate.Roles) -join '', '')) }' `
+    ''
+Invoke-Mutation 'naming: the state goes back into the name and breaks the columns' `
+    'install.ps1' 'install.tests.ps1' `
+    '    if ($Candidate.Roles) { $s += (''  ({0})'' -f (@($Candidate.Roles) -join '', '')) }' `
+    '    if ($Candidate.Roles) { $s += (''  ({0})'' -f (@($Candidate.Roles) -join '', '')) }
+    if ($Candidate.State) { $s += ("  ({0})" -f $Candidate.State) }'
+Invoke-Mutation 'naming: the menu goes back to picking by vendor:product' `
+    'install.ps1' 'walkthrough.tests.ps1' `
+    '        -Items  @($Cands | ForEach-Object { Get-CandidateLabel $_ }) `' `
+    '        -Items  @($Cands | ForEach-Object { ''{0,-20} {1,-4}'' -f $_.Key, $_.Bus }) `'
+Invoke-Mutation 'naming: a device presenting a keyboard stops sorting first' `
+    'install.ps1' 'install.tests.ps1' `
+    '            Rank  = $(if ($roles[$k]) { 0 }' `
+    '            Rank  = $(if ($false) { 0 }'
+Invoke-Mutation 'naming: the review menu goes back to listing ids' `
+    'install.ps1' 'walkthrough.tests.ps1' `
+    '                    if ($c) { $c.Name } else { $d }' `
+    '                    $d'
+Invoke-Mutation 'naming: status reports the trigger keys with no names' `
+    'install.ps1' 'install.tests.ps1' `
+    '        if ($c) { $name = Get-CandidateLabel $c }' `
+    "        if (`$c) { `$name = '' }"
+Invoke-Mutation 'naming: an absent trigger is left reading as a fault' `
+    'install.ps1' 'install.tests.ps1' `
+    '    if ($missing -gt 0) {' `
+    '    if ($false) {'
+
 # --- the LG service channel has one door --------------------------------------
 #
 # The self-test inside conventions.tests.ps1 already proves the CHECK bites, on

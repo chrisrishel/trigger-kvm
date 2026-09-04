@@ -45,10 +45,12 @@ $script:canElevate = $true
 function Test-CanElevate { return $script:canElevate }
 function Get-TriggerCandidates {
     @(
-        [PSCustomObject]@{ Key='usb:046d:0843';  Bus='USB'; Name='Webcam';    Class='Image';     State=''; Rank=0 }
-        [PSCustomObject]@{ Key='bt:0011223344ff';Bus='BT';  Name='AirPods';   Class='Bluetooth'; State='paired, not connected'; Rank=1 }
-        [PSCustomObject]@{ Key='usb:1235:820a';  Bus='USB'; Name='Clarett';   Class='Audio';     State=''; Rank=1 }
-        [PSCustomObject]@{ Key='usb:046d:c547';  Bus='USB'; Name='Input Dev'; Class='HIDClass';  State=''; Rank=2 }
+        [PSCustomObject]@{ Key='usb:046d:0843';  Bus='USB'; Name='Webcam';    Class='Image';     Roles=@(); State=''; Rank=1 }
+        [PSCustomObject]@{ Key='bt:0011223344ff';Bus='BT';  Name='AirPods';   Class='Bluetooth'; Roles=@(); State='paired, not connected'; Rank=1 }
+        [PSCustomObject]@{ Key='usb:1235:820a';  Bus='USB'; Name='Clarett';   Class='Audio';     Roles=@(); State=''; Rank=1 }
+        # The one with roles, so the label and the ordering are both exercised.
+        [PSCustomObject]@{ Key='usb:046d:c547';  Bus='USB'; Name='G915 X LIGHTSPEED TKL'
+                           Class='HIDClass'; Roles=@('mouse','keyboard'); State=''; Rank=0 }
     )
 }
 $script:triggerPulled = $null
@@ -825,6 +827,58 @@ Assert-Match $said '-- From boot'                   'drawn unnumbered, so it can
 Assert-Match ((Get-Asked) -join '|') 'Choice \[2\]' 'and the cursor does not start on it'
 
 Reset-Printed; $script:canElevate = $true
+
+# ---- the Triggers menu picks by NAME, and confirms by key --------------------
+#
+# Measured on the reference desk 2026-09-04: three rows read `USB Input Device`
+# and nothing else -- a receiver carrying the keyboard and mouse, the
+# motherboard's RGB, and an AIO cooler. `usb:046d:c547` in the item column named
+# nothing to a person, so the row you pick from is now what the device IS.
+#
+# The KEY STAYS VISIBLE, on the detail line. specs/configure.md 7's help text
+# tells you to match the FULL vendor+product pair -- this desk has a Logitech
+# webcam beside a Logitech receiver, exactly the case it warns about -- and
+# nobody can act on that advice against a name alone.
+
+Reset-Printed
+Set-Answers @('1')
+$null = Read-Triggers -Cands (Get-TriggerCandidates) -Current @()
+$said = Get-Printed
+
+Assert-Match $said 'G915 X LIGHTSPEED TKL\s+\(mouse, keyboard\)' `
+    'the row says what the device is, and what it presents itself as'
+Assert-Match $said 'usb:046d:c547\s+USB' 'and the key is still there to confirm against'
+Assert-NoMatch $said 'USB Input Device' 'the generic name is gone from the menu entirely'
+
+# specs/configure.md 7's normative block, byte for byte. The conformance check
+# covers the strings; this covers that they are still on THIS menu after the
+# layout moved underneath them.
+Assert-Match $said '--- triggers ---'
+Assert-Match $said 'Which devices move to this computer when you flip the switch\?'
+Assert-Match $said 'Keyboards and mice often share a vendor id with something that never'
+
+# A Bluetooth row's state sits with the key, NOT in the name. Concatenated, the
+# real string is `Chris's AirPods Pro - Find My  (paired, not connected)` at 53
+# characters, which shoved the key column out of line for every row under it.
+Assert-Match $said 'AirPods' 'a paired device is still offered'
+Assert-Match $said 'bt:0011223344ff\s+BT\s+paired, not connected' `
+    'and its state is placed beside the key, where the widths are predictable'
+
+Reset-Printed
+
+# The REVIEW MENU's Triggers row is named too. Computers shows names and Monitors
+# shows labels, so vendor+product pairs were the one row answering "what is set?"
+# with an id nobody can read.
+Set-Config $CONFIGURED
+Set-Outcomes @()
+Reset-Printed
+Set-Answers @('11')                 # draw the menu, then Cancel
+Invoke-Configure
+$said = Get-Printed
+Assert-Match   $said 'Triggers\s+Webcam, Clarett' 'the summary row names the devices'
+Assert-NoMatch $said 'Triggers\s+usb:046d:0843'   'rather than repeating their ids'
+
+Reset-Printed
 
 # ---- a TRANSPORT can be the reason the boot tier is unavailable --------------
 #

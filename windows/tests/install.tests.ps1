@@ -10,7 +10,10 @@ $ErrorActionPreference = 'Stop'
 Import-Subject -Script 'install.ps1'     -Functions @(
     'Get-WatcherCommand', 'Test-OurLegacyDir', 'Test-OurLegacyTask',
     'Get-PathValueKind', 'Get-UserPath', 'Set-UserPath', 'Get-InputMapReport',
-    'Get-TransportReport', 'Join-Names')
+    'Get-TransportReport', 'Join-Names',
+    'Get-BestDeviceName', 'Get-DeviceRoles', 'Get-CandidateLabel', 'Get-TriggerReport',
+    'Get-TriggerCandidates')
+Import-Subject -Script 'install.ps1'     -Variables @('GENERIC_NAMES')
 Import-Subject -Script 'install.ps1'     -Variables @('DESKTOP_TRANSPORTS')
 Import-Subject -Script 'event-watch.ps1' -Functions @('Get-SwitcherArguments')
 
@@ -255,6 +258,176 @@ Assert-Match $trBad 'refuse this panel' 'and says what the switch will do about 
 # Nothing configured: no rows, and no header claiming there are.
 Assert-Equal 0 @(Get-TransportReport -Cfg @{} -Labels @()).Count `
     'with no display configured there is nothing to report'
+
+# ---- naming a device, when Windows would rather not ---------------------------
+#
+# Measured on this desk 2026-09-04: three separate rows read `USB Input Device`
+# and nothing else -- a Logitech receiver carrying a keyboard AND a mouse, the
+# motherboard's RGB controller, and an AIO cooler. Two of those can never travel
+# with the switch and the one that IS the peripherals was indistinguishable from
+# them. Every name below is a real string one of them reports.
+#
+# The rule TESTS THE NAME. What it replaced ranked nodes by how specific their
+# device CLASS was, as a proxy for how good their name would be, and the proxy is
+# inverted: HID nodes are exactly the ones Windows names generically.
+
+Assert-Equal 'G915 X LIGHTSPEED TKL' `
+    (Get-BestDeviceName -Names @('USB Input Device', 'USB Receiver', 'G915 X LIGHTSPEED TKL')) `
+    'a real product name beats every generic sibling'
+
+# THE CASE THAT WAS ACTUALLY BROKEN: the generic name came FIRST and won on class
+# rank. Order must not decide this.
+Assert-Equal 'ROG STRIX LC' (Get-BestDeviceName -Names @('USB Input Device', 'ROG STRIX LC'))
+Assert-Equal 'AURA LED Controller' `
+    (Get-BestDeviceName -Names @('USB Composite Device', 'USB Input Device', 'AURA LED Controller'))
+
+# A NAME BEGINNING "USB " IS DESCRIBING THE BUS, NOT THE DEVICE. `USB Receiver`
+# and `USB Audio` are not in any generic list -- they are perfectly good English
+# -- and they still name a category rather than a thing. This is the test that
+# promotes the manufacturer's own string over them, and it is why there is no
+# hand-maintained list of weak names to keep adding to.
+Assert-Equal 'Realtek USB Audio' (Get-BestDeviceName -Names @('USB Audio', 'Realtek USB Audio')) `
+    'a bus-prefixed name loses to one that is not, even though both are specific'
+Assert-Equal 'Realtek USB Audio' (Get-BestDeviceName -Names @('Realtek USB Audio', 'USB Audio')) `
+    'and the answer does not depend on which came back first'
+
+# ...but "USB " is a PREFERENCE, not a veto: when it is all there is, say it.
+# An empty row is worse than a vague one.
+Assert-Equal 'USB Receiver' (Get-BestDeviceName -Names @('USB Input Device', 'USB Receiver')) `
+    'a weak name still beats a generic one'
+Assert-Equal 'USB Input Device' (Get-BestDeviceName -Names @('USB Input Device')) `
+    'and a generic one still beats nothing at all'
+
+Assert-Equal '' (Get-BestDeviceName -Names @())        'nothing in, nothing out'
+Assert-Equal '' (Get-BestDeviceName -Names @($null, '', '   ')) 'blanks are not names'
+
+# ---- what a device presents itself AS ----------------------------------------
+#
+# From the HID children, which the USB pass skips because it matches `USB\` only.
+# It is the most useful thing on the row -- and it is how the list shows that one
+# receiver carries both a keyboard and a mouse, which is a fact people need: that
+# is ONE vendor+product and therefore one row. There is no way to trigger on just
+# the mouse.
+$pnp = @(
+    [PSCustomObject]@{ InstanceId = 'HID\VID_046D&PID_C547&MI_00\a'; Class = 'Keyboard' }
+    [PSCustomObject]@{ InstanceId = 'HID\VID_046D&PID_C547&MI_01\b'; Class = 'Mouse' }
+    [PSCustomObject]@{ InstanceId = 'HID\VID_046D&PID_C547&MI_01\c'; Class = 'HIDClass' }
+    [PSCustomObject]@{ InstanceId = 'HID\VID_0B05&PID_879E\d';       Class = 'HIDClass' }
+    [PSCustomObject]@{ InstanceId = 'USB\VID_046D&PID_C547\e';       Class = 'USB' }
+)
+$r = Get-DeviceRoles -Devices $pnp
+Assert-Equal 'keyboard, mouse' (@($r['usb:046d:c547']) -join ', ') `
+    'one receiver reports both roles, and they are the roles a person recognises'
+Assert-Equal $false ($r.Contains('usb:0b05:879e')) `
+    'a bare HIDClass child is not a role -- the cooler speaks HID and is not an input device'
+
+# ---- the row: what it is, and NOT what it is doing right now ------------------
+#
+# State was moved OUT of the label. Connected-vs-paired is a fact about right
+# now, not about what a device IS, and carrying both in one column ran
+# `Chris's AirPods Pro - Find My  (paired, not connected)` to 53 characters and
+# shoved the vendor+product column out of line for every row beneath it.
+Assert-Equal 'G915 X LIGHTSPEED TKL  (mouse, keyboard)' `
+    (Get-CandidateLabel ([PSCustomObject]@{ Name = 'G915 X LIGHTSPEED TKL'
+                                            Roles = @('mouse','keyboard'); State = '' }))
+Assert-Equal 'AirPods' `
+    (Get-CandidateLabel ([PSCustomObject]@{ Name = 'AirPods'; Roles = @()
+                                            State = 'paired, not connected' })) `
+    'the state is placed by the caller, beside the key, not baked into the name'
+
+# ---- status names the triggers too -------------------------------------------
+#
+# `usb:046d:c547` is the only thing a watcher can match on and it tells a person
+# nothing. Same problem as the menu had, same answer: say what it IS beside the
+# id, never instead of it.
+$cands = @(
+    [PSCustomObject]@{ Key = 'usb:046d:c547'; Name = 'G915 X LIGHTSPEED TKL'; Roles = @('mouse','keyboard'); State = '' }
+    [PSCustomObject]@{ Key = 'usb:1235:820a'; Name = 'Clarett+ 2Pre'; Roles = @(); State = '' }
+)
+$tr = @(Get-TriggerReport -Devices @('usb:046d:c547','usb:1235:820a') -Candidates $cands) -join "`n"
+Assert-Match $tr 'triggers : usb:046d:c547\s+G915 X LIGHTSPEED TKL\s+\(mouse, keyboard\)'
+Assert-Match $tr 'usb:1235:820a\s+Clarett\+ 2Pre'
+Assert-NoMatch $tr 'not attached' 'nothing is missing, so nothing is said about missing'
+
+# A TRIGGER THAT IS NOT HERE IS THE ORDINARY CASE, not a fault -- the peripherals
+# are on the other computer, which is exactly when somebody runs status to ask
+# why nothing switched. Say so, or the blank reads as broken.
+$gone = @(Get-TriggerReport -Devices @('usb:046d:c547','bt:0011223344ee') -Candidates $cands) -join "`n"
+Assert-Match $gone 'bt:0011223344ee\s+-- not attached right now'
+Assert-Match $gone 'normal when the switch is on the other computer' `
+    'and the absence is explained, once, rather than left to read as a fault'
+
+Assert-Match (@(Get-TriggerReport -Devices @() -Candidates $cands) -join "`n") `
+    'none configured  <- nothing will ever fire' `
+    'no triggers at all is a different statement from a trigger that is elsewhere'
+
+# ---- the pieces above have to be WIRED, not merely each correct ---------------
+#
+# Every assertion so far tests a helper in isolation, and all of them passed
+# while Get-TriggerCandidates quietly stopped calling one -- found by mutation,
+# twice. A helper that is right and unused looks exactly like a helper that is
+# right and used, from anywhere except here.
+#
+# So: drive the real assembler over a synthetic desk. The stubs stand in for the
+# only two things it cannot have in a suite -- the PnP database and the child
+# process that enumerates Bluetooth -- and nothing else is faked.
+
+# Set-StrictMode: a stub must carry every property the real object is read for.
+function Get-PnpDevice {
+    param([switch]$PresentOnly, $ErrorAction)
+    @(
+        # A receiver with many nodes, the generic one first -- this is the shape
+        # that used to win. Its good name is only on a sibling.
+        [PSCustomObject]@{ InstanceId = 'USB\VID_046D&PID_C547\1'; Class = 'HIDClass'; FriendlyName = 'USB Input Device' }
+        [PSCustomObject]@{ InstanceId = 'USB\VID_046D&PID_C547\2'; Class = 'USB';      FriendlyName = 'G915 X LIGHTSPEED TKL' }
+        [PSCustomObject]@{ InstanceId = 'HID\VID_046D&PID_C547\3'; Class = 'Keyboard'; FriendlyName = 'HID Keyboard Device' }
+        [PSCustomObject]@{ InstanceId = 'HID\VID_046D&PID_C547\4'; Class = 'Mouse';    FriendlyName = 'HID-compliant mouse' }
+        # Generic at EVERY node: only the device's own report can name this one.
+        [PSCustomObject]@{ InstanceId = 'USB\VID_0B05&PID_879E\5'; Class = 'HIDClass'; FriendlyName = 'USB Input Device' }
+        # Infrastructure, and an unaddressable failed enumeration. Neither travels.
+        [PSCustomObject]@{ InstanceId = 'USB\VID_8087&PID_0AAA\6'; Class = 'USB';      FriendlyName = 'Generic USB Hub' }
+        [PSCustomObject]@{ InstanceId = 'USB\VID_0000&PID_0000\7'; Class = 'USB';      FriendlyName = 'Unknown USB Device' }
+        [PSCustomObject]@{ InstanceId = 'USB\VID_1235&PID_820A\8'; Class = 'MEDIA';    FriendlyName = 'Clarett+ 2Pre' }
+    )
+}
+# What each device says about ITSELF. Only the cooler depends on it, which is the
+# point: it is the sole source that can name that row at all.
+function Get-BusReportedName {
+    param([string]$InstanceId)
+    switch -Wildcard ($InstanceId) {
+        'USB\VID_0B05&PID_879E*' { 'ROG STRIX LC' }
+        'USB\VID_046D&PID_C547*' { 'USB Receiver' }
+        default                  { '' }
+    }
+}
+function Invoke-Sibling { param([string]$Script, [string[]]$Arguments) @() }
+
+$got = @(Get-TriggerCandidates)
+$byKey = @{}
+foreach ($g in $got) { $byKey[$g.Key] = $g }
+
+Assert-Equal 'G915 X LIGHTSPEED TKL' $byKey['usb:046d:c547'].Name `
+    'the assembler takes the good name off a SIBLING node, not the one it landed on'
+Assert-Equal 'keyboard, mouse' ((@($byKey['usb:046d:c547'].Roles) | Sort-Object) -join ', ') `
+    'and the roles come from the HID children of the same pair'
+
+# THE ONE THE DEVICE ONLY NAMES ITSELF. If Get-TriggerCandidates ever stops
+# asking, this row silently reverts to `USB Input Device` -- which is the whole
+# defect, and no helper test can see it.
+Assert-Equal 'ROG STRIX LC' $byKey['usb:0b05:879e'].Name `
+    'a panel named generically at every node is still named, from its own report'
+
+Assert-Equal $false ($byKey.Contains('usb:8087:0aaa')) 'a hub never travels, so it is not offered'
+Assert-Equal $false ($byKey.Contains('usb:0000:0000')) 'and a failed enumeration is not addressable'
+
+# ORDER IS "HOW LIKELY IS THIS TO TRAVEL", which is the question Rank was always
+# reaching for and could not ask: it used to score how specific a node's CLASS
+# was, so the keyboard and the AIO cooler both scored 2 and tied.
+Assert-Equal 'usb:046d:c547' $got[0].Key `
+    'the device presenting a mouse and a keyboard sorts first'
+Assert-True ([array]::IndexOf(@($got.Key), 'usb:1235:820a') -lt
+             [array]::IndexOf(@($got.Key), 'usb:0b05:879e')) `
+    'an audio interface outranks a cooler that merely speaks HID'
 
 Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
 exit 0

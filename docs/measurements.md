@@ -13,6 +13,53 @@ arrived within the 15 seconds observed), and "reading the displays needs a
 logged-in session" (it does not, at all). Run the thing in the context you are
 making a claim about; if you cannot, say that instead of concluding.
 
+## Naming a device
+
+**2026-09-04, Windows -- three trigger candidates were called `USB Input
+Device`, and two of them could never travel.** On the reference desk the
+Triggers list offered `usb:046d:c547`, `usb:0b05:19af` and `usb:0b05:879e` under
+that one name. They are, respectively, a Logitech LIGHTSPEED receiver carrying a
+G915 X keyboard **and** a mouse, the motherboard's AURA LED controller, and the
+ROG STRIX LC AIO cooler. So the two that are soldered into the case were
+indistinguishable from the one holding the peripherals.
+
+**The old rule chose the WORST available name, and did so by design.** It ranked
+a device's PnP nodes by how specific each one's device *class* was -- `HIDClass`
+scored 2, plain `USB` scored 4, lowest wins -- as a proxy for how good that
+node's name would be. The proxy is inverted: HID nodes are precisely the ones
+Windows names generically. For `046d:c547` the `HIDClass` node (`USB Input
+Device`) beat a sibling `USB` node already reading `G915 X LIGHTSPEED TKL`.
+
+**`DEVPKEY_Device_BusReportedDeviceDesc` names all three**, because it is the USB
+`iProduct` string the DEVICE reports rather than the name its INF driver hands
+it: `AURA LED Controller`, `ROG STRIX LC`, `USB Receiver`.
+
+**How you ask for it decides whether this is possible at all.** Same property,
+same 42 USB nodes, same unelevated session:
+
+| route | time | usable |
+|---|---|---|
+| `Get-PnpDeviceProperty` | **70,148 ms** (~200 ms per call) | no |
+| `cfgmgr32!CM_Get_DevNode_PropertyW` by P/Invoke | **6 ms** (0.14 ms per node) | yes |
+| registry `Enum\USB\...\Properties\{540b947e-...}\0004` | 106 ms | **no -- 0 of 115 instance keys readable unelevated**, and `configure` runs unelevated |
+
+A 10,000x spread between two ways of reading one property. The cmdlet's cost is
+its CIM plumbing, not the underlying API.
+
+**HID children carry the role, for free.** The `HID\VID_...&PID_...` nodes have
+class `Mouse` or `Keyboard`; the USB pass skips them because it matches `USB\`
+only. `usb:046d:c547` presents both -- which is also how the list can show that
+one receiver serves a keyboard and a mouse, so they are ONE vendor+product pair
+and cannot be triggered on separately.
+
+**A name beginning `USB ` is describing the bus, not the device.** True of every
+generic name observed here -- `USB Input Device`, `USB Composite Device`,
+`USB Receiver`, `USB Audio` -- and of no manufacturer's own string on this desk.
+Preferring against that prefix is what promotes `Realtek USB Audio` over
+`USB Audio` and `G915 X LIGHTSPEED TKL` over `USB Receiver`, with no list of weak
+names to maintain. Whole rewritten discovery, end to end: **355 ms**, including
+the `Add-Type` compile.
+
 ## Detectors
 
 **2026-09-02, Windows -- the round trip: BOTH panels, in both directions, with

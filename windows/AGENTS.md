@@ -9,11 +9,10 @@ The dated measurements behind it are in `..\docs\measurements.md`.
 **Hard rule 5's gate is `NvDdc.WriteLgInput` in `trigger-kvm.ps1`.** It is the
 only function that can emit source `0x50`, the source byte is not a parameter,
 and it **throws** unless the target's EDID manufacturer is GSM (`0x1E6D`).
-Until 2026-08-30 the LG was driven by `lg-input-switch.exe`, whose `_i2c_write`
-looped over every connected output mask and ports 0-7 -- so `lg-input-switch dp`
-also delivered `SetVCP 0xF4` to the ASUS, and a `Test-LgBlastRadius` guard refused
-whenever any third panel was attached. Both are gone; an aimed write has no blast
-radius.
+Until 2026-08-30 `lg-input-switch.exe` sprayed `SetVCP 0xF4` at every connected
+output, so the ASUS received the LG's write too and a `Test-LgBlastRadius` guard
+was needed. Both are gone: an aimed write has no blast radius. History in
+`README.md`.
 
 **A force-killed watcher leaves the mutex ABANDONED, and that is a normal
 condition here, not an error.** `install.ps1` force-kills the watcher on every
@@ -26,8 +25,8 @@ is an install that reports success and leaves nothing watching. After the catch,
 catch away: uncaught, it also strands the lock when the watcher is run BY HAND,
 because an aborted script does not end an interactive shell.
 
-**One physical USB plug produces DOZENS of `Win32_DeviceChangeEvent` indications
-(~32 in, ~13 out), each costing a `Win32_PnPEntity` query.** So the debounce is
+**One physical USB plug produces DOZENS of `Win32_DeviceChangeEvent` indications,
+each costing a `Win32_PnPEntity` query.** So the debounce is
 load-bearing for ordinary operation, and the no-edge branch is the common case
 by a wide margin -- which is why its line is `Write-Verbose`, not `Write-Log`;
 promoting it would bury the log on every plug. Run the watcher by hand with
@@ -60,12 +59,11 @@ detector onto window messages; it would break the s4u tier silently while
 post-login kept working.
 
 **Sleep/wake does not fire a spurious switch, tested by hibernate (S4).** The
-watcher survives hibernation as a live process holding its `$present` map; bus
-power cycles underneath it, the map and `Get-PresenceMap` agree on "present", and
-nothing fires. Flipping the switch to this PC *while it hibernates* does fire on
-resume, correctly. `DEVPKEY_Device_LastArrivalDate` does **not** track bus power
-cycling -- do not reach for it to answer "did USB come back?" across a resume. It
-DOES track a switch flip's PnP arrival, and since a departure is only
+watcher survives it as a live process holding its `$present` map, and nothing
+fires; flipping the switch to this PC *while it hibernates* does fire on resume,
+correctly. `DEVPKEY_Device_LastArrivalDate` does **not** track bus power cycling
+-- do not reach for it to answer "did USB come back?" across a resume. It DOES
+track a switch flip's PnP arrival, and since a departure is only
 `Write-Verbose`, it is how you correlate a flip against the log.
 
 **S3 standby HANGS this machine. Do not test it again; use hibernate.** Entered
@@ -82,6 +80,12 @@ is LOGIN-TIER ONLY -- `configure` draws the boot row disabled for it and `status
 says which panel it strands -- and its EDID gate is what stops session 0 acting
 on the phantom. NVAPI is the only identity source the boot tier may use, and is
 never correlated against the Windows display list. Decisions `001` and `003`.
+
+**`Get-PnpDeviceProperty` costs ~200 ms PER CALL** -- 70 s for 42 nodes, where
+`cfgmgr32!CM_Get_DevNode_PropertyW` reads the same property in 0.14 ms and the
+registry copy is unreadable unelevated. Device properties go through
+`Get-BusReportedName`. A per-node loop on the cmdlet is not a slower version of
+that, it is an unusable one; do not move any of the three back to it.
 
 **Do not gate anything on `NV_GPU_DISPLAYIDS.isActive` (flags bit 2).** It read
 `False` and then `True` for both panels in the same interactive session with no

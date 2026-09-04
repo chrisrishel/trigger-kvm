@@ -659,6 +659,59 @@ startup once it passes 1MB (`-MaxLogBytes`), keeping one generation as `.log.1`.
 
 ## Triggers
 
+### Naming what you are picking from
+
+A trigger is matched on its USB vendor+product pair, and `usb:046d:c547` names
+nothing to a person. Worse, Windows' own `FriendlyName` for an input device is
+usually the class rather than the device: on this desk **three separate rows read
+`USB Input Device`** — a Logitech receiver carrying a keyboard *and* a mouse, the
+motherboard's RGB controller, and an AIO cooler. Two of the three could never
+travel with the switch, and the one that held the peripherals was
+indistinguishable from them.
+
+So the list asks three questions instead of one, and shows what it learns:
+
+| | source | gives |
+|---|---|---|
+| what the driver calls it | `FriendlyName` | `Logitech Webcam C930e` — good for some devices, `USB Input Device` for others |
+| what the **device** calls itself | `DEVPKEY_Device_BusReportedDeviceDesc`, its USB `iProduct` string | `ROG STRIX LC`, `AURA LED Controller` — names the ones the driver does not |
+| what it **presents as** | the classes of its `HID\` children | `mouse`, `keyboard` |
+
+The row takes the best name any of a device's nodes reports. "Best" tests the
+name: one beginning `USB ` is describing the bus rather than the device, which is
+true of every generic name Windows hands out here (`USB Input Device`,
+`USB Receiver`, `USB Audio`) and of none of the manufacturers' own strings — so
+`Realtek USB Audio` wins over `USB Audio` with no list of weak names to maintain.
+
+```
+  G915 X LIGHTSPEED TKL  (mouse, keyboard) usb:046d:c547        USB
+  Chris's AirPods Pro                      bt:0011223344ee      BT    paired, not connected
+  Logitech Webcam C930e                    usb:046d:0843        USB  <- currently a trigger
+  Realtek USB Audio                        usb:0b05:1a52        USB
+  AURA LED Controller                      usb:0b05:19af        USB
+  ROG STRIX LC                             usb:0b05:879e        USB
+```
+
+Two things worth knowing from that list. **The roles column also tells you when
+one dongle carries two peripherals** — a Logitech receiver serving both a
+keyboard and a mouse is one vendor+product pair, so it is one row and there is no
+way to trigger on just the mouse. And **the key stays on every row on purpose**:
+this desk has a Logitech webcam beside a Logitech receiver, which is exactly the
+vendor-id collision the menu's own warning is about, and you cannot check for it
+against a name alone.
+
+`status` names the configured triggers the same way, and says plainly when one is
+not attached right now — which is the normal case, since that is where the
+peripherals being elsewhere shows up.
+
+**Ask `cfgmgr32`, never `Get-PnpDeviceProperty`.** Same property, same nodes:
+~200 ms per call through the cmdlet — **70 seconds** for this desk — against
+0.14 ms through the API it wraps. The registry copy is fast and unreadable
+unelevated, which is how `configure` runs. Measured 2026-09-04 and recorded in
+[`../docs/measurements.md`](../docs/measurements.md).
+
+### What can be a trigger
+
 **Anything that can run `trigger-kvm.ps1 pull` is a trigger.** The watcher and the
 switcher are separate processes and that command line is the entire interface
 between them, so a hotkey binding, a Stream Deck button, a scheduled task, or an
