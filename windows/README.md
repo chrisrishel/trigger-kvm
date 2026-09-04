@@ -4,9 +4,12 @@ A Scheduled Task runs `event-watch.ps1`, which fires `trigger-kvm.ps1 pull`
 when a watched USB device arrives. No compiled code and no third-party binary:
 PowerShell throughout, with the NVAPI bindings inline.
 
-Both panels use one transport -- raw I2C through NVAPI, each **aimed at the single
-GPU output whose EDID identifies that panel**. Neither write is a spray; no monitor
-receives the other's packet.
+Two transports, chosen per panel at configure time. **`nvapi`** is aimed raw I2C
+at the single GPU output whose EDID identifies that panel -- NVIDIA only, and the
+only one that works before anyone has logged in or can carry the LG's
+sidechannel. **`dxva2`** is Windows' own DDC/CI stack, which reaches any adapter
+but needs a desktop. Neither write is a spray; no monitor receives the other's
+packet. Both panels on this desk use `nvapi`.
 
 | Monitor | Target input | I2C source | VCP | Packet |
 |---|---|---|---|---|
@@ -18,16 +21,24 @@ exists precisely so these two implementations can't drift.
 
 ## Requirements
 
-- NVIDIA GPU. Both panels are driven by raw I2C through NVAPI. This is not a
-  preference: the LG's input lives on I2C source `0x50`, and the Windows DDC/CI
-  stack hardcodes source `0x51` and cannot express `0x50` at all, so no
-  vendor-neutral API can reach it. Verified on an RTX 4090, driver 32.0.16.1062.
+- **A GPU of any make, for a panel that takes the standard DDC/CI command** --
+  which is nearly every panel. Those go over `dxva2`, and the cost is stated
+  where you choose it: a `dxva2` panel does not follow the switch until somebody
+  has logged in, so the boot tier is unavailable for it. `configure` draws that
+  row disabled and says which panel; `status` says the same afterwards.
 
-  The requirement predates the NVAPI transport -- the LG has always needed it, and
-  the tool used before, `lg-input-switch.exe`, was itself an NVAPI program. A
-  standard-DDC panel *could* be driven on any GPU through `dxva2`; supporting that
-  is a generalisation question, taken up in
-  [`../docs/decisions/001-nvapi-as-the-only-windows-transport.md`](../docs/decisions/001-nvapi-as-the-only-windows-transport.md).
+- **An NVIDIA GPU for a panel that needs a manufacturer sidechannel**, and for
+  any panel that must switch at the login screen. The LG's input lives on I2C
+  source `0x50`; the Windows DDC/CI stack hardcodes source `0x51` and cannot
+  express `0x50` at all, so no vendor-neutral API can reach it. That is a
+  property of the protocol, not a preference -- and the requirement predates
+  NVAPI here: the tool used before, `lg-input-switch.exe`, was itself an NVAPI
+  program. Verified on an RTX 4090, driver 32.0.16.1062.
+
+  Why there are two, and why neither is ever a fallback for the other:
+  [`../docs/decisions/003-dxva2-as-a-second-windows-transport.md`](../docs/decisions/003-dxva2-as-a-second-windows-transport.md),
+  which reopened
+  [`001`](../docs/decisions/001-nvapi-as-the-only-windows-transport.md).
 - Windows PowerShell 5.1 (stock). Nothing elevated ever runs on the switch path.
   The login tier needs no admin at all; the boot tier needs it ONCE, to register
   the scheduled task — and the task it registers still runs as you, unelevated.
@@ -1104,20 +1115,24 @@ began logging `on \\.\DISPLAY2`, across a hard reboot and a hibernate cycle.
 Nothing broke, because the script never uses the index. Getting this wrong would
 send LG service-channel writes to the ASUS.
 
-**Both panels are resolved by the EDID that NVAPI reads off the GPU output** --
-manufacturer and product, compared against the values in `../displays.toml`. That is
-aimable, stable, and works with no desktop.
+**Every panel is resolved by its EDID manufacturer and product**, compared
+against the values in `../displays.toml`. **One key, both transports**: NVAPI
+reads it off the GPU output, and dxva2 parses it out of the PnP interface path.
+They agree exactly -- measured 2026-09-02, `AUS42E0` -> `0x06B3:0x42E0` and
+`GSM9E9D` -> `0x1E6D:0x9E9D` -- which is what lets the transport be a per-panel
+choice without a second notion of identity.
 
-Two identity mechanisms that were tried and are *not* used, each for a specific
+Three identity mechanisms that were tried and are *not* used, each for a specific
 reason worth not rediscovering:
 
 - **`\\.\DISPLAYn` indices** -- not stable, as above.
 - **The dxva2 description string** -- useless as a key: it reports the LG as the
   generic `Generic PnP Monitor`.
-
-The PnP interface path (`\\?\DISPLAY#AUS42E0#...`) *does* carry the EDID id and was
-what the ASUS matched on until 2026-08-30. It works, but only with a desktop, so it
-went when the ASUS moved onto NVAPI.
+- **The WHOLE PnP interface path** (`\\?\DISPLAY#AUS42E0#5&aaaaaaaa&0&UID4352_0`)
+  -- this is the one that actually broke. The ASUS matched on the full path until
+  2026-08-30; moving its cable changed the path to `4&bbbbbbbb&0&UID49_0` while
+  the `AUS42E0` inside it held. So dxva2 parses the EDID id OUT of the path and
+  matches on that alone; the path itself is not a key.
 
 **Historical:** `lg-input-switch` was not addressable to one monitor -- it injected
 on every connected output, so the ASUS also received the LG's VCP `0xF4` write. That

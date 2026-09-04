@@ -42,7 +42,7 @@ function Reset-Said { Reset-Printed }
 function New-Panel {
     param([string]$Label, $Map)
     [PSCustomObject]@{
-        Label = $Label; Name = $Label.ToUpper(); Method = 'standard'
+        Label = $Label; Name = $Label.ToUpper(); Method = 'standard'; Transport = 'nvapi'
         Vendor = '0x0001'; Product = '0x0001'; EdidVendor = 1; Mfg = 'XXX'; Key = "k-$Label"
         Map = $Map
     }
@@ -141,7 +141,7 @@ Assert-NoMatch $said 'choose pc' 'a machine name here would send someone hunting
 function New-LgPanel {
     param([string]$Method = 'standard')
     [PSCustomObject]@{
-        Label = 'lg'; Name = 'LG ULTRAGEAR+'; Method = $Method
+        Label = 'lg'; Name = 'LG ULTRAGEAR+'; Method = $Method; Transport = 'nvapi'
         Vendor = '0x1E6D'; Product = '0x9E9D'; EdidVendor = 0x1E6D; Mfg = 'GSM'
         Key = '1E6D:9E9D'; Map = [ordered]@{ pc = '0x11'; mac = '0x12' }
     }

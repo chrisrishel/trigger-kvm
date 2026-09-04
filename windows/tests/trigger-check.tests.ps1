@@ -45,7 +45,7 @@ function Write-Host { param([Parameter(ValueFromPipeline=$true)]$Object, [switch
 
 $panels = @(
     [PSCustomObject]@{
-        Label='lg'; Name='LG'; Method='lg-alt'; Vendor='0x1E6D'; Product='0x9E9D'
+        Label='lg'; Name='LG'; Method='lg-alt'; Transport='nvapi'; Vendor='0x1E6D'; Product='0x9E9D'
         EdidVendor=0x1E6D; Mfg='GSM'; Key='1E6D:9E9D'
         Map=[ordered]@{ pc='0xD0'; mac='0xD1' }
     }

@@ -606,6 +606,51 @@ function Get-InputMapReport {
     return $out
 }
 
+# How the switch reaches each panel, and where that takes away coverage the
+# autostart line has already promised -- specs/status.md 4.
+#
+# The tier statement above is about the TIER, and a transport can make it untrue
+# for ONE panel while it stays true for the others: a machine installed from boot
+# correctly reports that it covers the login screen and still has a monitor that
+# will not move until somebody logs in. Reporting only the tier would be accurate
+# and misleading at once.
+#
+# This is the same fact `configure` names when the transport is chosen. `status`
+# is where somebody looks afterwards, having forgotten choosing it or inherited
+# the machine.
+function Get-TransportReport {
+    param($Cfg, [string[]]$Labels, [switch]$FromBoot)
+
+    if (-not $Labels) { return @() }
+
+    $rows     = @()
+    $stranded = @()
+    foreach ($label in $Labels) {
+        $k = "display.$label.transport"
+        # Absent means nvapi, so a config written before the key existed reads as
+        # the transport it has always used rather than as unanswered.
+        $t = $(if ($Cfg.Contains($k)) { "$($Cfg[$k])".Trim().ToLower() } else { 'nvapi' })
+        $note = switch ($t) {
+            'nvapi' { 'through the graphics card' }
+            'dxva2' { 'through Windows; not before somebody logs in' }
+            # Named, not corrected. The switcher refuses an unrecognised transport
+            # by name rather than defaulting (specs/config-format.md), so status
+            # says the same thing instead of quietly reporting a working panel.
+            default { 'UNRECOGNISED -- the switch will refuse this panel' }
+        }
+        $rows += ("           {0,-8} {1,-6} ({2})" -f $label, $t, $note)
+        if ($DESKTOP_TRANSPORTS -contains $t) { $stranded += $label }
+    }
+
+    $out = @('reaches  : (how the switch reaches each monitor)') + $rows
+    if ($FromBoot -and $stranded.Count -gt 0) {
+        $out += '           ^ the autostart line above says it covers the login screen.'
+        $out += ("             It does not for {0}: nothing moves that panel until" -f (Join-Names $stranded))
+        $out += '             somebody has logged in.'
+    }
+    return $out
+}
+
 # IS A WATCHER RUNNING? Asked of event-watch.ps1, which owns the single-instance
 # lock, for the same reason -ListBluetooth and -TestTrigger are asked of it: a
 # second implementation here would be free to disagree with the lock that actually
@@ -1911,8 +1956,99 @@ function Get-DisplayMap {
     return $out
 }
 
-# One display: identity is already known from NVAPI; what we need from the human is
-# whether to manage it, what to call it, and which input each machine is on.
+# Which transports cannot switch a panel before anyone has logged in.
+#
+# THE RULE LIVES HERE, ONCE. Three places need it -- the disabled boot row, the
+# downgrade of an existing boot tier, and `status` -- and three copies of "dxva2
+# needs a desktop" would be three things to keep in step. dxva2 goes through
+# user32, and in session 0 user32 reports ONE PHANTOM MONITOR rather than none,
+# so it fails by MIS-RESOLVING (AGENTS.md, and windows/AGENTS.md).
+$DESKTOP_TRANSPORTS = @('dxva2')
+
+# Which transports cannot express an I2C source byte, and so cannot carry a
+# manufacturer dialect at all -- the impossible cell of the 2x2 in
+# docs/decisions/003. dxva2 is in both lists today and that is a COINCIDENCE of
+# one API, not one property: "needs a desktop" and "cannot address a source byte"
+# are the two different axes specs/config-format.md keeps apart, and a future
+# transport could easily have one without the other. Two names, each used only
+# where its own meaning is what matters.
+$SOURCELESS_TRANSPORTS = @('dxva2')
+
+# The managed panels a desktop-only transport would strand before login. Names,
+# because the person picking a tier knows their monitors by name and has never
+# heard of dxva2.
+function Get-LoginOnlyPanels {
+    param($Answers)
+    return @(@($Answers) |
+             Where-Object { $DESKTOP_TRANSPORTS -contains $_.Transport } |
+             ForEach-Object { $(if ($_.Name) { $_.Name } else { $_.Label }) })
+}
+
+# How the bytes reach one panel -- specs/configure.md 6.3. Returns the transport.
+#
+# SHOWN ONLY WHERE A CHOICE EXISTS: where this panel enumerated through more than
+# one transport. On a one-NVIDIA-card desk both transports see both panels, so the
+# question is real here; on a machine with no NVIDIA card only dxva2 enumerates,
+# and that panel is told rather than asked.
+#
+# ENUMERATING IS NOT PROBING. The offer is built from which of THIS COMPUTER'S
+# APIs could see the panel, and reading an EDID sends nothing to a monitor.
+# AGENTS.md 1b forbids discovering a MONITOR's behaviour by experiment, which is a
+# different act -- specs/configure.md 6.3 draws the line because the two could
+# otherwise be read as one.
+#
+# It comes BEFORE the method question, because the transport decides which
+# dialects exist at all: dxva2 cannot express an I2C source byte, so offering a
+# manufacturer channel first and refusing it second would be asking a question
+# whose answer was already fixed.
+function Read-Transport {
+    param([string[]]$Transports, [string]$Current, [int]$Vendor)
+
+    $t = @($Transports | Where-Object { $_ })
+    if ($t.Count -le 1) {
+        # Nothing to ask. Store what it enumerated on, so the config records the
+        # path that was actually confirmed rather than leaving it to a default.
+        if ($t.Count -eq 1) { return $t[0] }
+        return $(if ($Current) { $Current } else { 'nvapi' })
+    }
+
+    $d = $DIALECTS['{0:X4}' -f $Vendor]
+
+    Write-Host ''
+    Write-Host '--- how the switch reaches this monitor ---'
+    Write-Host '  Both ways work on this computer. They differ in when they work and'
+    Write-Host '  in what they can say.'
+    Write-Host ''
+    # THE CONSEQUENCE, NAMED WHERE THE CHOICE IS MADE -- specs/configure.md 2 and
+    # 6.3. In terms of what the person will experience, not the mechanism: nobody
+    # picking a monitor setting wants to be told about session 0.
+    Write-Host '  Through Windows, this monitor will not follow the switch until'
+    Write-Host '  somebody has logged in. A PC sitting at the login screen keeps'
+    Write-Host '  showing whatever it was showing.'
+    if ($d) {
+        Write-Host ''
+        Write-Host ("  It also cannot use {0}'s own method -- there is no way to send that" -f $d.What)
+        Write-Host '  down it. Only the standard one.'
+    }
+    Write-Host ''
+
+    # The graphics card is the default and where the cursor starts: it covers
+    # more, and someone with no opinion should land on the answer with fewer
+    # consequences (specs/configure.md 6.3).
+    $now  = $(if ($Current -eq 'dxva2') { 1 } elseif ($Current -eq 'nvapi') { 0 } else { -1 })
+    $pick = Select-One -Default ([Math]::Max(0, $now)) -Current $now -Escapable `
+                -Items  @('Through the graphics card', 'Through Windows') `
+                -Detail @('works before anyone logs in',
+                          $(if ($d) { ('login onward only; cannot use {0}''s own method' -f $d.What) }
+                            else    { 'login onward only' }))
+    if ($pick -lt 0) { return $BACK }
+    return $(if ($pick -eq 1) { 'dxva2' } else { 'nvapi' })
+}
+
+# One display: identity is already known -- `list` read it off whichever transports
+# could see the panel, and they agree on it. What we need from the human is whether
+# to manage it, what to call it, how the bytes get there, and which input each
+# machine is on.
 #
 # Standard DDC/CI is the answer for everyone here, whatever the make. A manufacturer
 # dialect is only reached for later, if the test shows standard does not work.
@@ -1933,10 +2069,23 @@ function Get-DisplayMap {
 # reasonably decide the tool does not know about it. Offering here sends fewer
 # packets, not more. The check still offers it again, in either direction.
 function Read-Method {
-    param([int]$Vendor, [string]$Current)
+    param([int]$Vendor, [string]$Current, [string]$Transport = 'nvapi')
 
     $d = $DIALECTS['{0:X4}' -f $Vendor]
     if (-not $d) { return $Current }
+
+    # A transport that cannot address an I2C source byte cannot carry a
+    # manufacturer channel, so there is no choice left to offer -- and offering
+    # one here to refuse it at the transport is exactly the question-whose-answer-
+    # is-already-fixed that specs/configure.md 6.3 orders these two to avoid.
+    # Read-Transport has already said so on the row where dxva2 was picked.
+    #
+    # The REFUSAL still lives in trigger-kvm.ps1's Switch-Display, which is where
+    # a hand-edited config meets it. This is not a second copy of that rule: one
+    # refuses a pair, this one never offers it. conventions.tests.ps1 pins the two
+    # to the same transport, so neither can drift into offering what the other
+    # rejects.
+    if ($Transport -in $SOURCELESS_TRANSPORTS) { return 'standard' }
 
     Write-Host ''
     Write-Host '--- how to talk to this monitor ---'
@@ -2027,9 +2176,18 @@ function Get-DisplayAnswers {
     $was    = if ($Existing -and $Existing.Method) { $Existing.Method } else { 'standard' }
     $prior  = if ($Existing -and $Existing.Map) { $Existing.Map } else { [ordered]@{} }
 
+    # An existing transport is a settled answer for the same reason an existing
+    # method is: somebody watched a panel move over it.
+    $wasT = if ($Existing -and $Existing.Transport) { $Existing.Transport } else { '' }
+
+    # BEFORE the method, because the transport decides which dialects exist --
+    # specs/configure.md 6.3, which is numbered after 6.2 and asked before it.
+    $transport = Read-Transport -Transports $Found.Transports -Current $wasT -Vendor $Found.EdidVendor
+    if ($transport -eq $BACK) { return $BACK }
+
     # Asked here, BEFORE any input question, because the values on offer depend on
     # the answer. Shown only for a vendor with a documented alternative.
-    $method = Read-Method -Vendor $Found.EdidVendor -Current $was
+    $method = Read-Method -Vendor $Found.EdidVendor -Current $was -Transport $transport
     if ($method -eq $BACK) { return $BACK }
 
     # A changed method makes every prior value meaningless -- they were addresses on
@@ -2056,7 +2214,7 @@ function Get-DisplayAnswers {
     }
 
     return [PSCustomObject]@{
-        Label = $label; Name = $desc; Method = $method
+        Label = $label; Name = $desc; Method = $method; Transport = $transport
         Vendor = ('0x{0:X4}' -f $Found.EdidVendor); Product = ('0x{0:X4}' -f $Found.EdidProduct)
         EdidVendor = $Found.EdidVendor; Mfg = $Found.Mfg; Key = $key
         Map = $map
@@ -2145,7 +2303,7 @@ function Test-CanElevate {
 # discovering months later that switching quietly does nothing until you log in.
 # A config that already says otherwise still wins: an existing choice is a choice.
 function Read-Tier {
-    param([string]$Current)
+    param([string]$Current, [string[]]$LoginOnly = @())
 
     Write-Host ''
     Write-Host '--- should it start on its own? ---'
@@ -2162,9 +2320,28 @@ function Read-Tier {
     # that installs belongs to that other account. The row stays so the menu keeps
     # the shape someone coming from macOS expects, and the question it raises is
     # answered where it is asked.
+    #
+    # A CONFIGURED TRANSPORT CAN ALSO BE THE REASON, and it is a DIFFERENT fact
+    # that must not be merged into one "not available" message: the account case
+    # is answered by finding an administrator, the transport case by putting that
+    # panel back on the graphics card, and somebody told the wrong one goes
+    # hunting for a password that would not have helped. Where both are true,
+    # both are said.
     $canElevate = Test-CanElevate
+    # @() around it, not the parameter default: an EMPTY result passed explicitly
+    # arrives as $null, which the default never replaces, and Set-StrictMode makes
+    # $null.Count terminating -- mid-walkthrough, on the common desk where no
+    # panel is stranded.
+    $stranded = @($LoginOnly | Where-Object { $_ })
     $off = @()
-    if (-not $canElevate) { $off += 0 }
+    if (-not $canElevate -or $stranded.Count -gt 0) { $off += 0 }
+
+    $why = @()
+    if ($stranded.Count -gt 0) {
+        $why += ('{0} cannot switch before login' -f (Join-Names $stranded))
+    }
+    if (-not $canElevate) { $why += 'needs an administrator account' }
+    if ($why.Count -eq 0) { $why += 'one administrator prompt now; nothing runs elevated afterwards' }
 
     $now = $(switch ($Current) { 's4u' { 0 } 'user' { 1 } 'manual' { 2 } default { -1 } })
     $default = [Math]::Max(0, $now)
@@ -2174,8 +2351,7 @@ function Read-Tier {
         'From boot',
         'From login',
         'No -- I will start it myself') -Detail @(
-        $(if ($canElevate) { 'one administrator prompt now; nothing runs elevated afterwards' }
-          else             { 'needs an administrator account' }),
+        ($why -join '; '),
         'covers everything from your logon onward',
         '')
     if ($pick -lt 0) { return $Current }
@@ -2196,6 +2372,10 @@ function Get-ConfiguredAnswers {
             Label  = $prior.Label
             Name   = $(if ($Existing.Contains("display.$($prior.Label).name")) { $Existing["display.$($prior.Label).name"] } else { $prior.Label })
             Method = $(if ($prior.Method) { $prior.Method } else { 'standard' })
+            # Absent means nvapi -- specs/config-format.md. This is where that
+            # default is applied for a config written before the key existed, so
+            # the menu, the boot row and `status` all read one answered value.
+            Transport = $(if ($prior.Transport) { $prior.Transport } else { 'nvapi' })
             Vendor = ('0x{0:X4}' -f $f.EdidVendor); Product = ('0x{0:X4}' -f $f.EdidProduct)
             EdidVendor = $f.EdidVendor; Mfg = $f.Mfg; Key = $key
             Map    = $prior.Map
@@ -2285,6 +2465,11 @@ function Get-PriorDisplay {
         return [PSCustomObject]@{
             Label  = $l
             Method = $(if ($Existing.Contains("display.$l.method")) { $Existing["display.$l.method"] } else { '' })
+            # Empty, not 'nvapi', when the key is absent. The DEFAULT is applied
+            # where the value is used; here empty means "nobody has answered", so
+            # a fresh panel starts the cursor on the recommendation rather than
+            # being shown a choice it never made marked (current).
+            Transport = $(if ($Existing.Contains("display.$l.transport")) { "$($Existing["display.$l.transport"])".Trim().ToLower() } else { '' })
             Map    = (Get-DisplayMap -Existing $Existing -Label $l -Computers $Computers)
         }
     }
@@ -2343,11 +2528,22 @@ function Invoke-Configure {
                 Connector   = $f[3]
                 # Field 6, and older copies of trigger-kvm.ps1 do not send it.
                 Name        = $(if ($f.Count -ge 6) { $f[5] } else { '' })
+                # Field 7, comma-joined: which transports can SEE this panel. An
+                # older copy of trigger-kvm.ps1 does not send it, and absent means
+                # nvapi -- the same default specs/config-format.md gives the key.
+                # So an installer newer than the switcher beside it asks nothing
+                # and keeps writing what that switcher understands.
+                Transports  = $(if ($f.Count -ge 7 -and $f[6]) {
+                                    @($f[6] -split ',' | Where-Object { $_ })
+                                } else { @('nvapi') })
             }
         }
     }
     if ($found.Count -eq 0) {
-        Write-Log 'no displays found on an NVIDIA GPU -- nothing to configure.'
+        # Not "on an NVIDIA GPU" any more: dxva2 sees panels on any adapter, so a
+        # machine with no NVIDIA card is one this can now configure rather than
+        # one it turns away.
+        Write-Log 'no displays found by any transport -- nothing to configure.'
         $global:LASTEXITCODE = 2
         return
     }
@@ -2537,12 +2733,32 @@ function Invoke-Configure {
                 # would show "all responded" beside numbers nothing tried -- but
                 # looking at the list and changing nothing is not an edit.
                 if ($before -ne $after) { $ranDisplays = $null }
+
+                # specs/configure.md 8: giving a panel a transport that cannot
+                # switch before login makes an already-chosen boot tier
+                # impossible, so it FALLS BACK TO LOGIN AND SAYS SO -- the same
+                # shape as a declined elevation.
+                #
+                # Said here, attached to the choice that caused it, and only in
+                # memory: the Autostart? row now reads "from login", the boot row
+                # is drawn disabled with the reason, and nothing is written until
+                # Save. That is the difference from the bug TODO.md records
+                # against the elevation path, which writes the downgrade into the
+                # config BEFORE the install that would apply it has succeeded --
+                # here the recording and the applying are the same Save.
+                $loginOnly = @(Get-LoginOnlyPanels -Answers $answers)
+                if ($newTier -eq 's4u' -and $loginOnly.Count -gt 0) {
+                    $newTier = 'user'
+                    Write-Host ''
+                    Write-Host ('  {0} cannot switch before anyone logs in, so starting from' -f (Join-Names $loginOnly))
+                    Write-Host '  boot is no longer possible. Changed to starting from login.'
+                }
             }
             'Triggers' {
                 $devices = @(Read-Triggers -Cands $cands -Current $devices)
                 $ranTriggers = $null
             }
-            'Autostart?'      { $newTier = Read-Tier $newTier }
+            'Autostart?'      { $newTier = Read-Tier -Current $newTier -LoginOnly (Get-LoginOnlyPanels -Answers $answers) }
             'Add to PATH?'    { $wantPath = Read-PathChoice -Current $wantPath }
             { $_ -like 'Test the trigger*' } {
                 # Only pull for real once the monitor values have been confirmed by
@@ -3059,7 +3275,7 @@ function Get-CarriedKeys {
         if ($RENAMED_KEYS.Contains($k)) { continue }
         if ($k -match '^display\.([^.]+)\.(.+)$') {
             if ($managed -notcontains $Matches[1]) { continue }
-            if ($Matches[2] -in @('vendor', 'product', 'name', 'method')) { continue }
+            if ($Matches[2] -in @('vendor', 'product', 'name', 'method', 'transport')) { continue }
             if ($Matches[2] -like 'input.*') { continue }
         }
         $out += ('{0} = {1}' -f $k, $Existing[$k])
@@ -3094,8 +3310,17 @@ function Write-ConfigFile {
         ("computer.this = {0}" -f $This)
         ''
         '# --- displays ---------------------------------------------------------'
-        '# method: standard (I2C src 0x51, VCP 0x60) -- what nearly every panel takes'
+        '# method:    WHAT is sent.'
+        '#         standard (I2C src 0x51, VCP 0x60) -- what nearly every panel takes'
         '#         lg-alt   (src 0x50, VCP 0xF4) -- LG panels whose 0x60 is stubbed'
+        '# transport: HOW it gets there.'
+        '#         nvapi -- aimed raw I2C at one GPU output. NVIDIA only, works with'
+        '#                  no desktop, and the only one that can carry lg-alt.'
+        '#         dxva2 -- Windows'' own DDC/CI stack. Any adapter, but it needs a'
+        '#                  desktop, so a panel on it does not follow the switch'
+        '#                  until somebody has logged in.'
+        '#         Omit it and it means nvapi. Never a fallback: nothing tries one'
+        '#         and falls through to the other.'
         '# input.<value> = <computer>: which computer is on which input of that panel.'
         '#         This is the whole map. pull and to are the same lookup against it,'
         '#         differing only in which name they look up, so the two can never'
@@ -3104,10 +3329,11 @@ function Write-ConfigFile {
     )
     foreach ($d in $Displays) {
         $lines += @(
-            ("display.{0}.vendor  = {1}" -f $d.Label, $d.Vendor)
-            ("display.{0}.product = {1}" -f $d.Label, $d.Product)
-            ("display.{0}.name    = {1}" -f $d.Label, $d.Name)
-            ("display.{0}.method  = {1}" -f $d.Label, $d.Method)
+            ("display.{0}.vendor    = {1}" -f $d.Label, $d.Vendor)
+            ("display.{0}.product   = {1}" -f $d.Label, $d.Product)
+            ("display.{0}.name      = {1}" -f $d.Label, $d.Name)
+            ("display.{0}.transport = {1}" -f $d.Label, $(if ($d.Transport) { $d.Transport } else { 'nvapi' }))
+            ("display.{0}.method    = {1}" -f $d.Label, $d.Method)
         )
         foreach ($m in $d.Map.Keys) {
             $lines += ("display.{0}.input.{1} = {2}" -f $d.Label, ([string]$d.Map[$m]).ToLower(), $m)
@@ -3342,6 +3568,9 @@ if ($Command -eq 'status') {
     # backwards: the machine that has no task is the one where "what does this
     # think is configured?" is the question being asked.
     $t = Get-ScheduledTask -TaskName $TASK -ErrorAction SilentlyContinue
+    # Declared before the branch: Set-StrictMode makes an unassigned variable
+    # terminating, and the no-task path below skips every assignment inside it.
+    $fromBoot = $false
     if (-not $t) {
         Write-Host 'autostart: not installed  <- run install.ps1 from the source tree'
         Write-Host '           covers: nothing. No watcher starts on its own.'
@@ -3356,6 +3585,7 @@ if ($Command -eq 'status') {
     # A task with no triggers is the "no autostart" answer; the principal alone
     # cannot tell you that, because it is Interactive either way.
     $auto = @($t.Triggers).Count -gt 0
+    $fromBoot = ($auto -and $logon -eq 'S4U')
     Write-Host ("autostart: {0}  (principal={1} logon={2} runlevel={3})" -f `
                 $(if (-not $auto) { 'no -- start it with: trigger-kvm restart' }
                   else { switch ($logon) {
@@ -3431,6 +3661,8 @@ if ($Command -eq 'status') {
         '   (trigger-kvm to <name>; only pull is automatic)'
     } else { 'none' }))
     Get-InputMapReport -Cfg $c -Labels $labels -This $this -Computers $computers |
+        ForEach-Object { Write-Host $_ }
+    Get-TransportReport -Cfg $c -Labels $labels -FromBoot:$fromBoot |
         ForEach-Object { Write-Host $_ }
 
     # What the watcher is actually waiting for. Without this line, "it is running"

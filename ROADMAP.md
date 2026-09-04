@@ -178,10 +178,16 @@ today. Different in kind, not degree.
 
 With N1 answered, the scope narrows to one certain piece and one open one:
 
-- **A `dxva2` transport** — now the whole generalisation story for Windows, not a
-  fallback. Chosen per panel at configure time, offered and never probed, gated
-  at the transport by EDID vendor+product. Shape in
-  [`003`](docs/decisions/003-dxva2-as-a-second-windows-transport.md).
+- **A `dxva2` transport — BUILT on Windows, 2026-09-04.** `transport` is now a
+  config key and a separate axis from `method` (`specs/CHANGELOG.md` revision 9):
+  chosen per panel at configure time, offered and never probed, gated at the
+  transport by EDID vendor+product, and never a fallback. `configure` asks only
+  where a panel enumerated on more than one transport, disables the boot tier for
+  a panel `dxva2` would strand, and `status` says which panel that is.
+  [`003`](docs/decisions/003-dxva2-as-a-second-windows-transport.md) is accepted.
+  **Not yet watched on the shipped path**: every run so far was `-WhatIf`, so
+  under hard rule 3 no claim is made that a panel has moved over it. macOS owes
+  only the refusal rule — it is not required to invent a second transport.
 - **An ADL transport for AMD** — open. `ADL_Display_WriteAndReadI2C` is a raw
   I2C path, and a third-party tool already uses ADL to drive an LG's `0x50` /
   `0xF4` sidechannel with the same values [`displays.toml`](displays.toml)

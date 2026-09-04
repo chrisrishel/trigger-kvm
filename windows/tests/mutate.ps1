@@ -530,6 +530,61 @@ Invoke-Mutation 'transport: a second embedded-source block goes unscanned' `
     '$TransportSource = @''' `
     "\$SecondSource = @'`nusing System;`n'@`n`n\$TransportSource = @'"
 
+# --- the walkthrough must configure a transport, and say what it costs --------
+#
+# The switcher's half of this is above. These are the installer's: what it asks,
+# what it writes, and the two places a transport takes away coverage the rest of
+# the program has already promised.
+
+Invoke-Mutation 'transport: the question is asked even with one transport' `
+    'install.ps1' 'walkthrough.tests.ps1' `
+    '    if ($t.Count -le 1) {' `
+    '    if ($false) {'
+Invoke-Mutation 'transport: dxva2 becomes the default instead of the covering one' `
+    'install.ps1' 'walkthrough.tests.ps1' `
+    "    `$now  = `$(if (`$Current -eq 'dxva2') { 1 } elseif (`$Current -eq 'nvapi') { 0 } else { -1 })" `
+    "    `$now  = `$(if (`$Current -eq 'dxva2') { 1 } elseif (`$Current -eq 'nvapi') { 0 } else { 1 })"
+Invoke-Mutation 'transport: the dialect question is asked and then refused' `
+    'install.ps1' 'walkthrough.tests.ps1' `
+    "    if (`$Transport -in `$SOURCELESS_TRANSPORTS) { return 'standard' }" `
+    '    if ($false) { }'
+Invoke-Mutation 'transport: the method question stops being told which transport' `
+    'install.ps1' 'walkthrough.tests.ps1' `
+    '    $method = Read-Method -Vendor $Found.EdidVendor -Current $was -Transport $transport' `
+    '    $method = Read-Method -Vendor $Found.EdidVendor -Current $was'
+Invoke-Mutation 'transport: the choice is never written to the config' `
+    'install.ps1' 'walkthrough.tests.ps1' `
+    '            ("display.{0}.transport = {1}" -f $d.Label, $(if ($d.Transport) { $d.Transport } else { ''nvapi'' }))' `
+    ''
+Invoke-Mutation 'transport: a configured one is walked back to the default on a re-run' `
+    'install.ps1' 'walkthrough.tests.ps1' `
+    '            Transport = $(if ($prior.Transport) { $prior.Transport } else { ''nvapi'' })' `
+    "            Transport = 'nvapi'"
+Invoke-Mutation 'transport: the boot row stays pickable with a panel that cannot reach it' `
+    'install.ps1' 'walkthrough.tests.ps1' `
+    '    if (-not $canElevate -or $stranded.Count -gt 0) { $off += 0 }' `
+    '    if (-not $canElevate) { $off += 0 }'
+Invoke-Mutation 'transport: the two disabled reasons are merged into one' `
+    'install.ps1' 'walkthrough.tests.ps1' `
+    "        `$why += ('{0} cannot switch before login' -f (Join-Names `$stranded))" `
+    "        `$why += 'needs an administrator account'"
+Invoke-Mutation 'transport: an impossible boot tier is kept rather than downgraded' `
+    'install.ps1' 'walkthrough.tests.ps1' `
+    "                if (`$newTier -eq 's4u' -and `$loginOnly.Count -gt 0) {" `
+    '                if ($false) {'
+Invoke-Mutation 'transport: status reports the tier and hides what it costs' `
+    'install.ps1' 'install.tests.ps1' `
+    '    if ($FromBoot -and $stranded.Count -gt 0) {' `
+    '    if ($false) {'
+Invoke-Mutation 'transport: status defaults an unrecognised transport instead of naming it' `
+    'install.ps1' 'install.tests.ps1' `
+    "            default { 'UNRECOGNISED -- the switch will refuse this panel' }" `
+    "            default { 'through the graphics card' }"
+Invoke-Mutation 'transport: the walkthrough may offer one the switcher refuses' `
+    'install.ps1' 'conventions.tests.ps1' `
+    "    return `$(if (`$pick -eq 1) { 'dxva2' } else { 'nvapi' })" `
+    "    return `$(if (`$pick -eq 1) { 'adl' } else { 'nvapi' })"
+
 # --- the LG service channel has one door --------------------------------------
 #
 # The self-test inside conventions.tests.ps1 already proves the CHECK bites, on
@@ -559,11 +614,12 @@ Invoke-Mutation 'tier: the fallback does not record what was installed' `
     "    Set-ConfigValue -Path `$CONFIG -Key 'install.autostart' -Value 'login'" ''
 Invoke-Mutation 'tier: the From boot row is offered to an account that cannot elevate' `
     'install.ps1' 'walkthrough.tests.ps1' `
-    '    if (-not $canElevate) { $off += 0 }' ''
+    '    if (-not $canElevate -or $stranded.Count -gt 0) { $off += 0 }' `
+    '    if ($stranded.Count -gt 0) { $off += 0 }'
 Invoke-Mutation 'tier: the row is hidden instead of disabled' `
     'install.ps1' 'walkthrough.tests.ps1' `
-    "          else             { 'needs an administrator account' }),"  `
-    "          else             { 'not available here' }),"
+    "    if (-not `$canElevate) { `$why += 'needs an administrator account' }"  `
+    "    if (-not `$canElevate) { `$why += 'not available here' }"
 
 # --- the monitors list --------------------------------------------------------
 

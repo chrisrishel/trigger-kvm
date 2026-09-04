@@ -16,7 +16,13 @@
 #   display.<label>.vendor   EDID manufacturer id, e.g. 0x1E6D
 #   display.<label>.product  EDID product id
 #   display.<label>.name     human name, for logs
-#   display.<label>.method   standard | lg-alt
+#   display.<label>.method   WHAT is sent: standard | lg-alt
+#   display.<label>.transport HOW it gets there: nvapi | dxva2 on this platform,
+#                            and absent means nvapi. The VOCABULARY is per
+#                            platform (specs/config-format.md), which is why the
+#                            values are not listed as a closed set here -- the
+#                            consumer that sends the bytes is the one that knows
+#                            them, and it refuses an unrecognised one by name
 #   display.<label>.input.<value>  which computer is on that input, e.g.
 #                            display.lg.input.0xd1 = mac. This is the WHOLE map:
 #                            `pull` looks up computer.this in it, `to mac` looks up

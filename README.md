@@ -52,7 +52,7 @@ cannot be a trigger.
 
 | | macOS | Windows |
 |---|---|---|
-| Hardware | Apple Silicon. `m1ddc`, the DDC tool used, does not support Intel Macs. | An **NVIDIA GPU**. DDC is sent through NVAPI, the only transport; AMD and Intel GPUs are unsupported. |
+| Hardware | Apple Silicon. `m1ddc`, the DDC tool used, does not support Intel Macs. | Any GPU, for a panel that takes the standard DDC/CI command -- but such a panel only follows the switch once somebody has logged in. An **NVIDIA GPU** for a panel needing a manufacturer sidechannel (the LG here does), and for any panel that must switch at the login screen. |
 | Software | Homebrew `m1ddc` (`brew install m1ddc`); Xcode command line tools (`xcode-select --install`) | Windows PowerShell 5.1, as shipped. Nothing to install. |
 | Permissions | None. Choosing "start from boot" asks for your password once, to install a system launchd job that then runs as you. | None for "start from login". Choosing "start from boot" raises one UAC prompt to register the task, which then runs as you; your account must itself be an administrator for that option. |
 | Bluetooth triggers | Yes. No permission prompt is involved. | Yes. |

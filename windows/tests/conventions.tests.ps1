@@ -495,6 +495,56 @@ foreach ($l in @($dxvaBody | Where-Object { $_ -match '^\s*public\s+static\b.*\(
     }
 }
 
+# ---- the installer must not offer a pair the switcher refuses ----------------
+#
+# Two scripts hold one fact between them, and they hold DIFFERENT HALVES of it on
+# purpose: Switch-Display REFUSES a transport it does not know and refuses
+# lg-alt on a transport with no source byte (that is the gate a hand-edited
+# config meets), while the walkthrough simply never OFFERS either. Neither is a
+# copy of the other -- but they can still drift apart, and the drift is silent
+# and nasty: a walkthrough offering a transport the switch rejects writes a
+# config that configures nothing, and the person finds out when a monitor does
+# not move.
+#
+# So the check is not "the same code twice", it is "the two vocabularies agree".
+# Structural, because no behavioural test can reach it: each script is right on
+# its own terms in isolation, and only the pair is wrong.
+
+$swSrc = (Get-Content -LiteralPath $Switcher) -join "`n"
+
+# The one place Switch-Display says which transports exist -- windows/AGENTS.md's
+# one-rule-one-place, and the reason Resolve-Panel throws rather than repeating it.
+$known = [regex]::Match($swSrc, "Transport\s+-notin\s+@\(([^)]*)\)")
+Assert-True $known.Success 'the switcher must state its transports in one place'
+$knownSet = @([regex]::Matches($known.Groups[1].Value, "'([a-z0-9]+)'") |
+              ForEach-Object { $_.Groups[1].Value } | Sort-Object)
+Assert-Equal 'dxva2 nvapi' ($knownSet -join ' ') `
+    'and those are the two this platform has'
+
+# Every transport the installer can WRITE into a config. Anything it can store
+# must be something the switcher will accept, or the walkthrough is a way to
+# configure a panel that never moves.
+$instText = (Get-Content -LiteralPath $installer) -join "`n"
+$readT    = [regex]::Match($instText, "(?s)function Read-Transport\b.*?\n\}")
+Assert-True $readT.Success 'the installer must have exactly one transport question'
+$offered  = @([regex]::Matches($readT.Value, "return\s+\`$\(if\s*\(\`$pick[^)]*\)\s*\{\s*'([a-z0-9]+)'\s*\}\s*else\s*\{\s*'([a-z0-9]+)'") |
+              ForEach-Object { $_.Groups[1].Value; $_.Groups[2].Value })
+Assert-True ($offered.Count -ge 2) 'and it must offer both of them by name'
+foreach ($t in $offered) {
+    Assert-True ($knownSet -contains $t) `
+        ("the walkthrough offers transport '{0}', which the switcher would refuse" -f $t)
+}
+
+# The impossible cell, from both sides. dxva2 cannot express an I2C source byte,
+# so the switcher refuses lg-alt on it and the installer must not ask a question
+# whose answer is already fixed -- specs/configure.md 6.3.
+Assert-Match $swSrc "Method\s+-eq\s+'lg-alt'\s+-and\s+.*Transport\s+-eq\s+'dxva2'" `
+    'the switcher refuses the impossible pair'
+Assert-Match $instText '\$SOURCELESS_TRANSPORTS\s*=\s*@\(\s*''dxva2''\s*\)' `
+    'and the installer names the same transport as the one that cannot carry a dialect'
+Assert-Match $instText 'if \(\$Transport -in \$SOURCELESS_TRANSPORTS\) \{ return ''standard'' \}' `
+    'so the method question is skipped rather than asked and then refused'
+
 # ---- "is a watcher running" is asked of the lock, not the process table ------
 #
 # An unelevated caller cannot read CommandLine across the session boundary, so

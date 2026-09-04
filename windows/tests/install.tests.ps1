@@ -9,7 +9,9 @@ $ErrorActionPreference = 'Stop'
 
 Import-Subject -Script 'install.ps1'     -Functions @(
     'Get-WatcherCommand', 'Test-OurLegacyDir', 'Test-OurLegacyTask',
-    'Get-PathValueKind', 'Get-UserPath', 'Set-UserPath', 'Get-InputMapReport')
+    'Get-PathValueKind', 'Get-UserPath', 'Set-UserPath', 'Get-InputMapReport',
+    'Get-TransportReport', 'Join-Names')
+Import-Subject -Script 'install.ps1'     -Variables @('DESKTOP_TRANSPORTS')
 Import-Subject -Script 'event-watch.ps1' -Functions @('Get-SwitcherArguments')
 
 # ---- the task action carries every path, the config included -----------------
@@ -203,6 +205,56 @@ Assert-NoMatch ($none -join "`n") 'asserted, never verified' `
 $bare = @(Get-InputMapReport -Cfg @{ 'display.lg.vendor' = '0x1E6D' } -Labels @('lg') `
                              -This 'pc' -Computers @('pc'))
 Assert-Match ($bare -join "`n") 'no inputs mapped'
+
+# ---- what a transport takes away, and where status has to say so -------------
+#
+# specs/status.md 4. The tier line above this block is about the TIER, and it can
+# be completely accurate while being untrue of ONE panel: a machine installed
+# from boot really does cover the login screen, and a dxva2 panel really will not
+# move until somebody logs in. Reporting only the tier is accurate and misleading
+# at once, which is the failure this block exists to catch.
+
+$tcfg = @{
+    'display.lg.vendor'      = '0x1E6D'
+    'display.lg.transport'   = 'nvapi'
+    'display.asus.vendor'    = '0x06B3'
+    'display.asus.transport' = 'dxva2'
+}
+$tr = @(Get-TransportReport -Cfg $tcfg -Labels @('lg','asus') -FromBoot) -join "`n"
+Assert-Match $tr 'lg\s+nvapi'  'every panel says which transport carries it'
+Assert-Match $tr 'asus\s+dxva2'
+Assert-Match $tr 'not before somebody logs in' 'and what that costs, on the row'
+Assert-Match $tr 'It does not for asus' `
+    'the boot tier is contradicted BY NAME for the panel it is untrue of'
+
+# The same config on the login tier says nothing about coverage: the tier never
+# claimed the login screen, so there is no promise for the panel to break. A
+# warning here would be noise on the tier where dxva2 costs nothing.
+$trLogin = @(Get-TransportReport -Cfg $tcfg -Labels @('lg','asus')) -join "`n"
+Assert-Match   $trLogin 'asus\s+dxva2' 'the transport is still reported'
+Assert-NoMatch $trLogin 'It does not for' `
+    'but nothing is contradicted when the tier never promised the login screen'
+
+# An all-nvapi desk on the boot tier: everything is covered, so nothing is said.
+$trOk = @(Get-TransportReport -Cfg @{ 'display.lg.transport' = 'nvapi' } -Labels @('lg') -FromBoot) -join "`n"
+Assert-NoMatch $trOk 'It does not for' 'a covered desk gets no warning'
+
+# ABSENT MEANS NVAPI -- specs/config-format.md. A config written before the key
+# existed must read as the transport it has always used, not as unanswered.
+$trOld = @(Get-TransportReport -Cfg @{ 'display.lg.vendor' = '0x1E6D' } -Labels @('lg') -FromBoot) -join "`n"
+Assert-Match   $trOld 'lg\s+nvapi' 'a config with no transport key reads as nvapi'
+Assert-NoMatch $trOld 'It does not for' 'and is not warned about'
+
+# NAMED, NOT CORRECTED. The switcher refuses an unrecognised transport by name
+# rather than defaulting, so status must not report a working panel where the
+# switch is going to refuse one.
+$trBad = @(Get-TransportReport -Cfg @{ 'display.lg.transport' = 'adl' } -Labels @('lg')) -join "`n"
+Assert-Match $trBad 'UNRECOGNISED' 'an unknown transport is reported as unknown'
+Assert-Match $trBad 'refuse this panel' 'and says what the switch will do about it'
+
+# Nothing configured: no rows, and no header claiming there are.
+Assert-Equal 0 @(Get-TransportReport -Cfg @{} -Labels @()).Count `
+    'with no display configured there is nothing to report'
 
 Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
 exit 0

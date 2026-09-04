@@ -67,6 +67,74 @@ it does not have. It is blind to two things, and this closes them:
 
 ---
 
+## Revision 9 — 2026-09-04
+
+**`transport` is a new config key, and a separate axis from `method`. Refuse an
+unrecognised one BY NAME; you are not required to have a second transport.**
+
+Sections: [`config-format.md`](config-format.md) "`transport` and `method` are
+different questions"; [`configure.md`](configure.md) §6.3 (new) and §8;
+[`status.md`](status.md) §4 (new).
+
+**Nothing here is normative, so the conformance check will not name any of it.**
+That is deliberate and it is why this entry is long: a platform with one
+transport must not owe strings for menus it never draws. The whole change
+travels on the revision.
+
+**Act on (macOS) — the short version: one rule, and it is a refusal.**
+
+1. **Read `display.<label>.transport`, and REFUSE a value you do not recognise,
+   naming it.** Never default it to the transport you have. This is the one
+   thing every platform owes, and the rule that makes a shared key with
+   per-platform vocabulary safe: a config naming `nvapi` is a config for a
+   different machine, and saying so is the honest answer. Defaulting instead
+   would send the write down a path nobody ever confirmed by eye — and a
+   transport, like an input value, is verified exactly once by a human looking
+   at the panel (`../AGENTS.md` hard rule 3).
+
+2. **Absent means your platform's original transport.** Every config written
+   before this key existed keeps working, unrewritten. macOS has one transport,
+   so in practice: absent, or the name of that one, is accepted; anything else
+   is refused.
+
+3. **You are NOT required to invent a second transport, and must not.** The key
+   is shared; the vocabulary is each platform's, named after the API that
+   carries it. macOS having exactly one name is the expected shape, not a gap.
+   §6.3 says a platform with one transport asks nothing — so no new menu, and
+   `configure.md` §6.3, `configure.md` §8's transport case and `status.md` §4
+   are all unreachable for you and owe you no work beyond point 1.
+
+**What Windows did, for context rather than for copying.** It gained `dxva2`
+(Windows' own DDC/CI stack, any adapter) beside `nvapi` (aimed raw I2C, NVIDIA
+only). That makes a 2×2 with one impossible cell — `dxva2` cannot express an I2C
+source byte at all, so it cannot carry a manufacturer dialect — and the pair is
+refused with the reason named rather than quietly downgraded to the standard
+command. `configure` asks §6.3 only where a panel enumerated on more than one
+transport, before the §6.2 method question, because the transport decides which
+dialects exist. Because `dxva2` needs a desktop, the `From boot` row is drawn
+disabled naming the panel, an already-chosen boot tier falls back to login and
+says so, and `status` §4 says which panel a transport strands.
+
+**Why `method` was not enough.** It conflated WHAT is sent with HOW it gets
+there. Those were one key only because every platform had exactly one transport,
+and the moment one has two, a single key cannot say that a panel takes the
+standard dialect *and* which API carries it — the values on offer would change
+meaning with the route. Splitting them is what lets a platform add a transport
+without any dialect changing meaning on any other platform.
+
+**Why the refusal, and not a fallback.** Nothing tries one transport and falls
+through to another at switch time (`docs/decisions/003`). A silent fallback
+would mean the packet that moved the panel on the day somebody watched it is not
+the packet sent afterwards — which is the one property this project cannot give
+up, because a human eye is the only verification the hardware permits.
+
+**One thing to check rather than assume**, since §6.3 draws a line that could
+otherwise blur hard rule 1b: **enumerating is not probing.** Listing this
+computer's own adapters and reading the EDID each reports sends nothing to any
+monitor. What 1b forbids is discovering a MONITOR's behaviour by experiment.
+Building an offer from what enumerated is not that, and the spec now says so
+explicitly so nobody has to re-derive it.
+
 ## Revision 8 — 2026-09-02
 
 **`status` must show the input map and say that nothing can verify it.**

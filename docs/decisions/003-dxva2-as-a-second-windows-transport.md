@@ -1,7 +1,8 @@
 # 003 -- dxva2 as a second Windows transport, chosen per panel at configure time
 
 **Date:** 2026-09-01
-**Status:** proposed -- measured, not built
+**Status:** accepted -- built 2026-09-02..04, and see "What was built, and what
+is still unwatched" below
 
 ## Context
 
@@ -44,22 +45,31 @@ mechanism.
 
 ## Decision
 
-**Proposed: a `dxva2` transport alongside NVAPI, selected per panel at configure
-time, and confined to the login tier.** Not built by this task, which produced a
-measurement and this record only.
+**Accepted: a `dxva2` transport alongside NVAPI, selected per panel at configure
+time, and confined to the login tier.**
 
-The shape, if it is built:
+Built as described, with one correction to the shape below: `configure` offers
+the transport as its own question (`specs/configure.md` §6.3), asked **before**
+the §6.2 dialect question rather than as a second axis of it. The transport
+decides which dialects exist at all — `dxva2` cannot express an I2C source byte,
+so it cannot carry `lg-alt` — and asking the dialect first would have been a
+question whose answer was already fixed. **The check does not offer the other
+transport when one does not answer**, which §10.5 does for a dialect: a dialect
+is a guess about a monitor, and a transport is a fact about this computer's
+adapters that enumeration already settled.
+
+The shape, as built:
 
 - **Per panel, not per machine.** A desk can mix: this one would drive the LG
   over NVAPI (its input lives on I2C `0x50`, which the Windows DDC/CI stack
   cannot express at any GPU) and could drive the ASUS over either. The unit of
   choice is the display, matching how `method` already works in the config.
 - **Chosen at configure time, offered and never probed.** Same posture as the
-  manufacturer dialect in `AGENTS.md` rule 1b: the walkthrough offers the
-  transport for the panel being configured, and the check offers the other one
-  if the chosen one does not answer -- `specs/configure.md` §6.2 and §10.5 are
-  the existing shape for exactly this, and a transport is a second axis on the
-  same question, not a new kind of question.
+  manufacturer dialect in `AGENTS.md` rule 1b, and the spec draws the line that
+  posture could otherwise blur: enumerating this computer's own adapters and
+  reading the EDIDs they report sends nothing to a monitor, so building the offer
+  from what enumerated is not a probe. Shown only where a panel enumerated on
+  more than one transport; a machine with one asks nothing.
 - **NVAPI stays the default where it is available for that panel**, because it
   is the one that also works in session 0.
 - **Selecting dxva2 for any configured panel disables the boot tier**, drawn and
@@ -97,6 +107,37 @@ The shape, if it is built:
   have to re-take them -- including the ones that say what was *not* measured:
   no DisplayPort motherboard output, no IGCL, nothing sent to the LG over the
   Intel route.
+
+## What was built, and what is still unwatched
+
+Added 2026-09-04, when the transport shipped.
+
+**The rot objection is answered better than this record expected, and the reason
+is worth recording because the record was wrong about it.** The argument above
+rests on this desk having an Intel iGPU to exercise `dxva2` on -- and the plan
+that built it budgeted a cable move to do so, at a real cost: the motherboard
+HDMI output drives the ASUS at 3840x2160 @ 60 Hz where the 4090 drives it at
+138 Hz. **That cost does not apply.** Measured 2026-09-02 with the ASUS back on
+the 4090, `trigger-kvm list` reports *both* panels as reachable by `nvapi, dxva2`
+and dxva2's EDID parse agrees with NVAPI exactly. `dxva2` is the Windows DDC/CI
+stack and works on **any** adapter, the NVIDIA one included -- indeed
+dxva2-on-the-4090 was this project's shipping path for the ASUS before commit
+`70e5ed4` deleted it.
+
+So what the 2026-09-01 cable move actually proved is the narrower claim that the
+**Intel iGPU** carries DDC. That remains measured and does not need redoing. The
+transport is exercisable on this desk at any time, without touching a cable,
+which is a stronger answer to decision 001's "nothing would exercise it" than
+"there is an iGPU we could re-cable to".
+
+**NO PANEL HAS BEEN MOVED OVER `dxva2` SINCE IT WAS BUILT.** Every run in the
+build was `-WhatIf`: both panels enumerate through both transports, dxva2's EDID
+parse agrees with NVAPI (`AUS42E0` -> `0x06B3:0x42E0`, `GSM9E9D` ->
+`0x1E6D:0x9E9D`), and a dxva2 `pull` resolves the ASUS to `\\.\DISPLAY2` with
+value `0x11`. Nothing was sent. The 2026-09-01 readings that *did* move a panel
+were taken with the earlier probe over the iGPU, not with this code. Until
+somebody watches a panel move on the shipped path, that claim is not made -- hard
+rule 3, and this note is here so nobody later reads "built" as "watched".
 
 ## What would reopen this
 

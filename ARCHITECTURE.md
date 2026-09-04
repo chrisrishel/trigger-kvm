@@ -193,25 +193,48 @@ The two monitors do not speak the same dialect:
 | LG 45GX950A | I2C source `0x50`, VCP `0xF4` | Standard input control is **stubbed** on this panel |
 
 Two dialects, but no longer two code paths. macOS reaches both through `m1ddc`
-(`set input` vs `set input-alt`). Windows sends both as raw I2C through NVAPI,
-differing only in the source byte and VCP code — because the Windows DDC/CI stack
-hardcodes I2C source `0x51` and cannot express `0x50` at all, so the LG forces a
-raw-I2C transport, and once that exists the ASUS has no reason to use a second one.
+(`set input` vs `set input-alt`).
 
-That the ASUS *could* be driven by the vendor-neutral `dxva2` and deliberately is
-not is a trade-off with consequences for anyone without an NVIDIA GPU; see
-`docs/decisions/001-nvapi-as-the-only-windows-transport.md`.
+## Dialect and transport are two axes, not one
 
-**That "could" is now measured, and it too is proven but not built.** On
-2026-09-01 the ASUS was moved to this machine's onboard Intel UHD 770 and
-switched through `dxva2` in both directions, including the case that matters —
-a pull back from an *inactive* link. So a standard-DDC panel can be driven on any
-GPU, and the NVIDIA requirement is really a requirement *for a panel whose input
-needs raw I2C*. Two things bound it: session 0 gives `dxva2` no monitor handle at
-all, so such a panel is login-tier only; and it does not help this desk, because
-the LG's `0x50` input still forces NVAPI. The shape it would take — a transport
-chosen per panel at configure time, never a fallback tried at switch time — is in
-`docs/decisions/003-dxva2-as-a-second-windows-transport.md`; the readings are in
+**`method` is WHAT is sent** — which VCP dialect, and therefore which values are
+legal. **`transport` is HOW it gets there** — which driver API carries the bytes.
+They were one key while every platform had exactly one transport. Windows now has
+two, which makes a 2×2 with one impossible cell:
+
+| | `nvapi` — aimed raw I2C, NVIDIA only | `dxva2` — Windows' own DDC/CI stack, any adapter |
+|---|---|---|
+| `standard` (`0x51`, VCP `0x60`) | works | works |
+| `lg-alt` (`0x50`, VCP `0xF4`) | works | **impossible** |
+
+The impossible cell is a *safety property*, not merely a limitation: the Windows
+DDC/CI stack hardcodes I2C source `0x51` and `SetVCPFeature` takes a VCP code
+rather than an address, so **adding `dxva2` cannot widen the `0x50` surface at
+all.** That is asserted by the conventions scan rather than remembered. The pair
+is refused with the reason named, never quietly downgraded to the standard
+command — somebody who asked for a sidechannel, silently got something else, and
+then confirmed by eye that a panel moved would be wrong about what moved it.
+
+**A transport is chosen per panel at configure time and is never a fallback.**
+Nothing tries one and falls through to the other at switch time, because the
+packet that moved the panel on the day somebody watched it must be the packet
+sent afterwards — a human eye is the only verification this hardware permits.
+`configure` offers the choice only where a panel enumerated on more than one
+transport; enumerating adapters and reading EDIDs sends nothing to a monitor, so
+that offer is not the probing `AGENTS.md` 1b forbids.
+
+**What `dxva2` costs is stated where it is chosen.** It goes through `user32`,
+which in session 0 reports one phantom monitor rather than none — it would fail
+by mis-resolving. So a `dxva2` panel is login-tier only: `configure` draws the
+`From boot` row disabled naming the panel, an already-chosen boot tier falls back
+to login and says so, and `status` reports which panel a transport strands. This
+is the whole story on hardware with no NVIDIA card, and it is accepted as a
+property of such a panel rather than a defect to fix later.
+
+Why there are two, and why the objection in
+`docs/decisions/001-nvapi-as-the-only-windows-transport.md` was answered by a
+change in circumstances rather than by argument:
+`docs/decisions/003-dxva2-as-a-second-windows-transport.md`. Readings in
 `docs/measurements.md`.
 
 The LG accepts `VCP 0x60` writes, returns success, and discards them; reads always
@@ -225,10 +248,17 @@ safe; sweeping VCP codes there has bricked LG monitors.
 ## Both switchers aim at exactly one display
 
 `m1ddc display <uuid> set ...` addresses one display by UUID. The Windows switcher
-addresses one display by **EDID identity**: it enumerates the GPU's connected
-outputs through NVAPI, reads each one's EDID, and writes only to the single output
-whose manufacturer and product id identify the intended panel. Both monitors are
-resolved that way, and each write reaches one output.
+addresses one display by **EDID identity**: it enumerates the connected outputs,
+reads each one's EDID, and writes only to the single output whose manufacturer and
+product id identify the intended panel. Both monitors are resolved that way, and
+each write reaches one output.
+
+**One identity key serves both transports**, which is what lets the transport be
+a per-panel choice rather than a second notion of what a monitor is: NVAPI reads
+the EDID off the GPU output, `dxva2` parses it out of the PnP interface path, and
+the two agree exactly. The *whole* interface path is not the key and never was —
+moving a cable changed the path while the EDID id inside it held, which is
+precisely what broke the earlier matcher.
 
 The safety rule that matters — a `0x50` service-channel write must never reach a
 non-LG panel — is enforced at the transport rather than by the caller.

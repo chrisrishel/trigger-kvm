@@ -11,13 +11,15 @@
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'lib.ps1')
 
-Import-Subject -Script 'install.ps1' -Variables @('DIALECTS','MCCS_INPUTS','NAME_RULE','BACK','RENAMED_KEYS') -Functions @(
+Import-Subject -Script 'install.ps1' -Variables @('DIALECTS','MCCS_INPUTS','NAME_RULE','BACK','RENAMED_KEYS',
+                                                  'DESKTOP_TRANSPORTS','SOURCELESS_TRANSPORTS') -Functions @(
     'Read-Default','Read-YesNo','Get-MenuWidth','Write-MenuFrame','Clear-ToLineEnd',
     'Split-Detail','Get-ItemWidth','Get-MenuRow',
     'Select-One','Select-Many','Join-Names','Get-InputName',
     'Get-DefaultComputerName','Get-KnownComputers','Read-Computers','Read-ComputerRemovals',
     'Edit-PanelMaps','Format-Name','Read-Name',
     'Format-Byte','Read-InputValue','Get-InputTable','Get-DisplayMap','Read-Method',
+    'Read-Transport','Get-LoginOnlyPanels',
     'Get-DisplayAnswers','Get-ConfiguredAnswers','Get-PriorDisplay','Read-Monitors',
     'Invoke-DisplayTest','Invoke-TestRound','Invoke-TestRoundBody','Test-OneComputer',
     'Test-DisplayInput','Test-OneValue','Invoke-BlindWalk',
@@ -389,6 +391,93 @@ Assert-Equal 'lg-alt' (Read-Method -Vendor 0x1E6D -Current 'lg-alt') 'and it sur
 Assert-Match ((Get-Asked) -join '|') 'Choice \[2\]' 'a configured method keeps the cursor'
 Assert-Match (Get-Said) "own method\s+for LG.*\(current\)" 'and is marked, not merely pre-selected'
 
+# ---- how the bytes get there, where there is a choice ------------------------
+#
+# specs/configure.md 6.3. SHOWN ONLY WHERE A CHOICE EXISTS -- and "a choice"
+# means this panel enumerated through more than one of this computer's
+# transports, which is a fact about the ADAPTERS, not about the monitor. Nothing
+# was sent to the panel to find it out, which is why offering it is consistent
+# with AGENTS.md 1b.
+
+# One transport saw it: nothing to ask, and the answer is the transport it was
+# seen on. A machine with no NVIDIA card lands here for every panel, and this is
+# the case where the walkthrough has to stay silent rather than offer a menu with
+# one row.
+Reset-Said; Set-Answers @()
+Assert-Equal 'dxva2' (Read-Transport -Transports @('dxva2') -Current '' -Vendor 0x06B3) `
+    'one transport is recorded, not asked about'
+Assert-NoMatch (Get-Said) 'how the switch reaches' 'and no question is drawn'
+
+# Nothing enumerated it at all -- it can only have come from the config. Default
+# to nvapi rather than inventing a transport, matching specs/config-format.md.
+Reset-Said; Set-Answers @()
+Assert-Equal 'nvapi' (Read-Transport -Transports @() -Current '' -Vendor 0x06B3)
+
+Reset-Said; Set-Answers @('1')
+Assert-Equal 'nvapi' (Read-Transport -Transports @('nvapi','dxva2') -Current '' -Vendor 0x06B3) `
+    'the graphics card is row 1'
+$said = Get-Said
+Assert-Match $said '--- how the switch reaches this monitor ---'
+# THE CONSEQUENCE, NAMED WHERE THE CHOICE IS MADE -- specs/configure.md 2 and
+# 6.3 -- in terms of what the person will EXPERIENCE. Not "session 0 has no
+# desktop", which is the mechanism and means nothing to somebody picking a
+# monitor setting.
+Assert-Match $said 'will not follow the switch until'
+Assert-Match $said 'somebody has logged in'
+Assert-NoMatch $said 'session 0' 'the mechanism is not what the row is for'
+Assert-Match $said 'works before anyone logs in'
+Assert-Match ((Get-Asked) -join '|') 'Choice \[1\]' `
+    'the transport that covers more is the default, so the cursor starts there'
+
+Reset-Said; Set-Answers @('2')
+Assert-Equal 'dxva2' (Read-Transport -Transports @('nvapi','dxva2') -Current '' -Vendor 0x06B3) `
+    'row 2 is through Windows'
+
+# A settled transport keeps the cursor and is marked, for the same reason a
+# settled method does: somebody watched a panel move over it.
+Reset-Said; Set-Answers @('2')
+Assert-Equal 'dxva2' (Read-Transport -Transports @('nvapi','dxva2') -Current 'dxva2' -Vendor 0x06B3)
+Assert-Match ((Get-Asked) -join '|') 'Choice \[2\]' 'a configured transport keeps the cursor'
+Assert-Match (Get-Said) 'Through Windows.*\(current\)' 'and is marked, not merely pre-selected'
+
+# Esc backs out of the whole panel, exactly as it does from the method question
+# one screen later. A key that works on one and is dead on the next is worse than
+# either -- the lesson the method question already learned twice.
+Reset-Said; Set-Answers @('q')
+Assert-Equal 'back' (Read-Transport -Transports @('nvapi','dxva2') -Current '' -Vendor 0x06B3) `
+    'esc backs out rather than answering'
+
+# WHERE THE VENDOR HAS A DIALECT, the row says what picking it would cost. The
+# person choosing here is the only one who can weigh "this panel needs LG's own
+# method" against "I want it on any adapter".
+Reset-Said; Set-Answers @('1')
+Read-Transport -Transports @('nvapi','dxva2') -Current '' -Vendor 0x1E6D | Out-Null
+Assert-Match (Get-Said) "cannot use LG's own method" `
+    'the dialect it rules out is named where the choice is made'
+
+# ...and where the vendor has none, that line would be about nothing.
+Reset-Said; Set-Answers @('1')
+Read-Transport -Transports @('nvapi','dxva2') -Current '' -Vendor 0x06B3 | Out-Null
+Assert-NoMatch (Get-Said) 'own method' 'a vendor with no dialect loses nothing, so nothing is said'
+
+# ---- the transport decides which dialects exist, so it is asked FIRST --------
+#
+# specs/configure.md 6.3. A transport that cannot address an I2C source byte
+# cannot carry a manufacturer channel at all, so offering the dialect and
+# refusing it at the transport afterwards would be a question whose answer was
+# already fixed. The switcher's Switch-Display still refuses the PAIR, for a
+# config edited by hand; this is the walkthrough never offering it.
+Reset-Said; Set-Answers @()
+Assert-Equal 'standard' (Read-Method -Vendor 0x1E6D -Current 'lg-alt' -Transport 'dxva2') `
+    'on a transport that cannot carry a dialect, the method question is not asked'
+Assert-NoMatch (Get-Said) 'how to talk to this monitor' 'and no menu is drawn for it'
+
+# The same vendor on a transport that CAN carry it is asked, so the skip above is
+# about the transport and not about the vendor quietly losing its alternative.
+Reset-Said; Set-Answers @('2')
+Assert-Equal 'lg-alt' (Read-Method -Vendor 0x1E6D -Current 'lg-alt' -Transport 'nvapi')
+Assert-Match (Get-Said) 'how to talk to this monitor'
+
 # ---- esc leaves a panel's questions, and changes nothing ---------------------
 #
 # specs/configure.md 3.3's first row: a submenu you entered from somewhere returns
@@ -408,7 +497,7 @@ Assert-Equal 'back' (Read-Method -Vendor 0x1E6D -Current 'lg-alt') `
 Reset-Said; Set-Answers @('y', 'lg', 'q')
 $a = Get-DisplayAnswers -Found ([PSCustomObject]@{
         EdidVendor = 0x1E6D; EdidProduct = 0x9E9D; Name = 'LG ULTRAGEAR+'
-        Mfg = 'GSM'; Connector = 'DisplayPort' }) `
+        Mfg = 'GSM'; Connector = 'DisplayPort'; Transports = @('nvapi') }) `
      -Existing $null -Computers @('pc','mac') -This 'pc'
 Assert-Equal 'back' $a 'and it propagates out of the panel, not just the question'
 
@@ -417,7 +506,7 @@ Assert-Equal 'back' $a 'and it propagates out of the panel, not just the questio
 Reset-Said; Set-Answers @('y', 'lg', '1', 'q')
 $a = Get-DisplayAnswers -Found ([PSCustomObject]@{
         EdidVendor = 0x1E6D; EdidProduct = 0x9E9D; Name = 'LG ULTRAGEAR+'
-        Mfg = 'GSM'; Connector = 'DisplayPort' }) `
+        Mfg = 'GSM'; Connector = 'DisplayPort'; Transports = @('nvapi') }) `
      -Existing $null -Computers @('pc','mac') -This 'pc'
 Assert-Equal 'back' $a 'half a map is not an answer'
 
@@ -479,7 +568,8 @@ Assert-Equal 'mac'    $c['display.lg.input.0xd1']
 # the CONFIG until Save, and Read-Monitors falls back to that -- which is right,
 # and is exactly why the guard reads $Existing rather than the working set.
 $LG = [PSCustomObject]@{ EdidVendor = 0x1E6D; EdidProduct = 0x9E9D
-                         Name = 'LG ULTRAGEAR+'; Mfg = 'GSM'; Connector = 'DisplayPort' }
+                         Name = 'LG ULTRAGEAR+'; Mfg = 'GSM'; Connector = 'DisplayPort'
+                         Transports = @('nvapi') }
 
 Reset-Printed; Set-Answers @('n')
 $a = Get-DisplayAnswers -Found $LG -Existing $null -Computers @('pc','mac') -This 'pc'
@@ -504,7 +594,7 @@ Reset-Said
 Set-Answers @('y', 'lg', '2', '1', '2')   # manage / label / LG's method / two inputs
 $a = Get-DisplayAnswers -Found ([PSCustomObject]@{
         EdidVendor = 0x1E6D; EdidProduct = 0x9E9D; Name = 'LG ULTRAGEAR+'
-        Mfg = 'GSM'; Connector = 'DisplayPort' }) `
+        Mfg = 'GSM'; Connector = 'DisplayPort'; Transports = @('nvapi') }) `
      -Existing $null -Computers @('pc','mac') -This 'pc'
 Assert-Equal 'lg-alt' $a.Method
 $asked = (Get-Asked) -join '|'
@@ -734,6 +824,161 @@ Assert-Match $said 'needs an administrator account' 'and says why it is not avai
 Assert-Match $said '-- From boot'                   'drawn unnumbered, so it cannot be picked'
 Assert-Match ((Get-Asked) -join '|') 'Choice \[2\]' 'and the cursor does not start on it'
 
+Reset-Printed; $script:canElevate = $true
+
+# ---- a TRANSPORT can be the reason the boot tier is unavailable --------------
+#
+# specs/configure.md 8. The two disabled cases are different facts and must not
+# be merged: one is about the ACCOUNT and is fixed by finding an administrator,
+# the other is about a MONITOR and is fixed by putting that panel back on the
+# graphics card. A single "not available" covering both would send somebody
+# hunting for an admin password that would not have helped.
+
+Assert-Equal 'PG42UQ' (@(Get-LoginOnlyPanels -Answers @(
+        [PSCustomObject]@{ Label='asus'; Name='PG42UQ'; Transport='dxva2' }
+        [PSCustomObject]@{ Label='lg';   Name='LG';     Transport='nvapi' }))[0]) `
+    'only the panels a transport strands are named'
+Assert-Equal 0 @(Get-LoginOnlyPanels -Answers @(
+        [PSCustomObject]@{ Label='lg'; Name='LG'; Transport='nvapi' })).Count `
+    'and an all-nvapi desk strands none'
+
+Reset-Printed; $script:canElevate = $true
+Set-Answers @('1', '2')     # From boot is unpickable, so try again with From login
+Assert-Equal 'user' (Read-Tier -Current '' -LoginOnly @('PG42UQ'))
+$said = Get-Printed
+Assert-Match $said 'From boot'                       'the row is still drawn'
+Assert-Match $said '-- From boot'                    'drawn unnumbered, so it cannot be picked'
+Assert-Match $said 'PG42UQ cannot switch before login' `
+    'and says WHICH MONITOR, because that is the thing the person can act on'
+Assert-NoMatch $said 'needs an administrator account' `
+    'this account can elevate; saying otherwise sends them after a password that would not help'
+
+# BOTH reasons at once are both said. Whichever they fix first, the row tells
+# them the other is still there.
+Reset-Printed; $script:canElevate = $false
+Set-Answers @('1', '2')
+Assert-Equal 'user' (Read-Tier -Current '' -LoginOnly @('PG42UQ'))
+$said = Get-Printed
+Assert-Match $said 'PG42UQ cannot switch before login'
+Assert-Match $said 'needs an administrator account'
+
+# An empty list passed EXPLICITLY arrives as $null, which a parameter default
+# never replaces -- and Set-StrictMode makes $null.Count terminating. That is the
+# common desk, mid-walkthrough, so it is worth a test of its own.
+Reset-Printed; $script:canElevate = $true
+Set-Answers @('1')
+Assert-Equal 's4u' (Read-Tier -Current 'user' -LoginOnly @()) `
+    'no stranded panel leaves the row pickable'
+
+Reset-Printed; $script:canElevate = $true
+
+# ---- giving a panel that transport downgrades an existing boot tier ----------
+#
+# specs/configure.md 8: it falls back to login AND SAYS SO, the same shape as a
+# declined elevation. Said here, attached to the choice that caused it, and held
+# in memory until Save -- which is the difference from the bug TODO.md records
+# against the elevation path, where the downgrade is written into the config
+# before the install that would apply it has even run.
+
+$script:panels = @('06B3|42E0|AUS|HDMI|01010101|PG42UQ|nvapi,dxva2',
+                   '1E6D|9E9D|GSM|DisplayPort|00001111|LG ULTRAGEAR+|nvapi')
+Set-Config ($CONFIGURED + @('install.autostart = boot'))
+Set-Outcomes @()
+Reset-Printed
+Set-Answers @(
+    '2',            # Monitors
+    '1',            #   PG42UQ
+    'y','',         #     manage? / keep the label
+    '2',            #     how the switch reaches it: through Windows
+    '3',            #     pc  is on HDMI 1
+    '1',            #     mac on DisplayPort 1
+    '4',            #   Done with the monitors list
+    '5','2',        # PATH: no
+    '10')           # Save
+Invoke-Configure
+Assert-Equal 0 $LASTEXITCODE
+$said = Get-Printed
+Assert-Match $said 'cannot switch before anyone logs in' 'the downgrade is said, not done quietly'
+Assert-Match $said 'Changed to starting from login'
+$c = Get-Written
+Assert-Equal 'login' $c['install.autostart'] 'and the tier that gets written is the one that can work'
+Assert-Equal 'dxva2' $c['display.asus.transport'] 'the chosen transport is written'
+Assert-Equal 'nvapi' $c['display.lg.transport'] `
+    'and a panel only one transport saw is written as that one, never left to a default'
+
+# THE PANEL WAS NOT ASKED. The LG enumerated on one transport only, so the
+# walkthrough recorded it rather than drawing a menu with one row -- which is
+# also why the answer stream above has no transport answer for it.
+Assert-NoMatch $said 'LG ULTRAGEAR\+.*how the switch reaches' 'one transport, no question'
+
+# ---- an existing transport survives a re-run, and an absent one means nvapi ---
+#
+# The re-run reads it back through Get-PriorDisplay, so a review that changes
+# nothing must not walk a settled answer back to the default.
+$reread = Get-ConfiguredAnswers -Found @(
+        [PSCustomObject]@{ EdidVendor=0x06B3; EdidProduct=0x42E0; Mfg='AUS' }) `
+    -Existing (Get-Written) -Computers @('pc','mac')
+Assert-Equal 'dxva2' $reread[0].Transport 'a configured transport is read back, not re-defaulted'
+
+# A config written before the key existed. Absent means nvapi
+# (specs/config-format.md), applied HERE, so the menu, the boot row and status
+# all read one answered value rather than each defaulting on its own.
+$old = Get-ConfiguredAnswers -Found @(
+        [PSCustomObject]@{ EdidVendor=0x1E6D; EdidProduct=0x9E9D; Mfg='GSM' }) `
+    -Existing (Read-Config -Path $null) -Computers @('pc','mac')
+Assert-Equal 0 @($old).Count 'a panel the config does not name is not invented'
+$oldCfg = [ordered]@{}
+foreach ($l in @('display.lg.vendor = 0x1E6D','display.lg.product = 0x9E9D',
+                 'display.lg.name = LG ULTRAGEAR+','display.lg.method = lg-alt',
+                 'display.lg.input.0xd0 = pc')) {
+    $kv = $l -split ' = '; $oldCfg[$kv[0]] = $kv[1]
+}
+$old = Get-ConfiguredAnswers -Found @(
+        [PSCustomObject]@{ EdidVendor=0x1E6D; EdidProduct=0x9E9D; Mfg='GSM' }) `
+    -Existing $oldCfg -Computers @('pc','mac')
+Assert-Equal 'nvapi' $old[0].Transport 'a config with no transport key reads as nvapi'
+
+# ---- the two questions are WIRED, not merely each correct on its own ---------
+#
+# Read-Method takes -Transport and defaults it to nvapi, so a call site that
+# stopped passing it would go on working and quietly start asking the dialect
+# question on a transport that cannot carry one -- the exact shape
+# windows/AGENTS.md records being bitten by twice, where a simple function
+# swallows what it is not given. Testing the two functions apart cannot catch
+# that; only driving the panel through the walkthrough can.
+#
+# The LG is the panel that proves it: its vendor is the one with a documented
+# alternative, so it is the only panel whose method question exists to be
+# wrongly asked.
+
+$script:panels = @('06B3|42E0|AUS|HDMI|01010101|PG42UQ|nvapi',
+                   '1E6D|9E9D|GSM|DisplayPort|00001111|LG ULTRAGEAR+|nvapi,dxva2')
+Set-Config $CONFIGURED
+Set-Outcomes @()
+Reset-Printed
+Set-Answers @(
+    '2',            # Monitors
+    '2',            #   LG ULTRAGEAR+
+    'y','',         #     manage? / keep the label
+    '2',            #     how the switch reaches it: through Windows
+                    #     ...and NO method question here: that is the assertion
+    '9','0xD0',     #     pc
+    '10','0xD1',    #     mac
+    '4',            #   Done
+    '5','2',        # PATH: no
+    '10')           # Save
+Invoke-Configure
+Assert-Equal 0 $LASTEXITCODE
+$said = Get-Printed
+Assert-NoMatch $said 'how to talk to this monitor' `
+    'the dialect question is not asked on a transport that cannot carry a dialect'
+$c = Get-Written
+Assert-Equal 'dxva2'    $c['display.lg.transport']
+Assert-Equal 'standard' $c['display.lg.method'] `
+    'and the method it lands on is the only one that transport can send'
+
+$script:panels = @('06B3|42E0|AUS|HDMI|01010101|PG42UQ',
+                   '1E6D|9E9D|GSM|DisplayPort|00001111|LG ULTRAGEAR+')
 Reset-Printed; $script:canElevate = $true
 
 # ---- autostart can be answered "no" ------------------------------------------

@@ -6,6 +6,15 @@
 # researched, cross-machine knowledge about a monitor MODEL: which method it
 # needs, which VCP code carries its input, and which values are known safe.
 #
+# `method` only, never `transport`. What a MODEL needs is a fact about the panel
+# and travels between desks; which API carries the bytes is a fact about the
+# COMPUTER's adapters and does not. So a transport belongs in a machine's own
+# config and never here -- and the one cross-machine consequence of the pair,
+# that a transport with no I2C source byte cannot carry `lg-alt` at all, is
+# enforced at each implementation's transport rather than written down as a
+# value. See specs/config-format.md, "`transport` and `method` are different
+# questions".
+#
 # It is the ALLOWLIST hard rule 1 (AGENTS.md) refers to. The dialect tables in
 # both implementations -- DIALECT_* in macos/lib/walkthrough.sh and $DIALECTS in
 # windows/install.ps1 -- carry these values, and a change here changes both in

@@ -69,19 +69,19 @@ DOES track a switch flip's PnP arrival, and since a departure is only
 `Write-Verbose`, it is how you correlate a flip against the log.
 
 **S3 standby HANGS this machine. Do not test it again; use hibernate.** Entered
-S3 once and never resumed: hard reboot, no crash dump, no bugcheck. Nothing in
-this repo is implicated (task `WakeToRun: False`, user-mode DDC cannot block S3
-entry or resume, zero completed sleep cycles in the System log ever); the cause is
-platform -- `powercfg /a` offers only S3 and Hibernate, Hybrid Sleep unavailable
-under the hypervisor with VBS/HVCI strict. From a bash-flavoured shell hibernate
-is `shutdown -h`, not `/h`, which MSYS rewrites into a path.
+S3 once and never resumed. Nothing in this repo is implicated and the cause is
+platform; the evidence is dated in `..\docs\measurements.md`. From a
+bash-flavoured shell hibernate is `shutdown -h`, not `/h`, which MSYS rewrites
+into a path.
 
 **In session 0, `user32` reports ONE PHANTOM MONITOR, not zero.** "No desktop"
-presents as *wrong* monitors, so any identity check that trusts `user32` in a
-non-interactive context silently mis-resolves (`haimgel/display-switch` #17 is
-this). **NVAPI is the sole source of display identity, never correlated against
-the Windows display list**; `dxva2`/`user32` were removed rather than kept as a
-fallback -- `docs/decisions/001-nvapi-as-the-only-windows-transport.md`.
+presents as *wrong* monitors, so an identity check trusting `user32` there
+MIS-RESOLVES: it fails by picking a panel, not by erroring
+(`haimgel/display-switch` #17). `dxva2` goes through `user32`, so a `dxva2` panel
+is LOGIN-TIER ONLY -- `configure` draws the boot row disabled for it and `status`
+says which panel it strands -- and its EDID gate is what stops session 0 acting
+on the phantom. NVAPI is the only identity source the boot tier may use, and is
+never correlated against the Windows display list. Decisions `001` and `003`.
 
 **Do not gate anything on `NV_GPU_DISPLAYIDS.isActive` (flags bit 2).** It read
 `False` and then `True` for both panels in the same interactive session with no
