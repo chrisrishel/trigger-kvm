@@ -78,6 +78,39 @@ function Get-ConfigPath {
     Join-Path $env:LOCALAPPDATA 'trigger-kvm\config'
 }
 
+# --- writing ------------------------------------------------------------------
+
+# specs/config-format.md, "A writer must not write what it cannot read back".
+#
+# Lives HERE, beside the reader, because it is the reader's rules read backwards
+# and the two must never disagree about what survives a round trip. It is the
+# same reasoning that put the converters in this file.
+#
+# THREE characters break the trip and all three follow from the regex above: `#`
+# cuts the value and has NO escape, CR and LF end the line, and surrounding
+# whitespace is trimmed. So they are removed rather than escaped -- this format
+# has no escape, and inventing one is exactly the kind of rule two readers drift
+# on. `=` needs nothing; a value may contain it.
+#
+# NOT hypothetical. A display's name is written verbatim from what the panel
+# reports, and EDID descriptor strings are LF-terminated by the standard: a panel
+# calling itself `ACME #1 Display` used to be written intact and read back as
+# `ACME`, on both platforms.
+function ConvertTo-ConfigValue {
+    param([string]$Text)
+    if ($null -eq $Text) { return '' }
+    return ($Text -replace '[#\r\n]', ' ' -replace '\s+', ' ').Trim()
+}
+
+# Would writing this value change it? For an IDENTIFIER -- something matched on
+# rather than read by a person -- a near-miss is worse than a refusal, because it
+# is stored, looks right and matches nothing. Callers writing an identifier ask
+# this first and refuse; callers writing a label just sanitise.
+function Test-ConfigValueExact {
+    param([string]$Text)
+    return ((ConvertTo-ConfigValue $Text) -ceq "$Text")
+}
+
 # --- value parsing -----------------------------------------------------------
 #
 # specs/config-format.md, "Value parsing". Both converters FAIL rather than guess
@@ -98,6 +131,7 @@ function Get-ConfigPath {
 # and " 0x11 " is exactly the kind of near-miss that should be refused rather
 # than quietly cleaned up. specs/config-fixture/values.tsv pins it, and the
 # macOS converters refuse it too.
+
 
 # An input value: 0x11, 0X11 or 17. A leading zero is DECIMAL, not octal --
 # shells read 010 as eight, which would be a silent cross-platform disagreement

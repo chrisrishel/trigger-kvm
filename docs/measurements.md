@@ -60,6 +60,30 @@ Preferring against that prefix is what promotes `Realtek USB Audio` over
 names to maintain. Whole rewritten discovery, end to end: **355 ms**, including
 the `Add-Type` compile.
 
+**2026-09-04, Windows -- what a per-device token would cost the detector.**
+`windows/AGENTS.md` warns that one physical plug is dozens of presence sweeps, so
+per-device work inside a sweep multiplies. Simulated at 32 sweeps against the 22
+PnP nodes of `046D:C547`, comparing today's `Test-UsbPresent` against the same
+query plus a container read and a bus-name read per node:
+
+| | per sweep | per plug (32 sweeps) |
+|---|---|---|
+| baseline, one WQL query | 23.22 ms | 743 ms |
+| plus token matching | 24.59 ms | 787 ms |
+| **added** | **1.4 ms** | **44 ms** (~6%) |
+
+**The CIM query already dominates**, and the `cfgmgr32` property reads are noise
+beside it -- so a token needs no cache. The prior estimate of ~100 ms was
+arithmetic and was pessimistic; this replaces it.
+
+Two things worth keeping from the same run. The baseline is **23 ms per sweep for
+ONE watched device**, so a two-device config already spends ~1.5 s per plug on
+presence alone -- existing behaviour, not introduced by anything here. And the
+two receivers resolve to distinct tokens (`g915-x-lightspeed-tkl`,
+`lightspeed-receiver`) while **`usb-receiver` appears under BOTH** -- a live
+demonstration that a token has to be chosen for uniqueness among the devices
+sharing an id, not merely taken.
+
 ## Detectors
 
 **2026-09-02, Windows -- the round trip: BOTH panels, in both directions, with

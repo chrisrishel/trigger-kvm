@@ -49,6 +49,45 @@ is a way two readers could differ, so each is stated:
   state that every caller already handles, and failing here would break `status`
   and `configure` on exactly the machine that needs them.
 
+## A writer must not write what it cannot read back
+
+Everything above defines what a READER does. This is the other half, and it was
+missing: both implementations wrote values straight through and both were wrong
+the same way, which is the argument for it being here rather than in either.
+
+**Whatever a writer puts in a file, reading that file back MUST yield the same
+string.** A value that would not survive the round trip is transformed before it
+is written, never written and left to be silently altered on the next read.
+
+Three characters break the round trip, and they follow from the rules above:
+
+| in a value | what the reader does |
+|---|---|
+| `#` | cuts the value there, and **there is no escape** |
+| CR or LF | ends the line, so the remainder becomes a separate line |
+| leading or trailing whitespace | trimmed |
+
+So a writer **removes `#`, CR and LF, and trims**. Nothing is escaped, because
+this format has no escape and giving it one is a rule two readers could differ
+on. `=` needs no treatment: a value may contain it.
+
+**This is not hypothetical.** A monitor's name is written verbatim from what the
+panel reports, and EDID descriptor strings are LF-terminated by the standard. A
+panel calling itself `ACME #1 Display` is written intact and reads back as
+`ACME`, on both platforms, today.
+
+**The same rule covers values a writer merely passes through.** Content read from
+an existing file has already been cut at `#`, so writing it back unchanged
+silently rewrites somebody's hand edit. Preserving hand edits (below) means
+preserving what the reader could see; a writer cannot restore what it never had,
+and must not pretend to.
+
+**Where a value's meaning depends on being exact** — an identifier something is
+matched on, rather than a label somebody reads — a writer that cannot represent
+it faithfully must **refuse to write it and say so**, rather than store a
+transformed version that matches nothing. Silently storing a near-miss is the
+failure this whole section exists to prevent.
+
 ## Value parsing
 
 Two converters, and **both fail rather than guess or default**.

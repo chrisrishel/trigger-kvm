@@ -112,4 +112,44 @@ Assert-Equal '0x00' (Format-Byte '0')
 Assert-Equal $null  (Format-Byte 'd1')   'a bare hex byte is not a byte -- the reader would drop it'
 Assert-Equal $null  (Format-Byte '256')
 
+# ---- a writer must not write what it cannot read back -------------------------
+#
+# specs/config-format.md. The read rule was pinned to the byte and said nothing
+# about writers, so BOTH implementations wrote values straight through and both
+# were wrong the same way -- which is what a missing shared rule looks like
+# rather than two coincidental bugs.
+#
+# Measured 2026-09-04: a display's name is written verbatim from what the panel
+# reports, so `ACME #1 Display` was written intact and read back as `ACME`.
+
+Assert-Equal 'ACME 1 Display' (ConvertTo-ConfigValue 'ACME #1 Display') `
+    'a hash is removed, because the reader cuts the value there and there is no escape'
+Assert-Equal 'ACME Display' (ConvertTo-ConfigValue "ACME`nDisplay") `
+    'and a newline, which would otherwise end the line mid-value'
+Assert-Equal 'ACME Display' (ConvertTo-ConfigValue "ACME`r`nDisplay")
+Assert-Equal 'ACME' (ConvertTo-ConfigValue '   ACME   ') 'surrounding space is trimmed, as the reader trims it'
+Assert-Equal 'ACME = 42' (ConvertTo-ConfigValue 'ACME = 42') `
+    'but `=` is untouched: a value may contain one and it is not a second separator'
+Assert-Equal '' (ConvertTo-ConfigValue '') 'and nothing in is nothing out, not an error'
+
+# THE PROPERTY THAT MATTERS, asserted as a round trip rather than as a string:
+# whatever a writer emits must read back identically. A test of the sanitiser
+# alone would pass while the reader changed underneath it.
+$rt = Join-Path $env:TEMP 'tk-writer-roundtrip.cfg'
+foreach ($raw in @('ACME #1 Display', "ACME`nDisplay", '   ACME   ', 'ACME = 42',
+                   'Logitech USB Camera (Webcam C930e)', 'Clarett+ 2Pre')) {
+    $safe = ConvertTo-ConfigValue $raw
+    ('display.x.name = {0}' -f $safe) | Set-Content -LiteralPath $rt -Encoding ASCII
+    Assert-Equal $safe ([string](Read-Config -Path $rt)['display.x.name']) `
+        ("what the writer emits for '{0}' must read back unchanged" -f ($raw -replace "`n",'\n'))
+}
+Remove-Item -LiteralPath $rt -Force -ErrorAction SilentlyContinue
+
+# An IDENTIFIER is different from a label: a near-miss is stored, looks right and
+# matches nothing, so a caller writing one asks first and refuses.
+Assert-True  (Test-ConfigValueExact 'g915-x-lightspeed-tkl') 'a token survives, so it may be written'
+Assert-True  (-not (Test-ConfigValueExact 'ACME #1')) 'one that would be altered is reported, not quietly stored'
+Assert-True  (-not (Test-ConfigValueExact 'trailing ')) 
+Assert-True  (Test-ConfigValueExact 'ACME = 42') 'and `=` does not make a value inexact'
+
 exit 0

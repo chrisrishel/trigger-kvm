@@ -175,14 +175,18 @@ single most useful sentence available to somebody whose trigger stopped firing.
 
 ### What it still costs, and what must be measured first
 
-**The detector's presence check.** Today it is one cheap WQL query per watched
-id. Matching a token means grouping the matched nodes by physical device and
-reading a name for each, ON EVERY SWEEP -- and `windows/AGENTS.md` has an
-explicit rule against per-device work per sweep, because one physical plug
-produces dozens of them. Rough arithmetic says ~22 nodes x 0.14 ms x ~32 sweeps
-is about 100 ms per plug, which is probably fine and is NOT yet measured. Measure
-it before the spec is written, not after: if it is not fine, the design needs a
-cache and the spec needs to say so.
+**The detector's presence check -- MEASURED 2026-09-04, and it is fine.**
+32 sweeps against the 22 nodes of `046D:C547`: baseline 23.22 ms per sweep,
+with token matching 24.59 ms, so **44 ms added per plug, about 6%.** The CIM
+query already dominates and the `cfgmgr32` reads are noise beside it, so **no
+cache is needed** and the design stands as written. The earlier ~100 ms figure
+was arithmetic and pessimistic. Numbers in `../docs/measurements.md`.
+
+**A token must be chosen for UNIQUENESS, not merely taken.** The same run shows
+why: the two receivers carry `g915-x-lightspeed-tkl` and `lightspeed-receiver`
+respectively, but **`usb-receiver` appears under both**. Picking "the best name"
+per device is not enough -- the walkthrough has to pick a name that is unique
+among the devices sharing that id, and say so when none is.
 
 **Collisions.** Two devices whose names slugify identically are back to
 ambiguous. That is the already-decided behaviour: disable that entry, keep

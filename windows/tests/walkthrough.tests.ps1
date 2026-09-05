@@ -1361,5 +1361,27 @@ Assert-Match ($review -join "`n") 'Computers\|pc \(this\), mac'
 Assert-Match ($review -join "`n") 'Monitors\|asus: pc/mac, lg: pc/mac' `
     'items separated by ", ", label by ": ", computers on one panel by "/" -- and pc first, as listed'
 
+# ---- a panel's own name goes through the writer rule --------------------------
+#
+# specs/config-format.md, "A writer must not write what it cannot read back".
+# display.<label>.name is the ONE free-text value here and it comes from the
+# panel, not from anybody who could be asked to change it -- so it is the one
+# that has to be made storable. Measured 2026-09-04: `ACME #1 Display` was
+# written intact and read back as `ACME`, on both platforms.
+#
+# Written through Write-ConfigFile and read back with the real reader, because
+# the property is a ROUND TRIP. Asserting the sanitiser's output alone would
+# pass while the reader changed underneath it.
+Write-ConfigFile -Path $script:CONFIG -Devices @('usb:046d:0843') -Tier 'user' -This 'pc' `
+    -Existing @{} -Displays @([PSCustomObject]@{
+        Label = 'odd'; Name = 'ACME #1 Display'; Method = 'standard'; Transport = 'nvapi'
+        Vendor = '0x1234'; Product = '0x5678'; EdidVendor = 0x1234; Mfg = 'ACM'
+        Key = '1234:5678'; Map = [ordered]@{ pc = '0x11' } })
+$w = Get-Written
+Assert-Equal 'ACME 1 Display' $w['display.odd.name'] `
+    'the hash is gone, so the name that was written is the name that reads back'
+Assert-Equal 'pc'   $w['display.odd.input.0x11'] `
+    'and the keys after it still parse -- a newline here would have taken them with it'
+
 Remove-Item -LiteralPath $script:CONFIG -Force -ErrorAction SilentlyContinue
 exit 0

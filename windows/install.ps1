@@ -3386,7 +3386,18 @@ function Write-ConfigFile {
         $lines += @(
             ("display.{0}.vendor    = {1}" -f $d.Label, $d.Vendor)
             ("display.{0}.product   = {1}" -f $d.Label, $d.Product)
-            ("display.{0}.name      = {1}" -f $d.Label, $d.Name)
+            # THE ONE FREE-TEXT VALUE HERE, and it comes from the panel rather
+            # than from anybody who could be asked to change it -- so it is the
+            # one that has to be made storable. specs/config-format.md, "A writer
+            # must not write what it cannot read back": `ACME #1 Display` used to
+            # be written intact and read back as `ACME`, and EDID descriptor
+            # strings are LF-terminated by the standard.
+            #
+            # Every other value on this page is already safe by construction:
+            # labels and computer names are name-ruled to [a-z0-9-], vendor and
+            # product are 0xNNNN, transport and method are enumerated, inputs are
+            # hex, and the timings are decimals.
+            ("display.{0}.name      = {1}" -f $d.Label, (ConvertTo-ConfigValue $d.Name))
             ("display.{0}.transport = {1}" -f $d.Label, $(if ($d.Transport) { $d.Transport } else { 'nvapi' }))
             ("display.{0}.method    = {1}" -f $d.Label, $d.Method)
         )

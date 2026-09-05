@@ -585,6 +585,33 @@ Invoke-Mutation 'transport: the walkthrough may offer one the switcher refuses' 
     "    return `$(if (`$pick -eq 1) { 'dxva2' } else { 'nvapi' })" `
     "    return `$(if (`$pick -eq 1) { 'adl' } else { 'nvapi' })"
 
+# --- a writer must not write what it cannot read back -------------------------
+#
+# The read rule was pinned to the byte and said nothing about writers, so both
+# implementations wrote values straight through and both truncated a display name
+# containing a hash. These hold the fix down on this side.
+
+Invoke-Mutation 'writer: a hash is written through and truncates on read' `
+    'config.ps1' 'config.tests.ps1' `
+    "    return (`$Text -replace '[#\r\n]', ' ' -replace '\s+', ' ').Trim()" `
+    "    return (`$Text -replace '[\r\n]', ' ' -replace '\s+', ' ').Trim()"
+Invoke-Mutation 'writer: a newline is written through and breaks the line' `
+    'config.ps1' 'config.tests.ps1' `
+    "    return (`$Text -replace '[#\r\n]', ' ' -replace '\s+', ' ').Trim()" `
+    "    return (`$Text -replace '[#]', ' ' -replace '[ \t]+', ' ').Trim()"
+Invoke-Mutation 'writer: an equals sign is stripped, though a value may hold one' `
+    'config.ps1' 'config.tests.ps1' `
+    "    return (`$Text -replace '[#\r\n]', ' ' -replace '\s+', ' ').Trim()" `
+    "    return (`$Text -replace '[#=\r\n]', ' ' -replace '\s+', ' ').Trim()"
+Invoke-Mutation 'writer: an identifier that would be altered is stored anyway' `
+    'config.ps1' 'config.tests.ps1' `
+    '    return ((ConvertTo-ConfigValue $Text) -ceq "$Text")' `
+    '    return $true'
+Invoke-Mutation 'writer: the display name goes to the file unsanitised' `
+    'install.ps1' 'walkthrough.tests.ps1' `
+    '            ("display.{0}.name      = {1}" -f $d.Label, (ConvertTo-ConfigValue $d.Name))' `
+    '            ("display.{0}.name      = {1}" -f $d.Label, $d.Name)'
+
 # --- naming a device, when Windows would rather not ---------------------------
 #
 # Three rows read `USB Input Device` on the reference desk, and two of them could

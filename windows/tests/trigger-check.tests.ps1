@@ -11,6 +11,10 @@ Set-StrictMode -Version Latest          # as install.ps1 runs
 
 Import-Subject -Script 'install.ps1' -Variables @('RENAMED_KEYS') -Functions @(
     'Read-Default','Read-YesNo','Invoke-TriggerTest','Get-CarriedKeys','Write-ConfigFile')
+# Write-ConfigFile sanitises through ConvertTo-ConfigValue, which lives beside
+# the reader in config.ps1 -- specs/config-format.md, "A writer must not write
+# what it cannot read back".
+. (Join-Path (Split-Path -Parent $PSScriptRoot) 'config.ps1')
 
 $global:CONFIG = Join-Path $env:TEMP 'trigger-kvm-trigcheck.cfg'
 $global:SWITCH = Join-Path (Split-Path -Parent $PSScriptRoot) 'trigger-kvm.ps1'

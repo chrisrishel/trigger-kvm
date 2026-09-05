@@ -67,6 +67,43 @@ it does not have. It is blind to two things, and this closes them:
 
 ---
 
+## Revision 11 — 2026-09-04
+
+**A writer must not write a value it cannot read back. Both platforms do today.**
+
+Sections: **new** [`config-format.md`](config-format.md) "A writer must not write
+what it cannot read back".
+
+**Act on:** before writing any value, remove `#`, CR and LF, and trim. Do not
+escape — this format has no escape and adding one is a rule two readers could
+differ on. `=` needs nothing; a value may contain it.
+
+Where a value is an **identifier something is matched on** rather than a label a
+person reads, a writer that cannot represent it faithfully must refuse and say
+so, instead of storing a near-miss that matches nothing.
+
+**This is a live defect on both sides, not a precaution.** A display's name is
+written verbatim from what the panel reports:
+
+- Windows `install.ps1` — `("display.{0}.name      = {1}" -f $d.Label, $d.Name)`
+- macOS `walkthrough.sh` — `printf 'display.%s.name    = %s\n' "$_l" "$name"`
+
+Neither sanitises. Measured 2026-09-04 against the real reader: `ACME #1 Display`
+is written intact and reads back as `ACME`. And EDID descriptor strings are
+LF-terminated by the standard, so a panel with an odd descriptor writes a config
+line that breaks in half and takes the following key with it.
+
+There is a second face of it. `Get-CarriedKeys` (and macOS's equivalent, which
+exists for the same reason) rewrites values it read from the config in order to
+preserve hand edits. A hand-written value containing `#` was already cut on read,
+so **saving silently rewrites the user's own file with the truncated version** —
+the opposite of preserving it.
+
+**Why the spec and not each implementation.** The read rule here is pinned to the
+byte, and says nothing about writers. Both implementations wrote naively and both
+went wrong identically, which is what a missing shared rule looks like rather
+than two coincidental bugs.
+
 ## Revision 10 — 2026-09-04
 
 **A Triggers row is identified by what the DEVICE IS, with its id beside it —

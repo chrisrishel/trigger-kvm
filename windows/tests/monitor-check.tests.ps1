@@ -13,6 +13,10 @@ Import-Subject -Script 'install.ps1' -Variables @('DIALECTS','MCCS_INPUTS','RENA
     'Format-Byte','Read-InputValue','Get-DisplayMap','Invoke-BlindWalk','Test-OneValue',
     'Invoke-DisplayTest','Invoke-TestRound','Invoke-TestRoundBody','Test-OneComputer',
     'Test-DisplayInput','Get-CarriedKeys','Write-ConfigFile')
+# Write-ConfigFile sanitises through ConvertTo-ConfigValue, which lives beside
+# the reader in config.ps1 -- specs/config-format.md, "A writer must not write
+# what it cannot read back".
+. (Join-Path (Split-Path -Parent $PSScriptRoot) 'config.ps1')
 
 $global:DEFAULT_DEBOUNCE = '3.0'
 $global:DEFAULT_SETTLE   = '0.75'
