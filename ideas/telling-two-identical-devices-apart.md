@@ -76,6 +76,88 @@ A serial number would beat all of this and there is not one: these receivers
 report no `iSerialNumber`, which is exactly why Windows fell back to a
 port-derived instance id.
 
+## SUPERSEDED, 2026-09-04: the id should not be the key at all
+
+Everything below this section treats "how do we qualify an id" as the question.
+It is the wrong question, and the two spellings drafted for it are kept only as
+the record of how that was worked out.
+
+**If a device id can name two devices, it has no business being an identity.**
+The qualifier designs are both workarounds for keying on something that is not
+unique, and the config already contains the answer -- it is what DISPLAYS do:
+
+```
+display.lg.vendor  = 0x1E6D        <- identity lives in FIELDS
+display.lg.product = 0x9E9D
+display.lg.method  = lg-alt
+```
+
+`lg` is a handle the person picks. The EDID pair is the identity and it sits
+INSIDE the record, precisely because two panels can share a product id -- which
+this project already learned about monitors and wrote into `AGENTS.md`. Triggers
+are the only thing in the config whose identity IS its key, and that is the
+defect.
+
+### The shape
+
+```
+trigger.device = kbd, mouse, clarett
+trigger.device.kbd.id      = usb:046d:c547
+trigger.device.kbd.match   = G915 X LIGHTSPEED TKL
+trigger.device.mouse.id    = usb:046d:c547
+trigger.device.mouse.match = LIGHTSPEED Receiver
+trigger.device.clarett.id  = usb:1235:820a
+```
+
+- **`id` is a field, not a key**, so two devices may share one and stay separate
+  entries. That is the whole point.
+- **`match` is optional and its contents are the PLATFORM's**, exactly as
+  `transport` is in revision 9: a shared key, per-platform vocabulary, nobody
+  required to have one. Windows would put a bus-reported name; if macOS finds
+  serial numbers where Windows finds none, it puts a serial. Configs are
+  machine-local and never copied between hosts, so the two never have to agree
+  on contents -- which is also why the field is `match` and not `name`, since
+  `name` presupposes the answer.
+- **The label is a handle the person picks**, the same as a monitor's, and the
+  same rule (`configure.md` §5.1) can name it.
+- The reader pattern is `^trigger\.device\.([^.]+)\.`, which mirrors
+  `^display\.([^.]+)\.` -- machinery both platforms already have.
+
+It also closes the gap spelling A could not: *"these two out of three"* is just
+two entries.
+
+### Clearing a prior rejection, on the record
+
+`RENAMED_KEYS` shows this repo already went `trigger.usb.device` ->
+`trigger.device.usb` -> back to flat, and `install.ps1` says why: the detour was
+*"future-proofing against a second transport -- the same speculative generality
+this project refuses elsewhere"*, and **"a malformed device id already throws
+loudly ... so nothing was failing silently for the extra nesting to prevent."**
+
+That last clause is the bar, and it is now cleared. Something IS failing
+silently: an id that names two devices, with no way to say which, and a menu
+that pooled both receivers' names and labelled the pair after whichever won. The
+nesting is no longer speculative -- it is the minimum shape that can express a
+measured fact about the reference desk.
+
+### What it costs
+
+- `specs/detector.md` §4 and `specs/config-format.md`, both platforms, plus
+  cases in `specs/config-fixture`.
+- **Old configs must keep working.** `trigger.device = usb:046d:0843,
+  usb:1235:820a` reads as entries with an `id` and no `match`, and `configure`
+  rewrites into the new shape on Save -- the warn-honour-rewrite path
+  `RENAMED_KEYS` already established.
+- **A constraint that cannot be checked from Windows:** `config.ps1` says *"if
+  this grows past what sed can mirror, the format has drifted"*. Enumerating
+  `trigger.device.<label>.*` is more work in `sed` than splitting a comma list.
+  macOS already does the identical thing for `display.<label>.*`, so the
+  machinery exists -- but that side should confirm rather than this side assume.
+
+---
+
+# Kept for the record: the qualifier designs this replaced
+
 ## First, what the SHARED READER does to each spelling
 
 Both spellings were run through the real `config.ps1` before being written up,
