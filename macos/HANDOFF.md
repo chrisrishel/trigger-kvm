@@ -96,19 +96,40 @@ The design, its measurements and the two candidate config spellings are in
 has changed for it**; a finding from this side is wanted BEFORE the format is
 settled, because a format is the hardest thing here to change afterwards.
 
-### Amendment, same day: the finding is no longer blocking, and the field is `match`
+### Amendment: this SHIPPED as revision 12, and not in the shape described above
 
-The design above moved after this was written, and the entry overstated the
-dependency. It said a finding was wanted "BEFORE the format is settled". It is
-not: the shape being drafted makes the device a RECORD rather than an id --
-`trigger.device.<label>.id` plus an optional `trigger.device.<label>.match` --
-and **`match` carries a platform-defined string**, exactly as `transport` does in
-revision 9. Shared key, per-platform vocabulary, nobody required to have one.
+Two corrections to what is written above, both of which happened after it was
+appended and before this side had read it.
 
-So this side's answer decides what macOS PUTS IN that field, not what the field
-is. Take the measurement when convenient; it does not hold up the format.
+**It is no longer a question of "before the format is settled".** The format is
+settled and published: `specs/detector.md` §4.1 and revision 12. So this
+measurement no longer holds anything up -- it decides what macOS PUTS IN the
+field, not what the field is. Take it when convenient.
 
-The field is deliberately `match` and not `name` for the same reason: `name`
-would presuppose that a product string is the right discriminator, which is
-precisely what this entry is asking. If serial numbers turn out to be available
-here where Windows has none, `match` holds a serial and nothing else changes.
+**And the shape is NOT the labelled record this entry first described.** That
+design -- `trigger.device.<label>.id` plus a `.match` key -- was drafted here and
+then dropped, because a label has to be worth its ceremony: a display is labelled
+because you TYPE the label (`pull --only asus`), while a trigger is never
+referenced by name anywhere, so naming one would exist only to give the config
+something to key on. What shipped instead is a suffix on the existing list entry,
+which adds no key at all:
+
+```
+trigger.device = usb:046d:c547@g915-x-lightspeed-tkl@0003-0005, usb:1235:820a
+```
+
+`usb:VVVV:PPPP[@token[@where]]`, both optional, both `[a-z0-9-]` and **checked
+lower-case rather than normalised**. Absent -- every config written so far --
+an entry means exactly what it always meant, so **there is nothing to migrate and
+a platform that only refuses malformed suffixes is already conformant for every
+existing desk.**
+
+`token` carries a platform-defined string, exactly as `transport` does in
+revision 9: shared key, per-platform vocabulary, nobody required to produce one.
+It is `token` and not `name` deliberately -- `name` would presuppose that a
+product string is the right discriminator, which is precisely what this entry is
+asking. **If serial numbers turn out to be readable here where Windows has none,
+a token holds a slugified serial and nothing else about the format changes.**
+
+Read the changelog entry rather than this note for what is actually owed; this
+one exists to stop the superseded design above being implemented by mistake.
