@@ -67,6 +67,55 @@ it does not have. It is blind to two things, and this closes them:
 
 ---
 
+## Revision 10 — 2026-09-04
+
+**A Triggers row is identified by what the DEVICE IS, with its id beside it —
+and the platform is asked for the best name it has, not the first.**
+
+Sections: **new** [`configure.md`](configure.md) §7.1.
+
+**Act on:**
+
+1. **§7.1 — the row says what the device is; the vendor+product pair moves
+   beside it rather than being the row.** An id alone is not a choice anybody can
+   make. The pair stays visible because §7's own help text tells the reader to
+   match the FULL pair, and that advice cannot be acted on against a name alone.
+
+2. **Ask for the best name available, not the first one found.** Where your
+   platform has more than one source for a device's name, take the most specific.
+   Windows had a rule that ranked a device's nodes by how specific each one's
+   device *class* was, as a proxy for how good its name would be — and the proxy
+   is inverted, because the input-device nodes are exactly the ones named
+   generically. It put `USB Input Device` on a row whose sibling node already
+   said `G915 X LIGHTSPEED TKL`.
+
+3. **Where the platform reports what a device presents itself as** — mouse,
+   keyboard — put it on the row. Most recognisable thing there.
+
+4. **Nothing new may become a filter.** Same rule as Bluetooth-on-paired: show
+   what is true, let the person decide. "Looks internal" is a guess.
+
+**Why.** The list existed to answer "which of these travels with the switch?",
+and on the reference desk it answered it with `USB Input Device` three times over
+— a wireless receiver carrying the keyboard and mouse, the motherboard's RGB
+controller, and a CPU cooler. Two of those three can never travel. The one that
+holds the peripherals was indistinguishable from the two that are soldered into
+the case, which makes the menu actively misleading rather than merely terse.
+
+**Windows-specific, for context rather than for copying:** the second name source
+is `DEVPKEY_Device_BusReportedDeviceDesc`, the USB `iProduct` string the device
+reports about itself, and roles come from the classes of a device's `HID\`
+children. Read it through `cfgmgr32` and not `Get-PnpDeviceProperty` — same
+property, 0.14 ms against ~200 ms per call, which is 70 seconds for one desk.
+Your platform's sources will be its own; what you owe is the shape, not the API.
+
+**Note for whoever implements this next:** an id can cover MORE THAN ONE physical
+device — two wireless receivers of the same model share one vendor+product pair,
+and the reference desk has exactly that. Saying so on the row is within this
+revision. **Selecting between them is not**, and is being designed separately in
+[`../ideas/telling-two-identical-devices-apart.md`](../ideas/telling-two-identical-devices-apart.md);
+it will need a config-format change and will arrive as its own revision.
+
 ## Revision 9 — 2026-09-04
 
 **`transport` is a new config key, and a separate axis from `method`. Refuse an

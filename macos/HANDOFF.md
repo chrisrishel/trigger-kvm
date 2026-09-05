@@ -40,3 +40,58 @@ Anything longer goes underneath.
   have better evidence — you can run it and they could not.
 
 ---
+
+## Measure what `ioreg` can actually tell you about a USB device's name
+
+Kind:     defect report
+Spec:     configure.md §7.1 (revision 10) — and it feeds a design not yet written
+Why:      the trigger list is only as good as the names the platform can give it,
+          and nobody here knows what yours are
+Owed:     a measurement, written into docs/measurements.md, dated
+Verified: nothing. This was taken on Windows only. The author cannot run macOS
+          and is not guessing at what IOKit reports.
+
+Revision 10 asks for "the best name the platform has, not the first". On Windows
+that turned out to matter enormously: three separate rows read `USB Input Device`
+— a wireless receiver holding the keyboard and mouse, the motherboard RGB
+controller, and a CPU cooler — and the fix was a SECOND name source, the USB
+`iProduct` string the device reports about itself, which named all three.
+
+**The question for this side: does `ioreg` give you one useful name, two, or only
+generic ones?** Specifically worth reading off a few real devices:
+
+- `kUSBProductString` / `USB Product Name` — the device's own iProduct string,
+  the equivalent of what Windows calls the bus-reported name
+- `kUSBVendorString`
+- whether IOKit surfaces anything like a role (mouse / keyboard) without opening
+  the device
+- `kUSBSerialNumberString` — see below, this one may make the harder problem easy
+
+If the names are already good, revision 10 may be nearly free here and the note
+below is moot. If they are as generic as Windows' `FriendlyName`, say so — that
+is the finding, and it means the second source matters here too.
+
+### The reason this is more than curiosity
+
+A follow-on design needs it: **two devices can share one vendor+product pair.**
+The reference desk has two Logitech LIGHTSPEED receivers, one for the keyboard
+and one for the mouse, both `046D:C547`, both travelling through the switch. So
+`trigger.device = usb:046d:c547` names two things, and there is no way to pick
+one.
+
+On Windows the ONLY port-independent discriminator turned out to be the
+bus-reported name: one receiver's node tree carries `G915 X LIGHTSPEED TKL` and
+the other's only `LIGHTSPEED Receiver`. Hardware ids, HID collections and
+revisions are byte-identical, and **neither reports a USB serial number**, which
+is why Windows falls back to a port-derived instance id.
+
+**If macOS DOES see a serial number where Windows sees none** — and IOKit does
+surface `kUSBSerialNumberString` when a device has one — that is a materially
+better key than a product string, and it would change the design before it is
+written. Worth checking explicitly rather than assuming the device reports the
+same thing to both operating systems.
+
+The design, its measurements and the two candidate config spellings are in
+`ideas/telling-two-identical-devices-apart.md`. **Nothing is built and no spec
+has changed for it**; a finding from this side is wanted BEFORE the format is
+settled, because a format is the hardest thing here to change afterwards.

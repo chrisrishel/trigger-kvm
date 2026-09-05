@@ -149,14 +149,47 @@ trigger.device = usb:046d:c547#G915 X LIGHTSPEED TKL, usb:1235:820a
   platforms implement identically, and `specs/config-fixture` needs a case for
   each.
 
-**Leaning: A, and the measurement is why.** It is not the prettier of the two.
-But B's cost lands squarely in the shared line-parsing rules -- the one
-definition in this project that both implementations and the fixture pin
-exactly, and that macOS mirrors in a `sed` expression small enough to hold in
-the head. A needs one naming convention and no change to that regex at all; B
-needs a new reserved character and a list-splitting rule that survives commas in
-names. The format is also the hardest thing here to change later, which argues
-for the option that changes least of it.
+**CHOSEN: A, 2026-09-04.**
+
+The measurement argues for it -- B's cost lands squarely in the shared
+line-parsing rules, the one definition both implementations and the fixture pin
+exactly and that macOS mirrors in a `sed` expression small enough to hold in the
+head. A needs one naming convention and no change to that regex; B needs a new
+reserved character and a list-splitting rule that survives commas in names.
+
+**But the deciding argument is architectural, and it is the better one:
+platform-specific device-identification conventions belong in a VALUE, not in
+the key schema.** macOS identifies USB devices by `locationID` and IOKit
+properties, Linux by sysfs paths; none of those look like `VID:PID`, and a third
+implementation should not have to fit its notion of "which device" into a key
+shape Windows' notion suggested. A value can hold whatever a platform reports.
+A key is schema, and schema is the part that has to mean the same thing
+everywhere.
+
+### The gap A leaves, stated plainly
+
+`trigger.device` holds each id **once**, so spelling A can express:
+
+- **all devices with this id** -- the unqualified entry, exactly today's meaning
+- **exactly one of them** -- the entry plus a `.name` qualifier
+
+It cannot express *"these two specific ones out of three."* On this desk that
+costs nothing, because both receivers travel and the unqualified id already
+covers both. It is still a real gap against the stated principle that every
+separately-plugged device should be separately selectable, and it is here in
+writing rather than waiting to be discovered.
+
+### A name that cannot be stored
+
+`config-format.md` is explicit that a value is cut at the first `#` and **there
+is no escape for a literal `#`** -- deliberate, because an escaping rule is
+exactly what two readers drift on, and macOS's is a `sed` expression.
+
+The answer is at the WRITER, not in the format: the walkthrough offers a name
+qualifier only where the name is storable and unique. A device whose
+distinguishing name contains `#` is not separately selectable, and the list says
+so rather than writing a value that reads back truncated. Nothing about the
+shared rule changes.
 
 ## Ambiguity: what happens when a qualifier matches 2, or 0
 

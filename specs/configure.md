@@ -658,6 +658,36 @@ state; never filter on it.
 
 Changing the selection invalidates a trigger pass.
 
+### 7.1 A row is identified by WHAT THE DEVICE IS
+
+**The row you pick from says what the device is; the id it is matched on stays
+visible beside it.** Not the reverse. A person recognises a device by its name,
+and the id is what confirms which one — so an id alone is not a choice anybody
+can make, and a name alone cannot be checked.
+
+**Ask the platform for the best name it has, not the first.** A driver's idea of
+a device is frequently the class rather than the device: on the reference desk
+three separate rows read `USB Input Device` — a wireless receiver, a motherboard
+RGB controller and a CPU cooler — and two of those can never travel with the
+switch. Where a platform can also report what the **device says about itself**,
+that is a second source and it names the ones the driver does not.
+
+**Where a platform can say what a device presents itself as** — a mouse, a
+keyboard — show that too. It is the most recognisable thing on the row.
+
+**Neither the name nor the role may become a filter.** The rule that Bluetooth is
+offered on paired rather than connected is the same rule: show what is true and
+let the person decide. A device that looks unlikely to travel is still shown,
+because "looks internal" is a guess and the person reading knows their desk.
+
+**The vendor+product pair stays on every row**, because §7's own warning tells
+the reader to match the full pair — a desk can easily have two devices from one
+vendor, and that advice cannot be acted on against a name alone.
+
+**None of this wording is normative**, since what a platform can discover and
+what it calls it differ. What is binding is the shape: name first, id present,
+best-effort naming, nothing filtered.
+
 ---
 
 ## 8. Autostart
