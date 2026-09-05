@@ -76,7 +76,78 @@ A serial number would beat all of this and there is not one: these receivers
 report no `iSerialNumber`, which is exactly why Windows fell back to a
 port-derived instance id.
 
-## SUPERSEDED, 2026-09-04: the id should not be the key at all
+## THE DESIGN, 2026-09-04: a flat list, with an optional derived token
+
+```
+trigger.device = usb:046d:c547@g915-x-lightspeed-tkl, usb:1235:820a
+```
+
+A flat list of devices. **No new keys, no hierarchy, and no name anybody has to
+invent.** Absent, the `@` part means what the entry means today, so every config
+already written is untouched and there is nothing to migrate.
+
+### Why not the labelled-record shape (the section below)
+
+Because a label has to be worth its ceremony, and here it is not. A DISPLAY is
+labelled because the label is a thing you TYPE -- `pull --only asus` -- so it
+earns a prompt, a character rule and a duplicate check. **A trigger is never
+referenced by name anywhere**, so the only reason to make somebody name their
+receivers would be to have something to key the config on, which is the tail
+wagging the dog. Displays and triggers look asymmetric because they ARE: one is
+addressable, the other is only ever matched.
+
+A hierarchy keyed on connectivity (`trigger.usb.*`) is separately unwanted, and
+this repo already rejected it once -- see the prior-rejection note below.
+
+### Why a slug, and why THIS slug
+
+The token is `[a-z0-9-]+`: lowercase letters, digits and dashes. That is not a
+new convention, it is **`$NAME_RULE`**, the rule computer and display names
+already follow.
+
+It also happens to be exactly the character class that survives the list's
+EXISTING normalisation, which is the measured reason to prefer it over the
+device's raw name:
+
+- `trigger.device` is parsed in four places as
+  `-replace '\s','' | -split ',' | .ToLower()`. A lowercase dashed token passes
+  through all three unchanged, so **none of those four sites needs editing.**
+- No `#`, so the reader cannot cut it (`config-format.md` gives no escape).
+- No `,`, so it cannot split the list.
+- No spaces and no case, so the normaliser cannot alter it.
+
+`@` was checked against the real reader and survives. It is unreserved in this
+format; `|`, `/` and `~` would do as well and `#` is the one that cannot.
+
+**The token is DERIVED, never asked.** The platform slugifies whatever it uses
+to tell two devices apart -- Windows the bus-reported name, macOS a serial if it
+has one -- and the walkthrough shows the real name (`G915 X LIGHTSPEED TKL`)
+while writing the token. Contents are the platform's, on revision 9's shared-key
+/ per-platform-vocabulary pattern; nobody is required to have one.
+
+### What it still costs, and what must be measured first
+
+**The detector's presence check.** Today it is one cheap WQL query per watched
+id. Matching a token means grouping the matched nodes by physical device and
+reading a name for each, ON EVERY SWEEP -- and `windows/AGENTS.md` has an
+explicit rule against per-device work per sweep, because one physical plug
+produces dozens of them. Rough arithmetic says ~22 nodes x 0.14 ms x ~32 sweeps
+is about 100 ms per plug, which is probably fine and is NOT yet measured. Measure
+it before the spec is written, not after: if it is not fine, the design needs a
+cache and the spec needs to say so.
+
+**Collisions.** Two devices whose names slugify identically are back to
+ambiguous. That is the already-decided behaviour: disable that entry, keep
+watching the rest, say so in `status`, refuse only if nothing usable is left.
+
+**The token tracks a pairing, not a dongle**, wherever the platform derives it
+from a paired device's name -- see the caveats above.
+
+---
+
+# Kept for the record: the labelled-record shape, and why it was dropped
+
+## SUPERSEDED: the id should not be the key at all
 
 Everything below this section treats "how do we qualify an id" as the question.
 It is the wrong question, and the two spellings drafted for it are kept only as
