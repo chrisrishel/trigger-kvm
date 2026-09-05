@@ -495,6 +495,116 @@ foreach ($l in @($dxvaBody | Where-Object { $_ -match '^\s*public\s+static\b.*\(
     }
 }
 
+# ---- one verb surface, in one place ------------------------------------------
+#
+# "Which verbs exist" was written down THREE times -- the shim's routing table,
+# install.ps1's ValidateSet, trigger-kvm.ps1's ValidateSet -- and none could see
+# the others, so they drifted and the drift was invisible until somebody typed a
+# wrong verb. What they got was a raw PowerShell binding error naming
+# "install,configure,status,discover,restart,logs,pause,uninstall": it OMITTED
+# pull, to and list, because the shim routes those away before install.ps1 is
+# reached, and it OFFERED install, which the shim itself refuses.
+#
+# Structural, because no behavioural test can see it: each file is internally
+# consistent and correct on its own terms. Only the three together are wrong.
+
+Import-Subject -Script 'install.ps1' -Variables @('VERBS') -Functions @('Get-UsageText','Get-ShimLines')
+
+$switchVerbs = @($VERBS | Where-Object { $_.Where -eq 'switch' } | ForEach-Object { $_.Verb })
+$manageVerbs = @($VERBS | Where-Object { $_.Where -eq 'manage' } | ForEach-Object { $_.Verb })
+Assert-True ($switchVerbs.Count -gt 0) 'the table must name the switching verbs'
+Assert-True ($manageVerbs.Count -gt 0) 'and the management ones'
+
+function Get-ValidateSet {
+    param([string]$Path)
+    $m = [regex]::Match(((Get-Content -LiteralPath $Path) -join "`n"),
+                        "(?s)\[ValidateSet\((.*?)\)\]")
+    if (-not $m.Success) { throw "$Path no longer declares a ValidateSet; this check is blind" }
+    return @([regex]::Matches($m.Groups[1].Value, "'([a-z-]+)'") | ForEach-Object { $_.Groups[1].Value })
+}
+
+# install.ps1's set is the management verbs, plus two the SHIM never routes:
+# `install`, which is what running this script from the source tree means and
+# which the shim refuses by name, and `help`, which the shim calls to print the
+# usage rather than spelling it out in batch echo lines.
+$instSet = Get-ValidateSet $installer
+foreach ($v in $manageVerbs) {
+    Assert-True ($instSet -contains $v) ("the shim routes '{0}' to install.ps1, which rejects it" -f $v)
+}
+foreach ($v in $instSet) {
+    if ($v -in @('install', 'help')) { continue }
+    Assert-True ($manageVerbs -contains $v) `
+        ("install.ps1 accepts '{0}', which the usage screen never mentions" -f $v)
+}
+Assert-True ($instSet -contains 'help') 'install.ps1 must accept the verb the shim calls for usage'
+Assert-True (-not ($VERBS.Verb -contains 'install')) `
+    'install must NOT be in the usage screen: the shim refuses it, and offering a verb that is refused is how the old error misled'
+
+# The switching verbs must all be verbs the switcher accepts, or the shim routes
+# to a script that will reject them.
+$swSet = Get-ValidateSet $Switcher
+foreach ($v in $switchVerbs) {
+    Assert-True ($swSet -contains $v) ("the shim routes '{0}' to trigger-kvm.ps1, which rejects it" -f $v)
+}
+
+# `set` IS DELIBERATELY UNROUTED, and this asserts the deliberateness. The
+# switcher accepts it for the installer's guided input discovery; a general
+# "write any value to a monitor" verb on the public surface invites the poking at
+# panels hard rule 1 exists to discourage. If someone ever "fixes" the omission
+# by adding it to the table, this fails and says why.
+Assert-True ($swSet -contains 'set') 'the switcher still has set, for guided discovery'
+Assert-True (-not ($VERBS.Verb -contains 'set')) `
+    'set must stay off the public verb surface -- see the -Value parameter in trigger-kvm.ps1'
+
+# ---- the shim routes exactly what the usage screen promises -------------------
+#
+# Generated text that nothing reads back is exactly where a routing table quietly
+# stops matching its own help.
+$shim  = (Get-ShimLines) -join "`n"
+$usage = (Get-UsageText) -join "`n"
+foreach ($v in $VERBS) {
+    Assert-Match $shim  ('if /i "%~1"=="{0}" goto :{1}' -f $v.Verb, $(if ($v.Where -eq 'switch') { 'switch' } else { 'manage' })) `
+        ("'{0}' is on the usage screen and not routed" -f $v.Verb)
+    Assert-Match $usage ('(?m)^\s+' + [regex]::Escape($v.Verb) + '\b') `
+        ("'{0}' is routed and not on the usage screen" -f $v.Verb)
+}
+
+# BARE INVOCATION PRINTS USAGE. It used to `goto :switch`, which with
+# trigger-kvm.ps1's $Command defaulting to 'pull' meant the bare command name
+# MOVED EVERY CONFIGURED MONITOR -- and that is the likeliest thing somebody
+# types to find out what a tool does. Hard rule 4.
+Assert-Match   $shim 'if "%~1"=="" goto :usage'
+Assert-NoMatch $shim 'if "%~1"=="" goto :switch' 'a bare command must never switch a monitor'
+
+# EVERY usage path exits 2, macOS included -- its usage() ends `exit 2` on every
+# route in, `-h` and `--help` among them. Exit 0 for an explicit request is the
+# more conventional choice and was written that way first; it was changed on
+# purpose, because two implementations of one CLI disagreeing about an exit code
+# is the drift this suite exists to prevent, and README.md already claims the
+# verbs are the same on both platforms.
+Assert-Match   $shim '(?s):usage.*?exit /b %ERRORLEVEL%'
+Assert-NoMatch $shim 'exit /b 0' 'no usage path may report success; macOS reports 2'
+Assert-Match $shim '(?s):unknown.*?no such verb' `
+    'an unknown verb is reported by the shim, which is the only thing that knows the whole surface'
+# ...and the fall-through actually REACHES that block. Asserting the block exists
+# is not the same claim: a mutation pointing the fall-through back at :manage
+# left every line of :unknown in place and unreachable, and passed.
+Assert-Match   $shim '(?m)^goto :unknown$'
+Assert-NoMatch $shim '(?m)^goto :manage$' `
+    'an unrecognised verb must not reach install.ps1, whose ValidateSet names only half the surface'
+
+# The two platforms' usage screens must read alike, since a person moving between
+# the desks reads both. Not a normative string -- nothing in specs/ pins this --
+# but the OPENING LINE is what makes them recognisably the same command.
+Assert-Match $usage '(?m)^usage: trigger-kvm <verb> \[options\]$' `
+    'the usage screen opens the way the macOS one does'
+Assert-Match $usage '(?m)^options:$' 'and carries its options section'
+Assert-Match $usage 'There is no `install` verb' 'and says the same thing about install'
+foreach ($alias in @('help', '--help', '-h')) {
+    Assert-Match $shim ('"%~1"=="{0}" goto :help' -f [regex]::Escape($alias))
+}
+Assert-Match $shim '"%~1"=="/\?" goto :help'
+
 # ---- the installer must not offer a pair the switcher refuses ----------------
 #
 # Two scripts hold one fact between them, and they hold DIFFERENT HALVES of it on

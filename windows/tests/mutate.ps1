@@ -641,6 +641,45 @@ Invoke-Mutation 'naming: an absent trigger is left reading as a fault' `
     '    if ($missing -gt 0) {' `
     '    if ($false) {'
 
+# --- one verb surface, in one place -------------------------------------------
+#
+# The drift these catch is the one that shipped: three lists of verbs that could
+# not see each other, and an error message that named a verb which did not work
+# while hiding three that did.
+
+Invoke-Mutation 'verbs: a bare command switches the monitors again' `
+    'install.ps1' 'conventions.tests.ps1' `
+    '    ''if "%~1"=="" goto :usage''' `
+    '    ''if "%~1"=="" goto :switch'''
+Invoke-Mutation 'verbs: a usage path diverges from macOS by reporting success' `
+    'install.ps1' 'conventions.tests.ps1' `
+    "    'exit /b %ERRORLEVEL%'" `
+    "    'exit /b 0'"
+Invoke-Mutation 'verbs: the usage screen stops reading like the macOS one' `
+    'install.ps1' 'conventions.tests.ps1' `
+    "        'usage: trigger-kvm <verb> [options]'" `
+    "        'trigger-kvm -- two computers, two monitors, one switch'"
+Invoke-Mutation 'verbs: an unknown one falls through to the binding error again' `
+    'install.ps1' 'conventions.tests.ps1' `
+    "    'goto :unknown'" `
+    "    'goto :manage'"
+Invoke-Mutation 'verbs: a switching verb stops being routed' `
+    'install.ps1' 'conventions.tests.ps1' `
+    "    foreach (`$v in (`$VERBS | Where-Object { `$_.Where -eq 'switch' })) {" `
+    "    foreach (`$v in (`$VERBS | Where-Object { `$_.Where -eq 'switch' -and `$_.Verb -ne 'list' })) {"
+Invoke-Mutation 'verbs: install is offered on the usage screen' `
+    'install.ps1' 'conventions.tests.ps1' `
+    "    @{ Verb = 'pull';      Where = 'switch'; Arg = ''" `
+    "    @{ Verb = 'install';   Where = 'manage'; Arg = ''
+       Help = 'install it' }
+    @{ Verb = 'pull';      Where = 'switch'; Arg = ''"
+Invoke-Mutation 'verbs: set reaches the public surface' `
+    'install.ps1' 'conventions.tests.ps1' `
+    "    @{ Verb = 'list';      Where = 'switch'; Arg = ''" `
+    "    @{ Verb = 'set';       Where = 'switch'; Arg = '<value>'
+       Help = 'write a value' }
+    @{ Verb = 'list';      Where = 'switch'; Arg = ''"
+
 # --- the LG service channel has one door --------------------------------------
 #
 # The self-test inside conventions.tests.ps1 already proves the CHECK bites, on

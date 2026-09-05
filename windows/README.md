@@ -68,6 +68,31 @@ trigger-kvm uninstall
 trigger-kvm pull | to <computer> | list
 ```
 
+**A bare `trigger-kvm` prints the verbs and exits 2**, as do `help`, `--help`,
+`-h` and `/?`. It used to `pull` -- the bare command name moved every configured
+monitor. That fell out of the shim's `if "%~1"=="" goto :switch` meeting the
+switcher's `$Command = 'pull'` default rather than out of a decision, and it is
+the likeliest thing somebody types to find out what a tool does (hard rule 4).
+
+**macOS had this right first, and this side now conforms to it** rather than
+inventing a third behaviour: same opening line, same verb-then-options layout,
+and `exit 2` on every usage path including an explicit `help`. Exit 0 for an
+explicit request is the more conventional choice and was written that way first;
+it was changed because two implementations of one CLI disagreeing about an exit
+code is exactly the drift this repo spends a conformance check preventing, and
+[`../README.md`](../README.md) already claims the verbs are the same on both
+platforms. Nothing in `specs/` pins any of it, so making them agree needed no
+spec change -- diverging would have needed one first.
+
+The verb list lives in `$VERBS` in `install.ps1`, and both the usage screen and
+the shim's routing are generated from it. It was written down three times before
+-- the shim, this script's `ValidateSet`, the switcher's -- and they drifted: an
+unknown verb produced a PowerShell binding error naming the management verbs
+only, so it omitted `pull`, `to` and `list` and offered `install`, which the shim
+refuses. `conventions.tests.ps1` now asserts the three agree. `set` is
+deliberately absent from all of it; see the `-Value` parameter in
+`trigger-kvm.ps1`.
+
 ### Tests
 
 ```powershell

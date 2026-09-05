@@ -133,6 +133,8 @@ each platform's convention (`--only` / `-Only`, `--dry-run` / `-WhatIf`,
 `--fresh` / `-Fresh`).
 
 ```
+trigger-kvm                      the verbs, with a line each. So does `help`, on
+                                 both platforms; neither has a default verb
 trigger-kvm pull                 point every configured monitor at THIS computer
 trigger-kvm to <computer>        point them at another computer, by name. Manual only
 trigger-kvm pull --only main     one monitor only -- use when testing (works with `to` as well)

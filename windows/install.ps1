@@ -83,7 +83,7 @@ param(
     # 'install' is the default and is NOT offered on the CLI shim -- it is what
     # running this script from the source tree means.
     [Parameter(Position = 0)]
-    [ValidateSet('install', 'configure', 'status', 'discover', 'restart', 'logs', 'pause', 'uninstall')]
+    [ValidateSet('install', 'help', 'configure', 'status', 'discover', 'restart', 'logs', 'pause', 'uninstall')]
     [string]$Command = 'install',
 
     # Put the install directory on the user PATH so `trigger-kvm` works anywhere.
@@ -3427,6 +3427,104 @@ function Write-ConfigFile {
     $lines | Set-Content -LiteralPath $Path -Encoding ASCII
 }
 
+# --- the verb surface ---------------------------------------------------------
+
+# EVERY VERB `trigger-kvm` ACCEPTS, IN ONE PLACE, because it was in three and they
+# had already drifted. The shim's routing table, this script's ValidateSet and
+# trigger-kvm.ps1's ValidateSet each held a partial answer, and none could see the
+# others -- so an unknown verb produced a raw PowerShell binding error naming
+# "install,configure,status,discover,restart,logs,pause,uninstall": it OMITTED
+# pull, to and list, which the shim routes away before this script ever sees them,
+# and it OFFERED install, which the shim refuses at :noinstall. The one message a
+# lost user got named a verb that does not work and hid three that do.
+#
+# So both the usage text and the shim's routing are generated from here, and
+# conventions.tests.ps1 asserts the two ValidateSets still agree with it.
+#
+# `Where` is which script runs it: the switcher is kept lean because it runs on
+# every device arrival, and the installer is large and rarely used. That split is
+# the reason a shim exists at all.
+#
+# `set` IS DELIBERATELY ABSENT. trigger-kvm.ps1 accepts it for the installer's
+# guided input discovery, and the shim has never routed it: a general "write any
+# value to a monitor" command invites exactly the poking at panels that hard rule
+# 1 exists to discourage. Do not "fix" the omission.
+$VERBS = @(
+    @{ Verb = 'pull';      Where = 'switch'; Arg = ''
+       Help = 'point every configured monitor at this computer' }
+    @{ Verb = 'to';        Where = 'switch'; Arg = '<computer>'
+       Help = 'point them at another computer, by name. Manual only' }
+    @{ Verb = 'list';      Where = 'switch'; Arg = ''
+       Help = 'what displays are attached, and how the switch can reach them' }
+    @{ Verb = 'configure'; Where = 'manage'; Arg = ''
+       Help = 'set up monitors, computers and triggers' }
+    @{ Verb = 'status';    Where = 'manage'; Arg = ''
+       Help = 'what is installed, running and configured' }
+    @{ Verb = 'discover';  Where = 'manage'; Arg = ''
+       Help = 'what this computer can see right now' }
+    @{ Verb = 'restart';   Where = 'manage'; Arg = ''
+       Help = 'start the watcher, or restart it after a pause' }
+    @{ Verb = 'pause';     Where = 'manage'; Arg = ''
+       Help = 'stand the watcher down until the next restart' }
+    @{ Verb = 'logs';      Where = 'manage'; Arg = ''
+       Help = 'follow the log' }
+    @{ Verb = 'uninstall'; Where = 'manage'; Arg = ''
+       Help = 'remove it, keeping the config and the log' }
+)
+
+# The usage text, built from the table so it cannot describe a verb that is not
+# routed or miss one that is.
+#
+# SHAPED TO MATCH macOS's `usage()`, which had all of this right before Windows
+# did -- same opening line, same verb-then-options layout, same closing notes.
+# This side was simply not conforming: `trigger-kvm` bare PULLED here and printed
+# usage there, and the root README already claims the verbs are the same on both
+# platforms. Keep them reading alike; the flags differ only where each platform's
+# convention does (-Only / --only, -WhatIf / --dry-run).
+#
+# The switching verbs come first and are separated from the management ones,
+# because they are what the tool is FOR -- the rest is setup and diagnosis you
+# touch once. `pull` is named first for the same reason it is what a trigger runs.
+function Get-UsageText {
+    $out = @(
+        'usage: trigger-kvm <verb> [options]'
+        ''
+    )
+    $w = 0
+    foreach ($v in $VERBS) {
+        $n = ($v.Verb + $(if ($v.Arg) { ' ' + $v.Arg } else { '' })).Length
+        if ($n -gt $w) { $w = $n }
+    }
+    $last = ''
+    foreach ($v in $VERBS) {
+        if ($last -and $v.Where -ne $last) { $out += '' }
+        $out += ('  {0,-' + $w + '}   {1}') -f `
+                ($v.Verb + $(if ($v.Arg) { ' ' + $v.Arg } else { '' })), $v.Help
+        $last = $v.Where
+    }
+    $out += @(
+        ''
+        'options:'
+        '  -Only <label>         one configured display only'
+        '  -WhatIf               resolve and print the packets, send nothing'
+        '  -Fresh                configure: pre-fill nothing, ask everything again'
+        '  -Config <path>        use this config instead of the default'
+        ''
+        'Only pull is ever automatic. A trigger runs pull and nothing else: another'
+        'computer''s name describes hardware this one cannot observe, so a stale one'
+        'could switch a monitor to a dead input with nobody watching.'
+        ''
+        'There is no `install` verb, deliberately: installing is what produced this'
+        'command. Upgrading and repairing both mean "fetch the source and run its'
+        'installer".'
+        ''
+        'There is no `apply` step either. Everything is read at the point it is used:'
+        'display edits take effect on the next switch, trigger edits when the watcher'
+        'next starts -- and `restart` does that.'
+    )
+    return $out
+}
+
 # --- discovery ---------------------------------------------------------------
 
 # Candidate trigger devices: things attached or connected RIGHT NOW.
@@ -3701,6 +3799,20 @@ function Get-TriggerCandidates {
     }
 
     return @(@($usb) + @($bt) | Sort-Object Rank, Name)
+}
+
+if ($Command -eq 'help') {
+    Get-UsageText | ForEach-Object { Write-Host $_ }
+    # EXIT 2, INCLUDING for an explicit `help`, because macOS's usage() does --
+    # every path into it there ends `exit 2`, `-h` and `--help` included.
+    #
+    # Exit 0 for an explicit request would be the more conventional choice and it
+    # was written that way first. It was changed on purpose: two implementations
+    # of one CLI disagreeing about an exit code is precisely the kind of drift
+    # this repo spends a conformance check preventing, and "the verbs are the
+    # same on both platforms" is a claim README.md already makes. Making them
+    # agree needs no spec change; diverging would need one FIRST.
+    exit 2
 }
 
 if ($Command -eq 'discover') {
@@ -4103,18 +4215,40 @@ foreach ($f in $STALE) {
 # Two scripts stay behind one command deliberately. trigger-kvm.ps1 runs on EVERY
 # device arrival and is kept lean; install.ps1 is large and rarely used. Merging
 # them would load installer code on the hot path.
+function Get-ShimLines {
 @(
     '@echo off'
     'rem Generated by install.ps1 -- do not edit; re-run the installer instead.'
+    'rem The routing below is generated from $VERBS; do not hand-add a verb here.'
     'setlocal'
     'rem Scripts live one level up; only this shim is on PATH.'
     'set "TK_DIR=%~dp0..\"'
-    'if "%~1"=="" goto :switch'
-    'if /i "%~1"=="pull" goto :switch'
-    'if /i "%~1"=="to"   goto :switch'
-    'if /i "%~1"=="list" goto :switch'
+    # NO ARGUMENTS PRINTS USAGE; it used to `pull`. That fell out of two defaults
+    # meeting -- this line said `goto :switch` and trigger-kvm.ps1's $Command
+    # defaults to 'pull' -- rather than out of a decision, and what it produced is
+    # a bare command name that MOVES EVERY CONFIGURED MONITOR. That is the single
+    # likeliest thing somebody types to find out what a tool does, and hard rule 4
+    # is that we never leave a person without a working display. `trigger-kvm pull`
+    # is what every doc and config comment already says.
+    'if "%~1"=="" goto :usage'
+    'if /i "%~1"=="help" goto :help'
+    'if /i "%~1"=="--help" goto :help'
+    'if /i "%~1"=="-h" goto :help'
+    'if "%~1"=="/?" goto :help'
+) + @(
+    # Generated, so a verb cannot exist in the usage text and not be routed.
+    foreach ($v in ($VERBS | Where-Object { $_.Where -eq 'switch' })) {
+        'if /i "%~1"=="{0}" goto :switch' -f $v.Verb
+    }
+    foreach ($v in ($VERBS | Where-Object { $_.Where -eq 'manage' })) {
+        'if /i "%~1"=="{0}" goto :manage' -f $v.Verb
+    }
+) + @(
     'if /i "%~1"=="install" goto :noinstall'
-    'goto :manage'
+    # ANYTHING ELSE IS OURS TO REPORT. It used to fall through to install.ps1 and
+    # die on its ValidateSet, which named the manage verbs only -- omitting pull,
+    # to and list, and offering install, which :noinstall refuses.
+    'goto :unknown'
     ':switch'
     'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%TK_DIR%trigger-kvm.ps1" %*'
     'exit /b %ERRORLEVEL%'
@@ -4129,7 +4263,27 @@ foreach ($f in $STALE) {
     'echo                this command. To upgrade or repair, run install.ps1 from the'
     'echo                source tree. To change settings: trigger-kvm configure'
     'exit /b 2'
-) | Set-Content -LiteralPath $SHIM -Encoding ASCII
+    # ONE source of usage text, and it is the PowerShell one. Generating the whole
+    # help screen as `echo` lines would mean escaping <, > and | for cmd on every
+    # line of it, forever -- so the shim asks install.ps1 to print it instead. It
+    # costs a process start on a path nobody is timing.
+    #
+    # help, a bare command and an unknown verb all land on the same target and
+    # the same exit code, because macOS's usage() does: every path into it there
+    # ends `exit 2`. The unknown-verb case says WHICH verb first, which is the
+    # only part that differs, and is what the old PowerShell binding error could
+    # not do without naming half the surface wrongly.
+    ':unknown'
+    'echo trigger-kvm: no such verb "%~1".'
+    'echo.'
+    ':help'
+    ':usage'
+    'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%TK_DIR%install.ps1" help'
+    'exit /b %ERRORLEVEL%'
+)
+}
+
+Get-ShimLines | Set-Content -LiteralPath $SHIM -Encoding ASCII
 
 # Version stamp. Records the commit too when the source is a git checkout, which is
 # how you tell a released copy from one built off a dirty tree.
