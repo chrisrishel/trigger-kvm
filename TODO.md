@@ -76,3 +76,19 @@
   directory is in play. Trigger: when `windows/AGENTS.md` next needs a rule added
   and there is no room. Outcome is an amendment to decision 002, or a new
   decision record of its own — 003 and 005 are taken.
+
+- **Two suite runs at once share fixed temp paths and can interfere.** Each test
+  file that needs a config writes to a FIXED name under `%TEMP%` --
+  `trigger-kvm-tests.cfg`, `trigger-kvm-trigcheck.cfg`,
+  `trigger-kvm-question.cfg`, and the round-trip file `config.tests.ps1` uses --
+  with no PID in any of them, unlike `mutate.ps1`'s output file which does carry
+  one. So two concurrent `run.ps1` instances read and write each other's
+  fixtures. Hit 2026-09-04: several suite runs were left alive at once (a
+  supervising shell timed out without stopping its grandchildren, the same
+  shape as the task/wscript/watcher problem `windows/AGENTS.md` records), and
+  the suite stopped completing until they were killed. The runs were the
+  proximate cause and the shared paths are the reason it was destructive rather
+  than merely wasteful; the hang itself was never root-caused.
+  Fix: put `$PID` in every fixture path, as `mutate.ps1` already does.
+  Trigger: next time anything in `tests/` is touched, or the first time a suite
+  hangs for no visible reason.
