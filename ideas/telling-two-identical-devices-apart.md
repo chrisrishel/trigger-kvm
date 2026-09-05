@@ -125,6 +125,54 @@ has one -- and the walkthrough shows the real name (`G915 X LIGHTSPEED TKL`)
 while writing the token. Contents are the platform's, on revision 9's shared-key
 / per-platform-vocabulary pattern; nobody is required to have one.
 
+### The port, as a TIEBREAK only
+
+```
+usb:VVVV:PPPP[@token[@where]]
+
+trigger.device = usb:046d:c547@g915-x-lightspeed-tkl@0003-0005, usb:1235:820a
+```
+
+Both suffixes optional, one delimiter, positional, everything in the same
+`[a-z0-9-]` class. `where` is platform-defined like the token -- Windows slugs
+`Port_#0003.Hub_#0005`, macOS a `locationID`.
+
+**`where` is consulted ONLY when `id`+`token` is ambiguous.** Never as a primary
+key, never to override a token that already matched one device. That single
+restriction is what makes recording a port acceptable at all:
+
+| present devices with this id | outcome |
+|---|---|
+| exactly one has the token | match it -- **`where` is not consulted, so a port move costs nothing** |
+| none has the token | no match: absent, or renamed / re-paired |
+| several have it, one at `where` | **`where` breaks the tie -- the case id+token alone cannot do** |
+| several have it, none at `where` | still ambiguous: disable the entry, keep the rest, say so |
+
+**The one case where it is actively wrong, stated up front.** Two
+indistinguishable receivers, A at P1 and B at P2, config remembering P1 meaning
+A. Swap them physically and the tiebreak resolves to whatever is now at P1,
+which is B. If A was the one travelling, the trigger stops firing. Without the
+tiebreak that case would have been ambiguous, disabled and explained.
+
+That is `AGENTS.md`'s standing rule -- *"do not write a mapping down anywhere and
+treat it as stable; a stale one is worse than none"* -- showing up here. It is
+written about display indices, where a stale one aims LG service-channel writes
+at the ASUS, so the stakes are far lower. Two things make it acceptable anyway,
+and BOTH are load-bearing:
+
+1. **`where` can never override a good match.** It is reached only when the
+   alternative is no match at all, so it is stale evidence against nothing, not
+   against better evidence. That is not the situation the rule was written for.
+2. **Every use of the tiebreak is ANNOUNCED.** `status` says two devices matched
+   and which port decided it, and tells the reader to re-run `configure` if they
+   have moved things. A stale mapping that announces itself is not the silent
+   kind the rule forbids -- and silence, not wrongness, is what makes staleness
+   dangerous.
+
+**Recording it pays for itself before it is ever consulted.** `discover` and
+`status` can say "configured at `0003-0005`, now at `0001-0006`", which is the
+single most useful sentence available to somebody whose trigger stopped firing.
+
 ### What it still costs, and what must be measured first
 
 **The detector's presence check.** Today it is one cheap WQL query per watched
