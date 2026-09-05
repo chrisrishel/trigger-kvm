@@ -95,3 +95,20 @@ The design, its measurements and the two candidate config spellings are in
 `ideas/telling-two-identical-devices-apart.md`. **Nothing is built and no spec
 has changed for it**; a finding from this side is wanted BEFORE the format is
 settled, because a format is the hardest thing here to change afterwards.
+
+### Amendment, same day: the finding is no longer blocking, and the field is `match`
+
+The design above moved after this was written, and the entry overstated the
+dependency. It said a finding was wanted "BEFORE the format is settled". It is
+not: the shape being drafted makes the device a RECORD rather than an id --
+`trigger.device.<label>.id` plus an optional `trigger.device.<label>.match` --
+and **`match` carries a platform-defined string**, exactly as `transport` does in
+revision 9. Shared key, per-platform vocabulary, nobody required to have one.
+
+So this side's answer decides what macOS PUTS IN that field, not what the field
+is. Take the measurement when convenient; it does not hold up the format.
+
+The field is deliberately `match` and not `name` for the same reason: `name`
+would presuppose that a product string is the right discriminator, which is
+precisely what this entry is asking. If serial numbers turn out to be available
+here where Windows has none, `match` holds a serial and nothing else changes.
