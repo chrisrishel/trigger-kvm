@@ -329,10 +329,10 @@ Assert-Equal $false ($r.Contains('usb:0b05:879e')) `
 # shoved the vendor+product column out of line for every row beneath it.
 Assert-Equal 'G915 X LIGHTSPEED TKL  (mouse, keyboard)' `
     (Get-CandidateLabel ([PSCustomObject]@{ Name = 'G915 X LIGHTSPEED TKL'
-                                            Roles = @('mouse','keyboard'); State = '' }))
+                                            Roles = @('mouse','keyboard'); State = ''; Twinned = $false; Ambiguous = $false }))
 Assert-Equal 'AirPods' `
     (Get-CandidateLabel ([PSCustomObject]@{ Name = 'AirPods'; Roles = @()
-                                            State = 'paired, not connected' })) `
+                                            State = 'paired, not connected'; Twinned = $false; Ambiguous = $false })) `
     'the state is placed by the caller, beside the key, not baked into the name'
 
 # ---- status names the triggers too -------------------------------------------
@@ -341,8 +341,8 @@ Assert-Equal 'AirPods' `
 # nothing. Same problem as the menu had, same answer: say what it IS beside the
 # id, never instead of it.
 $cands = @(
-    [PSCustomObject]@{ Key = 'usb:046d:c547'; Name = 'G915 X LIGHTSPEED TKL'; Roles = @('mouse','keyboard'); State = '' }
-    [PSCustomObject]@{ Key = 'usb:1235:820a'; Name = 'Clarett+ 2Pre'; Roles = @(); State = '' }
+    [PSCustomObject]@{ Key = 'usb:046d:c547'; Name = 'G915 X LIGHTSPEED TKL'; Roles = @('mouse','keyboard'); State = ''; Twinned = $false; Ambiguous = $false }
+    [PSCustomObject]@{ Key = 'usb:1235:820a'; Name = 'Clarett+ 2Pre'; Roles = @(); State = ''; Twinned = $false; Ambiguous = $false }
 )
 $tr = @(Get-TriggerReport -Devices @('usb:046d:c547','usb:1235:820a') -Candidates $cands) -join "`n"
 Assert-Match $tr 'triggers : usb:046d:c547\s+G915 X LIGHTSPEED TKL\s+\(mouse, keyboard\)'
@@ -373,58 +373,89 @@ Assert-Match (@(Get-TriggerReport -Devices @() -Candidates $cands) -join "`n") `
 # process that enumerates Bluetooth -- and nothing else is faked.
 
 # Set-StrictMode: a stub must carry every property the real object is read for.
+#
+# The enumeration is now ASKED OF event-watch.ps1 -- it owns the device-property
+# binding because it is what matches a token on every presence sweep, and a
+# second copy here could drift. So the stub is that door, not Get-PnpDevice:
+# container|vid|pid|token|where|name, one line per candidate name.
+#
+# The receiver appears TWICE with two different containers, which is the case
+# this whole design exists for: two physical devices, one vendor:product pair.
+function Invoke-Sibling {
+    param([string]$Script, [string[]]$Arguments)
+    if ($Arguments -notcontains '-ListUsb') { return @() }
+    @(
+        # Two receivers. Both report `usb-receiver`; only one reports the G915,
+        # which is exactly why a token must be chosen for UNIQUENESS rather than
+        # for being the best name.
+        'c1|046D|C547|usb-receiver|port-0003-hub-0005|USB Receiver'
+        'c1|046D|C547|g915-x-lightspeed-tkl|port-0003-hub-0005|G915 X LIGHTSPEED TKL'
+        'c2|046D|C547|usb-receiver|port-0001-hub-0006|USB Receiver'
+        'c2|046D|C547|lightspeed-receiver|port-0001-hub-0006|LIGHTSPEED Receiver'
+        # Generic at every node: only the device's own report can name it.
+        'c3|0B05|879E|rog-strix-lc|port-0004-hub-0004|ROG STRIX LC'
+        # Infrastructure, and an unaddressable failed enumeration.
+        'c4|8087|0AAA|generic-usb-hub|port-0001-hub-0001|Generic USB Hub'
+        # An ASM controller ASSERTS `ASM107x` and its driver calls it a hub.
+        # Preferring the device's own name promotes it PAST a filter that
+        # only looks at the chosen one -- which is how two hub controllers
+        # got back into the list.
+        'c7|174C|2074|asm107x|port-0010-hub-0001|ASM107x'
+        'c7|174C|2074||port-0010-hub-0001|Generic USB Hub'
+        'c5|0000|0000|unknown-usb-device|port-0009-hub-0001|Unknown USB Device'
+        'c6|1235|820A|clarett-2pre|port-0004-hub-0006|Clarett+ 2Pre'
+    )
+}
+# Roles still come from the HID children, which the USB listing never sees.
 function Get-PnpDevice {
     param([switch]$PresentOnly, $ErrorAction)
     @(
-        # A receiver with many nodes, the generic one first -- this is the shape
-        # that used to win. Its good name is only on a sibling.
-        [PSCustomObject]@{ InstanceId = 'USB\VID_046D&PID_C547\1'; Class = 'HIDClass'; FriendlyName = 'USB Input Device' }
-        [PSCustomObject]@{ InstanceId = 'USB\VID_046D&PID_C547\2'; Class = 'USB';      FriendlyName = 'G915 X LIGHTSPEED TKL' }
-        [PSCustomObject]@{ InstanceId = 'HID\VID_046D&PID_C547\3'; Class = 'Keyboard'; FriendlyName = 'HID Keyboard Device' }
-        [PSCustomObject]@{ InstanceId = 'HID\VID_046D&PID_C547\4'; Class = 'Mouse';    FriendlyName = 'HID-compliant mouse' }
-        # Generic at EVERY node: only the device's own report can name this one.
-        [PSCustomObject]@{ InstanceId = 'USB\VID_0B05&PID_879E\5'; Class = 'HIDClass'; FriendlyName = 'USB Input Device' }
-        # Infrastructure, and an unaddressable failed enumeration. Neither travels.
-        [PSCustomObject]@{ InstanceId = 'USB\VID_8087&PID_0AAA\6'; Class = 'USB';      FriendlyName = 'Generic USB Hub' }
-        [PSCustomObject]@{ InstanceId = 'USB\VID_0000&PID_0000\7'; Class = 'USB';      FriendlyName = 'Unknown USB Device' }
-        [PSCustomObject]@{ InstanceId = 'USB\VID_1235&PID_820A\8'; Class = 'MEDIA';    FriendlyName = 'Clarett+ 2Pre' }
+        [PSCustomObject]@{ InstanceId = 'HID\VID_046D&PID_C547&MI_00\a'; Class = 'Keyboard' }
+        [PSCustomObject]@{ InstanceId = 'HID\VID_046D&PID_C547&MI_01\b'; Class = 'Mouse' }
+        [PSCustomObject]@{ InstanceId = 'HID\VID_0B05&PID_879E\d';       Class = 'HIDClass' }
     )
 }
-# What each device says about ITSELF. Only the cooler depends on it, which is the
-# point: it is the sole source that can name that row at all.
-function Get-BusReportedName {
-    param([string]$InstanceId)
-    switch -Wildcard ($InstanceId) {
-        'USB\VID_0B05&PID_879E*' { 'ROG STRIX LC' }
-        'USB\VID_046D&PID_C547*' { 'USB Receiver' }
-        default                  { '' }
-    }
-}
-function Invoke-Sibling { param([string]$Script, [string[]]$Arguments) @() }
 
 $got = @(Get-TriggerCandidates)
 $byKey = @{}
 foreach ($g in $got) { $byKey[$g.Key] = $g }
 
-Assert-Equal 'G915 X LIGHTSPEED TKL' $byKey['usb:046d:c547'].Name `
-    'the assembler takes the good name off a SIBLING node, not the one it landed on'
-Assert-Equal 'keyboard, mouse' ((@($byKey['usb:046d:c547'].Roles) | Sort-Object) -join ', ') `
-    'and the roles come from the HID children of the same pair'
+# TWO ROWS for one vendor:product pair, because there are two devices. The row
+# count follows the hardware, not the key -- which is the defect this replaced:
+# grouping by id pooled both receivers' names and labelled the pair after
+# whichever won, so the mouse's receiver was shown as the keyboard.
+Assert-Equal 2 @($got | Where-Object { $_.Key -like 'usb:046d:c547*' }).Count `
+    'two physical receivers are two rows'
 
-# THE ONE THE DEVICE ONLY NAMES ITSELF. If Get-TriggerCandidates ever stops
-# asking, this row silently reverts to `USB Input Device` -- which is the whole
-# defect, and no helper test can see it.
+# The token is chosen for UNIQUENESS, not quality. Both carry `usb-receiver`, so
+# neither may use it; each takes the one only it has.
+Assert-True ($byKey.Contains('usb:046d:c547@g915-x-lightspeed-tkl')) `
+    'the keyboard receiver is keyed by the name only it reports'
+Assert-True ($byKey.Contains('usb:046d:c547@lightspeed-receiver')) `
+    'and the other by the name only it reports -- never the one they share'
+Assert-True (-not ($byKey.Keys -match 'usb-receiver')) `
+    'a name both of them report cannot identify either'
+
+Assert-Equal 'port-0003-hub-0005' $byKey['usb:046d:c547@g915-x-lightspeed-tkl'].Spot `
+    'and each remembers where it was, for breaking a tie later'
+Assert-Equal 'keyboard, mouse' ((@($byKey['usb:046d:c547@g915-x-lightspeed-tkl'].Roles) | Sort-Object) -join ', ')
+
+# A device ALONE on its id gets NO token, so every config written before tokens
+# existed still means what it meant and nothing migrates.
+Assert-True ($byKey.Contains('usb:0b05:879e')) 'a device alone on its id keeps the plain entry'
 Assert-Equal 'ROG STRIX LC' $byKey['usb:0b05:879e'].Name `
-    'a panel named generically at every node is still named, from its own report'
+    'named from its own report, since every node calls it generic'
 
-Assert-Equal $false ($byKey.Contains('usb:8087:0aaa')) 'a hub never travels, so it is not offered'
-Assert-Equal $false ($byKey.Contains('usb:0000:0000')) 'and a failed enumeration is not addressable'
+Assert-True (-not ($byKey.Keys -like 'usb:8087:0aaa*')) 'a hub never travels, so it is not offered'
+Assert-True (-not ($byKey.Keys -like 'usb:174c:2074*')) `
+    'and one that calls itself ASM107x while its driver calls it a hub is still a hub'
+Assert-True (-not ($byKey.Keys -like 'usb:0000:0000*')) 'and a failed enumeration is not addressable'
 
-# ORDER IS "HOW LIKELY IS THIS TO TRAVEL", which is the question Rank was always
-# reaching for and could not ask: it used to score how specific a node's CLASS
-# was, so the keyboard and the AIO cooler both scored 2 and tied.
-Assert-Equal 'usb:046d:c547' $got[0].Key `
-    'the device presenting a mouse and a keyboard sorts first'
+# ORDER IS "HOW LIKELY IS THIS TO TRAVEL", the question Rank was always reaching
+# for: it used to score how specific a node's CLASS was, so the keyboard and the
+# AIO cooler both scored 2 and tied.
+Assert-True ($got[0].Key -like 'usb:046d:c547*') `
+    'a device presenting a mouse and a keyboard sorts first'
 Assert-True ([array]::IndexOf(@($got.Key), 'usb:1235:820a') -lt
              [array]::IndexOf(@($got.Key), 'usb:0b05:879e')) `
     'an audio interface outranks a cooler that merely speaks HID'

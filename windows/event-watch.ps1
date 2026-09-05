@@ -45,10 +45,18 @@ so there is no polling interval. It does not say WHICH device changed, so each
 event is followed by a targeted query to establish identity. That combination
 gives push latency with exact identity, and needs no elevation.
 
-TRAP: the keyboard and mouse are Logitech too (VID_046D, PID_C547) and are always
-present, because they are wired directly to this computer's motherboard and do not
-pass through the USB switch. Matching on vendor id alone would fire constantly.
-Always match the full VID+PID pair.
+TRAP: matching on vendor id alone fires constantly -- a desk easily has a webcam
+and a receiver from one vendor. Always match the full VID+PID pair.
+
+TRAP: and the full pair is STILL not always one device. The reference desk has
+TWO Logitech receivers, one carrying the keyboard and one the mouse, both
+reporting 046D:C547. So an entry may carry `@token` to say WHICH -- and a token
+comes only from what a device says about ITSELF, never from its driver's name,
+because both receivers inherit `LIGHTSPEED Receiver` from one driver while only
+one asserts `G915 X LIGHTSPEED TKL`. Presence being per id is what makes this
+matter beyond naming: where two devices share an id and only one travels with
+the switch, the id never goes absent, the edge never happens, and the trigger
+never fires. See specs/detector.md 4.1.
 
 TRAP: the PnP presence model works for USB and NOT for Bluetooth, where a PAIRED
 device keeps its node whether or not it is connected -- for years. That is why
@@ -87,6 +95,15 @@ param(
     # shape as `trigger-kvm.ps1 list` answering for displays.
     [Parameter(Mandatory = $true, ParameterSetName = 'ListBluetooth')]
     [switch]$ListBluetooth,
+
+    # Every attached USB device as PHYSICAL devices rather than PnP nodes, with
+    # what each says it is and where it is plugged. Here for exactly the reason
+    # -ListBluetooth is: this script owns the device-property binding, because it
+    # is what has to match a token on every presence sweep, and a second copy in
+    # install.ps1 could drift -- a drift whose shape is a walkthrough that writes
+    # a token the watcher cannot find.
+    [Parameter(Mandatory = $true, ParameterSetName = 'ListUsb')]
+    [switch]$ListUsb,
 
     # Watch the configured devices for ONE arrival and exit, reporting what it saw.
     # The installer offers this as "test the trigger", and it lives here for the same
@@ -248,6 +265,78 @@ function Write-Log {
         }
     }
 }
+# Device properties, for telling apart two devices that share a vendor:product
+# pair -- specs/detector.md 4.1.
+#
+# cfgmgr32 DIRECTLY, never Get-PnpDeviceProperty: measured 2026-09-04, the cmdlet
+# costs ~200 ms PER CALL against 0.14 ms here, and this runs inside a presence
+# sweep, of which one physical plug produces dozens. Through the cmdlet a single
+# plug would cost over a minute. See windows/AGENTS.md.
+#
+# Loaded lazily and guarded, like the Bluetooth bindings below: .NET cannot
+# replace a type once a runspace has it, and this script is run by hand as well
+# as by the task.
+$DevNameSource = @'
+using System;
+using System.Runtime.InteropServices;
+
+public static class DevName {
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KEY { public Guid fmtid; public uint pid; }
+
+    [DllImport("cfgmgr32.dll", CharSet = CharSet.Unicode)]
+    static extern int CM_Locate_DevNodeW(out uint pdnDevInst, string pDeviceID, uint ulFlags);
+
+    [DllImport("cfgmgr32.dll", CharSet = CharSet.Unicode)]
+    static extern int CM_Get_DevNode_PropertyW(uint dnDevInst, ref KEY PropertyKey,
+        out uint PropertyType, IntPtr PropertyBuffer, ref uint PropertyBufferSize, uint ulFlags);
+
+    // DEVPKEY_Device_BusReportedDeviceDesc -- what the DEVICE says it is, as
+    // opposed to the generic name its driver gives it.
+    static KEY BUS = new KEY { fmtid = new Guid("540b947e-8b40-45bc-a8a2-6a0b894cbda2"), pid = 4 };
+    // DEVPKEY_Device_ContainerId -- one value per PHYSICAL device, which is how
+    // a receiver's twenty-odd nodes collapse into one thing to match.
+    static KEY CON = new KEY { fmtid = new Guid("8c7ed206-3f8a-4827-b3ab-ae9e1faefc6c"), pid = 2 };
+    // DEVPKEY_Device_LocationInfo -- "Port_#0003.Hub_#0005".
+    static KEY LOC = new KEY { fmtid = new Guid("a45c254e-df1c-4efd-8020-67d146a850e0"), pid = 15 };
+
+    // null for "nothing to say", never a guess and never a throw: an absent
+    // property is ordinary, and a presence sweep must not fail over one.
+    static string Get(string instanceId, ref KEY k) {
+        uint dev;
+        if (CM_Locate_DevNodeW(out dev, instanceId, 0) != 0) return null;
+        uint type = 0, size = 0;
+        CM_Get_DevNode_PropertyW(dev, ref k, out type, IntPtr.Zero, ref size, 0);
+        if (size == 0) return null;
+        IntPtr buf = Marshal.AllocHGlobal((int)size);
+        try {
+            if (CM_Get_DevNode_PropertyW(dev, ref k, out type, buf, ref size, 0) != 0) return null;
+            if (type == 13) {   // DEVPROP_TYPE_GUID
+                byte[] g = new byte[16]; Marshal.Copy(buf, g, 0, 16);
+                return new Guid(g).ToString();
+            }
+            return Marshal.PtrToStringUni(buf);
+        } finally { Marshal.FreeHGlobal(buf); }
+    }
+
+    public static string BusName(string id)   { return Get(id, ref BUS); }
+    public static string Container(string id) { return Get(id, ref CON); }
+    public static string Location(string id)  { return Get(id, ref LOC); }
+}
+'@
+
+function Initialize-DevName {
+    if ('DevName' -as [type]) { return $true }
+    try { Add-Type -ErrorAction Stop -TypeDefinition $DevNameSource; return $true }
+    catch {
+        # A token cannot be matched without it. Say so once and treat every
+        # tokened entry as unresolvable rather than silently matching the whole
+        # id, which would be the fall-back specs/detector.md 4.1 forbids.
+        Write-Log ("cannot load device-property bindings ({0}); entries naming a specific device cannot be matched" -f $_.Exception.Message)
+        return $false
+    }
+}
+
 
 # --- Bluetooth presence -----------------------------------------------------
 #
@@ -437,6 +526,82 @@ if ($ListBluetooth) {
     }
 }
 
+# The emitted rows, as a pure function over already-gathered devices.
+#
+# Separated from the gathering because the gathering needs real hardware and a
+# P/Invoke, so a rule living inside it can only be checked on a desk that happens
+# to own two identical devices -- and mutation found exactly that: the rule below
+# could be deleted with the whole suite still green.
+#
+# ONE ROW PER NAME, and `token` is filled ONLY where the name is the device's own
+# claim. A driver's name may describe a device and may never identify it: both
+# receivers inherit `LIGHTSPEED Receiver` from one driver, while only one asserts
+# `G915 X LIGHTSPEED TKL`, so pooling the two made each twin unidentifiable.
+function Format-UsbRows {
+    param($Devices)
+    $out = @()
+    foreach ($k in ($Devices.Keys | Sort-Object)) {
+        $p = $k -split '\|'
+        foreach ($n in $Devices[$k].Names) {
+            $tok = $(if ($Devices[$k].Own -contains $n) { ConvertTo-DeviceToken $n } else { '' })
+            $out += ('{0}|{1}|{2}|{3}|{4}|{5}' -f `
+                     $p[0], $p[1], $p[2], $tok, $Devices[$k].Where, $n)
+        }
+    }
+    return $out
+}
+
+# Answer the USB question and stop, for the same reason and with the same
+# properties: no lock, no events, no log, no disturbance to a running watcher.
+#
+# ONE ROW PER PHYSICAL DEVICE, not per PnP node. A wireless receiver enumerates
+# twenty-odd nodes and a person thinks of it as one thing, so the grouping is
+# ContainerId -- and grouping here rather than in the caller is the point of
+# having one owner: the walkthrough's idea of "a device" and the watcher's have
+# to be the same idea, or a token written by one will not match in the other.
+#
+# Fields: container|vid|pid|token|where|name . `token` and `where` are already
+# reduced to the config's [a-z0-9-] class, so the caller never has to know how
+# that reduction is done; `name` is the unreduced text, for showing a person.
+if ($ListUsb) {
+    if (-not (Initialize-DevName)) { exit 1 }
+    $devices = @{}
+    foreach ($e in @(Get-CimInstance -ClassName Win32_PnPEntity -Property DeviceID, Name `
+                                     -Filter "DeviceID LIKE 'USB\\VID_%'" `
+                                     -ErrorAction SilentlyContinue -Verbose:$false)) {
+        if ($e.DeviceID -notmatch '^USB\\VID_([0-9A-Fa-f]{4})&PID_([0-9A-Fa-f]{4})') { continue }
+        $vid = $Matches[1].ToUpper(); $prod = $Matches[2].ToUpper()
+        $c = [DevName]::Container($e.DeviceID)
+        if (-not $c) { continue }
+        $k = "$c|$vid|$prod"
+        if (-not $devices.Contains($k)) {
+            $devices[$k] = [PSCustomObject]@{ Names = @(); Own = @(); Where = '' }
+        }
+        # BOTH SOURCES, because either can be the good one: the driver names a
+        # webcam well and the device names a cooler well. Emitting only the
+        # device's own name lost that -- and lost the hub filter with it, since
+        # an ASM controller calls itself `ASM107x` while its driver calls it
+        # `Generic USB Hub`.
+        # Kept apart, because they answer different questions. The BUS name is
+        # what the device asserts about ITSELF, so it is the only one that may
+        # IDENTIFY it; a driver's name is inherited and generic, and pooling the
+        # two into the identity search made a receiver undistinguishable from its
+        # twin -- both inherit `LIGHTSPEED Receiver` from the same driver, while
+        # only one ASSERTS `G915 X LIGHTSPEED TKL`.
+        $bus = [DevName]::BusName($e.DeviceID)
+        if ($bus -and $devices[$k].Own -notcontains $bus) { $devices[$k].Own += $bus }
+        foreach ($n in @($bus, $e.Name)) {
+            if ($n -and $devices[$k].Names -notcontains $n) { $devices[$k].Names += $n }
+        }
+        if (-not $devices[$k].Where) {
+            $devices[$k].Where = ConvertTo-DeviceToken ([DevName]::Location($e.DeviceID))
+        }
+    }
+    Format-UsbRows -Devices $devices | ForEach-Object { Write-Output $_ }
+    exit 0
+}
+
+
 # --- parse -Device ----------------------------------------------------------
 
 # Accepted forms, one per comma-separated entry:
@@ -463,16 +628,35 @@ foreach ($d in ($Device -split ',')) {
     # entry. It used to allow `\s*:\s*`, which accepted `046d : 0843` that the
     # macOS reader refuses, so one config could have described two different
     # sets of watched devices depending on which computer read it.
-    if ($t -match '^(?:[Uu][Ss][Bb]:)?([0-9A-Fa-f]{4}):([0-9A-Fa-f]{4})$') {
+    # Two OPTIONAL suffixes, each [a-z0-9-]+ -- specs/detector.md 4.1. Absent,
+    # which is every config written before they existed, the entry means exactly
+    # what it always meant and none of the matching below it runs.
+    # -cmatch, not -match. PowerShell's -match is case-INSENSITIVE, so `[a-z0-9-]`
+    # silently accepted `@BAD` -- a token the spec does not allow, which this
+    # platform would then have taken and another could refuse. The id half is
+    # unaffected: its classes spell both cases out.
+    if ($t -cmatch '^(?:[Uu][Ss][Bb]:)?([0-9A-Fa-f]{4}):([0-9A-Fa-f]{4})(?:@([a-z0-9-]+))?(?:@([a-z0-9-]+))?$') {
         # Not $pid: that is a read-only automatic variable (this process's id).
-        $vid  = $Matches[1].ToUpper()
-        $prod = $Matches[2].ToUpper()
+        $vid   = $Matches[1].ToUpper()
+        $prod  = $Matches[2].ToUpper()
+        $token = $(if ($Matches[3]) { $Matches[3] } else { '' })
+        $where = $(if ($Matches[4]) { $Matches[4] } else { '' })
         $watch += [PSCustomObject]@{
             Kind = 'usb'
-            Key  = "usb:$vid`:$prod"
+            Key  = "usb:$vid`:$prod" + $(if ($token) { "@$token" } else { '' }) +
+                                       $(if ($where) { "@$where" } else { '' })
             # Backslash is the WQL LIKE escape character, hence the doubling.
+            # STILL THE WHOLE ID: the query finds every candidate, and the token
+            # narrows them afterwards. Putting a token in the WQL would need it
+            # to appear in a DeviceID, which is exactly what it does not do.
             Wql  = "DeviceID LIKE 'USB\\VID_$vid&PID_$prod%'"
-            Addr = $null
+            # WHICH device among those sharing the id, and where it was when it
+            # was configured. Spot is a TIEBREAK ONLY -- consulted when and only
+            # when Token still matches more than one present device, so that
+            # moving a dongle to another socket cannot stop a trigger firing.
+            Token = $token
+            Spot  = $where
+            Addr  = $null
         }
     }
     elseif ($t -match '^[Bb][Tt]:([0-9A-Fa-f]{12})$') {
@@ -481,12 +665,21 @@ foreach ($d in ($Device -split ',')) {
             Kind = 'bt'
             Key  = "bt:$addr"
             Wql  = $null
-            Addr = $addr
+            # A Bluetooth address already names one device, so there is nothing
+            # to disambiguate. Present and empty rather than absent, because
+            # Set-StrictMode makes reading a property that is not there
+            # terminating, and every consumer of a watch entry reads these.
+            Token = ''
+            Spot  = ''
+            Addr  = $addr
         }
     }
     else {
         # NAMED, and never prefixed into a `usb:` entry that can match nothing.
-        Deny-Startup ("trigger.device entry '{0}' is not a device; expected usb:VVVV:PPPP (or bare VVVV:PPPP) or bt:AAAAAAAAAAAA" -f $t)
+        # NAMES THE WHOLE GRAMMAR, suffixes included: somebody hand-editing a
+        # config should not have to learn that `@token` exists by having an entry
+        # rejected without being shown it.
+        Deny-Startup ("trigger.device entry '{0}' is not a device; expected usb:VVVV:PPPP[@token[@where]] (or bare VVVV:PPPP) or bt:AAAAAAAAAAAA. A token and a where are lower-case letters, digits and dashes." -f $t)
     }
 }
 
@@ -497,14 +690,104 @@ if ($watch.Count -eq 0) {
 # --- presence ---------------------------------------------------------------
 
 # Is this USB device attached right now?
+
 function Test-UsbPresent {
-    param([string]$Wql)
+    param([string]$Wql, [string]$Token = '', [string]$Spot = '', [string]$Key = '')
+
     # -Verbose:$false so our own -Verbose does not drown the log in CIM's
     # per-query chatter; we want the watcher's decisions, not its WQL.
     $hits = @(Get-CimInstance -ClassName Win32_PnPEntity -Filter $Wql -Property DeviceID `
                               -ErrorAction SilentlyContinue -Verbose:$false)
-    return ($hits.Count -gt 0)
+
+    # NO TOKEN IS THE WHOLE OF THE OLD BEHAVIOUR, and it is the common case: the
+    # id is present if anything matching it is. Returning here also means a
+    # config written before tokens existed costs exactly nothing -- measured, the
+    # branch below adds ~1.4 ms per sweep and this one adds none.
+    if (-not $Token) { return ($hits.Count -gt 0) }
+    if (-not (Initialize-DevName)) { return $false }
+
+    # specs/detector.md 4.1. Group the matched nodes into PHYSICAL DEVICES and
+    # ask which of them carries the token. A vendor:product pair can name more
+    # than one device -- two receivers of the same model do -- and presence being
+    # per id is what makes that dangerous: if one of them never travels, the id
+    # is permanently present, the absent->present edge never happens, and the
+    # trigger never fires with nothing in the log to say why.
+    $byDevice = @{}
+    foreach ($h in $hits) {
+        $c = [DevName]::Container($h.DeviceID)
+        if (-not $c) { continue }
+        if (-not $byDevice.Contains($c)) {
+            $byDevice[$c] = [PSCustomObject]@{ Tokens = @(); Spot = '' }
+        }
+        $slug = ConvertTo-DeviceToken ([DevName]::BusName($h.DeviceID))
+        if ($slug -and $byDevice[$c].Tokens -notcontains $slug) { $byDevice[$c].Tokens += $slug }
+        if (-not $byDevice[$c].Spot) {
+            $byDevice[$c].Spot = ConvertTo-DeviceToken ([DevName]::Location($h.DeviceID))
+        }
+    }
+
+    $verdict = Resolve-DeviceMatch -Devices @($byDevice.Values) -Token $Token -Spot $Spot
+
+    if ($verdict.How -eq 'spot') {
+        # SAID, not silent. A remembered location that has gone stale is
+        # dangerous only while nobody can see it was used -- two
+        # indistinguishable devices swapped between sockets resolve to the wrong
+        # one, and this line is the whole defence against that.
+        Write-Log ("{0}: {1} devices share this id and carry '{2}'; the one at '{3}' decided it. Re-run configure if you have moved them." -f `
+                   $Key, $verdict.Count, $Token, $Spot)
+    }
+    if ($verdict.How -eq 'ambiguous' -and -not $script:AmbiguousSaid.Contains($Key)) {
+        $script:AmbiguousSaid[$Key] = $true
+        Write-Log ("{0}: DISABLED -- {1} devices share this id and carry '{2}', and none is at the remembered spot. Every other trigger still works. Re-run configure to pick." -f `
+                   $Key, $verdict.Count, $Token)
+    }
+    return $verdict.Present
 }
+
+# THE MATCHING RULE, as a pure function over already-gathered devices --
+# specs/detector.md 4.1's table, one branch each.
+#
+# Separated from the lookup deliberately. The lookup needs real hardware and a
+# P/Invoke, so a rule living inside it can only be checked on a desk that happens
+# to have two identical devices -- and mutation found exactly that: the tiebreak
+# and the ambiguity branch could both be deleted with every test still green.
+# The rule is the part that decides whether a monitor moves; it is the part that
+# has to be testable on any machine.
+#
+# Returns Present (fire or not), How (which branch decided) and Count, because
+# the caller has something to SAY in two of the four cases and cannot re-derive
+# which one it was.
+function Resolve-DeviceMatch {
+    param($Devices, [string]$Token, [string]$Spot)
+
+    $matched = @(@($Devices) | Where-Object { $_.Tokens -contains $Token })
+
+    if ($matched.Count -eq 1) {
+        # THE SPOT IS NOT CONSULTED HERE, and that is the whole reason it is safe
+        # to record one: a device that moved sockets still matches, so a trigger
+        # cannot silently stop firing after a replug.
+        return [PSCustomObject]@{ Present = $true;  How = 'token';     Count = 1 }
+    }
+    if ($matched.Count -eq 0) {
+        return [PSCustomObject]@{ Present = $false; How = 'none';      Count = 0 }
+    }
+    if ($Spot) {
+        $here = @($matched | Where-Object { $_.Spot -eq $Spot })
+        if ($here.Count -eq 1) {
+            return [PSCustomObject]@{ Present = $true; How = 'spot'; Count = $matched.Count }
+        }
+    }
+    # THIS ENTRY is disabled, not the watcher -- a malformed entry can never
+    # match, so a watcher carrying one runs and never fires, while this one has
+    # its devices present and only "which" unresolved. Refusing to start over
+    # that turns a cosmetic uncertainty into total non-operation, met as "it just
+    # stopped working" with no visible cause.
+    return [PSCustomObject]@{ Present = $false; How = 'ambiguous'; Count = $matched.Count }
+}
+
+# Said once per entry, not once per sweep: one plug is dozens of sweeps, and a
+# line repeated 32 times per plug would bury the log it is trying to explain.
+$script:AmbiguousSaid = @{}
 
 # One sweep across every watched device, whatever its transport.
 #
@@ -534,7 +817,7 @@ function Get-PresenceMap {
             # node for years, which is exactly why this cannot use the USB path.
             $map[$w.Key] = ($null -ne $bt -and $bt.ContainsKey($w.Addr) -and $bt[$w.Addr])
         } else {
-            $map[$w.Key] = Test-UsbPresent -Wql $w.Wql
+            $map[$w.Key] = Test-UsbPresent -Wql $w.Wql -Token $w.Token -Spot $w.Spot -Key $w.Key
         }
     }
     return $map

@@ -410,12 +410,12 @@ Invoke-Mutation 'detector: a malformed settle is cast' `
     }" ''
 Invoke-Mutation 'detector: a bad device entry is thrown, not logged' `
     'event-watch.ps1' 'detector.tests.ps1' `
-    "        Deny-Startup (""trigger.device entry '{0}' is not a device; expected usb:VVVV:PPPP (or bare VVVV:PPPP) or bt:AAAAAAAAAAAA"" -f `$t)" `
+    "        Deny-Startup (""trigger.device entry '{0}' is not a device; expected usb:VVVV:PPPP[@token[@where]] (or bare VVVV:PPPP) or bt:AAAAAAAAAAAA. A token and a where are lower-case letters, digits and dashes."" -f `$t)" `
     "        throw ""bad -Device '`$t'"""
 Invoke-Mutation 'detector: whitespace inside a device entry is accepted' `
     'event-watch.ps1' 'detector.tests.ps1' `
-    "    if (`$t -match '^(?:[Uu][Ss][Bb]:)?([0-9A-Fa-f]{4}):([0-9A-Fa-f]{4})`$') {" `
-    "    if (`$t -match '^(?:[Uu][Ss][Bb]:)?([0-9A-Fa-f]{4})\s*:\s*([0-9A-Fa-f]{4})`$') {"
+    "    if (`$t -cmatch '^(?:[Uu][Ss][Bb]:)?([0-9A-Fa-f]{4}):([0-9A-Fa-f]{4})(?:@([a-z0-9-]+))?(?:@([a-z0-9-]+))?`$') {" `
+    "    if (`$t -cmatch '^(?:[Uu][Ss][Bb]:)?([0-9A-Fa-f]{4})\s*:\s*([0-9A-Fa-f]{4})(?:@([a-z0-9-]+))?(?:@([a-z0-9-]+))?`$') {"
 Invoke-Mutation 'detector: settle asks whether ANY watched device is present' `
     'event-watch.ps1' 'detector.tests.ps1' `
     '        $stillHere = @($arrived | Where-Object { $present[$_] })' `
@@ -585,6 +585,41 @@ Invoke-Mutation 'transport: the walkthrough may offer one the switcher refuses' 
     "    return `$(if (`$pick -eq 1) { 'dxva2' } else { 'nvapi' })" `
     "    return `$(if (`$pick -eq 1) { 'adl' } else { 'nvapi' })"
 
+# --- a vendor:product pair can name more than one device ----------------------
+#
+# Two receivers on the reference desk share 046D:C547. These hold down the fact
+# that each is separately selectable, and that a token identifies exactly one.
+
+Invoke-Mutation 'token: the best name is taken rather than a unique one' `
+    'install.ps1' 'install.tests.ps1' `
+    '                    (@($mine | Where-Object { $_.Tokens -contains $t }).Count -eq 1)' `
+    '                    $true'
+Invoke-Mutation 'token: two devices on one id collapse back into one row' `
+    'install.ps1' 'install.tests.ps1' `
+    "        `$id = '{0}|{1}' -f `$f[0], `$key" `
+    "        `$id = `$key"
+Invoke-Mutation 'token: a device alone on its id is given one anyway' `
+    'install.ps1' 'install.tests.ps1' `
+    '        $alone = ($mine.Count -eq 1)' `
+    '        $alone = $false'
+Invoke-Mutation 'token: hubs come back, because the chosen name is filtered' `
+    'install.ps1' 'install.tests.ps1' `
+    "            if (@(`$d.Names | Where-Object { `$_ -match 'Hub|Host Controller|Root Complex' })) { continue }" `
+    "            if (`$name -match 'Hub|Host Controller|Root Complex') { continue }"
+Invoke-Mutation 'token: the remembered spot is consulted before the token resolves' `
+    'event-watch.ps1' 'detector.tests.ps1' `
+    "        return [PSCustomObject]@{ Present = `$true;  How = 'token';     Count = 1 }" `
+    "        if (`$Spot) { return [PSCustomObject]@{ Present = `$false; How = 'none'; Count = 1 } }
+        return [PSCustomObject]@{ Present = `$true;  How = 'token';     Count = 1 }"
+Invoke-Mutation 'token: an ambiguous entry fires anyway' `
+    'event-watch.ps1' 'detector.tests.ps1' `
+    "    return [PSCustomObject]@{ Present = `$false; How = 'ambiguous'; Count = `$matched.Count }" `
+    "    return [PSCustomObject]@{ Present = `$true; How = 'ambiguous'; Count = `$matched.Count }"
+Invoke-Mutation 'token: a tie is broken without saying so' `
+    'event-watch.ps1' 'detector.tests.ps1' `
+    "            return [PSCustomObject]@{ Present = `$true; How = 'spot'; Count = `$matched.Count }" `
+    "            return [PSCustomObject]@{ Present = `$true; How = 'token'; Count = `$matched.Count }"
+
 # --- a writer must not write what it cannot read back -------------------------
 #
 # The read rule was pinned to the byte and said nothing about writers, so both
@@ -630,10 +665,10 @@ Invoke-Mutation 'naming: "USB " becomes a veto rather than a preference' `
     '    $good = @($all | Where-Object { $_ -notmatch $GENERIC_NAMES })
     if ($good.Count -gt 0) { return $good[0] }' `
     ''
-Invoke-Mutation 'naming: the device is never asked what it calls itself' `
-    'install.ps1' 'install.tests.ps1' `
-    '            BusName = Get-BusReportedName -InstanceId $d.InstanceId' `
-    "            BusName = ''"
+Invoke-Mutation 'naming: a driver name is allowed to identify a device' `
+    'event-watch.ps1' 'detector.tests.ps1' `
+    "            `$tok = `$(if (`$Devices[`$k].Own -contains `$n) { ConvertTo-DeviceToken `$n } else { '' })" `
+    "            `$tok = ConvertTo-DeviceToken `$n"
 Invoke-Mutation 'naming: a bare HIDClass child counts as an input role' `
     'install.ps1' 'install.tests.ps1' `
     "        if (`$d.Class -notin @('Mouse', 'Keyboard')) { continue }" `
@@ -653,8 +688,8 @@ Invoke-Mutation 'naming: the menu goes back to picking by vendor:product' `
     '        -Items  @($Cands | ForEach-Object { ''{0,-20} {1,-4}'' -f $_.Key, $_.Bus }) `'
 Invoke-Mutation 'naming: a device presenting a keyboard stops sorting first' `
     'install.ps1' 'install.tests.ps1' `
-    '            Rank  = $(if ($roles[$k]) { 0 }' `
-    '            Rank  = $(if ($false) { 0 }'
+    '                Rank  = $(if ($roles[$d.Key]) { 0 }' `
+    '                Rank  = $(if ($false) { 0 }'
 Invoke-Mutation 'naming: the review menu goes back to listing ids' `
     'install.ps1' 'walkthrough.tests.ps1' `
     '                    if ($c) { $c.Name } else { $d }' `

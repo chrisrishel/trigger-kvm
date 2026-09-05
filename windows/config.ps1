@@ -28,7 +28,12 @@
 #                            `pull` looks up computer.this in it, `to mac` looks up
 #                            mac, and there is no second table to disagree with it
 #   computer.this            what this computer is called in those input maps
-#   trigger.device           usb:VVVV:PPPP / VVVV:PPPP / bt:AAAAAAAAAAAA, comma-sep
+#   trigger.device           usb:VVVV:PPPP / VVVV:PPPP / bt:AAAAAAAAAAAA, comma-sep.
+#                            A usb entry may carry usb:VVVV:PPPP@token@where --
+#                            both optional, both [a-z0-9-] -- because a
+#                            vendor+product pair can name MORE THAN ONE device.
+#                            `token` says which; `where` breaks a tie only when
+#                            it still does not. specs/detector.md 4.1
 #   trigger.debounce         seconds
 #   trigger.settle           seconds
 #   install.autostart        boot | login | no   (install.start, and before it
@@ -100,6 +105,40 @@ function ConvertTo-ConfigValue {
     param([string]$Text)
     if ($null -eq $Text) { return '' }
     return ($Text -replace '[#\r\n]', ' ' -replace '\s+', ' ').Trim()
+}
+
+# Reduce whatever a platform uses to identify a device INTO the config's token
+# class -- specs/config-format.md, "A device entry may say WHICH device".
+#
+# `[a-z0-9-]` is not an arbitrary choice. It is $NAME_RULE, the class computer
+# and display names already follow, and it is the only one that survives this
+# list's existing handling unchanged: no `#` for the reader to cut, no `,` to
+# split the list, no whitespace or case for a reader that strips both. That is
+# why the raw string is never stored and a token is compared literally, never
+# interpreted.
+#
+# HERE, beside the reader and the writer rule, because all three consumers need
+# the same answer: install.ps1 writes tokens, event-watch.ps1 matches them, and
+# two spellings of "reduce this string" would be a drift with a nasty shape --
+# a watcher that cannot find the device the walkthrough just wrote.
+function ConvertTo-DeviceToken {
+    param([string]$Text)
+    if ([string]::IsNullOrEmpty($Text)) { return '' }
+    return (($Text.ToLower() -replace '[^a-z0-9]+', '-').Trim('-'))
+}
+
+# A device entry WITHOUT its remembered spot -- `usb:VVVV:PPPP[@token]`.
+#
+# The spot is not part of a device's identity: specs/detector.md 4.1 confines it
+# to breaking a tie, so an entry whose device moved sockets is still the SAME
+# entry. Everything that asks "is this device configured?" compares this, or a
+# device that moved would show as unconfigured and its "currently a trigger"
+# marker would vanish -- which reads as "my setup was lost".
+function Get-DeviceIdentity {
+    param([string]$Entry)
+    $p = "$Entry" -split '@'
+    if ($p.Count -le 1) { return "$Entry" }
+    return ($p[0] + '@' + $p[1])
 }
 
 # Would writing this value change it? For an IDENTIFIER -- something matched on

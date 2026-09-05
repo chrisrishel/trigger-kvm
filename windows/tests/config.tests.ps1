@@ -135,7 +135,7 @@ Assert-Equal '' (ConvertTo-ConfigValue '') 'and nothing in is nothing out, not a
 # THE PROPERTY THAT MATTERS, asserted as a round trip rather than as a string:
 # whatever a writer emits must read back identically. A test of the sanitiser
 # alone would pass while the reader changed underneath it.
-$rt = Join-Path $env:TEMP 'tk-writer-roundtrip.cfg'
+$rt = Join-Path $env:TEMP ("tk-writer-roundtrip-$PID.cfg")
 foreach ($raw in @('ACME #1 Display', "ACME`nDisplay", '   ACME   ', 'ACME = 42',
                    'Logitech USB Camera (Webcam C930e)', 'Clarett+ 2Pre')) {
     $safe = ConvertTo-ConfigValue $raw

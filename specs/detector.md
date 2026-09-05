@@ -73,6 +73,72 @@ runs and never does the right thing, which is the worst failure shape available.
 - A device is `usb:VVVV:PPPP` (exactly four hex digits, colon, four hex digits;
   case-insensitive) or `bt:AAAAAAAAAAAA` (exactly twelve hex digits, no
   separators). A bare `VVVV:PPPP` means `usb:`. Anything else is refused.
+- A `usb:` entry may carry up to two **optional suffixes**, each introduced by
+  `@` and each `[a-z0-9-]+`: `usb:VVVV:PPPP[@token[@where]]`. Absent, an entry
+  means exactly what it has always meant. §4.1 says what they do.
+
+### 4.1 A vendor:product pair can name more than one device
+
+**Two devices of the same model share one id.** The reference desk has two
+wireless receivers, one carrying a keyboard and one a mouse, both reporting
+`046D:C547`. So `usb:046d:c547` names two things and, without more, a person
+cannot pick one and the detector cannot tell them apart.
+
+That is not only a naming problem. **Presence is per id**: if a device is present
+whenever anything matching the id is present, then two devices sharing an id
+where only one travels with the switch means the id is permanently present, the
+absent→present edge never happens, and **the trigger never fires, silently.**
+
+- **`token` identifies WHICH device**, among those sharing the id. Its contents
+  are the platform's — a product string, a serial, whatever that platform can
+  read that stays with the device — and no platform is required to produce one.
+  Same rule as `transport` in `config-format.md`: shared key, per-platform
+  vocabulary. A platform that cannot tell two such devices apart says so where
+  the choice is made rather than guessing.
+- **`token` must be chosen for UNIQUENESS, not merely taken.** The best name for
+  a device is not necessarily one that distinguishes it: measured on the
+  reference desk, both receivers report `usb-receiver` and only one reports
+  `g915-x-lightspeed-tkl`. A writer picks a value held by exactly one of the
+  devices sharing that id, and where none exists, writes no token.
+- **`where` is a TIEBREAK ONLY**, consulted when and only when `token` still
+  matches more than one present device. It records where the device was when it
+  was configured. It must never be consulted while `token` resolves to exactly
+  one device, because then a device moved to another socket would stop matching
+  — and a trigger that silently stops firing after a replug is the failure this
+  section exists to prevent.
+- **Whenever `where` decides a match, say so** — in `status`, naming it. A
+  remembered location that has gone stale is only dangerous while it is silent:
+  two indistinguishable devices physically swapped between sockets will resolve
+  to the wrong one, and the only defence is that the reader can see it happened.
+
+**Matching, in order.** Among the present devices whose id matches:
+
+| | result |
+|---|---|
+| no `token` given | every one of them, as today |
+| exactly one has the `token` | that one; `where` is not consulted |
+| none has the `token` | no match — absent, or renamed |
+| several have it, one at `where` | that one, and **say that `where` decided it** |
+| several have it, none at `where` | ambiguous — see below |
+
+**An ambiguous entry is disabled; the watcher is not.** Log it, keep watching
+every other trigger, and say so in `status`. This is deliberately NOT the
+treatment a malformed entry gets: a malformed entry can never match, so a watcher
+carrying one runs and never fires, while an ambiguous one has all its devices
+present and only "which" unresolved. Refusing to start over the latter turns a
+cosmetic uncertainty into total non-operation, which a person meets as "it just
+stopped working" with no visible cause.
+
+**Unless nothing usable is left.** If disabling the ambiguous entries leaves no
+trigger that could ever fire, refuse to start and say so — that is the one case
+where the watcher would run and never fire, and refusing is the kinder answer.
+
+**Never fall back to the whole id.** Firing on any device sharing the id is not
+what the config asked for, and the cost is concrete: a visitor's identical dongle
+plugged into this machine would produce an arrival edge and pull the monitors
+over unbidden. Displays that move on their own are the worst failure this system
+has (`../AGENTS.md`). Salience does not require moving somebody's screens;
+`status` and the log carry it.
 - `trigger.debounce` and `trigger.settle` are non-negative decimals: digits, or
   digits `.` digits. Anything else is refused.
 

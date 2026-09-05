@@ -23,6 +23,8 @@ $ErrorActionPreference = 'Stop'
 
 $WinDir  = Split-Path -Parent $PSScriptRoot
 $Watcher = Join-Path $WinDir 'event-watch.ps1'
+Import-Subject -Script 'event-watch.ps1' -Functions @('Resolve-DeviceMatch','Format-UsbRows')
+. (Join-Path $WinDir 'config.ps1')
 
 $tmp = Join-Path $env:TEMP 'trigger-kvm-detector'
 Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
@@ -89,6 +91,98 @@ foreach ($bad in 'nonsense', '046d:084', 'usb:046d', 'bt:00112233', 'bt:00112233
     Assert-Match $r.Text 'REFUSING to start'
     Assert-Match $r.Text ([regex]::Escape($bad)) "naming the entry as it was written: '$bad'"
     Assert-NoMatch $r.Text 'trigger.debounce = ' 'and not blaming a timing that was fine'
+}
+
+# ---- an entry may say WHICH device, and a malformed one still refuses ---------
+#
+# specs/detector.md 4.1. Two receivers of one model share a vendor:product pair,
+# so `usb:VVVV:PPPP[@token[@where]]` says which. The suffixes are [a-z0-9-]:
+# anything else is not the grammar and gets the same refusal as any other
+# malformed entry, because an entry that can never match is a watcher that runs
+# forever and never fires.
+foreach ($bad in 'usb:046d:c547@', 'usb:046d:c547@BAD', 'usb:046d:c547@a b',
+                 'usb:046d:c547@ok@', 'usb:046d:c547@a@b@c', 'usb:046d:c547@under_score') {
+    $r = Invoke-Watcher @("trigger.device = $bad", 'trigger.debounce = 3.0', 'trigger.settle = 0.75')
+    Assert-True ($r.Code -ne 0) "the device entry '$bad' must refuse, not arm"
+    Assert-Match $r.Text 'REFUSING to start'
+    Assert-Match $r.Text ([regex]::Escape($bad)) "naming the entry as it was written: '$bad'"
+}
+
+# The refusal has to TELL you the suffixes exist, or somebody hand-editing a
+# config learns the grammar by having it rejected without being shown it.
+$r = Invoke-Watcher @('trigger.device = nonsense', 'trigger.debounce = 3.0')
+Assert-Match $r.Text ([regex]::Escape('usb:VVVV:PPPP[@token[@where]]')) `
+    'the refusal names the whole grammar, suffixes included'
+
+# ---- only what a device says about ITSELF may identify it ---------------------
+#
+# The rule that makes two identical receivers distinguishable at all. Both
+# inherit `LIGHTSPEED Receiver` from one driver; only one ASSERTS `G915 X
+# LIGHTSPEED TKL`. Pooling the two sources into the identity search made each
+# twin unidentifiable -- so a driver's name may DESCRIBE a device and may never
+# IDENTIFY it, and a row carries a token only for the device's own claim.
+$devs = @{}
+$devs['c1|046D|C547'] = [PSCustomObject]@{
+    Names = @('G915 X LIGHTSPEED TKL', 'LIGHTSPEED Receiver', 'USB Input Device')
+    Own   = @('G915 X LIGHTSPEED TKL')
+    Where = 'port-0003-hub-0005'
+}
+$rows = @(Format-UsbRows -Devices $devs)
+Assert-Equal 3 $rows.Count 'one row per name, so the caller can show any of them'
+Assert-True  (@($rows | Where-Object { $_ -like '*|g915-x-lightspeed-tkl|*' }).Count -eq 1) `
+    'the name the device asserts carries a token'
+foreach ($driverName in 'LIGHTSPEED Receiver', 'USB Input Device') {
+    $row = @($rows | Where-Object { $_ -like "*|$driverName" })
+    Assert-Equal 1 $row.Count
+    Assert-Match $row[0] '\|\|' 'a name the DRIVER gave it carries an empty token, so it can never identify'
+}
+Assert-True (@($rows | Where-Object { $_ -like '*|port-0003-hub-0005|*' }).Count -eq 3) `
+    'and every row carries where the device is, for breaking a tie later'
+
+# ---- which device, when an id names more than one -----------------------------
+#
+# specs/detector.md 4.1's table, one case each. Against the pure rule rather than
+# the lookup, because the lookup needs two identical devices actually plugged in
+# -- and mutation proved the point: with the rule buried inside it, the tiebreak
+# and the ambiguity branch could both be deleted with every test still green.
+function New-Dev { param([string[]]$Tokens, [string]$Spot = '')
+    [PSCustomObject]@{ Tokens = @($Tokens); Spot = $Spot }
+}
+$kbd   = New-Dev @('usb-receiver','g915-x-lightspeed-tkl') 'port-0003-hub-0005'
+$mouse = New-Dev @('usb-receiver','lightspeed-receiver')   'port-0001-hub-0006'
+
+$r = Resolve-DeviceMatch -Devices @($kbd,$mouse) -Token 'g915-x-lightspeed-tkl' -Spot ''
+Assert-True $r.Present 'a token held by exactly one device matches it'
+Assert-Equal 'token' $r.How
+
+# THE PROPERTY THAT MAKES RECORDING A SPOT SAFE: while the token resolves to one
+# device the spot is never consulted, so a dongle moved to another socket keeps
+# matching. A trigger that silently stops firing after a replug is the failure
+# this whole design is arranged to avoid.
+$moved = New-Dev @('usb-receiver','g915-x-lightspeed-tkl') 'port-0009-hub-0002'
+$r = Resolve-DeviceMatch -Devices @($moved,$mouse) -Token 'g915-x-lightspeed-tkl' -Spot 'port-0003-hub-0005'
+Assert-True $r.Present 'a device that moved sockets still matches on its token'
+Assert-Equal 'token' $r.How 'and the stale spot is not what decided it'
+
+$r = Resolve-DeviceMatch -Devices @($kbd,$mouse) -Token 'not-here' -Spot ''
+Assert-True (-not $r.Present) 'a token no device carries matches nothing'
+Assert-Equal 'none' $r.How
+
+# Both carry `usb-receiver`, so the token alone cannot choose -- THIS is where
+# the remembered spot earns its place.
+$r = Resolve-DeviceMatch -Devices @($kbd,$mouse) -Token 'usb-receiver' -Spot 'port-0001-hub-0006'
+Assert-True $r.Present 'the remembered spot breaks a tie the token cannot'
+Assert-Equal 'spot' $r.How 'and the caller is told it was the spot, so it can say so'
+Assert-Equal 2 $r.Count
+
+# Ambiguous with no spot recorded, and ambiguous with a spot that no longer
+# matches, are the same answer: this ENTRY is disabled, and the caller keeps
+# watching everything else.
+foreach ($spot in @('', 'port-9999-hub-9999')) {
+    $r = Resolve-DeviceMatch -Devices @($kbd,$mouse) -Token 'usb-receiver' -Spot $spot
+    Assert-True (-not $r.Present) 'a token both of them carry cannot fire'
+    Assert-Equal 'ambiguous' $r.How
+    Assert-Equal 2 $r.Count 'and says how many, because the log has to name the problem'
 }
 
 # An empty list is not a watcher with nothing to do; it is a setup nobody

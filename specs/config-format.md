@@ -49,6 +49,37 @@ is a way two readers could differ, so each is stated:
   state that every caller already handles, and failing here would break `status`
   and `configure` on exactly the machine that needs them.
 
+## A device entry may say WHICH device
+
+```
+trigger.device = usb:046d:c547@g915-x-lightspeed-tkl@0003-0005, usb:1235:820a
+```
+
+`usb:VVVV:PPPP[@token[@where]]`. Both suffixes optional and `[a-z0-9-]+` —
+**lower case, and that is checked rather than normalised**, because the id half
+of the entry is case-insensitive and a suffix that was silently lower-cased on
+one platform and refused on another is precisely the disagreement this file
+exists to prevent. Absent,
+an entry means exactly what it always meant, so **nothing already written needs
+migrating**. What they do is [`detector.md`](detector.md) §4.1; this is what they
+look like.
+
+**The character class is not arbitrary.** `[a-z0-9-]` is the rule computer and
+display names already follow, and it is the only class that survives this list's
+existing handling unchanged: it carries no `#` for the reader to cut, no `,` to
+split the list, and no whitespace or case for a reader that strips both. A
+platform therefore reduces whatever it uses to identify a device INTO that class
+rather than storing the raw string — which is also why a token is compared
+literally and never interpreted.
+
+**Both are derived, never asked.** A person picks a device from a list; they do
+not type a token. The walkthrough shows whatever the platform calls the device
+and writes the reduced form.
+
+**`where` is a remembered observation, not a choice**, and `detector.md` §4.1
+confines it to breaking ties. A config that has one is not more precise than one
+that does not; it is only better prepared for a specific ambiguity.
+
 ## A writer must not write what it cannot read back
 
 Everything above defines what a READER does. This is the other half, and it was

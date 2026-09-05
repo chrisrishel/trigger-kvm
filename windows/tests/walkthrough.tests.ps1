@@ -45,11 +45,11 @@ $script:canElevate = $true
 function Test-CanElevate { return $script:canElevate }
 function Get-TriggerCandidates {
     @(
-        [PSCustomObject]@{ Key='usb:046d:0843';  Bus='USB'; Name='Webcam';    Class='Image';     Roles=@(); State=''; Rank=1 }
-        [PSCustomObject]@{ Key='bt:0011223344ff';Bus='BT';  Name='AirPods';   Class='Bluetooth'; Roles=@(); State='paired, not connected'; Rank=1 }
-        [PSCustomObject]@{ Key='usb:1235:820a';  Bus='USB'; Name='Clarett';   Class='Audio';     Roles=@(); State=''; Rank=1 }
+        [PSCustomObject]@{ Key='usb:046d:0843';  Bus='USB'; Spot=''; Twinned=$false; Ambiguous=$false; Name='Webcam';    Class='Image';     Roles=@(); State=''; Rank=1 }
+        [PSCustomObject]@{ Key='bt:0011223344ff';Bus='BT'; Spot=''; Twinned=$false; Ambiguous=$false;  Name='AirPods';   Class='Bluetooth'; Roles=@(); State='paired, not connected'; Rank=1 }
+        [PSCustomObject]@{ Key='usb:1235:820a';  Bus='USB'; Spot=''; Twinned=$false; Ambiguous=$false; Name='Clarett';   Class='Audio';     Roles=@(); State=''; Rank=1 }
         # The one with roles, so the label and the ordering are both exercised.
-        [PSCustomObject]@{ Key='usb:046d:c547';  Bus='USB'; Name='G915 X LIGHTSPEED TKL'
+        [PSCustomObject]@{ Key='usb:046d:c547';  Bus='USB'; Spot=''; Twinned=$false; Ambiguous=$false; Name='G915 X LIGHTSPEED TKL'
                            Class='HIDClass'; Roles=@('mouse','keyboard'); State=''; Rank=0 }
     )
 }

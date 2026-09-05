@@ -67,6 +67,68 @@ it does not have. It is blind to two things, and this closes them:
 
 ---
 
+## Revision 12 — 2026-09-04
+
+**A vendor:product pair can name more than one device. An entry may now say
+which — `usb:VVVV:PPPP[@token[@where]]`, both optional.**
+
+Sections: [`detector.md`](detector.md) §4 and **new** §4.1;
+[`config-format.md`](config-format.md) "A device entry may say WHICH device".
+
+**Act on:**
+
+1. **Read the two optional `@` suffixes.** Absent — which is every config written
+   so far — an entry means exactly what it means today, so there is nothing to
+   migrate and a platform that stops here is still conformant for every existing
+   desk.
+
+2. **`token` selects among the devices sharing an id.** Its contents are yours: a
+   product string, a serial, whatever your platform can read that stays with the
+   device, reduced to `[a-z0-9-]`. Same shape as `transport` — shared key,
+   per-platform vocabulary, **nobody required to produce one**. If your platform
+   cannot tell two such devices apart, say so where the choice is made instead of
+   guessing.
+
+3. **Choose a token for UNIQUENESS, not quality.** The best name for a device is
+   not necessarily one that distinguishes it. Measured: both receivers on the
+   reference desk report `usb-receiver`, and only one reports
+   `g915-x-lightspeed-tkl`. Pick a value held by exactly one of the devices
+   sharing the id; where none exists, write no token.
+
+4. **`where` is consulted ONLY to break a tie**, never while a token already
+   resolves to one device — otherwise moving a dongle to another socket would
+   silently stop the trigger firing. And **whenever it decides a match, say so in
+   `status`**: a remembered location that has gone stale is dangerous only while
+   it is silent.
+
+5. **An ambiguous entry disables that ENTRY, not the watcher** — log it, keep
+   watching the rest, report it in `status` — **unless nothing usable is left**,
+   in which case refuse to start. Deliberately different from a malformed entry:
+   that one can never match, so a watcher carrying it runs and never fires, while
+   an ambiguous one has its devices present and only "which" unresolved. **Never
+   fall back to the whole id**: a visitor's identical dongle would then pull the
+   monitors over unbidden, and displays that move on their own are the worst
+   failure this system has.
+
+**Why.** The reference desk has two wireless receivers, one carrying a keyboard
+and one a mouse, both reporting `046D:C547` and both travelling through the
+switch. The Triggers list showed **one row for two devices**, named after
+whichever won — and there was no way to trigger on one. Worse, presence is per
+id, so where two devices share one and only one travels, the id never goes
+absent, the edge never happens and **the trigger never fires, silently**.
+
+**Not a config-structure change.** Keying the record on the id was considered and
+rejected: an id that can name two things has no business being a key, but a
+labelled record was rejected too, because a label has to be worth its ceremony
+and a trigger — unlike a display — is never referenced by name anywhere. What is
+left is a suffix on a list entry, which changes no key and migrates nothing. The
+whole working-out, including the two spellings that were measured and dropped, is
+in [`../ideas/telling-two-identical-devices-apart.md`](../ideas/telling-two-identical-devices-apart.md).
+
+**Cost, measured on Windows so nobody has to guess:** matching a token adds
+1.4 ms per presence sweep, ~44 ms per plug against a 743 ms baseline — about 6%,
+because the existing device query already dominates. **No cache is needed.**
+
 ## Revision 11 — 2026-09-04
 
 **A writer must not write a value it cannot read back. Both platforms do today.**

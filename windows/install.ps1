@@ -2620,7 +2620,7 @@ function Invoke-Configure {
     $devices = @()
     if ($seed.Contains('trigger.device')) {
         $devices = @(($seed['trigger.device'] -replace '\s','') -split ',' | Where-Object { $_ } | ForEach-Object {
-            if ($_ -match '^(usb:|bt:)') { $_.ToLower() } else { 'usb:' + $_.ToLower() } })
+            Get-DeviceIdentity $(if ($_ -match '^(usb:|bt:)') { $_.ToLower() } else { 'usb:' + $_.ToLower() }) })
     }
     $cands = @(Get-TriggerCandidates)
 
@@ -2829,7 +2829,7 @@ function Invoke-Configure {
         }
     }
 
-    Write-ConfigFile -Path $CONFIG -Displays $answers -Devices $devices -Tier $newTier `
+    Write-ConfigFile -Path $CONFIG -Displays $answers -Devices $devices -Tier $newTier -Candidates $cands `
                      -This $this -Existing $existing
     Write-Log "wrote $CONFIG"
 
@@ -3339,8 +3339,11 @@ function Get-CarriedKeys {
 }
 
 function Write-ConfigFile {
+    # $Candidates only supplies the remembered spot for a tokened device, so it
+    # is optional: every caller that writes no devices, and every older caller,
+    # still writes a correct file without it.
     param([string]$Path, $Displays, [string[]]$Devices, [string]$Tier,
-          [string]$This, [System.Collections.IDictionary]$Existing)
+          [string]$This, [System.Collections.IDictionary]$Existing, $Candidates = @())
 
     $lines = @(
         '# trigger-kvm configuration'
@@ -3421,7 +3424,16 @@ function Write-ConfigFile {
         '# device: usb:VVVV:PPPP (bare VVVV:PPPP means usb) or bt:AAAAAAAAAAAA.'
         '#         Bluetooth fires on CONNECTED, and every PAIRED device is offered.'
         ''
-        ("trigger.device   = {0}" -f ($Devices -join ', '))
+        # The remembered spot is appended HERE rather than carried in the key,
+        # because it is not part of a device's identity: an entry whose device
+        # moved sockets is still the same entry. specs/detector.md 4.1 confines
+        # `where` to breaking a tie, and only a tokened entry can have one --
+        # there is nothing to break a tie between otherwise.
+        ("trigger.device   = {0}" -f (@($Devices | ForEach-Object {
+            $d = $_
+            $c = @($Candidates | Where-Object { $_.Key -eq $d }) | Select-Object -First 1
+            if ($c -and $d -like '*@*' -and $c.Spot) { '{0}@{1}' -f $d, $c.Spot } else { $d }
+        }) -join ', '))
         ("trigger.debounce = {0}" -f $(if ($Existing.Contains('trigger.debounce')) { $Existing['trigger.debounce'] } else { $DEFAULT_DEBOUNCE }))
         ("trigger.settle   = {0}" -f $(if ($Existing.Contains('trigger.settle'))   { $Existing['trigger.settle'] }   else { $DEFAULT_SETTLE }))
         ''
@@ -3551,70 +3563,11 @@ function Get-UsageText {
 # Connected-vs-paired belongs beside the name in both places that show candidates,
 # so it is built once here rather than formatted twice.
 
-# THE NAME THE DEVICE GIVES ITSELF -- its USB iProduct string, as opposed to the
-# generic one its INF driver hands it. This is what turns three identical rows
-# reading `USB Input Device` into a keyboard, an RGB controller and a cooler.
-#
-# ASKED OF cfgmgr32 DIRECTLY, and that is not a preference. Get-PnpDeviceProperty
-# reads the same property through CIM and costs ~200 ms PER CALL -- measured
-# 2026-09-04, 70 SECONDS for this desk's 42 USB nodes, which is not a walkthrough
-# anybody would wait through. The API underneath it costs 0.14 ms. The registry
-# copy under Enum\USB\...\Properties is fast too and is NOT READABLE UNELEVATED
-# (0 of 115 instance keys), and configure runs unelevated. See
-# ..\docs\measurements.md.
-#
-# READ-ONLY, and it touches no device: it locates a devnode by id and reads one
-# string property. It is not a DDC path and must never grow into one.
-#
-# Add-Type LAZILY and guarded, exactly like Send-SettingChange: .NET cannot
-# replace a type once a runspace has loaded it, and tests dot-source this file
-# into one runspace repeatedly. At top level this would throw on the second
-# import; here it loads at most once and only when discovery actually runs.
-function Get-BusReportedName {
-    param([string]$InstanceId)
-
-    if (-not ('TkDevName' -as [type])) {
-        Add-Type -ErrorAction SilentlyContinue -TypeDefinition @'
-using System;
-using System.Runtime.InteropServices;
-
-public static class TkDevName {
-    [StructLayout(LayoutKind.Sequential)]
-    public struct DEVPROPKEY { public Guid fmtid; public uint pid; }
-
-    [DllImport("cfgmgr32.dll", CharSet = CharSet.Unicode)]
-    static extern int CM_Locate_DevNodeW(out uint pdnDevInst, string pDeviceID, uint ulFlags);
-
-    [DllImport("cfgmgr32.dll", CharSet = CharSet.Unicode)]
-    static extern int CM_Get_DevNode_PropertyW(uint dnDevInst, ref DEVPROPKEY PropertyKey,
-        out uint PropertyType, IntPtr PropertyBuffer, ref uint PropertyBufferSize, uint ulFlags);
-
-    // DEVPKEY_Device_BusReportedDeviceDesc. The GUID and index are the property's
-    // identity, not a magic number to be tidied: {540b947e-...},4 IS the name.
-    static DEVPROPKEY BusReported = new DEVPROPKEY {
-        fmtid = new Guid("540b947e-8b40-45bc-a8a2-6a0b894cbda2"), pid = 4 };
-
-    // null for "nothing to say", never a guess and never a throw -- an absent
-    // property is ordinary (plenty of devices report no iProduct string), and a
-    // walkthrough must not fail over a cosmetic lookup.
-    public static string Get(string instanceId) {
-        uint dev;
-        if (CM_Locate_DevNodeW(out dev, instanceId, 0) != 0) return null;
-        uint type = 0, size = 0;
-        CM_Get_DevNode_PropertyW(dev, ref BusReported, out type, IntPtr.Zero, ref size, 0);
-        if (size == 0) return null;
-        IntPtr buf = Marshal.AllocHGlobal((int)size);
-        try {
-            if (CM_Get_DevNode_PropertyW(dev, ref BusReported, out type, buf, ref size, 0) != 0) return null;
-            return Marshal.PtrToStringUni(buf);
-        } finally { Marshal.FreeHGlobal(buf); }
-    }
-}
-'@
-    }
-    if (-not ('TkDevName' -as [type])) { return '' }
-    try { return [string]([TkDevName]::Get($InstanceId)) } catch { return '' }
-}
+# The device's own name for itself is read by event-watch.ps1 and asked for
+# through -ListUsb, NOT read here. That script owns the binding because it is
+# what matches a token on every presence sweep, and two copies of a P/Invoke
+# drift -- with the nasty shape that the walkthrough writes a token the watcher
+# cannot find. Same rule as -ListBluetooth. See Get-TriggerCandidates.
 
 # Names Windows hands out when it has nothing specific to say. Matching one of
 # these identifies a CLASS of device, not a device.
@@ -3697,75 +3650,101 @@ function Get-CandidateLabel {
     param($Candidate)
     $s = "$($Candidate.Name)"
     if ($Candidate.Roles) { $s += ('  ({0})' -f (@($Candidate.Roles) -join ', ')) }
+    # A device that cannot be told from its twin is not a device you can pick,
+    # and the row says so rather than looking like a choice. specs/detector.md
+    # 4.1: where no name is held by exactly one of them, no token is written.
+    if ($Candidate.Ambiguous) { $s += '  [cannot be told from its twin]' }
     return $s
 }
 
 function Get-TriggerCandidates {
-    $rows = @()
-
-    $all   = @(Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue)
-    $roles = Get-DeviceRoles -Devices $all
-
-    # --- USB: present PnP nodes, minus infrastructure -----------------------
-    foreach ($d in $all) {
-        if ($d.InstanceId -notmatch '^USB\\VID_([0-9A-Fa-f]{4})&PID_([0-9A-Fa-f]{4})') { continue }
-        $key  = ('usb:{0}:{1}' -f $Matches[1], $Matches[2]).ToLower()
-        $name = $d.FriendlyName
-        if (-not $name) { continue }
-
-        # Hubs, controllers and the Bluetooth radio itself are attached permanently
-        # and never move. A failed enumeration (vid 0000) is not addressable at all.
-        if ($name -match 'Hub|Host Controller|Root Complex') { continue }
-        if ($d.Class -eq 'Bluetooth') { continue }
+    # ONE ROW PER PHYSICAL DEVICE, and the enumeration is ASKED OF THE WATCHER
+    # rather than done here -- specs/detector.md 4.1. event-watch.ps1 owns the
+    # device-property binding because it is what matches a token on every
+    # presence sweep, and a second copy here could drift; the shape of that drift
+    # is a walkthrough writing a token the watcher cannot find. Same reasoning as
+    # -ListBluetooth, and as asking trigger-kvm.ps1 for the display list.
+    #
+    # Fields: container|vid|pid|token|where|name, one line per candidate name.
+    $devices = @{}
+    $ew = Join-Path $PSScriptRoot 'event-watch.ps1'
+    if (-not (Test-Path -LiteralPath $ew -PathType Leaf)) { $ew = $WATCH }
+    foreach ($line in (Invoke-Sibling -Script $ew -Arguments @('-ListUsb') 2>$null)) {
+        $f = "$line" -split '\|', 6
+        if ($f.Count -lt 6) { continue }
+        $key = ('usb:{0}:{1}' -f $f[1], $f[2]).ToLower()
+        # A failed enumeration is not addressable at all.
         if ($key -like 'usb:0000:*') { continue }
-
-        $rows += [PSCustomObject]@{
-            Key   = $key
-            Bus   = 'USB'
-            Name  = $name
-            # What the DEVICE calls itself, beside what its driver calls it. Both
-            # go into the pool Get-BestDeviceName chooses from, because either can
-            # be the good one: the driver names the webcam well and the device
-            # names the cooler well.
-            BusName = Get-BusReportedName -InstanceId $d.InstanceId
-            Class = $d.Class
-            State = ''
+        $id = '{0}|{1}' -f $f[0], $key
+        if (-not $devices.Contains($id)) {
+            $devices[$id] = [PSCustomObject]@{
+                Key = $key; Tokens = @(); Names = @(); Where = $f[4]
+            }
         }
+        if ($f[3] -and $devices[$id].Tokens -notcontains $f[3]) { $devices[$id].Tokens += $f[3] }
+        if ($f[5] -and $devices[$id].Names  -notcontains $f[5]) { $devices[$id].Names  += $f[5] }
     }
 
-    # One row per VID:PID -- a single physical device enumerates several PnP nodes
-    # sharing one id (a webcam appears as a composite parent plus camera and audio
-    # children, a wireless receiver as twenty-odd), so the group is what a person
-    # thinks of as "the device" and the row has to speak for all of it.
-    #
-    # RANK IS NOW ONE QUESTION, NOT TWO. It used to pick the row's name AND its
-    # place in the list from a single number scoring "how specific is this node's
-    # class" -- and as a proxy for name quality that is inverted, because HID nodes
-    # are exactly the ones Windows names generically. It put `USB Input Device` on
-    # the keyboard while a sibling node said `G915 X LIGHTSPEED TKL`.
-    #
-    # So the name is now chosen by TESTING NAMES (Get-BestDeviceName) and Rank
-    # answers only what it was always reaching for: HOW LIKELY IS THIS TO TRAVEL.
-    # A device presenting a mouse or a keyboard is the likeliest trigger there is;
-    # an AIO cooler that also speaks HID is not, and they used to tie.
-    $usb = @($rows | Group-Object Key | ForEach-Object {
-        $k     = $_.Name
-        $klass = @($_.Group | Where-Object { $_.Class } | ForEach-Object { $_.Class })
-        [PSCustomObject]@{
-            Key   = $k
-            Bus   = 'USB'
-            Name  = Get-BestDeviceName -Names @(@($_.Group.Name) + @($_.Group.BusName))
-            # Filtered, not just wrapped: @($null) is an array of ONE $null, not
-            # an empty one, so a device with no roles would carry a phantom entry
-            # into every -join and -contains downstream.
-            Roles = @($roles[$k] | Where-Object { $_ })
-            Class = @($klass | Select-Object -First 1)
-            State = ''
-            Rank  = $(if ($roles[$k]) { 0 }
-                      elseif ($klass -match 'AudioEndpoint|MEDIA|Camera|Image') { 1 }
-                      else { 3 })
+    # Roles come from the HID children, which are `HID\` nodes the USB listing
+    # never sees. Cheap, and the most recognisable thing on a row.
+    $roles = Get-DeviceRoles -Devices @(Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue)
+
+    # A VENDOR:PRODUCT PAIR CAN NAME MORE THAN ONE DEVICE, so the token that
+    # distinguishes them is chosen HERE, per id, where the other candidates are
+    # visible. Choosing the "best" name per device in isolation is not enough:
+    # measured on this desk both receivers report `usb-receiver`, and only one
+    # reports `g915-x-lightspeed-tkl`.
+    $usb = @()
+    foreach ($grp in ($devices.Values | Group-Object Key)) {
+        $mine  = @($grp.Group)
+        $alone = ($mine.Count -eq 1)
+        foreach ($d in $mine) {
+            $token = ''
+            if (-not $alone) {
+                # Held by exactly one device in this group. Where none is, the
+                # device cannot be named apart from its twin and the row says so
+                # rather than writing a token that matches both.
+                $token = @($d.Tokens | Where-Object {
+                    $t = $_
+                    (@($mine | Where-Object { $_.Tokens -contains $t }).Count -eq 1)
+                } | Select-Object -First 1)
+                if ($token -isnot [string]) { $token = [string]$token }
+            }
+            $name = Get-BestDeviceName -Names $d.Names
+            if (-not $name) { continue }
+            # Hubs and controllers are attached permanently and never move.
+            #
+            # Tested against EVERY name the device reports, not the chosen one.
+            # Choosing the best name defeats a filter aimed at the worst: an ASM
+            # hub controller calls itself `ASM107x` while its driver calls it
+            # `Generic USB Hub`, so preferring the device's own name promoted it
+            # past the filter and put two hub controllers back in the list.
+            if (@($d.Names | Where-Object { $_ -match 'Hub|Host Controller|Root Complex' })) { continue }
+
+            $usb += [PSCustomObject]@{
+                # IDENTITY, without the remembered spot: a device that moved
+                # sockets is still the same entry, so the "currently a trigger"
+                # marker and the config round trip both keep working.
+                Key   = $d.Key + $(if ($token) { "@$token" } else { '' })
+                Bus   = 'USB'
+                Name  = $name
+                Roles = @($roles[$d.Key] | Where-Object { $_ })
+                Class = ''
+                Spot  = $d.Where
+                # More than one device on this id and nothing to tell them apart.
+                Twinned = (-not $alone)
+                Ambiguous = ((-not $alone) -and (-not $token))
+                State = ''
+                # Rank answers only HOW LIKELY THIS IS TO TRAVEL. It used to pick
+                # the row's NAME as well, from a single number scoring how
+                # specific a node's device class was -- an inverted proxy, since
+                # HID nodes are exactly the ones Windows names generically.
+                Rank  = $(if ($roles[$d.Key]) { 0 }
+                          elseif ($name -match 'Audio|Camera|Webcam') { 1 }
+                          else { 3 })
+            }
         }
-    })
+    }
 
     # --- Bluetooth: every PAIRED device, connected or not --------------------
     #
@@ -3797,6 +3776,11 @@ function Get-TriggerCandidates {
                 # property that is not there terminating, and every consumer of a
                 # candidate reads this one.
                 Roles = @()
+                # A Bluetooth address already names one device, so none of the
+                # disambiguation applies. Present and empty rather than absent:
+                # Set-StrictMode makes reading a property that is not there
+                # terminating, and every consumer of a candidate reads these.
+                Spot = ''; Twinned = $false; Ambiguous = $false
                 State = $(if ($parts[1] -eq 'True') { 'connected now' } else { 'paired, not connected' })
                 # Ranked with the audio and camera devices: a paired peripheral is
                 # a likely trigger, but nothing here says it is an input device the
@@ -3849,7 +3833,7 @@ if ($Command -eq 'discover') {
             # config, which reads as "none of these are configured" and is worse
             # than no marker at all.
             $cur = @(($c['trigger.device'] -replace '\s','') -split ',' | Where-Object { $_ } | ForEach-Object {
-                if ($_ -match '^(usb:|bt:)') { $_.ToLower() } else { 'usb:' + $_.ToLower() }
+                Get-DeviceIdentity $(if ($_ -match '^(usb:|bt:)') { $_.ToLower() } else { 'usb:' + $_.ToLower() })
             })
         }
     }
@@ -3860,7 +3844,7 @@ if ($Command -eq 'discover') {
         # what identifies it. The Class column went -- it was the internal reason
         # a row used to be named badly, and now that names are chosen by testing
         # names it tells a reader nothing they can act on.
-        Write-Host ('  {0,-40} {1,-20} {2,-4}{3}{4}' -f (Get-CandidateLabel $d), $d.Key, $d.Bus,
+        Write-Host ('  {0,-40} {1,-36} {2,-4}{3}{4}' -f (Get-CandidateLabel $d), $d.Key, $d.Bus,
                     $(if ($d.State) { '  ' + $d.State } else { '' }), $mark)
     }
 
@@ -4030,7 +4014,7 @@ if ($Command -eq 'status') {
     $devices = @()
     if ($c.Contains('trigger.device')) {
         $devices = @(($c['trigger.device'] -replace '\s','') -split ',' | Where-Object { $_ } | ForEach-Object {
-            if ($_ -match '^(usb:|bt:)') { $_.ToLower() } else { 'usb:' + $_.ToLower() } })
+            Get-DeviceIdentity $(if ($_ -match '^(usb:|bt:)') { $_.ToLower() } else { 'usb:' + $_.ToLower() }) })
     }
     # Named through the same door the walkthrough uses, so `status` and
     # `discover` can never disagree about what a device is called.
