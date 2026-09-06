@@ -995,6 +995,24 @@ function Switch-Display {
     }
 }
 
+# How many ATTACHED panels answer to one EDID identity, folded across transports.
+#
+# The count is the MAXIMUM across transports and never the sum. Each transport
+# enumerates each panel exactly once, so summing would report every ordinary panel
+# on every desk as two -- which is the trap specs/configure.md 6.4 names, and the
+# reason the rows above are unioned on the identity in the first place.
+#
+# Two panels reporting one pair is the case this exists for: the switcher already
+# refuses such a target (Resolve-Panel), and this is what lets `list`, `configure`
+# and `status` say so instead of the refusal only reaching the log.
+function Merge-PanelTally {
+    param([hashtable]$Into, [hashtable]$From)
+    foreach ($k in $From.Keys) {
+        if (-not $Into.Contains($k) -or $Into[$k] -lt $From[$k]) { $Into[$k] = $From[$k] }
+    }
+    return $Into
+}
+
 # --- main -------------------------------------------------------------------
 
 # `list` reads nothing from the config and writes nothing to any monitor. It exists
@@ -1013,22 +1031,33 @@ if ($Command -eq 'list') {
     # card is exactly the machine this transport was added for, and `list` refusing
     # on it would make the whole walkthrough unreachable there.
     $rows   = [ordered]@{}
+    # How many attached panels answer to each identity. Folded per transport and
+    # then merged by MAXIMUM -- see Merge-PanelTally for why it is not a sum.
+    $panels = @{}
     $status = [NvDdc]::Init()
     if ($status -eq 'OK') {
+        $tally = @{}
         foreach ($d in @([NvDdc]::Enumerate())) {
             $key = '{0:X4}:{1:X4}' -f $d.EdidVendor, $d.EdidProduct
+            $tally[$key] = 1 + $(if ($tally.Contains($key)) { $tally[$key] } else { 0 })
+            # Twins overwrite each other here, and that is correct: they are
+            # identical in every field this row carries. $panels is what remembers
+            # there was more than one, because it is the only thing that can.
             $rows[$key] = [PSCustomObject]@{
                 Vendor = $d.EdidVendor; Product = $d.EdidProduct
                 Connector = $d.Connector; Serial = $d.EdidSerial; Name = $d.EdidName
-                Transports = @('nvapi')
+                Transports = @('nvapi'); Panels = 1
             }
         }
+        $panels = Merge-PanelTally -Into $panels -From $tally
     } else {
         Write-Log "NVAPI unavailable -- $status (continuing; dxva2 does not need it)"
     }
 
+    $tally = @{}
     foreach ($d in @([Dxva]::Enumerate())) {
         $key = '{0:X4}:{1:X4}' -f $d.EdidVendor, $d.EdidProduct
+        $tally[$key] = 1 + $(if ($tally.Contains($key)) { $tally[$key] } else { 0 })
         if ($rows.Contains($key)) {
             $rows[$key].Transports = @($rows[$key].Transports) + 'dxva2'
         } else {
@@ -1037,9 +1066,14 @@ if ($Command -eq 'list') {
             $rows[$key] = [PSCustomObject]@{
                 Vendor = $d.EdidVendor; Product = $d.EdidProduct
                 Connector = '-'; Serial = 0; Name = ''
-                Transports = @('dxva2')
+                Transports = @('dxva2'); Panels = 1
             }
         }
+    }
+    $panels = Merge-PanelTally -Into $panels -From $tally
+
+    foreach ($key in @($rows.Keys)) {
+        if ($panels.Contains($key)) { $rows[$key].Panels = $panels[$key] }
     }
 
     $found = @($rows.Values)
@@ -1048,10 +1082,12 @@ if ($Command -eq 'list') {
     if ($Raw) {
         foreach ($d in $found) {
             # Fields append-only: install.ps1 accepts >= 4, so a copy of it that
-            # predates a field still works. Transports last, for that reason.
-            Write-Output ('{0:X4}|{1:X4}|{2}|{3}|{4:X8}|{5}|{6}' -f `
+            # predates a field still works. Panels last, for that reason -- an
+            # older installer reads six fields and behaves exactly as it did.
+            Write-Output ('{0:X4}|{1:X4}|{2}|{3}|{4:X8}|{5}|{6}|{7}' -f `
                           $d.Vendor, $d.Product, [NvDdc]::DecodeMfg($d.Vendor),
-                          $d.Connector, $d.Serial, $d.Name, ($d.Transports -join ','))
+                          $d.Connector, $d.Serial, $d.Name, ($d.Transports -join ','),
+                          $d.Panels)
         }
         exit 0
     }
@@ -1075,6 +1111,18 @@ if ($Command -eq 'list') {
                     $(if ($known.Contains($key)) { $known[$key] } else { '-- not in config --' }))
     }
     Write-Host ''
+
+    # The row above is one row per IDENTITY, so two identical panels are one line
+    # and the second would otherwise be invisible -- specs/configure.md 6.4. The
+    # count is what makes it visible; the table keeps its shape.
+    foreach ($d in $found) {
+        if ($d.Panels -le 1) { continue }
+        Write-Host ('  !! {0} monitors report the same id and cannot be told apart (0x{1:X4}:0x{2:X4}).' -f `
+                    $d.Panels, $d.Vendor, $d.Product)
+        Write-Host  '     A switch cannot aim at one of them, so none of them can be managed.'
+        Write-Host  '     Unplug one to manage the other.'
+        Write-Host ''
+    }
     Write-Host 'To add one, put this in the config and name the input each computer is on:'
     Write-Host ''
     $ex = $found[0]

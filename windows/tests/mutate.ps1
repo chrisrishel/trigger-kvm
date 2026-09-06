@@ -807,6 +807,66 @@ if ($skippedCases -gt 0) {
 '@ `
     ''
 
+# --- two attached panels sharing one identity ---------------------------------
+#
+# specs/configure.md 6.4, specs/status.md 5. Nobody here owns twins, so every one
+# of these is aimed at the decisions made ABOUT the count rather than at the
+# hardware case -- which is exactly what identity.tests.ps1 can reach.
+
+Invoke-Mutation 'identity: the panel count is summed across transports, not maxed' `
+    'trigger-kvm.ps1' 'identity.tests.ps1' `
+    '        if (-not $Into.Contains($k) -or $Into[$k] -lt $From[$k]) { $Into[$k] = $From[$k] }' `
+    '        $Into[$k] = $(if ($Into.Contains($k)) { $Into[$k] } else { 0 }) + $From[$k]'
+
+Invoke-Mutation 'identity: a smaller count from one transport lowers the other' `
+    'trigger-kvm.ps1' 'identity.tests.ps1' `
+    '        if (-not $Into.Contains($k) -or $Into[$k] -lt $From[$k]) { $Into[$k] = $From[$k] }' `
+    '        $Into[$k] = $From[$k]'
+
+# An older switcher sends no field 8. Defaulting it to 0 rather than 1 makes
+# every upgraded desk read as "fewer than one panel", which is not a state.
+Invoke-Mutation 'identity: a row with no panel count defaults to zero' `
+    'install.ps1' 'identity.tests.ps1' `
+    '                            [int]$f[7]
+                        } else { 1 }' `
+    '                            [int]$f[7]
+                        } else { 0 }'
+
+Invoke-Mutation 'identity: an unparseable panel count is cast anyway' `
+    'install.ps1' 'identity.tests.ps1' `
+    '$(if ($f.Count -ge 8 -and $f[7] -match ''^\d+$'') {' `
+    '$(if ($f.Count -ge 8) {'
+
+# The refusal is the whole point: without it the walkthrough asks about an id it
+# cannot aim at, and the second answer overwrites the first.
+Invoke-Mutation 'identity: the walkthrough takes an answer for an ambiguous id' `
+    'install.ps1' 'identity.tests.ps1' `
+    '        if ($f.Panels -gt 1) {
+            Write-Host ''''' `
+    '        if ($false) {
+            Write-Host '''''
+
+Invoke-Mutation 'identity: the Monitors row does not say the id is unmanageable' `
+    'install.ps1' 'identity.tests.ps1' `
+    '$detail += $(if ($f.Panels -gt 1) { ''{0} monitors share this id -- cannot manage'' -f $f.Panels }' `
+    '$detail += $(if ($false) { ''{0} monitors share this id -- cannot manage'' -f $f.Panels }'
+
+# specs/status.md 5.2: absent and ambiguous are different states. The guard that
+# separates them has NO mutation here on purpose -- dropping the Contains check
+# behaves identically, because a missing key reads as $null and $null -le 1 is
+# already true. It stays in the source for explicitness; a mutation nothing can
+# catch would report a surviving bug that is not one. The threshold below IS
+# mutable, and is what actually decides.
+Invoke-Mutation 'identity: status reports on a single attached panel' `
+    'install.ps1' 'identity.tests.ps1' `
+    '        if ($Attached[$key] -le 1) { continue }' `
+    '        if ($Attached[$key] -le 0) { continue }'
+
+Invoke-Mutation 'identity: status offers configure as the fix it does not have' `
+    'install.ps1' 'identity.tests.ps1' `
+    '           follow. Unplug one of each pair -- nothing here can tell them apart.' `
+    '           follow. Fix: trigger-kvm configure'
+
 # =============================================================================
 
 Write-Host ''

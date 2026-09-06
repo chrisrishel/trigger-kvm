@@ -124,3 +124,49 @@ afterwards, when they have forgotten choosing it, or inherited the machine.
 **Nothing is normative here**, for the reason §6.3 gives: a platform with one
 transport has no panel this can be true of, and must not owe wording for a case
 it cannot reach.
+
+## 5. An identity that names more than one attached panel
+
+Where a configured panel's identity currently matches **more than one attached
+panel**, `status` MUST say so, naming the label it is configured as.
+
+**The switch has already been refused by the time anyone looks here.** Resolution
+is by EDID vendor:product and refuses on more than one match, so the panel simply
+stops following, and the reason goes to the log — which is not where anyone looks,
+because the symptom is a monitor that used to work and now does not. That is the
+same shape as §3: something the tool can see perfectly well and does not say out
+loud.
+
+This is the same fact `configure` names when the identity is met in the Monitors
+list ([`configure.md`](configure.md) §6.4). `status` is where the person looks
+who did not run `configure` today — who plugged a second identical panel in weeks
+ago and has no reason to connect the two events.
+
+**Enumerating is permitted here.** §1 bars sending a packet and reading a VCP
+value; asking the platform what displays are attached is neither, and `status`
+already has to look at real hardware to report what the watcher is waiting for.
+
+### 5.1 What it must say
+
+Layout is each platform's own, as in §3.1. These fragments are binding:
+
+```normative
+more than one attached monitor matches
+the switch refuses rather than guessing
+```
+
+**Name the count where the platform has it.** "More than one" is the least the
+resolver knows; a number is better, and nothing above stops an implementation
+printing one.
+
+### 5.2 What it must not say
+
+- **It must not offer a fix it does not have.** `configure` cannot resolve this
+  and must not be suggested as though it could — the opposite of §3.1, where
+  `configure` is exactly the fix.
+- **It must not name one of the panels as the one that will be used.** Nothing
+  chooses, and a line implying something did is worse than the silence this
+  section replaces.
+- It must not report the condition for a configured panel that is merely
+  **absent**. Zero matches and two matches are different states with different
+  remedies, and only the second is this section.

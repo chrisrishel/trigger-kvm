@@ -21,6 +21,7 @@ Import-Subject -Script 'install.ps1' -Variables @('DIALECTS','MCCS_INPUTS','NAME
     'Format-Byte','Read-InputValue','Get-InputTable','Get-DisplayMap','Read-Method',
     'Read-Transport','Get-LoginOnlyPanels',
     'Get-DisplayAnswers','Get-ConfiguredAnswers','Get-PriorDisplay','Read-Monitors',
+    'ConvertFrom-DisplayRow',
     'Invoke-DisplayTest','Invoke-TestRound','Invoke-TestRoundBody','Test-OneComputer',
     'Test-DisplayInput','Test-OneValue','Invoke-BlindWalk',
     'Read-Triggers','Read-Tier','Read-PathChoice','Get-CandidateLabel',

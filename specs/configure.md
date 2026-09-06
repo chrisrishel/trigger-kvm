@@ -493,6 +493,55 @@ There is already a monitor called
 - Looking at the list and changing nothing is **not** an edit, and must not
   invalidate a pass.
 
+### 6.4 When two attached panels share one identity
+
+A panel is identified by its EDID vendor:product pair, so **two attached panels
+reporting the same pair are one identity.** The switcher already resolves by that
+pair and refuses when it matches more than one output. That refusal is correct
+and this section does not change it; what it requires is that the ambiguity is
+visible **where the choice is made**, instead of surfacing weeks later as a
+monitor that quietly stopped following.
+
+**The second panel must not be invisible.** A list that keys its rows on the
+identity merges two attached panels into one row, and the merge is silent — the
+reader sees one monitor where they have two, with nothing saying anything was
+dropped. Whether the count reaches them as several rows or as one row saying how
+many panels answer to the id is each platform's own. That it reaches them is not.
+
+**Such an identity cannot be managed, and the walkthrough says so rather than
+taking an answer for it.** Configuration written against it could never switch
+anything, because the switcher will refuse to resolve it. And a walkthrough that
+looks its answers up by the identity holds one record for two panels, so
+answering for the second **overwrites the first**: the person configures two
+monitors and discovers they have configured one.
+
+```normative
+report the same id and cannot be told apart
+A switch cannot aim at one of them
+```
+
+This is §6's duplicate-name rule read from the other side. There, two panels are
+refused one name because the config would merge them; here they cannot be given
+two names, because what a name would attach to is a single identity. Both are the
+same refusal — **the walkthrough declines to write configuration it already knows
+the switcher cannot use**, which is the whole reason it refuses what the switcher
+would refuse later (§12).
+
+**Unplugging one is the honest remedy today**, and a platform may say so. What it
+must not do is guess — take the first, the active one, or the lowest index — for
+exactly the reason [`../AGENTS.md`](../AGENTS.md) gives about display indices: a
+wrong guess here aims a real switch at the wrong panel.
+
+A qualifier that would tell two such panels apart and let each be configured is
+designed but **not built**
+([`../ideas/telling-two-identical-monitors-apart.md`](../ideas/telling-two-identical-monitors-apart.md)).
+It is out of scope here deliberately. This section is the behaviour that is
+correct whether or not that ever ships, and it is the fallback such a qualifier
+needs underneath it in any case.
+
+[`status.md`](status.md) §5 is the same condition reported afterwards, for
+someone who did not run `configure` today.
+
 ### 6.3 Choosing how the bytes get there
 
 **Shown only where a choice exists** — where this panel enumerated through more

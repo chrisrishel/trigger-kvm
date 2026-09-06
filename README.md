@@ -232,7 +232,10 @@ Each computer runs one background watcher and one switcher. The watcher listens
 for a configured device to go from absent to present, waits a moment to confirm
 it is still there, and runs `trigger-kvm pull`. The switcher resolves each
 configured monitor by the EDID vendor and product it reads at that moment, never
-by an index, and sends the input-select write, twice, to that one output. A
+by an index, and sends the input-select write, twice, to that one output. **Two
+monitors of the same model therefore read as one identity**, and rather than
+guess between them the tool refuses both and says so in `list`, `configure` and
+`status` — telling them apart is designed but not built. A
 computer only ever pulls monitors toward itself, so there is no shared state and
 nothing to coordinate. The design rests on one measured property: a computer's
 link to a monitor stays enumerated while the monitor displays another input, so

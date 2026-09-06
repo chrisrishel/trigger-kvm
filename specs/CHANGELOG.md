@@ -67,6 +67,63 @@ it does not have. It is blind to two things, and this closes them:
 
 ---
 
+## Revision 13 — 2026-09-05
+
+**Two attached panels can report the same EDID id. The walkthrough must refuse
+such an identity rather than take an answer for it, the list must stop hiding the
+second panel, and `status` must report one that is ambiguous right now.**
+
+Sections: [`configure.md`](configure.md) **new §6.4**;
+[`status.md`](status.md) **new §5**, with §5.1 and §5.2.
+
+**Act on:**
+
+1. **Count the ATTACHED panels answering to each identity, once.** Three surfaces
+   need the same number, and computing it three times is three representations of
+   one fact. Where a platform unions its display rows across transports, that
+   count is the **maximum across transports, never the sum** — each transport
+   enumerates each panel exactly once, so summing splits every ordinary panel on
+   every desk into two.
+
+2. **Stop merging two panels into one row.** A list keyed on the identity shows
+   one monitor where there are two and says nothing about it. Whether the count
+   reaches the reader as several rows or as one row naming the number is yours;
+   that it reaches them is not.
+
+3. **Refuse to manage an ambiguous identity in the walkthrough**, with §6.4's
+   wording, and take no answer for it. Configuration written against such an
+   identity could never switch anything, because the switcher already refuses to
+   resolve it. A walkthrough that looks answers up by identity holds one record
+   for two panels, so the second answer silently overwrites the first — **macOS
+   has a defect of exactly this shape, reported with what could and could not be
+   verified in `macos/HANDOFF.md`.**
+
+4. **Report it in `status`** with §5's wording, for the more-than-one case only:
+   a configured panel that is merely absent is a different state with a different
+   remedy. Enumerating displays to answer this is allowed — §1 bars sending a
+   packet and reading a VCP value, and this is neither.
+
+5. **Do not guess, at any surface.** Not the first match, not the active one, not
+   the lowest index. `../AGENTS.md`'s rule about display indices is written about
+   precisely this: a wrong guess aims a real switch at the wrong panel.
+
+**Why the old behaviour was wrong.** Control was already correct on both
+platforms — each refuses to resolve an identity matching more than one output, so
+nothing ever mis-aimed. What was wrong is that the refusal was **invisible at
+every surface that could have prevented it.** The list hid the second panel, the
+walkthrough accepted configuration that could never work, and `status` said
+nothing — so the whole condition presented as "one of my monitors stopped
+following", with the reason in a log file the user may not know exists. Both
+platforms had the bug, and had it *differently*, which is the disagreement this
+corpus exists to prevent.
+
+**This is NOT the tiebreak.** A qualifier that tells two such panels apart so each
+can be configured is designed and deliberately not specified here
+(`../ideas/telling-two-identical-monitors-apart.md`). This revision is the
+behaviour that is correct whether or not that ever ships, and the fallback such a
+qualifier needs underneath it in any case. Implementing this commits you to
+nothing about that.
+
 ## Revision 12 — 2026-09-04
 
 **A vendor:product pair can name more than one device. An entry may now say

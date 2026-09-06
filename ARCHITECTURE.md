@@ -269,7 +269,10 @@ is no code path, and no future caller, that can aim the sidechannel elsewhere.
 
 The switch also fails closed on ambiguity. Zero matching outputs is a refusal, and
 so is more than one, because a target that cannot be resolved to a single output
-cannot be aimed at.
+cannot be aimed at. That refusal is correct but was invisible until revision 13,
+which is a separate property: `list`, `configure` and `status` now each say when
+an id names more than one attached panel, so the condition is met where something
+can be done about it rather than in a log after a monitor stops following.
 
 **This replaced a genuinely dangerous arrangement, and the shape of the current
 design is a direct response to it.** Until 2026-08-30 the LG was driven by

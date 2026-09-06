@@ -671,6 +671,29 @@ sends the old value and the panel goes black with a success in the log. A panel
 whose id differs per input (the LG) refuses instead. Since the failure cannot be
 detected, `status` makes it legible: re-running `configure` is the fix.
 
+**Two identical monitors get an `AMBIGUOUS` block, and it is the one warning here
+`configure` cannot fix.** A panel is identified by its EDID vendor:product pair,
+so two of the same model are one identity and the switch refuses to aim at either
+— correctly, since choosing one would be a guess. That refusal used to reach only
+the log, which is not where anyone looks when a monitor that worked for a year
+stops following:
+
+```
+AMBIGUOUS: more than one attached monitor matches an id in this config
+           asus     0x06B3:0x42E0  2 of them
+           the switch refuses rather than guessing, so those panels do not
+           follow. Unplug one of each pair -- nothing here can tell them apart.
+```
+
+`trigger-kvm list` says the same thing where the identity is met rather than
+where it is configured, and the Monitors menu in `configure` refuses such an id
+instead of taking an answer for it — answers there are keyed by the identity, so
+one record would serve both panels and the second answer would overwrite the
+first. Anything already configured for that id is left alone, so unplugging one
+panel restores it. Behaviour is `specs/configure.md` §6.4 and `specs/status.md`
+§5; the qualifier that would let two identical panels be configured separately is
+designed but not built (`ideas/telling-two-identical-monitors-apart.md`).
+
 **The tier is a property of the host, not of the switcher.** All tier logic lives in
 `install.ps1`. Neither `trigger-kvm.ps1` nor `event-watch.ps1` knows or asks which
 tier it is running under. If either ever needs to, the abstraction is wrong.

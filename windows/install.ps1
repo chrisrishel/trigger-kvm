@@ -687,6 +687,86 @@ function Get-TransportReport {
     return $out
 }
 
+# One `trigger-kvm list -Raw` line -> the row the walkthrough and `status` both
+# read. ONE parser, deliberately: the fields are APPEND-ONLY, so every reader has
+# to default the ones an older switcher does not send, and a rule like that only
+# stays consistent while it lives in a single place.
+#
+# Returns $null for a line that is not a row, so a caller filters rather than
+# guarding on field counts itself.
+function ConvertFrom-DisplayRow {
+    param([string]$Line)
+
+    $f = "$Line" -split '\|'
+    if ($f.Count -lt 4) { return $null }
+    return [PSCustomObject]@{
+        EdidVendor  = [Convert]::ToInt32($f[0], 16)
+        EdidProduct = [Convert]::ToInt32($f[1], 16)
+        Mfg         = $f[2]
+        Connector   = $f[3]
+        # Field 6, and older copies of trigger-kvm.ps1 do not send it.
+        Name        = $(if ($f.Count -ge 6) { $f[5] } else { '' })
+        # Field 7, comma-joined: which transports can SEE this panel. Absent means
+        # nvapi -- the same default specs/config-format.md gives the key -- so an
+        # installer newer than the switcher beside it asks nothing and keeps
+        # writing what that switcher understands.
+        Transports  = $(if ($f.Count -ge 7 -and $f[6]) {
+                            @($f[6] -split ',' | Where-Object { $_ })
+                        } else { @('nvapi') })
+        # Field 8: how many ATTACHED panels answer to this id. Absent means one,
+        # which is what every desk without twins reports anyway -- so an installer
+        # newer than the switcher beside it simply never refuses on it.
+        # specs/configure.md 6.4.
+        Panels      = $(if ($f.Count -ge 8 -and $f[7] -match '^\d+$') {
+                            [int]$f[7]
+                        } else { 1 })
+    }
+}
+
+# specs/status.md 5. SILENT unless it has something to say: an id in the config
+# that right now answers for more than one attached panel. By the time anyone
+# reads `status` the switch has already refused that panel, and the refusal only
+# ever reached the log -- which is not where a person looks when a monitor they
+# have had for a year quietly stops following.
+#
+# $Attached maps 'VVVV:PPPP' to how many attached panels answer to it: field 8 of
+# `trigger-kvm list -Raw`. A configured id that is merely ABSENT is a different
+# state with a different remedy, and is deliberately not reported here.
+function Get-DisplayAmbiguityReport {
+    param($Cfg, [string[]]$Labels, [hashtable]$Attached)
+
+    if (-not $Labels -or $null -eq $Attached -or $Attached.Count -eq 0) { return @() }
+
+    $rows = @()
+    foreach ($label in $Labels) {
+        $v = ConvertTo-Word $Cfg["display.$label.vendor"]
+        $p = ConvertTo-Word $Cfg["display.$label.product"]
+        # An unparseable id matches nothing rather than matching 0x0000 -- the
+        # same refusal Get-ConfiguredDisplays makes, for the same reason.
+        if ($null -eq $v -or $null -eq $p) { continue }
+        $key = '{0:X4}:{1:X4}' -f $v, $p
+        # Absent and ambiguous are different states with different remedies, and
+        # only the second is this block's (specs/status.md 5.2). The Contains
+        # check is redundant TODAY -- a missing key reads as $null and $null -le 1
+        # is already true -- and it is kept deliberately, because "a missing value
+        # is not zero" is the rule this project follows everywhere else, and
+        # leaning on the coercion would make the next edit here a trap. There is
+        # no mutation for it in mutate.ps1: the two forms behave identically, so
+        # nothing could catch its removal, and a mutation nothing can catch is
+        # noise rather than proof.
+        if (-not $Attached.Contains($key)) { continue }
+        if ($Attached[$key] -le 1) { continue }
+        $rows += ("           {0,-8} 0x{1:X4}:0x{2:X4}  {3} of them" -f $label, $v, $p, $Attached[$key])
+    }
+    if ($rows.Count -eq 0) { return @() }
+
+    # No "run configure" here, deliberately: it cannot fix this and saying so
+    # would be a fix this tool does not have (specs/status.md 5.2).
+    return @('AMBIGUOUS: more than one attached monitor matches an id in this config') + $rows +
+           @('           the switch refuses rather than guessing, so those panels do not',
+             '           follow. Unplug one of each pair -- nothing here can tell them apart.')
+}
+
 # IS A WATCHER RUNNING? Asked of event-watch.ps1, which owns the single-instance
 # lock, for the same reason -ListBluetooth and -TestTrigger are asked of it: a
 # second implementation here would be free to disagree with the lock that actually
@@ -2443,7 +2523,13 @@ function Read-Monitors {
             $key = '{0:X4}:{1:X4}' -f $f.EdidVendor, $f.EdidProduct
             $a   = @($out | Where-Object { $_.Key -eq $key }) | Select-Object -First 1
             $items  += $(if ($f.Name) { $f.Name } else { '{0} panel {1}' -f $f.Mfg, $key })
-            $detail += $(if ($a) { '{0}: {1}' -f $a.Label, (@($a.Map.Keys) -join '/') } else { 'not managed' })
+            # An id that answers for more than one ATTACHED panel cannot be managed
+            # at all (specs/configure.md 6.4), so the row says that rather than an
+            # answer -- including where a config written before the second panel
+            # arrived still holds one. That answer is kept, not quietly dropped.
+            $detail += $(if ($f.Panels -gt 1) { '{0} monitors share this id -- cannot manage' -f $f.Panels }
+                         elseif ($a) { '{0}: {1}' -f $a.Label, (@($a.Map.Keys) -join '/') }
+                         else { 'not managed' })
         }
         $items += ''; $detail += ''
         $done = $items.Count
@@ -2470,6 +2556,19 @@ function Read-Monitors {
         if ($pick -eq $done -or $pick -lt 0) { return @($out) }
 
         $f    = $Found[$pick]
+        # Refuse BEFORE any question is asked. Answers here are looked up by the
+        # id, so one record would serve both panels and the second answer would
+        # overwrite the first -- the person configures two monitors and has
+        # configured one. specs/configure.md 6.4.
+        if ($f.Panels -gt 1) {
+            Write-Host ''
+            Write-Host ('  {0} monitors report the same id and cannot be told apart (0x{1:X4}:0x{2:X4}).' -f `
+                        $f.Panels, $f.EdidVendor, $f.EdidProduct)
+            Write-Host  '  A switch cannot aim at one of them, so none of them can be managed.'
+            Write-Host  '  Unplug one to manage the other. Anything already configured for'
+            Write-Host  '  this id is left exactly as it is.'
+            continue
+        }
         $key  = '{0:X4}:{1:X4}' -f $f.EdidVendor, $f.EdidProduct
         $was  = @($out | Where-Object { $_.Key -eq $key }) | Select-Object -First 1
         $prior = $was
@@ -2563,25 +2662,8 @@ function Invoke-Configure {
     # pipeline, so parsing it would silently find nothing.
     $found = @()
     foreach ($line in (Invoke-Sibling -Script $sw -Arguments @('list', '-Raw', '-Config', $CONFIG) 2>$null)) {
-        $f = "$line" -split '\|'
-        if ($f.Count -ge 4) {
-            $found += [PSCustomObject]@{
-                EdidVendor  = [Convert]::ToInt32($f[0], 16)
-                EdidProduct = [Convert]::ToInt32($f[1], 16)
-                Mfg         = $f[2]
-                Connector   = $f[3]
-                # Field 6, and older copies of trigger-kvm.ps1 do not send it.
-                Name        = $(if ($f.Count -ge 6) { $f[5] } else { '' })
-                # Field 7, comma-joined: which transports can SEE this panel. An
-                # older copy of trigger-kvm.ps1 does not send it, and absent means
-                # nvapi -- the same default specs/config-format.md gives the key.
-                # So an installer newer than the switcher beside it asks nothing
-                # and keeps writing what that switcher understands.
-                Transports  = $(if ($f.Count -ge 7 -and $f[6]) {
-                                    @($f[6] -split ',' | Where-Object { $_ })
-                                } else { @('nvapi') })
-            }
-        }
+        $row = ConvertFrom-DisplayRow $line
+        if ($row) { $found += $row }
     }
     if ($found.Count -eq 0) {
         # Not "on an NVIDIA GPU" any more: dxva2 sees panels on any adapter, so a
@@ -4007,6 +4089,24 @@ if ($Command -eq 'status') {
     Get-InputMapReport -Cfg $c -Labels $labels -This $this -Computers $computers |
         ForEach-Object { Write-Host $_ }
     Get-TransportReport -Cfg $c -Labels $labels -FromBoot:$fromBoot |
+        ForEach-Object { Write-Host $_ }
+
+    # What is attached RIGHT NOW, through the same door the walkthrough uses, so
+    # `status` and `configure` can never disagree about how many panels answer to
+    # one id. Enumerating is neither sending a packet nor reading a VCP value, so
+    # specs/status.md 1 permits it. Skipped entirely with nothing configured:
+    # there is no claim to check, and this is the one line here that costs a
+    # child process.
+    $attached = @{}
+    if ($labels) {
+        $sw = Join-Path $PSScriptRoot 'trigger-kvm.ps1'
+        if (-not (Test-Path $sw)) { $sw = $SWITCH }
+        foreach ($line in (Invoke-Sibling -Script $sw -Arguments @('list', '-Raw', '-Config', $CONFIG) 2>$null)) {
+            $row = ConvertFrom-DisplayRow $line
+            if ($row) { $attached[('{0:X4}:{1:X4}' -f $row.EdidVendor, $row.EdidProduct)] = $row.Panels }
+        }
+    }
+    Get-DisplayAmbiguityReport -Cfg $c -Labels $labels -Attached $attached |
         ForEach-Object { Write-Host $_ }
 
     # What the watcher is actually waiting for. Without this line, "it is running"

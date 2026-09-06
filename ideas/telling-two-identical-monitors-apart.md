@@ -15,28 +15,34 @@ reasoning, not measurement, and is marked as such.
 ## What happens today
 
 Identity is the EDID vendor:product pair and nothing else, and two identical
-panels are one identity. That breaks at three layers.
+panels are one identity. That broke at three layers; **revision 13 closed two of
+them, and is implemented on Windows only.**
 
-**Identification -- and the two platforms disagree, which is its own defect.**
-Windows `list` unions rows **on the EDID key** (`windows/trigger-kvm.ps1:1015-1043`,
-`$rows[$key] = ...`), so two identical panels would produce **one row**:
-`monitors found (1)`, one row in the Monitors menu, the second panel silently
-overwritten. macOS `wt_load_found` does not dedupe
-(`macos/lib/walkthrough.sh:210-223`) so it would list two rows -- but
-`wt_answer_index` looks answers up by that same key (`:200-208`, used at `:675`),
-so both rows resolve to one answer record and configuring the second overwrites
-the first. Neither platform can give them separate names, because the label is
-keyed to the identity.
-
-**Control -- fail-closed, and correct.** `Resolve-Panel` refuses on more than one
-match (`windows/trigger-kvm.ps1:851-864`), macOS likewise
+**Control -- fail-closed, and correct all along.** `Resolve-Panel` refuses on
+more than one match (`windows/trigger-kvm.ps1`), macOS likewise
 (`macos/lib/display.sh:63-85`). Picking the first would reintroduce the
-order-dependence EDID matching exists to remove. The panel simply never switches.
+order-dependence EDID matching exists to remove, so the panel simply never
+switches. Nothing here needed fixing and nothing here changed.
 
-**Discoverability -- a log line and nothing else.** `status` does not predict the
-ambiguity, so this presents as "one of my monitors stopped following" with the
-reason in a file the user may not know exists. Same failure class the trigger
-side fixed in revision 12.
+**Identification and discoverability -- fixed by revision 13**
+(`specs/configure.md` §6.4, `specs/status.md` §5). Both platforms had a bug here
+and had it *differently*, which is what made it a spec change rather than two
+local fixes:
+
+- Windows `list` unioned rows on the EDID key, so two identical panels produced
+  **one row** and the second was invisible. It now carries how many attached
+  panels answer to each id, the walkthrough refuses to manage an ambiguous one
+  rather than taking an answer, and `status` reports one that is ambiguous now.
+- macOS `wt_load_found` does not dedupe so it lists two rows, but
+  `wt_answer_index` looks answers up by that same key, so both rows resolve to
+  one answer record and configuring the second overwrites the first. Owed as
+  revision 13; also written up in `macos/HANDOFF.md`, since a reading of their
+  code is not something the machinery can tell them.
+
+**What remains unfixed is the thing this note is about**: neither platform can
+give two identical panels separate names, because the label is keyed to the
+identity. Revision 13 makes that state legible and refuses it safely. It does not
+make it *work*, which is what the design below would do.
 
 ## The serial is not the answer
 
@@ -229,18 +235,19 @@ Switch one, ask which moved, name it accordingly. The existing duplicate refusal
 So the naming question and the identity question are separate, and the twin case
 argues neither for nor against changing the default suggestion.
 
-## The cheap part, which stands on its own
+## The cheap part -- SHIPPED as revision 13, 2026-09-05
 
-**Make the ambiguity refusal visible in `status`.** Today the refusal is correct
-and invisible. Saying it in words converts "one of my monitors randomly stopped
-following" into a sentence naming the cause, and it is buildable and
-**verifiable today without twins**, because the refusal path can be driven from
-a fixture. It is also the necessary fallback for the last row of the resolution
-table above, so it is not wasted work if the tiebreak is never built.
+Making the ambiguity visible instead of silent turned out to stand entirely on
+its own, and it is now specified (`specs/configure.md` §6.4, `specs/status.md`
+§5) and built on Windows. It converts "one of my monitors randomly stopped
+following" into a sentence naming the cause, and it was **verifiable without
+twins**, from a fixture -- `windows/tests/identity.tests.ps1`.
 
-This is the same move as option D in `knowing-which-input-you-are-on.md`, which
-shipped for the same reason: make the failure cheap to recover rather than
-impossible to detect.
+It was the same move as option D in `knowing-which-input-you-are-on.md`: make the
+failure cheap to recover rather than impossible to detect. Left here rather than
+deleted because it is the last row of the resolution table above -- whatever the
+tiebreak eventually does, the refusal underneath it is the behaviour that was
+already needed, and is now the thing it degrades to.
 
 ## What macOS would owe
 
