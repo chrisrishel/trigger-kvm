@@ -333,8 +333,53 @@ run), so nothing here exercises the case that separates the two fields:
 GPU0's first port and GPU1's first port both read `0x00000100`, whereas NVAPI
 documents `displayId` as system-unique. That difference is structural and comes
 from NVIDIA's documentation, not from a reading here. Also unmeasured: another
-driver version, another machine, and moving a cable between two sockets on the
-same card (`TODO.md` carries that last one).
+machine, another driver version, and moving a cable between two sockets on the
+same card. `TODO.md` carries the last two, each with the reading that would
+settle it -- and the driver-version one now has a baseline to compare against,
+in the entry below.
+
+**2026-09-05, Windows -- the pre-driver-update baseline, and the driver version
+nothing here had ever recorded.** Every NVAPI reading in this file was taken
+against a driver version that was not written down -- including all three
+entries above. This is the first that names one, so that the next update can be
+a *measurement* rather than a change of unknown scope. Taken 23:42, read-only,
+on the boot recorded above.
+
+| | value |
+|---|---|
+| NVIDIA driver | **610.62** (WDDM `32.0.16.1062`, dated 2026-06-10) |
+| VBIOS | `95.02.18.80.89` |
+| Intel driver | `32.0.101.7088`, dated 2026-06-16 |
+| struct versions accepted | `NV_GPU_DISPLAYIDS` `0x00030010` (16 bytes), `NV_EDID` `0x00030110` (272 bytes) |
+| GPUs / connected displays | 1 / 2 |
+
+| panel | displayId | outputId | connector | reachable by | PnP instance |
+|---|---|---|---|---|---|
+| ASUS `06B3:42E0` | `0x80061083` | `0x00000100` | HDMI | nvapi, dxva2 | `DISPLAY\AUS42E0\5&aaaaaaaa&0&UID4352_0` |
+| LG `1E6D:9E9D` | `0x80061082` | `0x00000200` | DisplayPort | nvapi, dxva2 | `DISPLAY\GSM9E9D\5&aaaaaaaa&0&UID4353_0` |
+
+The ASUS's PnP instance path is character-for-character the one recorded before
+its 2026-09-01 cable move (below). That is what "putting the cable back restored
+the PnP path exactly" meant, and it is now checkable rather than remembered.
+
+`trigger-kvm list -Raw` at the same moment, which is the form an implementation
+actually consumes -- the trailing field is the attached-panel count added at
+revision 13:
+
+```
+06B3|42E0|AUS|HDMI|01010101|PG42UQ|nvapi,dxva2|1
+1E6D|9E9D|GSM|DisplayPort|00001111|LG ULTRAGEAR+|nvapi,dxva2|1
+```
+
+GDI device names at the same moment, recorded because they are the identifier
+measured NOT to survive re-enumeration: `\\.\DISPLAY1` primary at 3413x1440,
+`\\.\DISPLAY2` at 2560x1440 -- both logical sizes at 150% scaling. **Which panel
+is which is inferred from the resolution, not read** (5120x2160 is the LG,
+3840x2160 the ASUS), so this row is weaker evidence than the ones above and is
+here only because the pairing is the thing that has moved before.
+
+What a comparison after the next update should answer, and in what order of
+consequence, is in `../TODO.md`.
 
 **2026-08-30, Windows -- session 0 reports one phantom monitor.** `nvapi-probe.ps1`
 as SYSTEM and as an unelevated S4U task: `EnumDisplayMonitors` returned **1** in

@@ -1,3 +1,28 @@
+- **Re-take the NVAPI identity baseline after the next graphics driver update.**
+  A pre-update baseline against NVIDIA **610.62** is in `docs/measurements.md`
+  (2026-09-05, "the pre-driver-update baseline"), taken because no reading in that
+  file had ever named a driver version. Re-take it the same read-only way --
+  `windows\nvapi-probe.ps1`, `trigger-kvm list -Raw`,
+  `nvidia-smi --query-gpu=driver_version` -- and compare, in this order of
+  consequence:
+  1. **`outputId` and `displayId`.** If either moves, the tiebreak design in
+     `ideas/telling-two-identical-monitors-apart.md` loses its foundation, and the
+     fallback is the EDID `0xFF` descriptor, which both panels are measured to
+     carry. A cold reboot could not settle this; only a version change can.
+  2. **NVAPI still initialises and its struct versions are still accepted**
+     (`NV_GPU_DISPLAYIDS` `0x00030010`, `NV_EDID` `0x00030110`). A bumped struct
+     version fails the call with an unhelpful error, and the probe says so.
+  3. **A panel still MOVES.** Hard rule 3: no command answers this. `pull` and
+     watch, one monitor at a time with the terminal on the other (hard rule 4).
+  4. **`reachable by`, per panel.** One that silently became dxva2-only is
+     login-tier only (`docs/decisions/003`) and would stop following at the login
+     screen. `status` names it.
+  Free while you are there: whether the watcher logged anything during the
+  install. It fires on USB arrival and not on display events, so the
+  re-enumeration storm should produce nothing -- never actually observed, and
+  cheap to confirm. Do not flip the USB switch mid-install.
+  Trigger: the next graphics driver update on this machine.
+
 - **Send something over `dxva2` on the shipped path, and watch it.** Nothing ever has:
   every dxva2 run to date was `-WhatIf`, so under hard rule 3 no claim is made that a
   panel has moved over it (`docs/decisions/003`, `ROADMAP.md`). No re-cabling needed --
