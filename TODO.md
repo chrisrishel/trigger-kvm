@@ -1,27 +1,36 @@
-- **Re-take the NVAPI identity baseline after the next graphics driver update.**
-  A pre-update baseline against NVIDIA **610.62** is in `docs/measurements.md`
-  (2026-09-05, "the pre-driver-update baseline"), taken because no reading in that
-  file had ever named a driver version. Re-take it the same read-only way --
-  `windows\nvapi-probe.ps1`, `trigger-kvm list -Raw`,
+- **Re-read the NVAPI ids at the first reboot on driver 616.64.** The 2026-09-05
+  upgrade was applied LIVE -- `LastBootUpTime` never changed -- so "reboot on a new
+  driver" is the one combination still untaken. Reboot alone is measured stable and
+  a driver change alone is measured stable, so this is very likely a formality; it
+  is here because "very likely" is inference and this repo distinguishes the two.
+  One `windows\nvapi-probe.ps1` run answers it. Trigger: the next reboot.
+
+- **Re-take the NVAPI identity comparison after the next graphics driver update.**
+  Recurring. The current baseline is NVIDIA **616.64**, in `docs/measurements.md`
+  (2026-09-05, "a driver upgrade moved the GDI names"). Re-take it the same
+  read-only way -- `windows\nvapi-probe.ps1`, `trigger-kvm list -Raw`,
   `nvidia-smi --query-gpu=driver_version` -- and compare, in this order of
   consequence:
   1. **`outputId` and `displayId`.** If either moves, the tiebreak design in
      `ideas/telling-two-identical-monitors-apart.md` loses its foundation, and the
      fallback is the EDID `0xFF` descriptor, which both panels are measured to
-     carry. A cold reboot could not settle this; only a version change can.
+     carry. Held across 610.62 -> 616.64; one upgrade is not a guarantee.
   2. **NVAPI still initialises and its struct versions are still accepted**
      (`NV_GPU_DISPLAYIDS` `0x00030010`, `NV_EDID` `0x00030110`). A bumped struct
      version fails the call with an unhelpful error, and the probe says so.
-  3. **A panel still MOVES.** Hard rule 3: no command answers this. `pull` and
-     watch, one monitor at a time with the terminal on the other (hard rule 4).
+  3. **A panel still MOVES.** Hard rule 3: no command answers this. `to <other>
+     --only` then `pull --only`, watched, one monitor at a time with the terminal
+     on the other (hard rule 4). The pull back from an inactive link is the half
+     that matters.
   4. **`reachable by`, per panel.** One that silently became dxva2-only is
      login-tier only (`docs/decisions/003`) and would stop following at the login
      screen. `status` names it.
-  Free while you are there: whether the watcher logged anything during the
-  install. It fires on USB arrival and not on display events, so the
-  re-enumeration storm should produce nothing -- never actually observed, and
-  cheap to confirm. Do not flip the USB switch mid-install.
-  Trigger: the next graphics driver update on this machine.
+  **Expect the GDI names to move and do not read it as a fault** -- they went
+  `\\.\DISPLAY1`/`2` -> `\\.\DISPLAY10`/`11` across the last upgrade while every
+  NVAPI id held. Nothing resolves by that name, so it costs nothing.
+  Also settled and not worth re-checking unless something looks wrong: the watcher
+  fires nothing during an install (observed 2026-09-05). Do not flip the USB
+  switch mid-install. Trigger: the next graphics driver update on this machine.
 
 - **Send something over `dxva2` on the shipped path, and watch it.** Nothing ever has:
   every dxva2 run to date was `-WhatIf`, so under hard rule 3 no claim is made that a

@@ -177,8 +177,11 @@ fast-startup resume are in `../docs/measurements.md`.
 was right to exist -- `nvapi-transport.md` records `isActive` reading `False`
 then `True` in one session with nothing changed, and *"what it tracks is not
 established"* -- and what answers it is two fields on ONE machine with ONE GPU,
-across three logged reboots and one cable move. Another driver version is
-unmeasured, and so is any second card.
+across three logged reboots, one cable move, and **one driver upgrade** (610.62
+-> 616.64, the same day). That last one is the sharpest of the three: over the
+identical event, in one boot, the GDI names moved from `\\.\DISPLAY1`/`2` to
+`\\.\DISPLAY10`/`11` while both NVAPI ids did not move at all. A second card is
+still unmeasured, and so is any other machine.
 
 ### Which field to record: `displayId`, not `OutputId`
 

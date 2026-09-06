@@ -332,11 +332,10 @@ run), so nothing here exercises the case that separates the two fields:
 `outputId` is a single-bit mask scoped to ONE GPU, so on a two-card machine
 GPU0's first port and GPU1's first port both read `0x00000100`, whereas NVAPI
 documents `displayId` as system-unique. That difference is structural and comes
-from NVIDIA's documentation, not from a reading here. Also unmeasured: another
-machine, another driver version, and moving a cable between two sockets on the
-same card. `TODO.md` carries the last two, each with the reading that would
-settle it -- and the driver-version one now has a baseline to compare against,
-in the entry below.
+from NVIDIA's documentation, not from a reading here. **The driver-version
+question was settled later the same day, two entries below: 610.62 -> 616.64
+changed none of it.** Still unmeasured: another machine, a second card, and
+moving a cable between two sockets on the same one (`TODO.md` carries the last).
 
 **2026-09-05, Windows -- the pre-driver-update baseline, and the driver version
 nothing here had ever recorded.** Every NVAPI reading in this file was taken
@@ -379,7 +378,51 @@ is which is inferred from the resolution, not read** (5120x2160 is the LG,
 here only because the pairing is the thing that has moved before.
 
 What a comparison after the next update should answer, and in what order of
-consequence, is in `../TODO.md`.
+consequence, is in `../TODO.md`. The first such comparison follows.
+
+**2026-09-05, Windows -- a driver upgrade moved the GDI names and left every
+NVAPI identity untouched.** NVIDIA **610.62 -> 616.64** (WDDM `32.0.16.1062` ->
+`32.0.16.1664`, dated 2026-06-10 -> 2026-08-23), read at 23:50 against the
+baseline above.
+
+**Windows replaced the driver LIVE: `LastBootUpTime` is unchanged at 19:59:56.**
+The driver stack did genuinely tear down and re-enumerate -- the GDI names below
+are the proof -- so this is a real driver-version reading. What it is not is a
+reboot *on* the new driver; see the gap at the end.
+
+**Unchanged, every one of them:** `displayId` (ASUS `0x80061083`, LG
+`0x80061082`), `outputId` (`0x00000100`, `0x00000200`), connector, EDID ids, both
+descriptor `0xFF` serials, both PnP instance paths, `reachable by` (`nvapi,
+dxva2` on both), `gpus=1`, and the struct versions NVAPI accepts
+(`NV_GPU_DISPLAYIDS` `0x00030010`, `NV_EDID` `0x00030110`). VBIOS unchanged too,
+as firmware should be.
+
+**Changed: the GDI device names. `\\.\DISPLAY1` and `\\.\DISPLAY2` became
+`\\.\DISPLAY10` and `\\.\DISPLAY11`.** That is the finding. In ONE event, within
+one boot, with nothing else altered, the NVAPI ids held perfectly still while the
+GDI names moved by nine. The 2026-08-30 reboot swap said the same thing with more
+variables in play; this says it cleanly. It is the strongest evidence in this
+file for resolving by EDID and never by index -- and for preferring `displayId`
+over `\\.\DISPLAYn` as a per-port key, which is the choice
+`../ideas/telling-two-identical-monitors-apart.md` records.
+
+**The switch still works, confirmed by eye.** The ASUS was sent to the Mac and
+pulled back, `--only` in both directions, watched by the owner -- including the
+pull back from an INACTIVE link, which is the case that matters. Recorded on a
+person's word, per hard rule 3; no success code is evidence here.
+
+**The watcher fired nothing across the install -- the first observation of it.**
+The log's last entry before the upgrade is 22:43:57 and its next falls after it:
+the display re-enumeration storm produced no arrival edge. Presence is watched on
+USB and not on displays, and this is a measurement of that rather than the
+reasoning for it. The session-0 watcher armed at 20:00:38 came through the
+upgrade as a live process.
+
+**The gap this leaves.** A reboot ON the new driver has not happened. Reboot
+alone was measured stable this morning, and a driver change alone is stable here,
+so the combination is very likely stable as well -- but that is inference, and
+this file's preamble exists for exactly that distinction. `../TODO.md` carries
+it.
 
 **2026-08-30, Windows -- session 0 reports one phantom monitor.** `nvapi-probe.ps1`
 as SYSTEM and as an unelevated S4U task: `EnumDisplayMonitors` returned **1** in

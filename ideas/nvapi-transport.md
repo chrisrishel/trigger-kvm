@@ -77,9 +77,10 @@ LG 45GX950A    displayId=0x80061082   outputId=0x00000200   DisplayPort
 ```
 
 All four values still read the same on 2026-09-05, across the three cold boots
-logged since and the ASUS's cable moving off the 4090 and back
-(`../docs/measurements.md`, "Display identity"). Unlike `isActive` below, these
-have been checked for stability rather than assumed to have it.
+logged since, the ASUS's cable moving off the 4090 and back, and a driver upgrade
+from 610.62 to 616.64 -- which also left the accepted struct versions above
+untouched (`../docs/measurements.md`, "Display identity"). Unlike `isActive`
+below, these have been checked for stability rather than assumed to have it.
 
 `NV_GPU_DISPLAYIDS.flags`: bit 6 (`0x40`) isConnected, bit 2 (`0x04`) isActive.
 **Use isConnected. Do not gate anything on isActive** -- it read `False` for both
