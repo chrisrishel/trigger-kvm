@@ -235,7 +235,7 @@ mutate 'walkthrough: the PATH row is hidden when it is already on PATH' lib/walk
 mutate 'walkthrough: Cancel writes the config anyway' lib/walkthrough.sh walkthrough.tests.sh \
   '/cancelled; nothing was changed/{n;s%.*%      break%;}'
 mutate 'walkthrough: the input map is written under a key nothing reads' lib/walkthrough.sh walkthrough.tests.sh \
-  's@input\.%s@inputs.%s@'
+  's@"display.\$_l.input.@"display.$_l.inputs.@'
 
 # Enter never destroys (specs/configure.md 5.0, 5.3, 6). Each of these turns a
 # confirmation back into the one-keypress loss it replaced.
@@ -313,11 +313,11 @@ mutate 'revision: this platform claims a revision that does not exist' SPEC-REVI
 mutate 'watch: settle fires when ANY device is present, not the arriving one' event-watch.c watcher.tests.sh \
   's|        if (g_watch\[i\].arrived && now\[i\]) still = true;|        if (now[i]) still = true;|'
 mutate 'watch: a loose device grammar accepts usb:46d:843 and trailing junk' event-watch.c watcher.tests.sh \
-  's|        if (!usb_spec_ok(s)) return false;|        ;|'
+  's|        if (!usb_spec_ok(ids)) return false;|        ;|'
 mutate 'watch: a timing that is not a number reads as zero' event-watch.c watcher.tests.sh \
   's|    if (!ok \|\| \*p != .\\0.) {|    if (false) {|'
 mutate 'config: an unknown trigger entry is prefixed into a usb: key that matches nothing' lib/config.sh config.tests.sh \
-  's|      elif \[\[ \$_d =~ \^\[0-9a-f\]{4}:\[0-9a-f\]{4}\$ \]\];     then printf .usb:%s\\n. "\$_d"|      else printf "usb:%s\\n" "$_d"|'
+  's|      elif config_is_trigger_device "\$_d"; then|      else printf "usb:%s\\n" "$_d"; continue; fi; if false; then|'
 mutate 'config: a word above 65535 is accepted' lib/config.sh spec.tests.sh \
   's|      \[ \$(( 10#\$1 )) -le 65535 \] \|\| return 1|      :|'
 mutate 'watch: the launcher passes a bad trigger entry through' lib/manage.sh install.tests.sh \
@@ -537,6 +537,39 @@ mutate 'twins: two found rows build two answer records for one panel' lib/walkth
   's@    if wt_answer_index "\${WT_F_KEY\[\$_i\]}" >/dev/null; then _i=\$(( _i + 1 )); continue; fi@    :@'
 mutate 'twins: the cursor lands on a row it will refuse' lib/walkthrough.sh walkthrough.tests.sh \
   's@      if \[ "\${WT_F_TWINS\[\$_i\]}" -le 1 \] && ! wt_answer_index@      if ! wt_answer_index@'
+
+# --- revisions 10 and 12: the trigger row, and WHICH device ------------------
+
+mutate 'device: the list keeps one row per id, hiding the second device' event-watch.c watcher.tests.sh \
+  's@    if (!strcmp(kind, "bt"))@    if (1)@'
+mutate 'device: a malformed suffix is squashed into a valid entry' lib/config.sh config.tests.sh \
+  "s@    sed -e 's/^\[\[:space:\]\]\*//' -e 's/\[\[:space:\]\]\*\$//' | { grep -v '\^\$' || true; }@    tr -d ' \\\\t' | { grep -v '^$' || true; }@"
+mutate 'device: an upper-case suffix is lower-cased instead of refused' lib/config.sh config.tests.sh \
+  's%(@\[a-z0-9-\]+)?\$ \]\] || return 1 ;;%(@[a-z0-9-]+)?$ ]] || return 0 ;;%'
+mutate 'device: a suffix is accepted with no grammar check at all' event-watch.c watcher.tests.sh \
+  's@static bool copy_suffix(const char \*s, size_t n, char \*dst, size_t dstsz) {@static bool copy_suffix(const char *s, size_t n, char *dst, size_t dstsz) { if (n < dstsz) { memcpy(dst, s, n); dst[n] = 0; return true; }@'
+mutate 'device: a token that matches nothing falls back to the whole id' event-watch.c watcher.tests.sh \
+  's@            if (strcmp(slug, token) != 0) { IOObjectRelease(s); continue; }@            (void)slug;@'
+mutate 'device: the port is consulted even when the token already resolves' event-watch.c watcher.tests.sh \
+  's@    if (matched > 1 && where\[0\] && at_where == 1) {@    if (matched >= 1 \&\& where[0] \&\& at_where == 1) {@'
+mutate 'device: an ambiguous entry is silently treated as present' event-watch.c watcher.tests.sh \
+  's@    bool now_ambiguous = (n > 1 && w->token\[0\]);@    bool now_ambiguous = false;@'
+mutate 'device: an all-ambiguous config starts a watcher that can never fire' event-watch.c watcher.tests.sh \
+  's@    if (usable == 0) {@    if (false) {@'
+mutate 'device: the arm pass ignores the token and primes off the bare id' event-watch.c watcher.tests.sh \
+  's@    if (w->token\[0\] || w->where\[0\])@    if (false)@'
+mutate 'device: status stays silent about a port-decided match' lib/manage.sh status.tests.sh \
+  "s@        where)@        never-happens)@"
+mutate 'device: status stays silent about a disabled trigger' lib/manage.sh status.tests.sh \
+  "s@        ambiguous)@        never-happens)@"
+mutate 'device: the trigger row leads with the id again' lib/manage.sh discover.tests.sh \
+  "s@      printf '  %s %s %-22s %s%s.n' \\\\@      printf '  %-22s %s %s %s%s\\\\n' \"\$_key\" \\\\@"
+mutate 'device: the walkthrough writes a token that is not unique' lib/walkthrough.sh walkthrough.tests.sh \
+  's@      if \[ -n "\$_tok" \] && \[ "\$_uniq" = 1 \]; then@      if [ -n "$_tok" ]; then@'
+mutate 'device: a port is written beside a token that already resolves' lib/walkthrough.sh walkthrough.tests.sh \
+  's%^        _entry="\$_key@\$_tok"$%        _entry="$_key@$_tok@$_where"%'
+mutate 'device: twins with no name get a placeholder token matching nothing' lib/walkthrough.sh walkthrough.tests.sh \
+  's@      elif \[ -n "\$_tok" \] && \[ -n "\$_where" \]; then@      elif [ -n "$_where" ]; then _tok=${_tok:-x}@'
 
 echo
 if [ "$survived" = "0" ]; then

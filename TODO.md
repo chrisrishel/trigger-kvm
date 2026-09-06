@@ -147,3 +147,52 @@
   Fix: put `$PID` in every fixture path, as `mutate.ps1` already does.
   Trigger: next time anything in `tests/` is touched, or the first time a suite
   hangs for no visible reason.
+
+- **`macos/AGENTS.md` is now out of room too, and a hazard is waiting for it.**
+  It is at **10,172 bytes of 10,240** -- 68 spare. The hazard with nowhere to go:
+  **an assertion inside a `cmd | while read` loop is thrown away**, because the
+  loop runs in a subshell and the `FAILED` it increments dies with it, so the
+  case reports PASS however wrong the answer is. Found 2026-09-06 by a mutation
+  surviving against a deliberately broken build; the test looked right and could
+  not fail. Use a here-string. It is enforced by a self-tested scan in
+  `macos/tests/conventions.tests.sh`, which is stronger than a doc line, so
+  nothing is currently lost -- but it belongs in a `macos/tests/AGENTS.md`
+  alongside the Windows candidates already listed above.
+  This is the SECOND platform to hit the cap, which strengthens the case for
+  measuring directory-scoped `AGENTS.md` rather than deferring it further.
+  Trigger: the same one as the entry above, now fired on both platforms.
+
+- **Settle whether `detector.md` §4.1 means a token may be written when it is NOT
+  unique.** Two sentences in that section pull against each other, and macOS is
+  the first implementation to reach the gap:
+  - *"A writer picks a value held by exactly one of the devices sharing that id,
+    and where none exists, writes no token."*
+  - and the matching table's row *"several have it, one at `where`"*, plus
+    *"`where` is a TIEBREAK ONLY, consulted when and only when `token` still
+    matches more than one present device."*
+
+  The grammar is `usb:VVVV:PPPP[@token[@where]]`, so **a `where` cannot be
+  written without a token**. If the first sentence is absolute, the tiebreak row
+  and the whole `where` suffix are unreachable -- dead grammar that the same
+  section spends four bullets specifying.
+
+  **macOS read it as: the first sentence governs a token written ALONE, and the
+  tiebreak row is what a shared token plus a port is for.** So where two devices
+  share an id and a token, it writes `@token@where`; where they share an id and
+  the token would be unique, it writes `@token` and no port; where there is no
+  token at all it writes the bare id, because a placeholder would match nothing,
+  which is worse than matching both. The reasoning is at the decision point in
+  `macos/lib/walkthrough.sh` (`wt_triggers`) and is covered by three tests in
+  `macos/tests/walkthrough.tests.sh`.
+
+  **Windows has not reached this**: measured on that desk, the two receivers
+  report distinct product strings, so a token always resolves and the tiebreak
+  row never runs. macOS reaches it on every one of these receivers, because both
+  report `USB Receiver` (`docs/measurements.md`, 2026-09-06). So the two
+  implementations do not disagree today -- but they would the first time Windows
+  meets twins with a shared name, which is exactly the divergence `specs/` exists
+  to prevent, and no conformance check can see it because no normative string is
+  involved.
+  Fix is one clarifying sentence in §4.1, not a behaviour change; if it lands the
+  other way, macOS's writer is what changes. Trigger: when §4.1 is next touched,
+  or the first time Windows meets two devices sharing an id AND a name.

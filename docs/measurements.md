@@ -84,6 +84,45 @@ two receivers resolve to distinct tokens (`g915-x-lightspeed-tkl`,
 demonstration that a token has to be chosen for uniqueness among the devices
 sharing an id, not merely taken.
 
+**2026-09-06, macOS -- IOKit gives ONE name, and it is already the good one; the
+two LIGHTSPEED receivers are indistinguishable here in a way they are not on
+Windows.** Read off every attached USB device with `ioreg -a -r -c
+IOUSBHostDevice -l`, unelevated, no device opened.
+
+| what Windows needed | what macOS reports |
+|---|---|
+| two name sources, the driver's and the device's | **one** -- `USB Product Name` and `kUSBProductString` are the same string on all 15 devices, and it IS the `iProduct` string |
+| the second source rescued `USB Input Device` | nothing to rescue: the names are already `Logitech Webcam C930e`, `Clarett+ 2Pre`, `LG Monitor Controls`, `USB Receiver` |
+| roles from `HID\` child device classes | roles from HID usage pages on the child nodes -- `1/2` mouse, `1/6` keyboard -- readable as properties, no open |
+
+**So revision 10 is nearly free here, and the second-source finding does not
+transfer.** Two devices report no name at all (`1e4e:720b`, and one node of
+`043e:9a8a`), which is a missing string rather than a bad one.
+
+**The part that matters, and it goes the other way.** Both `046D:C547` receivers
+are on this Mac, at `locationID` 1245184 and 1314816:
+
+| discriminator | Windows | macOS |
+|---|---|---|
+| product string | `G915 X LIGHTSPEED TKL` vs `LIGHTSPEED Receiver` -- **distinct** | `USB Receiver` vs `USB Receiver` -- **identical** |
+| USB serial | absent on both | **absent on both** |
+| role | both present mouse and keyboard | both present `1/2` AND `1/6` -- identical |
+| port | instance id | `locationID` -- **the only thing that differs** |
+
+The hoped-for answer was that macOS might see a serial where Windows sees none.
+**It does not.** `kUSBSerialNumberString` is surfaced and real -- the webcam
+reports `11223344`, the Clarett `IFACE001`, `LG Monitor Controls` `LG0000000001`
+-- so the route exists; it is simply absent on the devices where it would decide
+something. And a serial is not automatically unique anyway: the two Apple hubs
+(`05ac:8009`, `05ac:800a`) both report `0000001`.
+
+**Consequence for revision 12, measured rather than assumed:** on this desk macOS
+can write NO token for `usb:046d:c547`, because `detector.md` §4.1 requires a
+value held by exactly one of the devices sharing the id and there is none. The
+`where` suffix is not a nicety here, it is the only route -- the opposite of
+Windows, where a token resolves it and `where` is never consulted. Nothing about
+the FORMAT changes; what changes is which half of it this platform leans on.
+
 ## Detectors
 
 **2026-09-02, Windows -- the round trip: BOTH panels, in both directions, with

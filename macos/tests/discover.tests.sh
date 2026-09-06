@@ -106,12 +106,20 @@ if [ -x "$MAC_DIR/event-watch" ]; then
   TK_WATCHER="$MAC_DIR/event-watch" run_tk discover --config "$CFG"
   assert_equal 0 "$TK_RC" "$TK_OUT"
   assert_match "$TK_OUT" '=== devices that could be a trigger ==='
-  rows=$(printf '%s\n' "$TK_OUT" | grep -E '^  (usb|bt):' || true)
+  # specs/configure.md 7.1: the row leads with WHAT THE DEVICE IS and the id it
+  # is matched on sits beside it. This asserted the reverse until revision 10 --
+  # `^  usb:...` -- so the id is now found mid-row rather than anchored.
+  rows=$(printf '%s\n' "$TK_OUT" | grep -E ' (usb:[0-9a-f]{4}:[0-9a-f]{4}|bt:[0-9a-f]{12}) ' || true)
   if [ -z "$rows" ]; then
     assert_match "$TK_OUT" '(none found)' 'no rows means it must say so'
   else
-    bad=$(printf '%s\n' "$rows" | grep -vE '^  (usb:[0-9a-f]{4}:[0-9a-f]{4}|bt:[0-9a-f]{12}) +(USB|BT) +(attached now|paired, not connected|connected now) ' || true)
+    bad=$(printf '%s\n' "$rows" |
+          grep -vE ' (usb:[0-9a-f]{4}:[0-9a-f]{4}|bt:[0-9a-f]{12}) +(attached now|paired, not connected|connected now)' || true)
     assert_equal '' "$bad" 'malformed device rows from the real watcher'
+    # The name column must not be empty: an id alone is not a choice anybody can
+    # make, which is the whole point of 7.1.
+    nameless=$(printf '%s\n' "$rows" | grep -E '^  +(usb|bt):' || true)
+    assert_equal '' "$nameless" 'every row must lead with a name, not an id'
   fi
 else
   skip_case 'event-watch is not built (run: make)'

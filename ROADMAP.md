@@ -57,6 +57,22 @@ byte and VCP code. Reasoning and the cost accepted:
 Both tiers (LaunchDaemon with `UserName`, LaunchAgent), Bluetooth and USB
 detection, and the finding that display identity needs no session at all.
 
+**Back to parity again, 2026-09-06 — revisions 8 through 13.** macOS had fallen
+six revisions behind while the Windows work above was landing, and `status.md`
+had gone unchecked here for five of them because the conformance loop held a
+hardcoded list of spec names. Both are closed: the loop now derives its list, so
+a new spec joins by existing, and the suite is green at revision 13.
+
+What it took, beyond following the specs: `status` gained the input map and asks
+the single-instance lock rather than counting processes; every config value is
+written through one door that cannot emit what the reader would not give back;
+`transport` is read and an unrecognised one refused by name; an identity naming
+two attached panels is refused where the choice is made rather than only in the
+log; and the trigger list became one row per DEVICE, with `usb:VVVV:PPPP@token@where`
+behind it. Two of those found defects the specs had not predicted — a malformed
+device entry was being squashed into a valid one, and an assertion inside a piped
+`while` loop was being silently discarded by the test harness.
+
 ### Measured, deliberately not built
 
 Two routes proven on hardware and left unimplemented, each with a decision record
@@ -237,7 +253,8 @@ The trigger is the point.
 | The advanced escape hatch | someone reports a panel answering neither standard DDC nor a known dialect | `TODO.md` |
 | Boot tier on a real standard account | such an account exists, or someone reports it failing | `TODO.md` |
 | Intel-Mac DDC | see the record's own conditions | [`004`](docs/decisions/004-intel-mac-ddc-proven-not-built.md) |
-| Directory-scoped `AGENTS.md` | `windows/AGENTS.md` needs a rule and has no room | `TODO.md` |
+| Directory-scoped `AGENTS.md` | **fired, on both platforms** — each is now within ~100 bytes of its cap with a hazard waiting | `TODO.md` |
+| Is a non-unique `token` writable? (`detector.md` §4.1) | §4.1 is next touched, or Windows meets two devices sharing an id AND a name | `TODO.md` |
 | Same-GPU, different-port re-plug | next time the machine is open | `TODO.md` |
 
 ---

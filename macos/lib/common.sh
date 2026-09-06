@@ -90,3 +90,21 @@ tk_join_names() {
 }
 
 tk_lower() { printf '%s\n' "$1" | tr '[:upper:]' '[:lower:]'; }
+
+# Pad or truncate to a column width counted in CHARACTERS, not bytes.
+#
+# `printf '%-26.26s'` counts bytes, so every name on this desk carrying a curly
+# apostrophe -- which is every Apple device name -- came out short by two columns
+# per apostrophe and broke the table. Only matters where a variable-width field
+# is not the last on the line, which is what the Triggers list became when the
+# NAME moved to the front of the row (specs/configure.md 7.1).
+tk_pad() {
+  local _s _w _n
+  _s=$1 _w=$2
+  _n=$(printf '%s' "$_s" | wc -m | tr -d ' ')
+  if [ "$_n" -gt "$_w" ]; then
+    printf '%s' "$(printf '%s' "$_s" | cut -c "1-$_w")"
+  else
+    printf '%s%*s' "$_s" "$(( _w - _n ))" ''
+  fi
+}

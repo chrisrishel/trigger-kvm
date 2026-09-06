@@ -1,8 +1,27 @@
 # Telling two identical devices apart
 
-**Status:** exploratory. Nothing built. Two spellings drafted below for a
-decision; the one chosen goes into `specs/` FIRST, then Windows, then a
-changelog entry and revision 10.
+**Status: SHIPPED, on both platforms.** `usb:VVVV:PPPP[@token[@where]]`, spec
+revision 12 -- `specs/detector.md` §4.1 and `specs/config-format.md`, "A device
+entry may say WHICH device". Windows built it 2026-09-04, macOS 2026-09-06.
+
+**Read the spec, not this note, for what the format IS.** What survives here is
+the working-out: what was measured, why the name rather than the port, and the
+spellings that were drafted and dropped -- kept so nobody re-proposes one. Both
+"Spelling A" and "Spelling B" below, and the "SUPERSEDED" section, describe
+designs that were NOT built; the suffix that shipped changes no key at all.
+
+**One finding since, and it runs against the note below.** This was written from
+Windows, where each receiver reports a distinguishing product string. **macOS
+reports `USB Receiver` for BOTH, and no serial for either** (measured
+2026-09-06, `docs/measurements.md`, "Naming a device"). So the reasoning in "Why
+the name, and not the port" is a Windows finding and not a general one: on macOS
+no token can separate them and `where` is the only route. That is exactly why
+§4.1 makes `token` per-platform and requires it to be chosen for uniqueness
+rather than quality -- but the note should not be read as saying the name always
+wins, because on one of the two platforms it never does.
+
+**Still unbuilt:** only the live "press a key and watch the row light up"
+indicator, in "Rejected while drafting" at the end.
 
 The question this started from: the Triggers list showed one row reading
 `G915 X LIGHTSPEED TKL  (mouse, keyboard)` where the desk actually has **two
@@ -445,14 +464,27 @@ biting this desk (both receivers travel, and the configured triggers are the
 webcam and the Clarett), but it is a property worth a warning where the choice is
 made, and it is Windows-local prose, not a format change.
 
-## What macOS would owe
+## What macOS owed -- DONE 2026-09-06, and the guess above was half wrong
 
-One rule, and the shape is already familiar from revision 9's transport key: read
-the qualifier, and where it is absent behave exactly as today. `ioreg` exposes a
-USB product string per device, so the mechanism exists there; the vocabulary and
-the property name are its own. It is **not** required to find the same string
-Windows finds -- a qualifier is machine-local, like an input value, and configs
-are never copied between hosts.
+The prediction was "one rule: read the qualifier, and where it is absent behave
+exactly as today". Reading it was indeed one rule. **Producing one was not**, and
+that is the part worth keeping:
+
+- `ioreg` does expose a USB product string per device, as predicted -- and it is
+  the ONLY name source, identical to `kUSBProductString`, so revision 10's
+  "ask for the best name, not the first" cost macOS nothing. Windows needed a
+  second source to escape `USB Input Device`; macOS never had the problem.
+- **But both receivers report the same string**, `USB Receiver`, and neither
+  reports a serial. So the qualifier that resolves them on Windows resolves
+  nothing here, and `where` -- `locationID` -- is the only discriminator on the
+  machine. The note above reasons at length that the name beats the port; that
+  conclusion holds on Windows and is simply unavailable on macOS.
+- The role (`mouse`, `keyboard`, from HID usage pages) does not separate them
+  either: a LIGHTSPEED receiver presents BOTH regardless of what is paired to it.
+
+This is why §4.1 requires a token to be chosen for **uniqueness among the devices
+sharing the id**, and to be omitted where no such value exists -- a rule that
+reads like pedantry from the Windows side and is the whole story from this one.
 
 ## Rejected while drafting
 

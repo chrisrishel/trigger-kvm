@@ -447,6 +447,42 @@ power events. Anything wired directly to one computer cannot be a trigger, and
 the full vendor+product pair is matched, because a keyboard often shares a
 vendor id with something that never moves.
 
+### When two devices share one id
+
+Two devices of the same model report the same `VVVV:PPPP`, and this desk has
+exactly that: **two Logitech LIGHTSPEED receivers, one carrying the keyboard and
+one the mouse.** That matters beyond naming — presence is per id, so if only one
+of them travels, the id is never absent, the arrival edge never happens and
+**the trigger never fires, silently.**
+
+An entry may therefore say WHICH device:
+
+```
+trigger.device = usb:046d:c547@usb-receiver@00130000, usb:1235:820a
+```
+
+`usb:VVVV:PPPP[@token[@where]]`, both optional and both `[a-z0-9-]`. **Absent —
+every config written before this — an entry means exactly what it always meant,
+so nothing needs migrating.** `configure` writes them for you; you never type one.
+
+- **`token`** is the device's own name, reduced. It is chosen for UNIQUENESS,
+  not quality: measured here, **both receivers report `usb-receiver`**, so no
+  token can separate them and none is written on its own.
+- **`where`** is the port, and is consulted **only** to break a tie a token could
+  not. Never while a token already resolves — otherwise moving a dongle to
+  another socket would silently stop the trigger firing. Whenever it decides a
+  match, `status` says so, because a remembered port that has gone stale is
+  dangerous only while it is silent.
+
+If an entry still matches several devices it is **disabled and reported**, and
+the other triggers keep watching; the watcher refuses to start only if that
+leaves nothing that could ever fire. It never falls back to the whole id — a
+visitor's identical dongle would then pull the monitors over unbidden.
+
+Unlike Windows, macOS has no second name source to fall back on and reports no
+serial for these receivers, so `where` is the only route here. The readings are
+in [`docs/measurements.md`](../docs/measurements.md), "Naming a device".
+
 ## Persistence, measured
 
 `RunAtLoad` starts the watcher at login; `KeepAlive` restarts it if it dies. Both

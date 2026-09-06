@@ -242,21 +242,62 @@ config_known_computers() {
   for _l in $(config_display_labels); do config_input_map "$_l" | cut -f1; done | awk '!seen[$0]++'
 }
 
-# The configured trigger devices, normalised to the form the candidate keys use.
-# The grammar is strict (specs/config-format.md): usb:VVVV:PPPP, bt: plus twelve
+# The device grammar, in ONE place, because two spellings of it would let an
+# entry be good here and bad in the refusal below -- and the entry that is
+# neither listed nor named is the one nobody can debug.
+#
+# specs/config-format.md and specs/detector.md 4: usb:VVVV:PPPP, bt: plus twelve
 # hex digits, or a bare VVVV:PPPP, which means usb so configs written before
-# Bluetooth existed keep working. Anything else is NOT prefixed into a usb:
-# entry that matches nothing -- it is left for config_bad_trigger_devices to
-# name, and the launcher refuses.
+# Bluetooth existed keep working.
+#
+# A usb: entry may carry up to TWO optional `@` suffixes -- usb:VVVV:PPPP@token
+# or @token@where -- each `[a-z0-9-]+`. The id half is case-insensitive; the
+# suffixes are CHECKED lower-case rather than normalised, because a suffix
+# silently lower-cased on one platform and refused on another is exactly the
+# disagreement this shared corpus exists to prevent. Absent, an entry means what
+# it has always meant, so nothing already written needs migrating.
+CONFIG_ID_RULE='[0-9a-f]{4}:[0-9a-f]{4}'
+CONFIG_SUFFIX_RULE='(@[a-z0-9-]+){0,2}'
+
+# True when an entry is well formed. Takes it EXACTLY as written: the id may be
+# any case, the suffixes may not.
+config_is_trigger_device() {
+  local _l
+  _l=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
+  [[ $_l =~ ^(usb:)?$CONFIG_ID_RULE$CONFIG_SUFFIX_RULE$ ]] || return 1
+  # The id half only is case-insensitive, so re-check the suffixes as written.
+  case $1 in
+    *@*) [[ ${1#*@} =~ ^[a-z0-9-]+(@[a-z0-9-]+)?$ ]] || return 1 ;;
+  esac
+  [[ $_l =~ ^bt: ]] && return 1
+  return 0
+}
+
+# The list split into entries, each TRIMMED at its ends, as written.
+#
+# Trimmed, not stripped of all whitespace. `tr -d ' \t'` squashed
+# `usb:046d:c547@has space` into `usb:046d:c547@hasspace` -- a malformed entry
+# silently becoming a well-formed one that can never match, which is the failure
+# shape detector.md 4 refuses by name. The spaces this has to tolerate are the
+# ones after a comma, and those are at an entry's ends.
+config_trigger_entries() {
+  config_get 'trigger.device' | tr ',' '\n' |
+    sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' | { grep -v '^$' || true; }
+}
+
+# The configured trigger devices, normalised to the form the candidate keys use.
+# Anything else is NOT prefixed into a usb: entry that matches nothing -- it is
+# left for config_bad_trigger_devices to name, and the launcher refuses.
 config_trigger_devices() {
-  local _d
-  config_get 'trigger.device' |
-    tr ',' '\n' | tr -d ' \t' | tr '[:upper:]' '[:lower:]' |
+  local _d _l
+  config_trigger_entries |
     while IFS= read -r _d; do
-      [ -n "$_d" ] || continue
-      if [[ $_d =~ ^usb:[0-9a-f]{4}:[0-9a-f]{4}$ ]]; then printf '%s\n' "$_d"
-      elif [[ $_d =~ ^bt:[0-9a-f]{12}$ ]];             then printf '%s\n' "$_d"
-      elif [[ $_d =~ ^[0-9a-f]{4}:[0-9a-f]{4}$ ]];     then printf 'usb:%s\n' "$_d"
+      _l=$(printf '%s' "$_d" | tr '[:upper:]' '[:lower:]')
+      if [[ $_l =~ ^bt:[0-9a-f]{12}$ ]]; then printf '%s\n' "$_l"
+      elif config_is_trigger_device "$_d"; then
+        # Only the id half is lower-cased; a suffix that needed lower-casing was
+        # already refused above.
+        case $_l in usb:*) printf '%s\n' "$_l" ;; *) printf 'usb:%s\n' "$_l" ;; esac
       fi
     done
 }
@@ -264,13 +305,15 @@ config_trigger_devices() {
 # The entries config_trigger_devices dropped, as written, for a refusal to name.
 config_bad_trigger_devices() {
   local _d _l
-  config_get 'trigger.device' |
-    tr ',' '\n' | tr -d ' \t' |
+  config_trigger_entries |
     while IFS= read -r _d; do
-      [ -n "$_d" ] || continue
       _l=$(printf '%s' "$_d" | tr '[:upper:]' '[:lower:]')
-      if [[ $_l =~ ^usb:[0-9a-f]{4}:[0-9a-f]{4}$ ]] || [[ $_l =~ ^bt:[0-9a-f]{12}$ ]] \
-         || [[ $_l =~ ^[0-9a-f]{4}:[0-9a-f]{4}$ ]]; then continue; fi
+      [[ $_l =~ ^bt:[0-9a-f]{12}$ ]] && continue
+      config_is_trigger_device "$_d" && continue
       printf '%s\n' "$_d"
     done
 }
+
+# The bare id of an entry, with any suffixes dropped. What "which devices share
+# this id" is asked about.
+config_trigger_id() { printf '%s\n' "${1%%@*}"; }

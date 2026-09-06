@@ -240,9 +240,91 @@ assert_match "$out" 'here now'
 assert_match "$out" 'bt:0011223344ff'
 assert_match "$out" 'not here'
 
-it 'lists nothing twice'
-dupes=$(printf '%s\n' "$LIST" | cut -d'|' -f2 | sort | uniq -d)
-assert_equal '' "$dupes" 'one row per device id'
+it 'lists one row per DEVICE, not per id'
+# This asserted "one row per device id" until revision 12, and that assertion
+# encoded the bug: two devices of one model share an id, so the list showed ONE
+# row for two devices, named after whichever won, with no way to pick one. The
+# contract now is one row per physical device -- so a duplicate KEY is expected
+# where a desk has twins, and what must never repeat is a device.
+dupes=$(printf '%s\n' "$LIST" | cut -d'|' -f2,7 | sort | uniq -d)
+assert_equal '' "$dupes" 'the same device must not appear twice'
+
+it 'and where two devices DO share an id, both rows are there'
+# The bug this replaced: the list showed ONE row for two devices, named after
+# whichever won, so there was no way to pick one -- and presence was per id, so
+# with only one of them travelling the id never went absent, the edge never
+# happened, and the trigger never fired. Silently.
+#
+# The expectation comes from `ioreg`, an INDEPENDENT oracle, not from the list
+# under test. Deriving "which ids are shared" from the list itself cannot catch a
+# list that dropped the duplicate: there would be no duplicate left to look for,
+# and the case would skip rather than fail -- which is exactly what happened when
+# this was written the easy way.
+# Counts only IOUSBHostDevice nodes -- an interface node repeats its parent's
+# idVendor/idProduct and is not a second device -- and applies the same
+# infrastructure filter the program does, because hubs are not candidates and
+# their exclusion is not what is under test here.
+oracle=$(ioreg -a -r -c IOUSBHostDevice -l 2>/dev/null |
+  /usr/bin/python3 -c '
+import sys, plistlib
+try: d = plistlib.loads(sys.stdin.buffer.read())
+except Exception: sys.exit(0)
+def walk(n):
+    for e in n:
+        yield e
+        for c in e.get("IORegistryEntryChildren", []) or []:
+            yield from walk([c])
+count = {}
+for e in walk(d):
+    if e.get("IOObjectClass") != "IOUSBHostDevice": continue
+    if "idVendor" not in e or "idProduct" not in e: continue
+    name = (e.get("USB Product Name") or "").lower()
+    if any(w in name for w in ("hub", "host controller", "root complex")): continue
+    k = "%04x:%04x" % (e["idVendor"], e["idProduct"])
+    count[k] = count.get(k, 0) + 1
+for k, v in count.items():
+    if v > 1: print(k, v)
+' 2>/dev/null || true)
+if [ -z "$oracle" ]; then
+  skip_case 'no two USB devices on this machine share an id (or python3 is absent)'
+else
+  # A here-string, NOT a pipe: `cmd | while read` puts the loop in a subshell,
+  # so every assert_equal inside it increments a FAILED that is thrown away when
+  # the subshell exits. This case passed against a deliberately broken build
+  # until it was written this way.
+  while read -r oid on; do
+    [ -n "$oid" ] || continue
+    n=$(printf '%s\n' "$LIST" | awk -F'|' -v k="usb:$oid" '$1 == "usb" && $2 == k' | wc -l | tr -d ' ')
+    assert_equal "$on" "$n" "usb:$oid must appear once per device, and ioreg sees $on"
+    ports=$(printf '%s\n' "$LIST" | awk -F'|' -v k="usb:$oid" '$2 == k { print $7 }' | sort -u | wc -l | tr -d ' ')
+    assert_equal "$n" "$ports" 'each of those rows must name a different port'
+  done <<EOF
+$oracle
+EOF
+fi
+
+it 'and Bluetooth still lists one row per address'
+# A bt address really is one per device, so that dedupe stays.
+btdupes=$(printf '%s\n' "$LIST" | awk -F'|' '$1 == "bt" { print $2 }' | sort | uniq -d)
+assert_equal '' "$btdupes" 'one row per paired Bluetooth device'
+
+it 'carries the role, token and port for every USB row it can read them from'
+# specs/configure.md 7.1 and detector.md 4.1. Asserted as a PROPERTY of the rows
+# rather than against this desk's devices: which are attached is this machine's
+# business, and a suite naming one described a single desk.
+usbrows=$(printf '%s\n' "$LIST" | awk -F'|' '$1 == "usb"')
+if [ -z "$usbrows" ]; then
+  skip_case 'no USB device is attached to read fields off'
+else
+  assert_equal 7 "$(printf '%s\n' "$usbrows" | head -1 | awk -F'|' '{print NF}')"
+  # A token is the row's own name reduced to the config's class, so wherever a
+  # row has a name it must have a token, and that token must be writable as-is.
+  bad=$(printf '%s\n' "$usbrows" |
+        awk -F'|' '$4 != "(unnamed)" && $6 !~ /^[a-z0-9-]+$/ { print $2 " name=" $4 " token=" $6 }')
+  assert_equal '' "$bad" 'a named device must yield a token in [a-z0-9-]'
+  badwhere=$(printf '%s\n' "$usbrows" | awk -F'|' '$7 != "" && $7 !~ /^[a-z0-9-]+$/ { print $2 }')
+  assert_equal '' "$badwhere" 'a port must be writable as a where suffix'
+fi
 
 it '--list takes no lock, so it cannot disturb a running watcher'
 bg_watch --device "$ABSENT" --log "$LOG"
@@ -277,6 +359,138 @@ it 'the refused second watcher exits 0, not as an error'
 # no-op rather than a crash.
 run_bounded 8 "$WATCH" --exec /bin/echo --arg TEST --device "$ABSENT" --log "$LOG"
 assert_equal 0 "$BOUNDED_RC"
+
+# =============================================================================
+# 4.1: a vendor:product pair can name more than one device
+# =============================================================================
+#
+# Against the real binary and this machine's real devices, asserting PROPERTIES
+# rather than any particular device -- the id used below is taken from the live
+# list, so this says the same thing on any desk.
+
+it 'refuses a malformed suffix by name, rather than reading it as the bare id'
+# A malformed entry quietly becoming the bare id would watch EVERY device
+# sharing it -- "never fall back to the whole id", broken by the parser, at the
+# one place nobody would look.
+for bad in "$ABSENT@" "$ABSENT@BadCase" "$ABSENT@a@b@c" "$ABSENT@under_score"; do
+  set +e; out=$("$WATCH" --report --device "$bad" 2>&1); rc=$?; set -e
+  assert_equal 2 "$rc" "must refuse: $bad"
+  assert_match "$out" 'bad --device'
+done
+
+it 'accepts both suffixes, and says what the grammar is when it refuses'
+set +e; out=$("$WATCH" --report --device "$ABSENT@some-token@0011" 2>&1); rc=$?; set -e
+assert_equal 0 "$rc" "$out"
+set +e; out=$("$WATCH" --report --device "$ABSENT@Nope" 2>&1); set -e
+assert_match "$out" '@token'
+assert_match "$out" 'lower-case'
+
+it 'an entry with no suffix still means every device with that id'
+if [ -n "$PRESENT" ]; then
+  out=$("$WATCH" --report --device "$PRESENT" 2>/dev/null)
+  assert_match "$out" '|present|'
+else skip_no_present; fi
+
+it 'a token nothing carries matches NOTHING, never the whole id'
+# The cost of falling back is concrete: a visitor's identical dongle would
+# produce an arrival edge and pull the monitors over unbidden.
+if [ -n "$PRESENT" ]; then
+  out=$("$WATCH" --report --device "$PRESENT@no-such-device-token" 2>/dev/null)
+  assert_match "$out" '|absent|0'
+else skip_no_present; fi
+
+it 'a token held by exactly one device selects it, and the port is not consulted'
+# Taken from the live list: the id of a device whose token is unique among the
+# devices sharing that id. Skips where this desk has no such device.
+UNIQ=$("$WATCH" --list 2>/dev/null | awk -F'|' '
+  $1 == "usb" && $6 != "" { n[$2]++; t[$2 "|" $6]++; key[$2 "|" $6] = $2 "@" $6 }
+  END { for (k in t) if (t[k] == 1) { print key[k]; exit } }')
+if [ -n "$UNIQ" ]; then
+  out=$("$WATCH" --report --device "$UNIQ" 2>/dev/null)
+  assert_match "$out" '|present|1'
+  assert_no_match "$out" '|where|'
+else skip_case 'no USB device on this machine has a token unique to it'; fi
+
+it 'and a port beside a resolving token is NOT what decided it'
+# 4.1: `where` must never be consulted while `token` resolves to exactly one
+# device -- otherwise moving that dongle to another socket would silently stop
+# the trigger firing. Given BOTH suffixes, the TOKEN still decides, and status
+# must not claim the port did. A config CAN carry both: the walkthrough only
+# writes them together when the token is shared, but a hand edit may do anything.
+#
+# The port used is the device's REAL one, deliberately. A port that matches
+# nothing cannot tell "not consulted" from "consulted and found nothing"; only
+# the port that WOULD match proves the check was skipped.
+if [ -n "$UNIQ" ]; then
+  realport=$("$WATCH" --list 2>/dev/null | awk -F'|' -v k="${UNIQ%@*}" -v t="${UNIQ#*@}" \
+             '$2 == k && $6 == t { print $7; exit }')
+  out=$("$WATCH" --report --device "$UNIQ@$realport" 2>/dev/null)
+  assert_match "$out" '|present|1'
+  assert_no_match "$out" '|where|' 'the token resolved it, so the port decided nothing'
+
+  out=$("$WATCH" --report --device "$UNIQ@ffffffff" 2>/dev/null)
+  assert_match "$out" '|present|1' 'and a STALE port must not unmatch a resolving token'
+else skip_case 'no USB device on this machine has a token unique to it'; fi
+
+it 'several devices sharing a token, with none at the port, is AMBIGUOUS'
+# The reference desk has exactly this: two LIGHTSPEED receivers, both reporting
+# `usb-receiver`, neither reporting a serial (docs/measurements.md 2026-09-06).
+SHARED=$("$WATCH" --list 2>/dev/null | awk -F'|' '
+  $1 == "usb" && $6 != "" { t[$2 "|" $6]++; key[$2 "|" $6] = $2 "@" $6 }
+  END { for (k in t) if (t[k] > 1) { print key[k]; exit } }')
+if [ -n "$SHARED" ]; then
+  out=$("$WATCH" --report --device "$SHARED" 2>/dev/null)
+  assert_match "$out" '|ambiguous|'
+else skip_case 'no two devices on this machine share an id and a token'; fi
+
+it 'and the port breaks that tie, reporting that it was the port that decided'
+# 4.1: whenever `where` decides a match, SAY SO. A remembered location that has
+# gone stale is dangerous only while it is silent.
+if [ -n "$SHARED" ]; then
+  WHERE=$("$WATCH" --list 2>/dev/null | awk -F'|' -v k="${SHARED%@*}" -v t="${SHARED#*@}" \
+          '$2 == k && $6 == t { print $7; exit }')
+  out=$("$WATCH" --report --device "$SHARED@$WHERE" 2>/dev/null)
+  assert_match "$out" '|where|1'
+else skip_case 'no two devices on this machine share an id and a token'; fi
+
+it 'refuses to start when every configured trigger is ambiguous'
+# 4.1: an ambiguous entry disables that ENTRY, not the watcher -- UNLESS nothing
+# usable is left, which is the one case where the watcher would run and never
+# fire. Refusing is the kinder answer and is loud in the log.
+if [ -n "$SHARED" ]; then
+  kill_watchers
+  run_bounded 8 "$WATCH" --exec /bin/echo --arg TEST --device "$SHARED" --log "$LOG"
+  assert_match "$BOUNDED_OUT" 'REFUSING to watch'
+  assert_match "$BOUNDED_OUT" 'nothing could ever fire'
+  assert_equal 2 "$BOUNDED_RC"
+else skip_case 'no two devices on this machine share an id and a token'; fi
+
+it 'the ARM pass honours the token too, not just the sweep'
+# IOKit matches on vendor+product only, so the arm iterator cannot express a
+# token -- it has to be re-asked. Without that a watch carrying `@token` arms and
+# fires on ANY device sharing the id, which is "never fall back to the whole id"
+# broken at the one moment nobody would look. Visible in the armed line, which
+# reports the count the watch actually primed on.
+if [ -n "$SHARED" ]; then
+  kill_watchers
+  : >"$LOG"
+  # A token nothing carries: the bare id IS present, so a prime that ignored the
+  # token would arm on it and report a non-zero count.
+  bg_watch --device "${SHARED%@*}@no-such-device-token" --log "$LOG" --verbose
+  assert_match "$(cat "$LOG")" '(0 already present, not firing)'
+  kill_watchers
+else skip_case 'no two devices on this machine share an id and a token'; fi
+
+it 'but keeps watching the others when only SOME entries are ambiguous'
+if [ -n "$SHARED" ] && [ -n "$PRESENT" ]; then
+  kill_watchers
+  : >"$LOG"
+  bg_watch --device "$SHARED" --device "$ABSENT" --log "$LOG"
+  assert_match "$(cat "$LOG")" 'AMBIGUOUS'
+  assert_match "$(cat "$LOG")" 'the rest keep watching'
+  assert_match "$(cat "$LOG")" 'watching 1 device'
+  kill_watchers
+else skip_case 'needs both a shared-token device and a present one'; fi
 
 # =============================================================================
 # --lock-status: the question specs/status.md 2 makes `status` ask

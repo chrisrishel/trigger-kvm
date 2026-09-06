@@ -900,6 +900,93 @@ dupes=$(grep -E '^[A-Za-z0-9_.-]+[[:space:]]*=' "$CFG" |
         sed 's/[[:space:]]*=.*//' | tr -d ' ' | sort | uniq -d)
 assert_equal '' "$dupes" 'an identity naming two panels must still be ONE record'
 
+# =============================================================================
+# 7.1 and 4.1: the trigger row, and picking one of two devices sharing an id
+# =============================================================================
+
+# Two receivers of one model, both reporting the same id AND the same name --
+# which is what this desk actually reports (docs/measurements.md, 2026-09-06),
+# and the opposite of Windows, where one of them carries a distinguishing
+# product string. So there is no unique token here and `where` is the only route.
+trig_rows() { printf '%s\n' "$@" >"$TK_FAKE_DEVICES"; }
+TWIN_A='usb|usb:046d:c547|attached now|USB Receiver|mouse, keyboard|usb-receiver|00130000'
+TWIN_B='usb|usb:046d:c547|attached now|USB Receiver|mouse, keyboard|usb-receiver|00141000'
+SOLO='usb|usb:1235:820a|attached now|Clarett+ 2Pre||clarett-2pre|00144000'
+NAMED_A='usb|usb:046d:c547|attached now|G915 X LIGHTSPEED TKL|keyboard|g915-x-lightspeed-tkl|00130000'
+
+fake_displays "$FAKE_LG" "$FAKE_ASUS"
+seed_three
+trig_rows "$TWIN_A" "$TWIN_B" "$SOLO"
+
+it 'the trigger row says what the device IS, with the id beside it'
+# 7.1: an id alone is not a choice anybody can make, and a name alone cannot be
+# checked -- so the name leads and the pair it is matched on stays visible.
+configure_with '3
+q
+11'
+assert_match "$WT_OUT" 'USB Receiver (mouse, keyboard)'
+assert_match "$WT_OUT" 'usb:046d:c547'
+assert_match "$WT_OUT" 'Clarett+ 2Pre'
+
+it 'and shows the role the device presents itself as'
+assert_match "$WT_OUT" '(mouse, keyboard)'
+
+it 'shows BOTH devices sharing an id, and says that is what they are'
+assert_equal 2 "$(printf '%s\n' "$WT_OUT" | grep -c '1 of 2 sharing this id')"
+
+it 'nothing is filtered out -- a device that looks unlikely to travel is shown'
+# 7.1: "looks internal" is a guess, and the person reading knows their desk.
+trig_rows "$TWIN_A" "$TWIN_B" "$SOLO" \
+  'usb|usb:0b05:19af|attached now|AURA LED Controller||aura-led-controller|00150000'
+configure_with '3
+q
+11'
+assert_match "$WT_OUT" 'AURA LED Controller'
+
+it 'writes NO token when no name is held by exactly one of the devices'
+# detector.md 4.1: a token is chosen for UNIQUENESS, not quality. Both receivers
+# report `usb-receiver`, so a token would match both and decide nothing -- and
+# `where` becomes the only thing that can. Where none exists, write no token.
+trig_rows "$TWIN_A" "$TWIN_B" "$SOLO"
+configure_with '3
+1
+10'
+assert_match "$WT_OUT" 'wrote'
+assert_match "$(cat "$CFG")" 'trigger.device   = usb:046d:c547@usb-receiver@00130000'
+
+it 'and writes a TOKEN, with no port, when one name is held by exactly one'
+# The Windows shape. `where` must NOT be added here: a device moved to another
+# socket would silently stop matching, and a trigger that stops firing after a
+# replug is the failure 4.1 exists to prevent.
+trig_rows "$NAMED_A" "$TWIN_B" "$SOLO"
+configure_with '3
+1
+10'
+assert_match "$WT_OUT" 'wrote'
+assert_match "$(cat "$CFG")" 'trigger.device   = usb:046d:c547@g915-x-lightspeed-tkl'
+assert_no_match "$(cat "$CFG")" 'g915-x-lightspeed-tkl@'
+
+it 'writes the bare id when nothing shares it, so nothing already written changes'
+trig_rows "$TWIN_A" "$SOLO"
+configure_with '3
+1,2
+10'
+assert_match "$WT_OUT" 'wrote'
+assert_match "$(cat "$CFG")" 'trigger.device   = usb:046d:c547, usb:1235:820a'
+
+it 'writes the bare id for twins that report NO name, rather than a placeholder'
+# The grammar cannot express a `where` without a token, so a device with no name
+# has nothing to carry its port. An invented placeholder would match NOTHING,
+# which is strictly worse than the entry meaning both devices as it always did.
+trig_rows 'usb|usb:046d:c547|attached now|(unnamed)|||00130000' \
+          'usb|usb:046d:c547|attached now|(unnamed)|||00141000' "$SOLO"
+configure_with '3
+1
+10'
+assert_match "$WT_OUT" 'wrote'
+assert_match "$(cat "$CFG")" 'trigger.device   = usb:046d:c547'
+assert_no_match "$(cat "$CFG")" 'usb:046d:c547@'
+
 it 'the cursor never lands on a row it would refuse'
 # The landing rule is "the first panel nobody has answered for". With the LG
 # already configured, the first unanswered rows are the twins -- and a cursor

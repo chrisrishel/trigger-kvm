@@ -33,10 +33,13 @@ case "$1" in
   --lock-status)
     if [ "${TK_FAKE_LOCK_STATUS:-none}" = running ]; then echo running; exit 0; fi
     echo none; exit 1 ;;
+  --report) [ -f "${TK_FAKE_REPORT:-/nonexistent}" ] && cat "$TK_FAKE_REPORT"; exit 0 ;;
 esac
 exit 0
 EOS
 chmod +x "$FAKE_DIR/event-watch"
+TK_FAKE_REPORT="$FAKE_DIR/report"; export TK_FAKE_REPORT
+: >"$TK_FAKE_REPORT"
 
 # =============================================================================
 # 2. the watcher is a STATE, answered from the lock
@@ -148,6 +151,37 @@ AMB="$FAKE_DIR/ambiguous.cfg"
 printf 'computer.this = mac\ndisplay.dup.vendor = 0x06B3\ndisplay.dup.product = 0x42E0\ndisplay.dup.input.0x0F = mac\ndisplay.dup.input.0x11 = mac\n' >"$AMB"
 run_tk status --config "$AMB"
 assert_match "$TK_OUT" 'two inputs both name mac'
+
+# =============================================================================
+# detector.md 4.1: what status owes about WHICH device a trigger matched
+# =============================================================================
+
+it 'says when the remembered port is what decided which device a trigger is'
+# 4.1: a remembered location that has gone stale is dangerous only while it is
+# SILENT. Two indistinguishable devices swapped between sockets resolve to the
+# wrong one, and the reader's only defence is being able to see it happened.
+printf 'usb:046d:c547@usb-receiver@00130000|where|1\n' >"$TK_FAKE_REPORT"
+run_tk status --config "$CFG"
+assert_match "$TK_OUT" 'the remembered port decided which device this is'
+assert_match "$TK_OUT" 'usb:046d:c547@usb-receiver@00130000'
+
+it 'reports an ambiguous entry as DISABLED, with how many matched'
+# 4.1: the entry is disabled and the watcher is not, so this is a trigger that
+# will silently never fire -- exactly the thing status exists to make visible.
+printf 'usb:046d:c547@usb-receiver|ambiguous|2\n' >"$TK_FAKE_REPORT"
+run_tk status --config "$CFG"
+assert_match "$TK_OUT" 'DISABLED'
+assert_match "$TK_OUT" '2 present devices match'
+assert_match "$TK_OUT" 'trigger-kvm configure'
+
+it 'says nothing about a trigger that simply matched, or one that is absent'
+# Reporting the ordinary case would bury the two above in noise.
+printf 'usb:046d:0843|present|1\nusb:1235:820a|absent|0\n' >"$TK_FAKE_REPORT"
+run_tk status --config "$CFG"
+assert_no_match "$TK_OUT" 'remembered port'
+assert_no_match "$TK_OUT" 'DISABLED'
+
+: >"$TK_FAKE_REPORT"
 
 # =============================================================================
 # 5. an identity that names more than one attached panel

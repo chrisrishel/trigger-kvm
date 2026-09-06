@@ -882,19 +882,59 @@ wt_answer_add() {
 # --- triggers ----------------------------------------------------------------
 
 wt_triggers() {
-  local _keys _labels _details _kind _key _state _name _checked _i _d _new _n
+  local _keys _labels _details _kind _key _state _name _role _tok _where
+  local _checked _i _d _new _n _rows _same _uniq _entry _what _detail
   printf '\n--- triggers ---\n' >&2
   printf 'Which devices move to this computer when you flip the switch?\n' >&2
   printf 'USB rows are attached right now; Bluetooth rows are everything paired.\n\n' >&2
 
+  _rows=$("$TK_WATCHER" --list 2>/dev/null || true)
   _keys=() _labels=() _details=()
-  while IFS='|' read -r _kind _key _state _name; do
+  while IFS='|' read -r _kind _key _state _name _role _tok _where; do
     [ -n "$_key" ] || continue
-    _keys+=("$_key")
-    _labels+=("$(printf '%-20s %-4s' "$_key" "$(printf '%s' "$_kind" | tr '[:lower:]' '[:upper:]')")")
-    _details+=("$_name  ($_state)")
+
+    # specs/detector.md 4.1: what this row would be WRITTEN as. Absent a twin the
+    # entry is the bare id, exactly as before, so nothing already written changes.
+    _entry=$_key
+    _same=$(printf '%s\n' "$_rows" | awk -F'|' -v k="$_key" '$2 == k' | wc -l | tr -d ' ')
+    if [ "$_same" -gt 1 ]; then
+      # A token is chosen for UNIQUENESS, not quality: the best name for a device
+      # is not necessarily one that distinguishes it. Measured on this desk, both
+      # LIGHTSPEED receivers report `usb-receiver` -- so there is NO token here
+      # and `where` is the only route, the opposite of Windows where a token
+      # resolves it. Where no value is held by exactly one, write none.
+      _uniq=$(printf '%s\n' "$_rows" |
+              awk -F'|' -v k="$_key" -v t="$_tok" '$2 == k && $6 == t' | wc -l | tr -d ' ')
+      if [ -n "$_tok" ] && [ "$_uniq" = 1 ]; then
+        # `where` is NOT added here. 4.1 confines it to breaking a tie, and a
+        # remembered port beside a token that already resolves would make moving
+        # the dongle to another socket stop the trigger firing, silently.
+        _entry="$_key@$_tok"
+      elif [ -n "$_tok" ] && [ -n "$_where" ]; then
+        # The tiebreak row of 4.1's table: several devices carry this token and
+        # one of them is at this port. Reaching that row REQUIRES writing the
+        # shared token, because the grammar has no way to give a `where` without
+        # one -- so "write no token where none is unique" cannot be absolute
+        # without making `where` unreachable. A device with no name at all is the
+        # case that stays below: there is no token to carry the port, so the
+        # entry stays the bare id and means both devices, exactly as it always
+        # did. Inventing a placeholder token would match NOTHING, which is worse
+        # than matching both.
+        _entry="$_key@$_tok@$_where"
+      fi
+    fi
+
+    _keys+=("$_entry")
+    # 7.1: the row says WHAT THE DEVICE IS; the id it is matched on stays beside
+    # it. The reverse -- an id as the row -- is not a choice anybody can make.
+    _what=$_name
+    [ -n "$_role" ] && _what="$_name ($_role)"
+    _labels+=("$(tk_pad "$_what" 34)")
+    _detail=$(printf '%-22s %s' "$_key" "$_state")
+    [ "$_same" -gt 1 ] && _detail="$_detail  -- 1 of $_same sharing this id"
+    _details+=("$_detail")
   done <<EOF
-$("$TK_WATCHER" --list 2>/dev/null || true)
+$_rows
 EOF
 
   if [ "${#_keys[@]}" -eq 0 ]; then

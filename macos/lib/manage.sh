@@ -18,7 +18,7 @@
 # which is the worst possible place for a disagreement, since this list is what
 # someone picks their trigger from.
 cmd_discover() {
-  local _cur _rows _kind _key _state _name _mark
+  local _cur _rows _kind _key _state _name _role _tok _where _mark _n
   printf '\n=== displays on this computer ===\n'
   RAW=0 cmd_list_table
 
@@ -32,11 +32,25 @@ cmd_discover() {
   if [ -z "$_rows" ]; then
     echo '  (none found)'
   else
-    printf '%s\n' "$_rows" | while IFS='|' read -r _kind _key _state _name; do
+    # specs/configure.md 7.1: the row says WHAT THE DEVICE IS, with the id it is
+    # matched on BESIDE it rather than being it. An id alone is not a choice
+    # anybody can make, and a name alone cannot be checked -- and 7's own warning
+    # to match the full pair cannot be acted on against a name.
+    printf '  %-26s %-16s %-22s %s\n' 'device' 'role' 'id' 'state'
+    printf '  %-26s %-16s %-22s %s\n' ------ ---- -- -----
+    printf '%s\n' "$_rows" | while IFS='|' read -r _kind _key _state _name _role _tok _where; do
       _mark=''
       case " $_cur " in *" $_key "*) _mark='  <- currently a trigger' ;; esac
-      printf '  %-22s %-4s %-24s %s%s\n' "$_key" "$(printf '%s' "$_kind" | tr '[:lower:]' '[:upper:]')" \
-             "$_state" "$_name" "$_mark"
+      # An id covering MORE THAN ONE device is said on the row (revision 10's
+      # closing note). Selecting between them is the `@` suffix, which the
+      # walkthrough writes; here it is enough that the reader can see there are
+      # two, because a list showing one row per device with no word for it looks
+      # like a repeat rather than a fact.
+      _n=$(printf '%s\n' "$_rows" | awk -F'|' -v k="$_key" '$2 == k' | wc -l | tr -d ' ')
+      [ "$_n" -gt 1 ] && _mark="$_mark  ($_n devices share this id)"
+      printf '  %s %s %-22s %s%s\n' \
+             "$(tk_pad "$_name" 26)" "$(tk_pad "${_role:--}" 16)" \
+             "$_key" "$_state" "$_mark"
     done
   fi
 
@@ -447,7 +461,7 @@ tk_installed_tier() {
 
 cmd_status() {
   local _note _labels _this _machines _c _v _l _row _first _when _rev _commit
-  local _all _vn _pn _n
+  local _all _vn _pn _n _d _args _key _verdict
   tk_warn_if_stale
   # Say when it runs and what that therefore COVERS -- never just a tier name.
   # What someone wants to know is whether a locked or logged-out machine still
@@ -531,6 +545,33 @@ cmd_status() {
     printf 'computers: none\n'
   fi
   printf 'triggers : %s\n' "$(config_trigger_devices | tr '\n' ' ' | sed 's/ $//')"
+
+  # specs/detector.md 4.1: whenever `where` decides a match, SAY SO -- a
+  # remembered location that has gone stale is dangerous only while it is
+  # silent, because two indistinguishable devices swapped between sockets
+  # resolve to the wrong one and the reader's only defence is seeing it happen.
+  # And an ambiguous entry is reported here as well as logged, since it is
+  # disabled and would otherwise be a trigger that silently never fires.
+  #
+  # The verdicts come from the watcher, which owns the matching rules. Asking it
+  # beats a second implementation here that would be free to disagree with the
+  # one that actually fires.
+  _args=()
+  for _d in $(config_trigger_devices); do _args+=(--device "$_d"); done
+  if [ "${#_args[@]}" -gt 0 ]; then
+    while IFS='|' read -r _key _verdict _n; do
+      [ -n "$_key" ] || continue
+      case $_verdict in
+        where)
+          printf '           %s  <- the remembered port decided which device this is\n' "$_key" ;;
+        ambiguous)
+          printf '           %s  <- DISABLED: %s present devices match and none is at\n' "$_key" "$_n"
+          printf '              the remembered port. Re-run: trigger-kvm configure\n' ;;
+      esac
+    done <<EOF
+$("$TK_WATCHER" --report "${_args[@]}" 2>/dev/null || true)
+EOF
+  fi
 
   # specs/status.md 3: the input map, and the one claim this command cannot make.
   #

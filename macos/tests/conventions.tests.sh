@@ -416,6 +416,51 @@ for f in "$TESTS_DIR"/*.tests.sh; do
 done
 
 # =============================================================================
+# An assertion inside a pipeline loop is thrown away
+# =============================================================================
+#
+# `cmd | while read ...` runs the loop in a SUBSHELL, so an assert_ inside it
+# increments a FAILED that vanishes when the subshell exits: the case reports
+# PASS however wrong the answer was. Caught by a mutation surviving against a
+# deliberately broken build -- the test looked right and could not fail.
+#
+# The fix is a here-string. No single mutation reproduces this, so it is scanned.
+
+# Matches a real loop HEADER only: a comment describing one, or a quoted one
+# inside a probe fixture, is prose. Hence "ends in `; do`" and "is not a
+# comment" -- both of which this file itself would otherwise trip.
+pipe_asserts() {
+  awk '
+    /^[ \t]*#/ { next }
+    /\|[ \t]*while .*;[ \t]*do[ \t]*$/ { inloop = 1; line = FNR; next }
+    inloop && /^[ \t]*done/ { inloop = 0; next }
+    inloop && /assert_|_fail / { print FILENAME ":" FNR ": assertion inside a piped while (opened at " line ")" }
+  ' "$@"
+}
+
+it 'no assertion sits inside a piped while loop, where its failure would vanish'
+hits=$(pipe_asserts "$TESTS_DIR"/*.tests.sh)
+assert_equal '' "$hits"
+
+it 'and the scan that says so can see one, and ignores a here-string loop'
+probe=$(mktemp "$FAKE_DIR/probe.XXXXXX")
+printf '%s\n' \
+  'while read -r a; do' \
+  '  assert_equal 1 "$a"' \
+  'done <<EOF' \
+  '$stuff' \
+  'EOF' >"$probe"
+assert_equal '' "$(pipe_asserts "$probe")" 'a here-string loop is not a subshell'
+# Assembled rather than written literally: a scan looking for this shape would
+# otherwise find it here, in the fixture that exists to test the scan.
+_pipe='| while read -r a; do'
+printf '%s\n' \
+  "printf '%s' \"\$rows\" $_pipe" \
+  '  assert_equal 1 "$a"' \
+  'done' >>"$probe"
+assert_match "$(pipe_asserts "$probe")" 'assertion inside a piped while' 'a piped one must be caught'
+
+# =============================================================================
 # Every config value is written through one door
 # =============================================================================
 #

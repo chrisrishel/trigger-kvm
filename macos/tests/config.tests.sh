@@ -174,6 +174,52 @@ cfg 'trigger.device = 046D:0843, usb:1235:820a, bt:0011223344FF'
 assert_equal 'usb:046d:0843 usb:1235:820a bt:0011223344ff' \
   "$(config_trigger_devices | tr '\n' ' ' | sed 's/ $//')"
 
+# --- a device entry may say WHICH device --------------------------------------
+#
+# specs/config-format.md and detector.md 4.1: usb:VVVV:PPPP[@token[@where]], both
+# suffixes optional, both `[a-z0-9-]+`, and CHECKED lower-case rather than
+# normalised -- because the id half is case-insensitive and a suffix silently
+# lower-cased on one platform and refused on another is precisely the
+# disagreement this shared corpus exists to prevent.
+
+it 'an entry with no suffix means exactly what it always meant'
+cfg 'trigger.device = usb:046d:c547, 1235:820A, bt:0011223344FF'
+assert_equal 'usb:046d:c547 usb:1235:820a bt:0011223344ff' \
+  "$(config_trigger_devices | tr '\n' ' ' | sed 's/ $//')"
+assert_equal '' "$(config_bad_trigger_devices)"
+
+it 'accepts one suffix, and two'
+cfg 'trigger.device = usb:046d:c547@g915-x-lightspeed-tkl, usb:046d:c547@usb-receiver@0003-0005'
+assert_equal 'usb:046d:c547@g915-x-lightspeed-tkl usb:046d:c547@usb-receiver@0003-0005' \
+  "$(config_trigger_devices | tr '\n' ' ' | sed 's/ $//')"
+
+it 'the ID half is case-insensitive, and the suffixes are NOT'
+cfg 'trigger.device = USB:046D:C547@usb-receiver'
+assert_equal 'usb:046d:c547@usb-receiver' "$(config_trigger_devices)"
+cfg 'trigger.device = usb:046d:c547@USB-Receiver'
+assert_equal '' "$(config_trigger_devices)" 'an upper-case suffix must be refused, not lower-cased'
+assert_equal 'usb:046d:c547@USB-Receiver' "$(config_bad_trigger_devices)"
+
+it 'refuses a malformed suffix rather than reading it as a narrower entry'
+# A malformed entry that quietly became the bare id would watch BOTH devices --
+# which is the "never fall back to the whole id" rule broken by the parser.
+for bad in 'usb:046d:c547@' 'usb:046d:c547@a@b@c' 'usb:046d:c547@has space' \
+           'usb:046d:c547@under_score' 'usb:046d:c547@@x'; do
+  cfg "trigger.device = $bad"
+  assert_equal '' "$(config_trigger_devices)" "must refuse: $bad"
+  assert_equal "$bad" "$(config_bad_trigger_devices)" "must be NAMED as bad: $bad"
+done
+
+it 'a bt entry takes no suffix'
+cfg 'trigger.device = bt:0011223344ff@something'
+assert_equal '' "$(config_trigger_devices)"
+assert_equal 'bt:0011223344ff@something' "$(config_bad_trigger_devices)"
+
+it 'the bare id of an entry drops whatever suffixes it has'
+assert_equal 'usb:046d:c547' "$(config_trigger_id 'usb:046d:c547@tok@where')"
+assert_equal 'usb:046d:c547' "$(config_trigger_id 'usb:046d:c547@tok')"
+assert_equal 'usb:046d:c547' "$(config_trigger_id 'usb:046d:c547')"
+
 # --- writing: what goes in must come back out --------------------------------
 #
 # specs/config-format.md, "A writer must not write what it cannot read back".
