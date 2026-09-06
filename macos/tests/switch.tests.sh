@@ -175,6 +175,59 @@ assert_equal 2 "$TK_RC"
 assert_match "$TK_OUT" 'more than one input'
 assert_nothing_sent
 
+# --- transport: a config for a different machine -----------------------------
+#
+# specs/config-format.md, "`transport` and `method` are different questions".
+# macOS has one transport and is not required to invent a second; what it owes
+# is the refusal, BY NAME and never defaulted.
+
+it 'refuses a transport this platform does not have, naming it, and sends nothing'
+fake_reset
+othermachine=$(make_config <<'EOF'
+computer.this = mac
+display.lg.vendor    = 0x1E6D
+display.lg.product   = 0x9E9F
+display.lg.method    = lg-alt
+display.lg.transport = nvapi
+display.lg.input.0xD1 = mac
+EOF
+)
+run_tk pull --config "$othermachine"
+assert_match "$TK_OUT" "transport 'nvapi'"
+assert_match "$TK_OUT" 'ioavservice'
+assert_nothing_sent
+
+it 'and an absent transport means this one, so an old config still switches'
+# Every config written before the key existed has no transport line. Defaulting
+# is right HERE and wrong for an unrecognised name -- the difference is that
+# absent asserts nothing, while a name asserts a machine this is not.
+fake_reset
+run_tk pull --config "$CFG"
+assert_match "$(fake_sent)" "$LG_UUID"
+
+it 'accepts the transport it writes itself, spelled in any case'
+fake_reset
+explicit=$(make_config <<'EOF'
+computer.this = mac
+display.lg.vendor    = 0x1E6D
+display.lg.product   = 0x9E9F
+display.lg.method    = lg-alt
+display.lg.transport = IOAVService
+display.lg.input.0xD1 = mac
+EOF
+)
+run_tk pull --config "$explicit"
+assert_match "$(fake_sent)" "$LG_UUID"
+
+it 'refuses the transport WITHOUT falling through to the one it has'
+# A silent fallback would mean the packet that moved the panel on the day
+# somebody watched it is not the packet sent afterwards -- the one property this
+# project cannot give up, because a human eye is the only verification the
+# hardware permits. So this asserts NOTHING on the wire, not merely a message.
+fake_reset
+run_tk pull --config "$othermachine"
+assert_nothing_sent
+
 it 'refuses an unparseable EDID id rather than matching vendor 0x0000'
 fake_reset
 badedid=$(make_config <<'EOF'

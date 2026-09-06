@@ -504,6 +504,19 @@ mutate 'config: the panel name is written straight through again' lib/walkthroug
 mutate 'config: carried-through hand edits skip the writer' lib/walkthrough.sh conventions.tests.sh \
   "s@    config_line \"\$_k\" \"\$_v\"@    printf 'k%s = %s\\\\n' \"\${_k#?}\" \"\$_v\"@"
 
+# --- revision 9: transport is a separate axis from method --------------------
+
+mutate 'transport: an unrecognised one is defaulted instead of refused' lib/display.sh switch.tests.sh \
+  's@  if \[ "\$_transport" != "\$DDC_TRANSPORT" \]; then@  if false; then@'
+mutate 'transport: refused, then it falls through and sends anyway' lib/display.sh switch.tests.sh \
+  "s@    tk_log \"REFUSING \$_label: transport '\$_transport' does not@    tk_log \"transport '\$_transport' does not@;s@^    return 1\$@    :@"
+mutate 'transport: an ABSENT one is refused, breaking every old config' lib/display.sh switch.tests.sh \
+  's@config_display_field "\$_label" transport "\$DDC_TRANSPORT"@config_get "display.$_label.transport"@'
+mutate 'transport: the walkthrough stops recording what it used' lib/walkthrough.sh walkthrough.tests.sh \
+  's@      config_line "display.\$_l.transport" "\$DDC_TRANSPORT" "\$_w"@      :@'
+mutate 'transport: a hand-written transport is dropped on Save' lib/walkthrough.sh walkthrough.tests.sh \
+  's@        case \$_rest in vendor|product|name|method|transport|input\.\*) continue ;; esac ;;@        case $_rest in vendor|product|name|method|input.*) continue ;; esac ;;@'
+
 echo
 if [ "$survived" = "0" ]; then
   echo "all $checked mutations were caught"

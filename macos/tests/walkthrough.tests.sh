@@ -112,6 +112,16 @@ it 'defaults every panel to standard, whatever the make'
 assert_match "$c" 'display.lg.method  = standard'
 assert_match "$c" 'display.asus.method  = standard'
 
+it 'stores the transport it used, without ever asking about it'
+# specs/configure.md 6.3: a platform with one transport asks nothing and stores
+# the transport it used. So the file says what the panel was verified with --
+# which is the whole reason the key exists -- while the walkthrough gains no
+# menu, because there is nothing to choose between.
+assert_match "$c" 'display.lg.transport = ioavservice'
+assert_match "$c" 'display.asus.transport = ioavservice'
+assert_no_match "$WT_OUT" 'transport'
+assert_no_match "$WT_OUT" 'how the bytes get there'
+
 it "offers the manufacturer's method up front for a vendor that has one"
 # specs/configure.md 6.2. Someone who already knows their model needs it should
 # not have to run a check that moves a panel purely in order to fail.
@@ -671,6 +681,24 @@ trigger.device   = usb:046d:0843, usb:1235:820a
 install.autostart = login
 EOS
 }
+
+it 'a saved config never defines a key twice, however the previous one was written'
+# Every key the walkthrough writes itself must be excluded from the carry-through
+# block, or Save emits it a second time under "kept from the previous file". The
+# reader lets the last one win, so the file still BEHAVES correctly -- which is
+# exactly why this needs asserting rather than noticing. A duplicate definition
+# is the shape specs/README.md warns about: present, and the one you are reading
+# is not the one in force.
+seed_three
+# Seeded with the keys a previous version wrote, including the one added most
+# recently -- the case where the exclusion list is a step behind the writer.
+{ printf 'display.lg.transport = ioavservice\n'
+  printf 'display.asus.transport = ioavservice\n'; } >>"$CFG"
+configure_with '10'
+assert_match "$WT_OUT" 'wrote'
+dupes=$(grep -E '^[A-Za-z0-9_.-]+[[:space:]]*=' "$CFG" |
+        sed 's/[[:space:]]*=.*//' | tr -d ' ' | sort | uniq -d)
+assert_equal '' "$dupes" 'these keys are defined more than once'
 
 it 'a blank answer at the rename prompt KEEPS the name'
 # It used to remove the computer -- the most innocuous keypress there is was

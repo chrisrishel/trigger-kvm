@@ -304,6 +304,25 @@ Setting `method = lg-alt` on a non-LG panel makes the write **refuse**. It does
 not make the write happen. There is a test for that, and a test that the string
 `input-alt` appears in exactly one place in the sources.
 
+## Transport
+
+`method` is *what* is sent -- which dialect, and therefore which values are
+legal. `transport` is *how it gets there* -- which driver API carries the bytes.
+They are separate keys because a platform can have two transports; **this one
+has exactly one**, `ioavservice`, named after the API `m1ddc` reaches panels
+through. So `configure` asks nothing about it and simply records it.
+
+A `display.<label>.transport` naming anything else is **refused, by name**, and
+nothing is sent. That is a config for a different machine -- `nvapi` is
+Windows' -- and saying so is the honest answer; defaulting to the one transport
+here would send the write down a path nobody ever confirmed by eye. An *absent*
+transport means this one, so every config written before the key existed keeps
+working untouched.
+
+The Intel-Mac framebuffer route is the only thing that would ever be a second
+name here. It is measured and deliberately not built
+([`docs/decisions/004`](../docs/decisions/004-intel-mac-ddc-proven-not-built.md)).
+
 ## The menus
 
 Every list question in the walkthrough is one of two menus, and in both, **enter

@@ -26,6 +26,26 @@ DDC_SOURCE_LG=0x50
 DDC_VCP_STANDARD=0x60
 DDC_VCP_LG=0xF4
 
+# specs/config-format.md, "`transport` and `method` are different questions".
+#
+# `method` is WHAT is sent -- which VCP dialect, and therefore which values are
+# legal. `transport` is HOW it gets there -- which driver API carries the bytes.
+# They were one key while every platform had exactly one transport, and
+# separating them is what lets a platform have two without the values on offer
+# changing meaning on any other platform.
+#
+# THIS PLATFORM HAS ONE, and is not required to invent a second: the key is
+# shared, the vocabulary is each platform's, and a platform with one transport
+# asks nothing at configure time (specs/configure.md 6.3). Named after the API
+# that carries it, as Windows names `nvapi` and `dxva2` -- m1ddc reaches panels
+# through IOAVService. The Intel-Mac framebuffer route is the one that would
+# ever be a second name here, and it is measured but deliberately not built
+# (docs/decisions/004).
+#
+# Absent means this transport, so every config written before the key existed
+# keeps working, untouched and unrewritten.
+DDC_TRANSPORT=ioavservice
+
 M1DDC=${M1DDC:-/opt/homebrew/bin/m1ddc}
 
 # DDC is lossy and these writes are idempotent, so a repeat is free. Never a
@@ -182,7 +202,7 @@ ddc_send() {
 # used and that is the ONLY thing it changes -- resolution, aiming, retry and
 # logging are identical either way.
 display_switch() {
-  local _label _value _dry _vraw _praw _name _method _vendor _product _row
+  local _label _value _dry _vraw _praw _name _method _transport _vendor _product _row
   local _uuid _packet _chan _what
   _label=$1 _value=$2 _dry=$3
 
@@ -193,6 +213,20 @@ display_switch() {
 
   if ! _vendor=$(config_to_word "$_vraw") || ! _product=$(config_to_word "$_praw"); then
     tk_log "REFUSING $_label: its config has no usable EDID vendor/product. Fix display.$_label.vendor and .product."
+    return 1
+  fi
+
+  # An unrecognised transport is REFUSED BY NAME, never defaulted to the one we
+  # have. That is the rule that makes a shared key with per-platform vocabulary
+  # safe: a config naming `nvapi` is a config for a different machine, and
+  # saying so is the honest answer. Defaulting would send the write down a path
+  # nobody ever confirmed by eye -- and a transport, like an input value, is
+  # verified exactly once by a human looking at the panel (hard rule 3).
+  # Refused here, before the display is resolved: a config for another machine
+  # should not reach the hardware at all.
+  _transport=$(tk_lower "$(config_display_field "$_label" transport "$DDC_TRANSPORT")")
+  if [ "$_transport" != "$DDC_TRANSPORT" ]; then
+    tk_log "REFUSING $_label: transport '$_transport' does not exist on this platform. macOS has one, '$DDC_TRANSPORT'. Fix display.$_label.transport, or remove the line to mean this one."
     return 1
   fi
 

@@ -994,6 +994,11 @@ wt_write_config() {
       config_line "display.$_l.product" "${WT_A_PRODUCT[$_i]}" "$_w"
       config_line "display.$_l.name"    "${WT_A_NAME[$_i]}"    "$_w"
       config_line "display.$_l.method"  "${WT_A_METHOD[$_i]}"  "$_w"
+      # specs/configure.md 6.3: a platform with one transport ASKS nothing and
+      # STORES the transport it used. There is no menu and no WT_ answer behind
+      # this -- there is nothing to choose between -- but the file says what the
+      # panel was verified with, which is the whole reason the key exists.
+      config_line "display.$_l.transport" "$DDC_TRANSPORT" "$_w"
       for _c in $(map_computers "${WT_A_MAP[$_i]}"); do
         config_line "display.$_l.input.$(tk_lower "$(map_get "${WT_A_MAP[$_i]}" "$_c")")" "$_c"
       done
@@ -1047,7 +1052,7 @@ wt_other_keys() {
       display.*)
         _rest=${_k#display.}; _l=${_rest%%.*}; _rest=${_rest#*.}
         case " $_managed " in *" $_l "*) ;; *) continue ;; esac
-        case $_rest in vendor|product|name|method|input.*) continue ;; esac ;;
+        case $_rest in vendor|product|name|method|transport|input.*) continue ;; esac ;;
     esac
     # Carried through, and sanitised on the way like everything else. A value
     # read from the file has already been cut at `#` by the reader, so this
