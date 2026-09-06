@@ -250,6 +250,11 @@ FAKE_ASUS='06B3|42E0|AUS|DP|01010101|BBBBBBBB-0000-4000-8000-000000000002|PG42UQ
 # A third panel, invented: batching across panels only becomes visible at three,
 # because at two hard rule 4 splits them into two rounds of one.
 FAKE_DELL='10AC|A123|DEL|HDMI|00000001|33333333-3333-3333-3333-333333333333|U2720Q'
+# The ASUS's TWIN: same make and model, so the same EDID vendor:product, on a
+# different connector with a different serial and UUID. Nobody here owns two
+# identical panels, so specs/configure.md 6.4 and specs/status.md 5 can only be
+# exercised against a fixture -- which is exactly what a fixture is for.
+FAKE_ASUS_TWIN='06B3|42E0|AUS|HDMI|02020202|CCCCCCCC-0000-4000-8000-000000000003|PG42UQ'
 
 # --- configs -----------------------------------------------------------------
 

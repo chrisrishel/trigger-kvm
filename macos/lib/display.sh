@@ -66,6 +66,20 @@ display_enumerate() {
 
 display_field() { printf '%s\n' "$1" | cut -d'|' -f"$2"; }
 
+# How many ATTACHED displays answer to one EDID identity ("VVVV:PPPP").
+#
+# specs/configure.md 6.4 and specs/status.md 5. ONE definition, because three
+# surfaces need this number -- the list, the walkthrough and `status` -- and
+# computing it three times is three representations of one fact, which is the
+# arrangement this repo keeps finding on the wrong end of.
+#
+# Takes the enumeration rather than fetching it: a caller that already has the
+# rows does not probe the hardware a second time, and a test can hand it the
+# case this desk cannot produce, having only one panel of each model.
+display_identity_count() {
+  printf '%s\n' "$1" | cut -d'|' -f1,2 | tr '|' ':' | grep -cxF "$2" || true
+}
+
 # A one-line description of a row, for a refusal message.
 display_describe() {
   printf 'edid=0x%s:0x%s connector=%s serial=0x%s' \

@@ -517,6 +517,27 @@ mutate 'transport: the walkthrough stops recording what it used' lib/walkthrough
 mutate 'transport: a hand-written transport is dropped on Save' lib/walkthrough.sh walkthrough.tests.sh \
   's@        case \$_rest in vendor|product|name|method|transport|input\.\*) continue ;; esac ;;@        case $_rest in vendor|product|name|method|input.*) continue ;; esac ;;@'
 
+# --- revision 13: an identity naming more than one attached panel ------------
+
+mutate 'twins: the count sums instead of counting one identity' lib/display.sh status.tests.sh \
+  "s@  printf '%s\\\\n' \"\$1\" | cut -d'|' -f1,2 | tr '|' ':' | grep -cxF \"\$2\" || true@  printf '1\\\\n'@"
+mutate 'twins: status says nothing about an ambiguous panel' lib/manage.sh status.tests.sh \
+  's@    \[ "\$_n" -gt 1 \] || continue@    continue@'
+mutate 'twins: status reports an ABSENT panel as ambiguous too' lib/manage.sh status.tests.sh \
+  's@    \[ "\$_n" -gt 1 \] || continue@    [ "$_n" -ne 1 ] || continue@'
+mutate 'twins: status offers configure as the fix for something it cannot fix' lib/manage.sh status.tests.sh \
+  "s@    printf '  Unplugging one is the only remedy today..n'@    printf '  Fix: trigger-kvm configure\\\\n'@"
+mutate 'twins: the walkthrough lets an ambiguous identity be picked' lib/walkthrough.sh walkthrough.tests.sh \
+  's@        menu_disable "\$_i"@        :@'
+mutate 'twins: the walkthrough merges the two panels into one row' lib/walkthrough.sh walkthrough.tests.sh \
+  's@      if \[ "\${WT_F_TWINS\[\$_i\]}" -gt 1 \]; then@      if [ "${WT_F_TWINS[$_i]}" -gt 1 ] \&\& [ "$_ambiguous" = 0 ]; then@'
+mutate 'twins: the list hides the second panel behind the first' trigger-kvm switch.tests.sh \
+  's@    \[ "\$_n" -gt 1 \] && _as=@    [ "$_n" -gt 99 ] \&\& _as=@'
+mutate 'twins: two found rows build two answer records for one panel' lib/walkthrough.sh walkthrough.tests.sh \
+  's@    if wt_answer_index "\${WT_F_KEY\[\$_i\]}" >/dev/null; then _i=\$(( _i + 1 )); continue; fi@    :@'
+mutate 'twins: the cursor lands on a row it will refuse' lib/walkthrough.sh walkthrough.tests.sh \
+  's@      if \[ "\${WT_F_TWINS\[\$_i\]}" -le 1 \] && ! wt_answer_index@      if ! wt_answer_index@'
+
 echo
 if [ "$survived" = "0" ]; then
   echo "all $checked mutations were caught"

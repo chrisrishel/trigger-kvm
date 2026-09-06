@@ -355,6 +355,26 @@ fake_displays "$FAKE_LG" "$FAKE_ASUS" \
 run_tk list --config "$CFG"
 assert_match "$TK_OUT" 'not in config'
 
+it 'list shows BOTH panels when two report the same id, and says so'
+# specs/configure.md 6.4. A list keyed on the identity merges two attached panels
+# into one row and the merge is SILENT -- the reader sees one monitor where they
+# have two. One row per panel is what this table already does; the word for it is
+# what was missing, because two rows both reading `asus` with nothing said looks
+# like a bug in the table rather than a condition being reported.
+fake_displays "$FAKE_LG" "$FAKE_ASUS" "$FAKE_ASUS_TWIN"
+run_tk list --config "$CFG"
+assert_equal 2 "$(printf '%s\n' "$TK_OUT" | grep -c '0x06B3   0x42E0')"
+assert_equal 2 "$(printf '%s\n' "$TK_OUT" | grep -c 'monitors report the same id')"
+assert_match "$TK_OUT" '2 monitors report the same id and cannot be told apart'
+
+it 'and the unique panel on the same desk is not marked'
+assert_no_match "$(printf '%s\n' "$TK_OUT" | grep '0x1E6D')" 'report the same id'
+
+it 'list marks nothing on a desk where every panel is unique'
+fake_displays "$FAKE_LG" "$FAKE_ASUS"
+run_tk list --config "$CFG"
+assert_no_match "$TK_OUT" 'report the same id'
+
 it 'list --raw emits the rows for a caller to parse'
 run_tk list --raw --config "$CFG"
 assert_match "$TK_OUT" "1E6D|9E9F|GSM|DP|00001111|$LG_UUID|LG ULTRAGEAR+"

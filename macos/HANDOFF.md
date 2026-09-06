@@ -41,50 +41,6 @@ Anything longer goes underneath.
 
 ---
 
-## Two identical panels resolve to ONE answer record, and the second overwrites the first
-
-Kind:     defect report
-Spec:     configure.md §6.4 and status.md §5 (revision 13) — those are the
-          obligation; this entry is only where your code already goes wrong
-Why:      someone with two identical monitors configures both and finds they
-          have configured one, with no message
-Owed:     nothing beyond revision 13, if implementing it happens to close this.
-          The entry exists so you do not have to find it by reading.
-Verified: read only. `macos/lib/walkthrough.sh` at the revision current on
-          2026-09-05. The author was on Windows, cannot run your suite, and does
-          not own identical panels — so this is a reading of the code, not an
-          observed failure. Disagree with it if you can run it.
-
-`wt_load_found` appends one record per attached display and does **not** dedupe,
-so two identical panels correctly produce two rows in the found list — good, and
-better than this side, where `list` collapsed them into one row and hid the
-second entirely.
-
-The break is one step later. Both those rows carry the same `$vendor:$product`
-key, and `wt_answer_index` walks `WT_A_KEY` returning the **first** index whose
-key matches. So both found-rows address one answer record: an answer given for
-the second panel lands on top of the first panel's, and nothing says so.
-
-That is the same failure revision 13 is written about, arrived at from the
-opposite direction — so the fix is very likely just §6.4's refusal, which never
-reaches the lookup. Worth checking rather than assuming: the found list and the
-answer list are keyed the same way, and §6.4 only closes the path where the key
-names more than one ATTACHED panel.
-
-Also noticed while reading, and deliberately not turned into a claim:
-`wt_load_found` reads `_ser` and `_uuid` from `display-probe` into locals and
-pushes neither into an array. If that is intentional — the serial is measured to
-be a placeholder on one of the reference panels, and `AGENTS.md` says the
-CoreGraphics UUID is not a stable per-port handle — then nothing is wrong and
-this line is just noise. Mentioned because a discarded field is hard to tell from
-a forgotten one from the outside.
-
-Neither of the above blocks anything. The design that would let two such panels
-be told apart and configured separately is
-`ideas/telling-two-identical-monitors-apart.md`, and it is **not built on either
-platform**; revision 13 is deliberately only the fallback underneath it. What
-macOS would owe if it is ever built is one rule, in that note's last section.
-
 ## Measure what `ioreg` can actually tell you about a USB device's name
 
 Kind:     defect report

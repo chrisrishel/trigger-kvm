@@ -304,6 +304,28 @@ Setting `method = lg-alt` on a non-LG panel makes the write **refuse**. It does
 not make the write happen. There is a test for that, and a test that the string
 `input-alt` appears in exactly one place in the sources.
 
+## When two monitors report the same id
+
+A panel is identified by the EDID vendor:product pair read off the output, so
+**two attached panels of the same model are one identity.** The switcher already
+refuses to resolve an id matching more than one output -- it will not guess, for
+the reason index numbers are never used either -- so such a panel simply stops
+following.
+
+What changed is that the refusal is now visible where it can be acted on rather
+than only in the log:
+
+- `list` shows **both** panels, one row each, and says the id names more than one
+- `configure` draws those rows greyed and takes no answer for them, because
+  configuration written against that identity could never switch anything
+- `status` names the panel, says how many match, and does **not** offer
+  `configure` as a fix -- there is none
+
+**Unplugging one is the honest remedy today.** Telling two such panels apart so
+each can be configured is designed and built on neither platform
+([`ideas/telling-two-identical-monitors-apart.md`](../ideas/telling-two-identical-monitors-apart.md));
+this is the behaviour that is correct whether or not that ever ships.
+
 ## Transport
 
 `method` is *what* is sent -- which dialect, and therefore which values are

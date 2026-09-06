@@ -840,4 +840,96 @@ n
 assert_no_match "$WT_OUT" 'Stop managing this monitor?'
 assert_match "$WT_OUT" 'cancelled; nothing was changed'
 
+# =============================================================================
+# 6.4: two attached panels sharing one identity
+# =============================================================================
+#
+# Nobody here owns two identical monitors, so this runs against a fixture. It is
+# the same failure the macOS inbox reported from the other direction: the found
+# list correctly holds two rows, both carrying one key, so an answer given for
+# the second used to land on top of the first's -- someone configures two
+# monitors and has configured one, with nothing said.
+
+fake_displays "$FAKE_LG" "$FAKE_ASUS" "$FAKE_ASUS_TWIN"
+cat >"$CFG" <<'EOS'
+computer.this = mac
+display.lg.vendor  = 0x1E6D
+display.lg.product = 0x9E9F
+display.lg.name    = LG ULTRAGEAR+
+display.lg.method  = standard
+display.lg.input.0xD1 = mac
+display.lg.input.0xD0 = pc
+display.asus.vendor  = 0x06B3
+display.asus.product = 0x42E0
+display.asus.name    = PG42UQ
+display.asus.method  = standard
+display.asus.input.0x0F = mac
+display.asus.input.0x11 = pc
+trigger.device   = usb:046d:0843
+install.autostart = login
+EOS
+
+it 'shows BOTH panels rather than merging them into one row'
+configure_with '2
+11'
+assert_equal 2 "$(printf '%s\n' "$WT_OUT" | grep -c 'monitors report the same id')"
+
+it 'and says, in the list, why they cannot be told apart'
+assert_match "$WT_OUT" '2 monitors report the same id and cannot be told apart'
+assert_match "$WT_OUT" 'A switch cannot aim at one of them'
+
+it 'draws the ambiguous rows unpickable, so no answer can be taken for them'
+# Configuration written against this identity could never switch anything --
+# display_resolve already refuses an id matching more than one output -- so the
+# walkthrough declines to write what it knows the switcher cannot use.
+assert_match "$WT_OUT" '   -- PG42UQ'
+
+it 'and the panel that is unique is still pickable'
+assert_no_match "$WT_OUT" '   -- LG ULTRAGEAR+'
+
+it 'saving with a twin attached does not duplicate or drop the existing config'
+# The panel was configured before the twin arrived. Its keys must survive a Save
+# untouched -- refusing to MANAGE it is not the same as forgetting it -- and
+# must not be written twice, which is what two found rows sharing one key did.
+configure_with '10'
+assert_match "$WT_OUT" 'wrote'
+c=$(cat "$CFG")
+assert_match "$c" 'display.asus.input.0x0f = mac'
+assert_match "$c" 'display.asus.input.0x11 = pc'
+dupes=$(grep -E '^[A-Za-z0-9_.-]+[[:space:]]*=' "$CFG" |
+        sed 's/[[:space:]]*=.*//' | tr -d ' ' | sort | uniq -d)
+assert_equal '' "$dupes" 'an identity naming two panels must still be ONE record'
+
+it 'the cursor never lands on a row it would refuse'
+# The landing rule is "the first panel nobody has answered for". With the LG
+# already configured, the first unanswered rows are the twins -- and a cursor
+# sitting on an unpickable row reads as the menu being broken rather than as the
+# panel being the problem. Done is item 5 here: LG, twin, twin, separator, Done.
+# The LG configured and the twins NOT -- so "the first panel nobody has answered
+# for" genuinely points at a twin. With the twins already in the config both
+# versions would skip them for the other reason and prove nothing.
+fake_displays "$FAKE_LG" "$FAKE_ASUS" "$FAKE_ASUS_TWIN"
+cat >"$CFG" <<'EOS'
+computer.this = mac
+display.lg.vendor  = 0x1E6D
+display.lg.product = 0x9E9F
+display.lg.name    = LG ULTRAGEAR+
+display.lg.method  = standard
+display.lg.input.0xD1 = mac
+display.lg.input.0xD0 = pc
+trigger.device   = usb:046d:0843
+install.autostart = login
+EOS
+configure_with '2
+11'
+assert_match "$WT_OUT" 'Choice [5]:'
+assert_no_match "$WT_OUT" 'Choice [2]:'
+
+it 'and an ordinary desk gains no such row'
+fake_displays "$FAKE_LG" "$FAKE_ASUS"
+configure_with '2
+11'
+assert_no_match "$WT_OUT" 'report the same id'
+assert_no_match "$WT_OUT" 'A switch cannot aim at one of them'
+
 finish

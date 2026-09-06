@@ -184,6 +184,13 @@ cmd_list_table() {
     _as=$(printf '%s' "$_known" | awk -F'\t' -v k="$_key" '$1 == k { print $2; exit }')
     [ -n "$_as" ] || _as='-- not in config --'
     [ -n "$_name" ] || _name="($_mfg, unnamed)"
+    # specs/configure.md 6.4: the second panel must not be invisible. One row per
+    # attached panel is what this table already does -- merging on the id would
+    # show one monitor where there are two -- so what is added is the WORD for
+    # it, because two rows reading `configured as: lg` with nothing said is a
+    # table that looks like a bug rather than one that reports a condition.
+    _n=$(display_identity_count "$_found" "$_key")
+    [ "$_n" -gt 1 ] && _as="$_as  <- $_n monitors report the same id and cannot be told apart"
     printf '  0x%s   0x%s    %-11s %-22s %s\n' "$_v" "$_p" "${_conn:--}" "$_name" "$_as"
   done
   return 0

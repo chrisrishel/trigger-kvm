@@ -447,6 +447,7 @@ tk_installed_tier() {
 
 cmd_status() {
   local _note _labels _this _machines _c _v _l _row _first _when _rev _commit
+  local _all _vn _pn _n
   tk_warn_if_stale
   # Say when it runs and what that therefore COVERS -- never just a tier name.
   # What someone wants to know is whether a locked or logged-out machine still
@@ -580,5 +581,37 @@ cmd_status() {
     printf '             on the monitor, pull silently switches that panel to a dead input\n'
     printf '             -- black, with a success in the log.  Fix: trigger-kvm configure\n'
   fi
+
+  # specs/status.md 5: a configured panel whose identity currently matches MORE
+  # THAN ONE attached panel.
+  #
+  # The switch has already been refused by the time anyone reads this -- resolution
+  # is by EDID vendor:product and refuses on more than one match -- so the panel
+  # simply stops following and the reason goes to the log, which is not where
+  # anyone looks, because the symptom is a monitor that used to work and now does
+  # not. Enumerating to answer this is allowed: 1 bars sending a packet and
+  # reading a VCP value, and asking what is attached is neither.
+  #
+  # NOT for a panel that is merely absent. Zero matches and two matches are
+  # different states with different remedies, and only the second is this.
+  _all=$(display_enumerate 2>/dev/null || true)
+  for _l in $_labels; do
+    _v=$(config_get "display.$_l.vendor"); _c=$(config_get "display.$_l.product")
+    _vn=$(config_to_word "$_v") || continue
+    _pn=$(config_to_word "$_c") || continue
+    _n=$(display_identity_count "$_all" "$(printf '%04X:%04X' "$_vn" "$_pn")")
+    [ "$_n" -gt 1 ] || continue
+    # 5.2: no fix is offered, because there is none -- `configure` cannot resolve
+    # this, which is the opposite of the input map above. And neither panel is
+    # named as the one that will be used, because nothing chooses.
+    # 5.1: name the count where the platform has it -- "more than one" is the
+    # least the resolver knows and a number is better. Each fragment stays whole
+    # inside one printf, as in the input map above.
+    printf '\n  WARNING: %s -- more than one attached monitor matches its id\n' "$_l"
+    printf '  (0x%04X:0x%04X): %s of them do. It has stopped following, because\n' \
+      "$_vn" "$_pn" "$_n"
+    printf '  the switch refuses rather than guessing which one you meant.\n'
+    printf '  Unplugging one is the only remedy today.\n'
+  done
   exit 0
 }

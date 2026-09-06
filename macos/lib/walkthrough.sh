@@ -194,9 +194,20 @@ WT_ONPATH=0
 WT_A_KEY=(); WT_A_LABEL=(); WT_A_NAME=(); WT_A_METHOD=()
 WT_A_VENDOR=(); WT_A_PRODUCT=(); WT_A_MAP=()
 
-# One record per ATTACHED display, from display-probe.
-WT_F_KEY=(); WT_F_VENDOR=(); WT_F_PRODUCT=(); WT_F_MFG=(); WT_F_NAME=()
+# One record per ATTACHED display, from display-probe. WT_F_TWINS holds how many
+# attached panels answer to that row's identity -- 1 for every ordinary panel.
+WT_F_KEY=(); WT_F_VENDOR=(); WT_F_PRODUCT=(); WT_F_MFG=(); WT_F_NAME=(); WT_F_TWINS=()
 
+# The answer record for an identity, or nothing.
+#
+# There is AT MOST ONE, which is a property wt_load_found cannot have: two
+# attached panels of the same model are two found rows and one identity, so the
+# first index is the only index. Before 6.4 that made this function a silent
+# overwrite -- both rows resolved here, and an answer given for the second
+# landed on top of the first, so someone configured two monitors and had
+# configured one. What closes it is the refusal in wt_monitors, which never lets
+# the second row be picked; this stays a first-match lookup because with the
+# refusal in place there is nothing else for it to find.
 wt_answer_index() {
   local _i
   _i=0
@@ -208,8 +219,19 @@ wt_answer_index() {
 }
 
 wt_load_found() {
-  local _v _p _mfg _conn _ser _uuid _name
-  WT_F_KEY=(); WT_F_VENDOR=(); WT_F_PRODUCT=(); WT_F_MFG=(); WT_F_NAME=()
+  local _v _p _mfg _conn _ser _uuid _name _all _i
+  WT_F_KEY=(); WT_F_VENDOR=(); WT_F_PRODUCT=(); WT_F_MFG=(); WT_F_NAME=(); WT_F_TWINS=()
+  # Enumerated ONCE and counted from that, rather than probing per row.
+  _all=$(display_enumerate)
+  # `_ser` and `_uuid` are named because `read` cannot skip a field in the middle
+  # of a line, and DISCARDED deliberately -- not forgotten. The CoreGraphics UUID
+  # is not a stable per-port handle (../AGENTS.md), and the switcher resolves it
+  # fresh at switch time rather than from anything stored here. The EDID serial
+  # IS stable across inputs and is the obvious raw material for telling two
+  # identical panels apart -- but that design is not built on either platform
+  # (../ideas/telling-two-identical-monitors-apart.md), and storing a field
+  # nothing reads would be a mapping written down and trusted, which is the one
+  # thing ../AGENTS.md's conventions forbid outright.
   while IFS='|' read -r _v _p _mfg _conn _ser _uuid _name; do
     [ -n "$_v" ] || continue
     WT_F_KEY+=("$_v:$_p")
@@ -218,8 +240,16 @@ wt_load_found() {
     WT_F_MFG+=("$_mfg")
     if [ -n "$_name" ]; then WT_F_NAME+=("$_name"); else WT_F_NAME+=("$_mfg panel $_v:$_p"); fi
   done <<EOF
-$(display_enumerate)
+$_all
 EOF
+  # A second pass, because the count is a property of the whole enumeration and
+  # not of a row. One row per attached panel either way: the count is what makes
+  # the duplication visible, and merging the rows is what 6.4 forbids.
+  _i=0
+  while [ "$_i" -lt "${#WT_F_KEY[@]}" ]; do
+    WT_F_TWINS+=("$(display_identity_count "$_all" "${WT_F_KEY[$_i]}")")
+    _i=$(( _i + 1 ))
+  done
 }
 
 # Rebuild the answers straight from a config, asking nothing. What the menu
@@ -230,6 +260,11 @@ wt_load_answers() {
   WT_A_VENDOR=(); WT_A_PRODUCT=(); WT_A_MAP=()
   _i=0
   while [ "$_i" -lt "${#WT_F_KEY[@]}" ]; do
+    # At most ONE answer record per identity. Two attached panels of one model
+    # are two found rows sharing a key, and without this each of them would
+    # build a record from the same config label -- so Save would write that
+    # panel's keys twice and wt_answer_index would only ever see the first.
+    if wt_answer_index "${WT_F_KEY[$_i]}" >/dev/null; then _i=$(( _i + 1 )); continue; fi
     for _l in $(config_display_labels); do
       _v=$(config_get "display.$_l.vendor"); _p=$(config_get "display.$_l.product")
       _vn=$(config_to_word "$_v") || { continue; }
@@ -736,12 +771,24 @@ wt_display_answers() {
 # and for the same reason. Walking every panel in sequence to change one value
 # meant answering for all of them, which is what a menu exists to avoid.
 wt_monitors() {
-  local _i _ai _donerow _land _pick _before _row _key
+  local _i _ai _donerow _land _pick _before _row _key _ambiguous
   while :; do
     menu_reset
     _i=0
+    _ambiguous=0
     while [ "$_i" -lt "${#WT_F_KEY[@]}" ]; do
-      if _ai=$(wt_answer_index "${WT_F_KEY[$_i]}"); then
+      if [ "${WT_F_TWINS[$_i]}" -gt 1 ]; then
+        # specs/configure.md 6.4. Drawn, and unpickable: the second panel must
+        # not be invisible, and configuration written against this identity
+        # could never switch anything, because display_resolve already refuses
+        # to resolve an id matching more than one output. So the walkthrough
+        # declines to write configuration it knows the switcher cannot use --
+        # the same rule that makes it refuse a duplicate name (6).
+        menu_add "${WT_F_NAME[$_i]}" \
+          "$(printf '%s monitors report the same id and cannot be told apart' "${WT_F_TWINS[$_i]}")"
+        menu_disable "$_i"
+        _ambiguous=1
+      elif _ai=$(wt_answer_index "${WT_F_KEY[$_i]}"); then
         menu_add "${WT_F_NAME[$_i]}" "$(printf '%s: %s' "${WT_A_LABEL[$_ai]}" \
                     "$(map_computers "${WT_A_MAP[$_ai]}" | paste -sd/ -)")"
       else
@@ -753,17 +800,28 @@ wt_monitors() {
     _donerow=${#MENU_ITEMS[@]}
     menu_add 'Done' ''
 
-    # The first panel nobody has answered for, else the way out.
+    # The first panel nobody has answered for, else the way out. Never lands on
+    # one it would refuse: the cursor starting on an unpickable row reads as the
+    # menu being broken rather than as the panel being the problem.
     _land=$_donerow
     _i=0
     while [ "$_i" -lt "${#WT_F_KEY[@]}" ]; do
-      if ! wt_answer_index "${WT_F_KEY[$_i]}" >/dev/null; then _land=$_i; break; fi
+      if [ "${WT_F_TWINS[$_i]}" -le 1 ] && ! wt_answer_index "${WT_F_KEY[$_i]}" >/dev/null; then
+        _land=$_i; break
+      fi
       _i=$(( _i + 1 ))
     done
 
     printf '\n--- monitors ---\n' >&2
     printf 'Which of these should follow the switch, and which input is each\n' >&2
     printf 'computer on?\n\n' >&2
+    if [ "$_ambiguous" = 1 ]; then
+      # 6.4 is explicit that guessing is barred -- not the first, not the active
+      # one, not the lowest index -- for the reason ../AGENTS.md gives about
+      # display indices: a wrong guess aims a real switch at the wrong panel.
+      printf '  A switch cannot aim at one of them, so a greyed row cannot be set up.\n' >&2
+      printf '  Unplugging one is the honest remedy today.\n\n' >&2
+    fi
     select_one --default "$_land" --escapable
     _pick=$MENU_PICK
     [ "$_pick" -lt 0 ] && return 0

@@ -149,4 +149,59 @@ printf 'computer.this = mac\ndisplay.dup.vendor = 0x06B3\ndisplay.dup.product = 
 run_tk status --config "$AMB"
 assert_match "$TK_OUT" 'two inputs both name mac'
 
+# =============================================================================
+# 5. an identity that names more than one attached panel
+# =============================================================================
+#
+# The switch has already been refused by the time anyone reads status: resolution
+# is by EDID vendor:product and refuses on more than one match. So the panel just
+# stops following, and the reason goes to a log nobody opens -- because the
+# symptom is a monitor that used to work and now does not.
+
+it 'names a configured panel whose id matches more than one attached monitor'
+fake_displays "$FAKE_LG" "$FAKE_ASUS" "$FAKE_ASUS_TWIN"
+run_tk status --config "$CFG"
+assert_match "$TK_OUT" 'more than one attached monitor matches'
+assert_match "$TK_OUT" 'the switch refuses rather than guessing'
+assert_match "$TK_OUT" 'asus'
+
+it 'and says how many, because the resolver knows'
+# 5.1: "more than one" is the least it knows; a number is better and nothing
+# stops it being printed.
+assert_match "$TK_OUT" '2 of them do'
+
+it 'says nothing about the panel that is fine'
+# One line naming `asus` -- the LG resolves to exactly one and is not this
+# condition. A warning that swept in every panel would train people to ignore it.
+assert_equal 1 "$(printf '%s\n' "$TK_OUT" | grep -c 'more than one attached monitor matches')"
+assert_no_match "$(printf '%s\n' "$TK_OUT" | grep 'WARNING')" ' lg '
+
+it 'offers no fix, because there is none'
+# 5.2, and the opposite of 3.1 where `configure` IS the fix. `configure` cannot
+# resolve this, and suggesting it as though it could is worse than saying
+# nothing -- the person runs it, nothing improves, and the message loses credit.
+_warn=$(printf '%s\n' "$TK_OUT" | sed -n '/more than one attached monitor matches/,$p')
+assert_no_match "$_warn" 'Fix: trigger-kvm configure'
+
+it 'and names neither panel as the one that will be used'
+# Nothing chooses. A line implying something did is worse than the silence this
+# replaces -- it would read as "handled" when the panel is not switching at all.
+assert_no_match "$_warn" 'will be used'
+assert_no_match "$_warn" 'using'
+assert_no_match "$_warn" 'HDMI'
+
+it 'does NOT report a configured panel that is merely ABSENT'
+# Zero matches and two matches are different states with different remedies, and
+# only the second is this section. Reporting both under one wording would send
+# someone unplugging a monitor that is not plugged in.
+fake_displays "$FAKE_LG"
+run_tk status --config "$CFG"
+assert_no_match "$TK_OUT" 'more than one attached monitor matches'
+
+it 'reports nothing on an ordinary desk where every panel is unique'
+fake_displays "$FAKE_LG" "$FAKE_ASUS"
+run_tk status --config "$CFG"
+assert_no_match "$TK_OUT" 'more than one attached monitor matches'
+assert_match "$TK_OUT" 'inputs   :'
+
 finish
