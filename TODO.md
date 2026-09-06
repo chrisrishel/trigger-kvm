@@ -1,3 +1,17 @@
+- **Send something over `dxva2` on the shipped path, and watch it.** Nothing ever has:
+  every dxva2 run to date was `-WhatIf`, so under hard rule 3 no claim is made that a
+  panel has moved over it (`docs/decisions/003`, `ROADMAP.md`). No re-cabling needed --
+  measured 2026-09-02, `trigger-kvm list` reports both panels as `nvapi, dxva2` with the
+  ASUS on the 4090, so the motherboard output's 138 Hz -> 60 Hz cost does not apply.
+  Order: terminal onto the LG FIRST (hard rule 4; the ASUS is the panel moving); point
+  the ASUS at `transport = dxva2`; `pull` and `to mac` BOTH directions, confirmed BY EYE
+  -- the pull-back from an inactive link is the one that matters; confirm the boot row is
+  drawn disabled and says why while dxva2 is set; set the ASUS back to `nvapi`, verify,
+  restore the boot tier; record the readings in `docs/measurements.md`, dated.
+  Still not measured and must not be claimed either way: AMD, a DisplayPort motherboard
+  output, and anything sent to the LG over Intel. Trigger: next time the ASUS can be
+  spared for a few minutes. (Was Phase B of the dxva2 plan, `.context/PLAN.md`.)
+
 - **Verify the boot tier on a real standard (non-admin) account.** The install path no
   longer lets the elevated child derive its own answers -- `install.ps1` passes
   `-ForUser` and `-ForAppData`, every path and principal is built from those, and the
