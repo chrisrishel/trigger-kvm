@@ -76,6 +76,11 @@ ASUS PG42UQ    displayId=0x80061083   outputId=0x00000100   HDMI
 LG 45GX950A    displayId=0x80061082   outputId=0x00000200   DisplayPort
 ```
 
+All four values still read the same on 2026-09-05, across the three cold boots
+logged since and the ASUS's cable moving off the 4090 and back
+(`../docs/measurements.md`, "Display identity"). Unlike `isActive` below, these
+have been checked for stability rather than assumed to have it.
+
 `NV_GPU_DISPLAYIDS.flags`: bit 6 (`0x40`) isConnected, bit 2 (`0x04`) isActive.
 **Use isConnected. Do not gate anything on isActive** -- it read `False` for both
 panels at 15:51 and `True` for both at 16:13 *in the same interactive session*, with

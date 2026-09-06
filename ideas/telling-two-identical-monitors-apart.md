@@ -1,10 +1,12 @@
 # Telling two identical monitors apart
 
-**Status:** exploratory. Nothing built, and it should not be built until the one
-measurement below is taken. The sibling note for the same problem on the trigger
-side is `telling-two-identical-devices-apart.md`, whose design is settled and
-shipped (revision 12); much of the reasoning here is that argument re-checked
-against displays rather than re-derived.
+**Status:** exploratory, nothing built -- but **the measurement it was blocked on
+has been taken (2026-09-05) and the design survives it**: `OutputId` is a port
+identity, not a per-boot handle. See "The measurement it was waiting on" below,
+which also settles which NVAPI field to record. The sibling note for the same
+problem on the trigger side is `telling-two-identical-devices-apart.md`, whose
+design is settled and shipped (revision 12); much of the reasoning here is that
+argument re-checked against displays rather than re-derived.
 
 The question this started from: what happens if someone attaches two identical
 monitors? Nobody here owns a pair, so every claim about the two-panel case is
@@ -51,9 +53,13 @@ placeholder. A discriminator that some vendors decline to populate is not a
 solution to telling twins apart -- it is a solution to telling *some* twins
 apart, with the refusal path still needed underneath for the rest.
 
-Descriptor `0xFF` (the ASCII serial string) is unparsed and might carry a real
-one where the numeric field does not. That is a real option, and it is
-deliberately not being pursued: see "Rejected while drafting".
+**Descriptor `0xFF` (the ASCII serial string) is a better version of the same
+idea, and it is populated on both panels here** -- ASUS `AS0000000001`, LG
+`LG0000000001`, measured 2026-09-05. That is a correction: this note previously
+leaned on the numeric placeholder to argue the serial route was holed, and the
+placeholder turns out to be a property of that one FIELD, not of the panel. It
+remains deliberately not pursued, but for a narrower reason than before -- see
+"Rejected while drafting", which has been rewritten rather than merely re-stated.
 
 ## THE DESIGN: the port, as a tiebreak, consulted only on ambiguity
 
@@ -64,7 +70,7 @@ it is used.
 ```
 display.left.vendor  = 0x10AC
 display.left.product = 0x41A2
-display.left.output  = 0x00000100     # tiebreak; consulted ONLY on ambiguity
+display.left.output  = 0x80061082     # tiebreak; consulted ONLY on ambiguity
 ```
 
 Resolution becomes:
@@ -76,10 +82,11 @@ Resolution becomes:
 | several, one at `output` | **the tiebreak decides -- the case vendor:product alone cannot** |
 | several, none at `output` | still ambiguous: refuse, as today, and say so in `status` |
 
-On Windows the value is NVAPI's `OutputId`
-(`windows/trigger-kvm.ps1:245`, `:493`, `:507`). Its contents are the platform's,
-on the same shared-key / per-platform-vocabulary pattern as `transport`
-(revision 9): a config is machine-local and never copied between hosts.
+On Windows the value is NVAPI's `displayId` (`windows/trigger-kvm.ps1:508`), for
+the reasons under "Which field to record" below -- the key is named `output`
+because that is the shared vocabulary; what a platform puts in it is its own, on
+the same pattern as `transport` (revision 9). A config is machine-local and never
+copied between hosts.
 
 ### Why displays are a BETTER case for a port tiebreak than triggers were
 
@@ -149,18 +156,52 @@ Beyond that: one additive config key; the resolver table above; the answer looku
 keyed by EDID in the walkthrough on both platforms; and `list -Raw` gains a field
 (append-only, which the format already supports -- `windows/trigger-kvm.ps1:1050`).
 
-## What must be measured before any of this is built
+## The measurement it was waiting on -- taken 2026-09-05, and it holds
 
-**Is `OutputId` a port identity or a per-boot handle?** If it does not survive a
-reboot the design collapses. This repo has been burned by exactly this class of
-NVAPI field before: `nvapi-transport.md` records `isActive` reading `False` then
-`True` in one session with nothing changed, and *"what it tracks is not
-established."*
+**Is `OutputId` a port identity or a per-boot handle?** A port identity, on this
+machine. It and `displayId` both came back from a cold reboot unchanged, and both
+had already survived the ASUS leaving the 4090 for the motherboard output and
+returning -- an event over which the GDI name took a *third* value. Neither
+tracks enumeration order either: the LG's index moved from `display[0]` to
+`display[1]` between two readings while both its ids stood still. The values,
+dates, and the boot-type evidence that the restart was a cold boot rather than a
+fast-startup resume are in `../docs/measurements.md`.
 
-A pre-reboot baseline is recorded in `../docs/measurements.md` (2026-09-05): LG
-`0x00000200`, ASUS `0x00000100`. Re-read after a restart and compare. Worth
-settling in the same pass: whether `displayId` (system-unique per NVAPI) is a
-better key than `OutputId` (a per-GPU bitmask two GPUs could collide on).
+**So the design above has a foundation.** The caution that put this section here
+was right to exist -- `nvapi-transport.md` records `isActive` reading `False`
+then `True` in one session with nothing changed, and *"what it tracks is not
+established"* -- and what answers it is two fields on ONE machine with ONE GPU,
+across three logged reboots and one cable move. Another driver version is
+unmeasured, and so is any second card.
+
+### Which field to record: `displayId`, not `OutputId`
+
+Both proved stable and both are already on the enumerated row
+(`windows/trigger-kvm.ps1:507-508`), so the choice is free either way and turns
+on one asymmetry:
+
+- **`OutputId` is a single-bit mask scoped to one GPU.** Two cards, and GPU0's
+  first port and GPU1's first port both read `0x00000100`.
+- **`displayId` is system-unique** -- NVAPI's documentation, not measured here.
+
+Equal cost, and one of them has a collision case while the other has none. Take
+the one with nothing to reason about.
+
+**That collision would not be dangerous, which is why this is a preference and
+not a safety argument.** Two identical panels on two cards at symmetric ports,
+config recording `0x00000100`: the tiebreak matches BOTH candidates, so it does
+not decide, and resolution falls to the last row of the table above -- refuse,
+and say so in `status`. Fail-closed, exactly as today. It cannot mis-aim, and
+hard rule 5's transport gate is untouched either way.
+
+**Recording `displayId` does not put it on the write path.** `GetEDID` and
+`I2CWrite` take the legacy `OutputId` (`nvapi-transport.md`, "the output-id
+trap") and still would: the tiebreak SELECTS a row, and the row carries its own
+`OutputId` for the write. The qualifier never aims anything.
+
+One consequence for whoever builds it: the field `list -Raw` would gain is
+`displayId`, which it does not carry today -- it exposes `outputId`
+(`windows/trigger-kvm.ps1:1050-1052`), and `configure` reads that output.
 
 **Not measurable here:** anything about the two-panel case itself. Both suites
 are built so they cannot move a monitor, and hard rule 3 says a switch is
@@ -218,17 +259,35 @@ implementation, then a `specs/CHANGELOG.md` entry and this platform's
 
 **Layering the EDID serial underneath the port as a first-choice tiebreak.** It
 has exactly one advantage -- it survives a cable move between ports -- and the
-2026-09-05 measurement says it would be absent on some panels, so the port
-mechanism has to exist underneath it anyway. Paying for a second mechanism, live
-on some fraction of desks, to cover a rare event the port tiebreak already
-announces, is structure that has not earned its existence. Recorded here so it is
-not re-proposed from first principles.
+port mechanism has to exist underneath it anyway, so it is a second mechanism
+bought to cover a rare event the port tiebreak already announces. That is
+structure which has not earned its existence. Recorded here so it is not
+re-proposed from first principles.
 
-**Parsing EDID descriptor `0xFF` to find a better serial.** Same reasoning: it
-would improve the serial option, and the serial option is not the one being
-taken. Worth revisiting only if `OutputId` turns out not to survive a reboot, at
-which point this becomes the fallback design and the descriptor is the first
-thing to measure.
+**Rewritten 2026-09-05, because its original reason was wrong.** This entry used
+to say the serial "would be absent on some panels" on the strength of the ASUS's
+`0x01010101`. Descriptor `0xFF` then turned out to be populated on *both* panels
+here, so that premise is false and is not what carries the rejection. What
+carries it is weaker but still standing: descriptor `0xFF` is **optional** in the
+EDID standard, so a panel without one is a case the design must handle whatever
+this desk shows; and n=2 on one desk says nothing about the property that would
+actually matter, which is whether two units of the SAME model carry *different*
+strings. Nobody here has twins to check that on. A tiebreak whose discriminating
+power is untested on the only case it exists for does not displace one that is
+measured.
+
+**So the port stays the design, and this is now a live alternative rather than a
+closed one.** If someone turns up with two identical panels, the cheap first
+measurement is whether their `0xFF` strings differ -- and if they do, the
+trade-off (survives a cable move; needs the port path underneath anyway for
+panels lacking the descriptor) is worth re-arguing rather than re-reading.
+
+**Parsing EDID descriptor `0xFF` in the switcher.** Not needed by the design
+above, and it is worth noting how it would have to be done if it ever is: WMI
+surfaces the string today (`WmiMonitorID.SerialNumberID`, which is how it was
+measured) but the boot tier may not use WMI as an identity source
+(`windows/AGENTS.md`), so shipping code would parse the descriptor out of the
+EDID block NVAPI already returns.
 
 **Making the serial or the port a primary key rather than a tiebreak.** It would
 break panel replacement: swap a monitor for an identical model and its

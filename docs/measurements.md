@@ -268,15 +268,73 @@ the LG's serial is a plausible per-unit value and stable across all four of its
 inputs (see below), while the ASUS's is not plausible as one.
 
 Only EDID bytes 12-15 are parsed (`windows/trigger-kvm.ps1:512-513`). **Descriptor
-tag `0xFF`, the ASCII serial-number string, is not read** -- it is where a real
-per-unit serial usually lives when the numeric field is a placeholder, and
-whether the ASUS carries one is unmeasured.
+tag `0xFF`, the ASCII serial-number string, is not read by this code** -- it is
+where a real per-unit serial lives when the numeric field is a placeholder, and
+**both panels here carry one.** Measured 2026-09-05 from
+`WmiMonitorID.SerialNumberID`, which surfaces that descriptor: ASUS
+`AS0000000001`, LG `LG0000000001`. So `0x01010101` is a property of this ASUS's
+numeric FIELD, not of the panel. This section previously called that unmeasured
+while the 2026-09-01 entry below had already recorded the ASUS string in passing;
+the two are now in step.
 
-The `outputId` values are a **pre-reboot baseline**, taken so the question "is
-`OutputId` a port identity or a per-boot handle?" can be answered by re-reading
-them after a restart. Nothing rests on them yet. They come from
-`NvAPI_SYS_GetGpuAndOutputIdFromDisplayId` and are what `NvAPI_I2CWrite` is
+Two limits on what that licenses. Descriptor `0xFF` is **optional** in the EDID
+standard, so "both panels here have one" is n=2 and says nothing about panels
+generally -- and nothing here measures whether two units of one model carry
+*different* strings, which is the only property that would matter for telling
+twins apart. And WMI is not available to the switcher's boot tier
+(`windows/AGENTS.md`: NVAPI is the only identity source it may use), so reading
+this in shipping code means parsing the descriptor out of the EDID block NVAPI
+already returns, not calling WMI.
+
+The `outputId` values above are a **pre-reboot baseline**, taken so the question
+"is `OutputId` a port identity or a per-boot handle?" could be answered by
+re-reading them after a restart. **It has been -- see the next entry.** They come
+from `NvAPI_SYS_GetGpuAndOutputIdFromDisplayId` and are what `NvAPI_I2CWrite` is
 already aimed at (`windows/trigger-kvm.ps1:245`, `:493`).
+
+**2026-09-05, Windows -- `OutputId` and `displayId` both survived a cold reboot,
+unchanged.** Re-read after a restart at 19:59:57, by two independent paths: the
+switcher's own resolution via `trigger-kvm pull -WhatIf` at 20:03 (which prints
+the packets it would send and sends nothing) and `nvapi-probe.ps1` at 20:05
+(read-only; it never resolves `NvAPI_I2CWrite`). The restart was a real
+one: `Kernel-Boot` event 27 reports **boot type `0x0`**, a cold boot -- not `0x1`
+(hybrid, i.e. fast startup) and not `0x2` (resume from hibernate), either of
+which restores the previous kernel session instead of re-enumerating, and would
+have made the reading meaningless.
+
+| panel | connector | displayId | outputId |
+|---|---|---|---|
+| LG ULTRAGEAR+ | DisplayPort | `0x80061082` | `0x00000200` |
+| ASUS PG42UQ | HDMI | `0x80061083` | `0x00000100` |
+
+Every value identical to the baseline. **On this machine `OutputId` is a port
+identity, not a per-boot handle**, and `displayId` is equally stable. Three
+further observations widen the span, with all four values agreeing throughout:
+
+- **The same four values were recorded by the phase-1 probe runs**
+  (`ideas/nvapi-transport.md`), the last of them 2026-08-30 16:13 -- the runs the
+  `isActive` entry below is drawn from. Three cold boots are logged since: 16:21
+  that same day, 2026-09-01 22:36, and 2026-09-05 19:59.
+- **The ASUS left the card entirely and came back to the same values.** Its PC
+  cable moved to the motherboard HDMI output on 2026-09-01 and back to the 4090
+  afterwards, restoring the PnP instance path exactly (see the 2026-09-01 entry
+  below). Its NVAPI ids are what they were before the move -- while over that same
+  event its GDI name did *not* return, taking a third value (`\\.\DISPLAY1` ->
+  `\\.\DISPLAY7` -> `\\.\DISPLAY3`). One identifier stable across it, one not.
+- **Neither id tracks enumeration order.** On 2026-09-01, with the ASUS on the
+  Intel output, the LG was the only connected NVIDIA display and enumerated as
+  `display[0]` carrying `displayId=0x80061082 outputId=0x00000200`. Today it
+  enumerates as `display[1]` carrying the same two values. The index moved; the
+  ids did not.
+
+**What this does NOT measure.** The machine has one GPU (`gpus=1` in every probe
+run), so nothing here exercises the case that separates the two fields:
+`outputId` is a single-bit mask scoped to ONE GPU, so on a two-card machine
+GPU0's first port and GPU1's first port both read `0x00000100`, whereas NVAPI
+documents `displayId` as system-unique. That difference is structural and comes
+from NVIDIA's documentation, not from a reading here. Also unmeasured: another
+driver version, another machine, and moving a cable between two sockets on the
+same card (`TODO.md` carries that last one).
 
 **2026-08-30, Windows -- session 0 reports one phantom monitor.** `nvapi-probe.ps1`
 as SYSTEM and as an unelevated S4U task: `EnumDisplayMonitors` returned **1** in

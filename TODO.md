@@ -43,23 +43,13 @@
   on the ASUS first (hard rule 4). Expect no change -- EDID vendor+product are
   unaffected and `outputId` is resolved fresh. Trigger: next time the machine is
   open, or before anyone documents the re-plug behaviour as a guarantee.
-  Note: that expectation holds only while nothing STORES an `outputId`. If the
+  Note: that expectation holds only while nothing STORES a per-port id. If the
   tiebreak in `ideas/telling-two-identical-monitors-apart.md` is ever built, this
   same measurement also answers "how stale does a stored one get, and when?" --
-  so take the reading either way, and record it against both.
-
-- **Re-read `outputId` after a reboot.** It decides whether NVAPI's `OutputId` is
-  a port identity or a per-boot handle, and therefore whether the tiebreak design
-  in `ideas/telling-two-identical-monitors-apart.md` has a foundation at all.
-  Baseline taken 2026-09-05 and recorded in `docs/measurements.md`: LG
-  `0x00000200`, ASUS `0x00000100`. Check: `trigger-kvm pull -WhatIf` (read-only;
-  it resolves and prints the packets without sending) and compare both values.
-  Same values means a port identity; different means the design collapses and the
-  fallback is the EDID `0xFF` descriptor, per that note's rejection list. Worth
-  settling in the same pass whether `displayId` (system-unique per NVAPI) is a
-  better key than `OutputId` (a per-GPU bitmask two GPUs could collide on).
-  This repo has been wrong about an NVAPI field's meaning before -- `isActive`,
-  `docs/measurements.md` 2026-08-30. Trigger: the next reboot of this machine.
+  so take the reading either way, and record it against both. Record `displayId`
+  as well as `outputId`: the reboot reading (2026-09-05) showed both stable and
+  that note now records `displayId` as the field to store, so a port change is
+  the one event left that could separate them.
 
 - **Write up the deferred advanced escape hatch** (one specific I2C address, one specific
   value, typed by the user, behind a strong disclaimer; never a sweep across a range of
