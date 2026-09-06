@@ -252,6 +252,32 @@ switching on signal loss despite the wording.
 
 ## Display identity
 
+**2026-09-05, Windows -- one of the two panels here reports an EDID serial of
+`0x01010101`.** `trigger-kvm list -Raw` on the reference desk:
+
+| panel | EDID | connector | EDID serial | outputId |
+|---|---|---|---|---|
+| LG ULTRAGEAR+ | `1E6D:9E9D` | DisplayPort | `0x00001111` | `0x00000200` |
+| ASUS PG42UQ | `06B3:42E0` | HDMI | `0x01010101` | `0x00000100` |
+
+**What is measured is the value, not what it means.** `0x01010101` has the shape
+of a placeholder, and the obvious inference is that a second PG42UQ would read
+the same -- but there is only one of them here, so that is an inference and this
+file's preamble is about exactly this. What can be said without a second unit:
+the LG's serial is a plausible per-unit value and stable across all four of its
+inputs (see below), while the ASUS's is not plausible as one.
+
+Only EDID bytes 12-15 are parsed (`windows/trigger-kvm.ps1:512-513`). **Descriptor
+tag `0xFF`, the ASCII serial-number string, is not read** -- it is where a real
+per-unit serial usually lives when the numeric field is a placeholder, and
+whether the ASUS carries one is unmeasured.
+
+The `outputId` values are a **pre-reboot baseline**, taken so the question "is
+`OutputId` a port identity or a per-boot handle?" can be answered by re-reading
+them after a restart. Nothing rests on them yet. They come from
+`NvAPI_SYS_GetGpuAndOutputIdFromDisplayId` and are what `NvAPI_I2CWrite` is
+already aimed at (`windows/trigger-kvm.ps1:245`, `:493`).
+
 **2026-08-30, Windows -- session 0 reports one phantom monitor.** `nvapi-probe.ps1`
 as SYSTEM and as an unelevated S4U task: `EnumDisplayMonitors` returned **1** in
 each case, not DDC-capable, while NVAPI enumerated both real panels with their
