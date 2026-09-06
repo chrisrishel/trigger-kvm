@@ -950,7 +950,7 @@ wt_path() {
 # --- writing -----------------------------------------------------------------
 
 wt_write_config() {
-  local _path _i _l _c _other
+  local _path _i _l _c _w _other
   _path=$1
   mkdir -p "$(dirname "$_path")"
   {
@@ -967,13 +967,13 @@ wt_write_config() {
     echo '#   trigger-kvm list'
     echo ''
     echo '# --- install ----------------------------------------------------------'
-    printf 'install.autostart = %s\n' "${WT_TIER:-login}"
+    config_line 'install.autostart' "${WT_TIER:-login}"
     echo ''
     echo '# --- computers --------------------------------------------------------'
     echo '# What this computer is called below. `trigger-kvm pull` means "point every'
     echo '# display at this one"; `trigger-kvm to mac` names any other.'
     echo ''
-    printf 'computer.this = %s\n' "$WT_THIS"
+    config_line 'computer.this' "$WT_THIS"
     echo ''
     echo '# --- displays ---------------------------------------------------------'
     echo '# method: standard (I2C src 0x51, VCP 0x60) -- what nearly every panel takes'
@@ -986,13 +986,16 @@ wt_write_config() {
     _i=0
     while [ "$_i" -lt "${#WT_A_KEY[@]}" ]; do
       _l=${WT_A_LABEL[$_i]}
-      printf 'display.%s.vendor  = %s\n' "$_l" "${WT_A_VENDOR[$_i]}"
-      printf 'display.%s.product = %s\n' "$_l" "${WT_A_PRODUCT[$_i]}"
-      printf 'display.%s.name    = %s\n' "$_l" "${WT_A_NAME[$_i]}"
-      printf 'display.%s.method  = %s\n' "$_l" "${WT_A_METHOD[$_i]}"
+      # The width that lines this block up is the longest key in it,
+      # `display.<label>.product` -- computed rather than written out, so a
+      # longer label still aligns instead of shifting one row.
+      _w=$(( 16 + ${#_l} ))
+      config_line "display.$_l.vendor"  "${WT_A_VENDOR[$_i]}"  "$_w"
+      config_line "display.$_l.product" "${WT_A_PRODUCT[$_i]}" "$_w"
+      config_line "display.$_l.name"    "${WT_A_NAME[$_i]}"    "$_w"
+      config_line "display.$_l.method"  "${WT_A_METHOD[$_i]}"  "$_w"
       for _c in $(map_computers "${WT_A_MAP[$_i]}"); do
-        printf 'display.%s.input.%s = %s\n' "$_l" \
-          "$(tk_lower "$(map_get "${WT_A_MAP[$_i]}" "$_c")")" "$_c"
+        config_line "display.$_l.input.$(tk_lower "$(map_get "${WT_A_MAP[$_i]}" "$_c")")" "$_c"
       done
       echo ''
       _i=$(( _i + 1 ))
@@ -1011,9 +1014,9 @@ wt_write_config() {
     echo '# device: usb:VVVV:PPPP (bare VVVV:PPPP means usb) or bt:AAAAAAAAAAAA.'
     echo '#         Bluetooth fires on CONNECTED, and every PAIRED device is offered.'
     echo ''
-    printf 'trigger.device   = %s\n' "$(printf '%s' "${WT_DEVICES[*]+${WT_DEVICES[*]}}" | sed 's/ /, /g')"
-    printf 'trigger.debounce = %s\n' "$(wt_keep 'trigger.debounce' '3.0')"
-    printf 'trigger.settle   = %s\n' "$(wt_keep 'trigger.settle' '0.75')"
+    config_line 'trigger.device'   "$(printf '%s' "${WT_DEVICES[*]+${WT_DEVICES[*]}}" | sed 's/ /, /g')" 16
+    config_line 'trigger.debounce' "$(wt_keep 'trigger.debounce' '3.0')"  16
+    config_line 'trigger.settle'   "$(wt_keep 'trigger.settle' '0.75')"   16
     echo ''
     # Every key this walkthrough did not write is carried across
     # (specs/config-format.md, "Hand edits survive"): someone's hand edit, or
@@ -1046,7 +1049,11 @@ wt_other_keys() {
         case " $_managed " in *" $_l "*) ;; *) continue ;; esac
         case $_rest in vendor|product|name|method|input.*) continue ;; esac ;;
     esac
-    printf '%s = %s\n' "$_k" "$_v"
+    # Carried through, and sanitised on the way like everything else. A value
+    # read from the file has already been cut at `#` by the reader, so this
+    # cannot restore what was lost -- and must not pretend to. What it does
+    # prevent is a hand edit surviving one round trip and breaking the next.
+    config_line "$_k" "$_v"
   done | sort
 }
 

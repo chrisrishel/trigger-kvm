@@ -174,4 +174,63 @@ cfg 'trigger.device = 046D:0843, usb:1235:820a, bt:0011223344FF'
 assert_equal 'usb:046d:0843 usb:1235:820a bt:0011223344ff' \
   "$(config_trigger_devices | tr '\n' ' ' | sed 's/ $//')"
 
+# --- writing: what goes in must come back out --------------------------------
+#
+# specs/config-format.md, "A writer must not write what it cannot read back".
+# Asserted as a ROUND TRIP through the real reader rather than against expected
+# output text: the property is that the two agree, and a test that only checked
+# the writer's string could drift from the parser exactly as the writer did.
+
+roundtrip() { printf '%s\n' "$(config_line 'display.x.name' "$1")" >"$FAKE_DIR/c"
+              config_load "$FAKE_DIR/c"; config_get 'display.x.name'; }
+
+it 'a value containing # survives, because # is removed and not escaped'
+# The live defect: this was written intact and read back as `ACME`. There is no
+# escape in this format, and inventing one is a rule two readers could differ on.
+assert_equal 'ACME 1 Display' "$(roundtrip 'ACME #1 Display')"
+
+it 'an LF-terminated EDID descriptor does not split the line in half'
+# EDID descriptor strings are LF-terminated by the standard, so this wrote a
+# broken line that also swallowed the key on the line after it.
+assert_equal 'Panel name' "$(roundtrip "$(printf 'Panel\nname')")"
+
+it 'a CR does not ride on the value'
+assert_equal 'Panel name' "$(roundtrip "$(printf 'Panel\rname')")"
+
+it 'leading and trailing whitespace is trimmed by the writer, not just the reader'
+# The round trip alone cannot prove this -- config_load trims too, so it would
+# hold either way. What depends on the WRITER trimming is version.txt: cmd_status
+# reads it with a sed that strips what is before the value and not what is after,
+# so an untrimmed writer hands `status` a version with spaces on the end of it.
+assert_equal 'Panel' "$(roundtrip '   Panel   ')"
+assert_equal 'a = Panel' "$(config_line 'a' '   Panel   ')"
+assert_equal 'a = Panel' "$(config_line 'a' '#  Panel')"
+
+it 'a tab inside a value becomes a space, as it does on Windows'
+# The reader would keep an internal tab verbatim, so this is not needed for the
+# round trip -- it is here so the same panel name produces the same bytes on both
+# platforms. windows/config.ps1 collapses \s+, and matching it costs nothing.
+assert_equal 'Panel name' "$(roundtrip "$(printf 'Panel\tname')")"
+
+it 'an = inside a value needs no treatment and is not a second separator'
+assert_equal 'W=1920' "$(roundtrip 'W=1920')"
+
+it 'an empty value stays empty rather than becoming a broken line'
+assert_equal '' "$(roundtrip '')"
+
+it 'a value that is nothing but # and space reduces to empty, not to a stray key'
+assert_equal '' "$(roundtrip '  #  ')"
+
+it 'ordinary text is untouched'
+assert_equal 'LG ULTRAGEAR+' "$(roundtrip 'LG ULTRAGEAR+')"
+
+it 'the key is padded to line a block up, and the padding is not part of the key'
+assert_equal 'display.lg.name    = LG' "$(config_line 'display.lg.name' 'LG' 18)"
+printf '%s\n' "$(config_line 'display.lg.name' 'LG' 18)" >"$FAKE_DIR/c"
+config_load "$FAKE_DIR/c"
+assert_equal 'LG' "$(config_get 'display.lg.name')"
+
+it 'and with no width it pads nothing'
+assert_equal 'a = b' "$(config_line 'a' 'b')"
+
 finish

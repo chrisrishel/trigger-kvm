@@ -415,6 +415,41 @@ for f in "$TESTS_DIR"/*.tests.sh; do
   assert_equal 'finish' "$last" "$(basename "$f") must end in finish"
 done
 
+# =============================================================================
+# Every config value is written through one door
+# =============================================================================
+#
+# specs/config-format.md, "A writer must not write what it cannot read back".
+# This went wrong because a dozen sites each wrote their value straight through,
+# so the fix has to be a property of writing rather than a thing each site
+# remembers -- which is only true while no site writes a `key = value` line by
+# itself. No single mutation reproduces that, so it is scanned for.
+
+config_writes() {
+  grep -rn "printf '[a-z][A-Za-z0-9_.%]*  *=" "$@" | grep -vc '^[^:]*:[0-9]*: *#' || true
+}
+
+it 'no config line is printed outside config_line'
+hits=$(config_writes "$MAC_DIR/lib" "$TK" "$MAC_DIR/install.sh")
+assert_equal 0 "$hits" 'a value written straight through is a value not sanitised'
+
+it 'and the scan that says so can see one, and ignores a comment'
+# Without this the assertion above passes for as long as nobody writes a config
+# line in a shape the grep happens not to match, and means nothing after that.
+probe=$(mktemp "$FAKE_DIR/probe.XXXXXX")
+printf '%s\n' \
+  '  config_line "display.$_l.name" "$name" "$_w"' \
+  "# printf 'display.%s.name    = %s\\n' in a comment is documentation" >"$probe"
+assert_equal 0 "$(config_writes "$probe")" 'the helper and a comment are not writes'
+printf '%s\n' "  printf 'display.%s.name    = %s\\n' \"\$_l\" \"\$name\"" >>"$probe"
+assert_equal 1 "$(config_writes "$probe")" 'a bare config-line printf must be counted'
+
+it 'and config_line is the only place the sanitiser is applied'
+# If a second caller applied config_to_value by hand, the guarantee would be
+# "everywhere someone remembered" again.
+owner=$(grep -rln 'config_to_value' "$MAC_DIR/lib" | sort)
+assert_equal "$MAC_DIR/lib/config.sh" "$owner"
+
 it 'every CLAUDE.md is an import of the AGENTS.md beside it, never a second copy'
 # Claude Code reads CLAUDE.md, not AGENTS.md; the @ import is how it gets the
 # same instructions. Anything else at the top of a CLAUDE.md is a second copy

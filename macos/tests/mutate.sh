@@ -487,6 +487,23 @@ mutate 'status: the warning is printed even with nothing configured' lib/manage.
 mutate 'status: a panel with no inputs is dropped from the map' lib/manage.sh status.tests.sh \
   "s@      \[ -n \"\$_row\" \] || _row='no inputs configured'@      [ -n \"\$_row\" ] || continue@"
 
+# --- revision 11: a writer must not write what it cannot read back -----------
+
+mutate 'config: a written value is not sanitised at all' lib/config.sh config.tests.sh \
+  's@config_line() {@config_line() { printf "%-*s = %s\\n" "${3:-0}" "$1" "$2"; return 0@'
+mutate 'config: # is kept, so the value is cut on the next read' lib/config.sh config.tests.sh \
+  "s@  _v=\${_v//\[\$'#\\\\r\\\\n\\\\t\\\\v\\\\f'\]/ }@  _v=\${_v//[\$'\\\\r\\\\n\\\\t\\\\v\\\\f']/ }@"
+mutate 'config: a newline is kept, so one value becomes two lines' lib/config.sh config.tests.sh \
+  "s@  _v=\${_v//\[\$'#\\\\r\\\\n\\\\t\\\\v\\\\f'\]/ }@  _v=\${_v//[\$'#\\\\r\\\\t\\\\v\\\\f']/ }@"
+mutate 'config: the writer does not trim, so the reader has to' lib/config.sh config.tests.sh \
+  's@  _v=\${_v# }; _v=\${_v% }@  :@'
+mutate 'config: the key padding is written into the key' lib/config.sh config.tests.sh \
+  "s@  printf '%-\*s = %s.n' \"\\\${3:-0}\" \"\$1\" \"\$(config_to_value \"\$2\")\"@  printf '%s = %s\\\\n' \"\$(printf '%-*s' \"\${3:-0}\" \"\$1\" | sed 's/ /_/g')\" \"\$(config_to_value \"\$2\")\"@"
+mutate 'config: the panel name is written straight through again' lib/walkthrough.sh conventions.tests.sh \
+  "s@      config_line \"display.\$_l.name\"    \"\\\${WT_A_NAME\[\$_i\]}\"    \"\$_w\"@      printf 'display.%s.name    = %s\\\\n' \"\$_l\" \"\${WT_A_NAME[\$_i]}\"@"
+mutate 'config: carried-through hand edits skip the writer' lib/walkthrough.sh conventions.tests.sh \
+  "s@    config_line \"\$_k\" \"\$_v\"@    printf 'k%s = %s\\\\n' \"\${_k#?}\" \"\$_v\"@"
+
 echo
 if [ "$survived" = "0" ]; then
   echo "all $checked mutations were caught"

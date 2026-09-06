@@ -135,6 +135,47 @@ config_to_word() {
 # A number of seconds as the config allows it: digits, or digits.digits.
 config_is_seconds() { [[ $1 =~ ^[0-9]+(\.[0-9]+)?$ ]]; }
 
+# --- writing -----------------------------------------------------------------
+#
+# specs/config-format.md, "A writer must not write what it cannot read back".
+#
+# Lives HERE, beside the reader, because it is the reader's rules read backwards
+# and the two must never disagree about what survives a round trip -- the same
+# reasoning that put the converters in this file rather than in their callers.
+#
+# THREE characters break the trip, and all three follow from the parser above:
+# `#` cuts the value and has NO escape, CR and LF end the line, and surrounding
+# whitespace is trimmed. They are REMOVED rather than escaped, because this
+# format has no escape and inventing one is exactly the kind of rule two readers
+# drift on.  `=` needs nothing: a value may contain it.
+#
+# NOT hypothetical. A panel's name is written from what the panel reports, and
+# EDID descriptor strings are LF-terminated by the standard: `ACME #1 Display`
+# used to be written intact and read back as `ACME`, on both platforms.
+#
+# Each removed character becomes a SPACE and runs of whitespace then collapse,
+# matching windows/config.ps1's ConvertTo-ConfigValue byte for byte. Deleting
+# outright would glue words together, and two platforms transforming the same
+# panel name differently is a disagreement with no upside.
+config_to_value() {
+  local _v
+  _v=$1
+  _v=${_v//[$'#\r\n\t\v\f']/ }
+  while [ "$_v" != "${_v//  / }" ]; do _v=${_v//  / }; done
+  _v=${_v# }; _v=${_v% }
+  printf '%s' "$_v"
+}
+
+# The ONE way a `key = value` line is written. Sanitising is a property of
+# writing a line rather than something each of a dozen printf sites has to
+# remember -- which is what let this go wrong: every site wrote its value
+# straight through, on both platforms, identically.
+#
+# $3 pads the key so a block of keys lines up; absent, no padding.
+config_line() {
+  printf '%-*s = %s\n' "${3:-0}" "$1" "$(config_to_value "$2")"
+}
+
 # --- the display map ---------------------------------------------------------
 
 # Every display label the config declares, sorted. `[^.]+` matches the

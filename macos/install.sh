@@ -148,14 +148,18 @@ install -m 755 "$0"                 "$TK_PREFIX/install.sh"
 # running what I think I am running?" is otherwise unanswerable -- the installed
 # copy is what `trigger-kvm` resolves to, NOT the source tree you just edited,
 # and a stale install looks exactly like a missing feature.
+# Through config_line like every other key = value this project writes: this
+# file is not the config, but it is the same shape and it is READ BACK, so the
+# same rule applies. `source` is a path, and a checkout under a directory whose
+# name contains `#` would otherwise be stored truncated.
 {
-  printf 'version = %s\n' "$TK_VERSION"
-  printf 'installed = %s\n' "$(date '+%Y-%m-%d %H:%M:%S')"
-  printf 'spec-revision = %s\n' \
+  config_line 'version'   "$TK_VERSION"
+  config_line 'installed' "$(date '+%Y-%m-%d %H:%M:%S')"
+  config_line 'spec-revision' \
     "$(sed -n 's/^revision[[:space:]]*=[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$SRC/SPEC-REVISION" 2>/dev/null | tail -1)"
-  printf 'commit = %s\n' \
+  config_line 'commit' \
     "$(git -C "$SRC" rev-parse --short HEAD 2>/dev/null || echo unknown)"
-  printf 'source = %s\n' "$SRC"
+  config_line 'source' "$SRC"
 } > "$TK_PREFIX/version.txt"
 say "installed to $TK_PREFIX"
 
