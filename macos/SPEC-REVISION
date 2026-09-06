@@ -4,4 +4,4 @@
 # macos/tests/spec.tests.sh fails while this is behind the changelog, so this
 # platform finds out it is out of date from its own test run.
 
-revision = 7
+revision = 8

@@ -758,6 +758,42 @@ tool and the ASUS write isolated out (a `-Only lg` run, so the spray was the onl
 traffic on the wire), the ASUS ignored `SetVCP 0xF4`: no flicker, no setting
 change. The only evidence anyone has on this, for that specific panel.
 
+## Asking whether a watcher is running
+
+**2026-09-06, macOS -- `pgrep` DOES see a boot-tier watcher from a user session,
+so the Windows blindness does not reproduce here.** With the LaunchDaemon tier
+installed and loaded (`launchctl print system/com.chrisrishel.trigger-kvm`
+succeeds, the gui-domain agent is not loaded), `pgrep -f 'event-watch --exec'`
+run from an ordinary Terminal returned **1**. The reason is the tier's defining
+property: the daemon has `UserName` set and runs AS THE USER, so the watcher and
+the caller share a uid and the process is plainly visible. There is no
+session-boundary equivalent of `Win32_Process.CommandLine` coming back empty.
+
+**Counting was still the wrong question, and `status` now asks the lock anyway**
+(`specs/status.md` §2). Two reasons that survive the measurement above:
+
+- The lock is what MAKES a second watcher impossible, so it is the authority on
+  both halves of "is one running, and could there be two". A count can disagree
+  with the thing that enforces the invariant; the lock cannot disagree with
+  itself.
+- Matching on a command line is brittle in the way this project has already been
+  bitten by: the old filter carried `usb-watch --exec` beside `event-watch
+  --exec` precisely because a pre-rename watcher ran unnoticed beside the real
+  one for a day. A lock has no spelling to keep up to date.
+
+Measured the same day, against the real binary: `event-watch --lock-status`
+answers `running` while a watcher holds it and `none` when none does; **a lock
+file whose mode is `000` reads as `running`**, which is the
+`status.md` §2 rule that an existing-but-unopenable lock is a running watcher and
+not an absent one. Asking creates no lock file on a machine that never ran a
+watcher -- `O_CREAT` would leave a stray that the next reader could not
+distinguish from a real one, and under the rule above an unopenable stray reads
+as a watcher. The query needs no explicit `flock(LOCK_UN)`: `close()` drops it,
+the same property that makes a killed watcher leave nothing to take over.
+
+The Windows half of this question -- where counting genuinely could not see the
+watcher -- is under "PowerShell console and language" below.
+
 ## Logs
 
 **2026-08-31, macOS -- copy-truncate under launchd leaves no hole.** A throwaway

@@ -141,7 +141,7 @@ trigger-kvm pull                 point every configured monitor at THIS computer
 trigger-kvm to pc                point them at another, by name -- MANUAL ONLY
 trigger-kvm list                 what is attached, with EDID ids and names
 trigger-kvm discover             what is attached, in the form the config wants
-trigger-kvm status               is it running, what that covers, version, config
+trigger-kvm status               is it running, what that covers, the input map
 trigger-kvm restart              make a hand-edited config take effect now
 trigger-kvm logs                 tail the log
 trigger-kvm pause                stand the watcher down to test by hand

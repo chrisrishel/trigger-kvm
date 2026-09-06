@@ -156,12 +156,21 @@ have. It is blind to three things:
 - **a behavioural change with no new wording** — nothing to grep for
 - **a removed or renamed string** — the check tests presence only, so old wording
   survives and the suite stays green
-- **a whole new spec FILE** — each platform's suite loops over a list of spec
-  names it holds itself, so a file nobody has added to that list is checked by
-  nobody. The revision still catches it, but only if the changelog entry **names
-  the new file and says to add it**; an entry that just describes the behaviour
-  gets the revision bumped and the strings skipped. First hit by `status.md` at
-  revision 8, which is also the first spec file added since these checks existed.
+- **a whole new spec FILE**, wherever a suite loops over a list of spec names it
+  holds ITSELF: a file nobody has added to that list is checked by nobody. The
+  revision still catches it, but only if the changelog entry **names the new file
+  and says to add it**; an entry that just describes the behaviour gets the
+  revision bumped and the strings skipped. First hit by `status.md` at revision
+  8, which is also the first spec file added since these checks existed — and it
+  sat unchecked on macOS for five revisions afterwards.
+
+  **This one is avoidable, and macOS no longer has it**: its loop DERIVES the
+  list from `specs/*.md`, naming only the two files that are not contracts
+  (`README.md`, whose `normative` block is the worked example above, and
+  `CHANGELOG.md`). A new spec then joins by existing, while a new meta-file fails
+  loudly and is excluded deliberately. Windows still holds a list. Deriving is
+  the better shape and neither platform is required to adopt it — a hardcoded
+  list is not wrong, only easy to forget, which is what happened.
 
 [`CHANGELOG.md`](CHANGELOG.md) closes both. Its newest entry number is the spec
 revision; each implementation records the revision it implements in its own

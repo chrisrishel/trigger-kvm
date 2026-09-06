@@ -278,6 +278,67 @@ it 'the refused second watcher exits 0, not as an error'
 run_bounded 8 "$WATCH" --exec /bin/echo --arg TEST --device "$ABSENT" --log "$LOG"
 assert_equal 0 "$BOUNDED_RC"
 
+# =============================================================================
+# --lock-status: the question specs/status.md 2 makes `status` ask
+# =============================================================================
+#
+# The real binary against the real lock, because a fake could only prove that
+# `status` prints what it is told. What matters here is that the ANSWER is
+# right, and the lock is the only thing that knows.
+
+LOCKFILE="$HOME/Library/Application Support/trigger-kvm/watcher.lock"
+
+it 'answers "running" while a watcher holds the lock'
+kill_watchers
+bg_watch --device "$ABSENT" --log "$LOG"
+set +e; out=$("$WATCH" --lock-status 2>&1); rc=$?; set -e
+assert_equal 'running' "$out"
+assert_equal 0 "$rc" 'exit 0 means a watcher is running'
+
+it 'and "none" once it is gone, without disturbing anything'
+kill_watchers
+set +e; out=$("$WATCH" --lock-status 2>&1); rc=$?; set -e
+assert_equal 'none' "$out"
+assert_equal 1 "$rc" 'exit 1 means nothing holds it'
+
+it 'leaves no lock behind, so two asked in a row both say none'
+# It has to TAKE the lock to find out whether it is free, so a query that kept
+# it would make the next one report a watcher that is the previous command.
+# Nothing has to release it explicitly -- the process exits and the kernel drops
+# the flock with the last descriptor -- so this is the guarantee being written
+# down, not a call being guarded. No mutation can break it, and that is why
+# there isn't one.
+set +e; out=$("$WATCH" --lock-status 2>&1); set -e
+assert_equal 'none' "$out" 'the previous query must not still hold the lock'
+
+it 'creates no lock file on a machine that has never run a watcher'
+# O_CREAT here would leave a file behind that the next reader cannot tell from a
+# real lock -- and under the rule below, an unopenable stray would then be read
+# as a running watcher.
+rm -f "$LOCKFILE"
+set +e; out=$("$WATCH" --lock-status 2>&1); set -e
+assert_equal 'none' "$out"
+assert_true "$([ ! -e "$LOCKFILE" ] && echo 0 || echo 1)" 'asking must not create the lock file'
+
+it 'reads a lock it cannot OPEN as running, never as absent'
+# specs/status.md 2: "a lock that exists but cannot be opened by this caller is a
+# RUNNING watcher, not an absent one". That is what a watcher in another session
+# looks like from here, and reading it as absent is the failure the rule exists
+# to prevent -- on Windows it printed `watchers : 0` beside a watcher that was
+# firing. Root can open anything, so this proves nothing as root.
+kill_watchers
+if [ "$(id -u)" = 0 ]; then
+  skip_case 'running as root, which can open a mode-000 file'
+else
+  : >"$LOCKFILE"
+  chmod 000 "$LOCKFILE"
+  set +e; out=$("$WATCH" --lock-status 2>&1); rc=$?; set -e
+  chmod 644 "$LOCKFILE"
+  assert_equal 'running' "$out"
+  assert_equal 0 "$rc"
+fi
+rm -f "$LOCKFILE"
+
 it 'releases the lock when it is KILLED, with nothing left to take over'
 # flock is held by the file descriptor, so the kernel drops it when the process
 # dies however it dies. The abandoned-lock condition the Windows side has to

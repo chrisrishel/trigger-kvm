@@ -562,8 +562,56 @@ static void usage(const char *me) {
       "          [--debounce S] [--settle S] [--bt-poll S] [--log PATH]\n"
       "          [--max-log-bytes N] [--verbose]\n"
       "       %s --list\n"
-      "       %s --test-trigger --device ... [--timeout S]\n", me, me, me);
+      "       %s --lock-status\n"
+      "       %s --test-trigger --device ... [--timeout S]\n", me, me, me, me);
     exit(2);
+}
+
+// The single-instance lock's path, in ONE place. main() takes the lock and
+// --lock-status asks about it; two spellings of one path could disagree, and the
+// one that disagreed would report "no watcher" with a watcher running.
+static void lock_path(char *dst, size_t dstsz) {
+    const char *home = getenv("HOME");
+    snprintf(dst, dstsz, "%s/Library/Application Support/trigger-kvm/watcher.lock",
+             home ? home : "/tmp");
+}
+
+// Is a watcher running? Answered from the LOCK and never by counting processes
+// (specs/status.md 2). The lock is what makes a second watcher impossible, so it
+// is the authority on both halves of the question, and it is a STATE not a count.
+//
+// Creates nothing: O_CREAT here would leave a lock file behind on a machine that
+// has never run a watcher, and the next reader could not tell that file from a
+// real one. A file that is absent means no watcher has ever started; a file that
+// EXISTS BUT CANNOT BE OPENED is a RUNNING watcher, not an absent one -- that is
+// what a watcher in another session looks like from here, and reading it as
+// absent is the failure that rule exists to prevent.
+//
+// Prints one word and exits 0 when a watcher holds it, 1 when none does, so a
+// caller can branch on either.
+static int lock_status(void) {
+    char path[1200];
+    lock_path(path, sizeof path);
+
+    int fd = open(path, O_RDWR);
+    if (fd < 0) {
+        if (errno == ENOENT) { printf("none\n"); return 1; }
+        printf("running\n");   // present and unopenable: held by someone else
+        return 0;
+    }
+    if (flock(fd, LOCK_EX | LOCK_NB) != 0) {
+        close(fd);
+        printf("running\n");
+        return 0;
+    }
+    // We took it, so nobody held it. close() releases the flock -- the kernel
+    // drops it with the last descriptor referring to the file, which is the same
+    // property that makes a killed watcher leave nothing behind. An explicit
+    // LOCK_UN here was tried and removed: it changed nothing, and a mutation
+    // deleting it could not be caught, which is what dead code looks like.
+    close(fd);
+    printf("none\n");
+    return 1;
 }
 
 // Copy an argument, or refuse. Silent truncation put a DIFFERENT path on the
@@ -642,6 +690,7 @@ static double parse_secs(const char *s, const char *what) {
 int main(int argc, char **argv) {
     signal(SIGCHLD, SIG_IGN);   // auto-reap the spawned switcher
     bool want_list = false;
+    bool want_lock = false;
 
     for (int i = 1; i < argc; i++) {
         const char *a = argv[i];
@@ -662,6 +711,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(a, "--max-log-bytes")) g_maxlog   = atol(NEXT());
         else if (!strcmp(a, "--timeout"))       g_timeout  = atoi(NEXT());
         else if (!strcmp(a, "--list"))          want_list  = true;
+        else if (!strcmp(a, "--lock-status"))   want_lock  = true;
         else if (!strcmp(a, "--test-trigger"))  g_testmode = true;
         else if (!strcmp(a, "--verbose"))       g_verbose  = true;
         else usage(argv[0]);
@@ -671,6 +721,7 @@ int main(int argc, char **argv) {
     // Answer and stop. Takes no lock, registers no events, writes no log and
     // starts nothing, so it cannot disturb a running watcher.
     if (want_list) { list_candidates(); return 0; }
+    if (want_lock) { return lock_status(); }
 
     if (g_nwatch == 0) usage(argv[0]);
     if (!g_testmode && !g_exec[0]) usage(argv[0]);
@@ -730,9 +781,7 @@ int main(int argc, char **argv) {
     // second, so the window in which no watcher holds it is not worth
     // engineering around.
     char lockpath[1200];
-    const char *home = getenv("HOME");
-    snprintf(lockpath, sizeof lockpath,
-             "%s/Library/Application Support/trigger-kvm/watcher.lock", home ? home : "/tmp");
+    lock_path(lockpath, sizeof lockpath);
     int lockfd = open(lockpath, O_CREAT | O_RDWR, 0644);
     if (lockfd < 0) {
         logmsg("WARN: cannot open %s (%s); continuing without a single-instance lock",

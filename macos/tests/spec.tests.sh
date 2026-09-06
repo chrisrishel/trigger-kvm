@@ -29,13 +29,35 @@ SOURCES=(
 it 'the checker exists and is executable'
 assert_true "$([ -x "$CHECK" ] && echo 0 || echo 1)" "$CHECK"
 
-for spec in configure config-format detector; do
-  it "this implementation conforms to specs/$spec.md"
-  out=$("$CHECK" "$SPECS/$spec.md" "${SOURCES[@]}" 2>&1) || true
+# The list of specs is DERIVED, never written down. A hardcoded list is checked
+# by nobody the day a spec file is added -- specs/status.md landed in revision 8
+# and sat unchecked here because this loop had not been told about it, and the
+# changelog entry was the only thing that could have said so.
+#
+# Two files in specs/ are not contracts an implementation conforms to:
+# README.md is ABOUT the marker format, so its ```normative block is the worked
+# example rather than an obligation, and CHANGELOG.md is the revision ledger.
+# Naming those two is safe in a way that naming the specs is not -- a new spec
+# joins the loop by existing, while a new meta-file would fail loudly here and
+# be added deliberately.
+CHECKED=0
+for spec in "$SPECS"/*.md; do
+  case ${spec##*/} in README.md | CHANGELOG.md) continue ;; esac
+  CHECKED=$(( CHECKED + 1 ))
+  it "this implementation conforms to specs/${spec##*/}"
+  out=$("$CHECK" "$spec" "${SOURCES[@]}" 2>&1) || true
   case $out in
     *"are missing"*) _fail "$out" ;;
   esac
 done
+
+# Self-test of the derivation above: every .md in specs/ is either checked or one
+# of the two named exclusions. Catches the glob matching nothing, and catches an
+# exclusion list that has quietly grown to swallow a real spec.
+it 'every spec file is covered, so none can be added unchecked'
+assert_equal "$(find "$SPECS" -maxdepth 1 -name '*.md' | wc -l | tr -d ' ')" \
+             "$(( CHECKED + 2 ))" \
+             'specs/*.md is not fully accounted for by the conformance loop'
 
 # =============================================================================
 # The shared reader fixture (specs/config-format.md, "The shared fixture")

@@ -468,6 +468,25 @@ mutate 'tier: the daemon runs as root instead of the user' lib/manage.sh walkthr
 mutate 'tier: a declined password leaves the config claiming boot' lib/manage.sh walkthrough.tests.sh \
   "s@      sed -i '' 's/.*install@      : 's/^\\([[:space:]]*\\)install@"
 
+# --- revision 8: status shows the input map, and asks the lock ---------------
+
+mutate 'status: the watcher question is answered by counting processes' lib/manage.sh status.tests.sh \
+  's@--lock-status@--list@'
+mutate 'status: a lock it cannot open reads as no watcher' event-watch.c watcher.tests.sh \
+  's@        printf("running.n");   // present and unopenable@        printf("none\\n"); //@'
+mutate 'status: asking about the lock creates it' event-watch.c watcher.tests.sh \
+  's@    int fd = open(path, O_RDWR);@    int fd = open(path, O_RDWR | O_CREAT, 0644);@'
+mutate 'status: the input map is shown with no warning that it is unverified' lib/manage.sh status.tests.sh \
+  "s@    printf '           ^ asserted, never verified@    : '@"
+mutate 'status: inputs ordered by value instead of by computer' lib/manage.sh status.tests.sh \
+  's@      for _c in \$(config_known_computers); do@      for _c in $(config_input_map "$_l" | sort -k2 | cut -f1); do@'
+mutate 'status: this computer is not marked on the map' lib/manage.sh status.tests.sh \
+  's@        if \[ "\$_c" = "\$_this" \]; then _c="\$_c (this one)"; fi@        :@'
+mutate 'status: the warning is printed even with nothing configured' lib/manage.sh status.tests.sh \
+  "s@    printf 'inputs   : none configured.n'@    printf 'inputs   : none configured\\n           asserted, never verified. Fix: trigger-kvm configure\\n'@"
+mutate 'status: a panel with no inputs is dropped from the map' lib/manage.sh status.tests.sh \
+  "s@      \[ -n \"\$_row\" \] || _row='no inputs configured'@      [ -n \"\$_row\" ] || continue@"
+
 echo
 if [ "$survived" = "0" ]; then
   echo "all $checked mutations were caught"

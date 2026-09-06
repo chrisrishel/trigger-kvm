@@ -446,7 +446,7 @@ tk_installed_tier() {
 }
 
 cmd_status() {
-  local _n _note _labels _this _machines _c _v _when _rev _commit
+  local _note _labels _this _machines _c _v _l _row _first _when _rev _commit
   tk_warn_if_stale
   # Say when it runs and what that therefore COVERS -- never just a tier name.
   # What someone wants to know is whether a locked or logged-out machine still
@@ -474,15 +474,27 @@ cmd_status() {
       ;;
   esac
 
-  # `|| true`: pgrep exits 1 when nothing matches, and under `set -euo pipefail`
-  # that made `status` stop dead at this line on a machine with no watcher --
-  # which is exactly the machine someone runs `status` on.
-  # Counts the pre-rename watcher too: one was found still running beside the
-  # real one, firing on every flip, a day after the rename.
-  _n=$(pgrep -f 'usb-watch --exec|event-watch --exec' 2>/dev/null | wc -l | tr -d ' ' || true)
-  [ -n "$_n" ] || _n=0
-  if [ "$_n" = "1" ]; then _note=''; else _note='  <- expected exactly 1'; fi
-  printf 'watchers : %s%s\n' "$_n" "$_note"
+  # specs/status.md 2: answered from the LOCK, never by counting processes.
+  # The lock is what makes a second watcher impossible, so it is the authority on
+  # both halves of the question -- and because it permits only one, this is a
+  # STATE and not a count.
+  #
+  # Counting worked on this platform and was still the wrong question. Measured
+  # 2026-09-06: `pgrep` DOES see a boot-tier watcher from a user session here,
+  # because the LaunchDaemon runs as the user, so the Windows blindness that
+  # reported `watchers : 0` beside a firing watcher does not reproduce. What it
+  # cannot see is a lock held by a process it has no other reason to match --
+  # and `-f 'event-watch --exec'` matching on a command line is exactly the
+  # brittleness that let a pre-rename watcher run unnoticed for a day.
+  #
+  # `|| true`: the query exits 1 when nothing holds the lock, and under
+  # `set -euo pipefail` that would make `status` stop dead on a machine with no
+  # watcher -- which is exactly the machine someone runs `status` on.
+  if [ "$("$TK_WATCHER" --lock-status 2>/dev/null || true)" = running ]; then
+    printf 'watcher  : running\n'
+  else
+    printf 'watcher  : none  <- nothing is watching; start it with: trigger-kvm restart\n'
+  fi
   printf 'log      : %s\n' "$TK_LOG"
   if [ -f "$CONFIG" ]; then _note=''; else _note='  <- MISSING; run: trigger-kvm configure'; fi
   printf 'config   : %s%s\n' "$CONFIG" "$_note"
@@ -518,5 +530,55 @@ cmd_status() {
     printf 'computers: none\n'
   fi
   printf 'triggers : %s\n' "$(config_trigger_devices | tr '\n' ' ' | sed 's/ $//')"
+
+  # specs/status.md 3: the input map, and the one claim this command cannot make.
+  #
+  # The map is an assertion about PHYSICAL CABLING. If a computer's cable is
+  # moved to a different input ON THE MONITOR, a panel whose EDID product id is
+  # stable across its inputs still resolves perfectly, `pull` sends the old
+  # value, and the panel goes black with a success in the log. Detection is
+  # BARRED rather than unimplemented -- reading the value back is hard rule 2 and
+  # answers the wrong question anyway -- so making the failure legible is the
+  # only move available, which is what makes this wording a behaviour and not a
+  # nicety. status.md 3.2: do not hedge it, do not offer to check it.
+  #
+  # This READS display.<label>.input.<value>; it keeps no second copy of the map.
+  if [ -z "$_labels" ]; then
+    # 3.1: an empty map asserts nothing, so the warning would be noise.
+    printf 'inputs   : none configured\n'
+  else
+    _first=y
+    for _l in $_labels; do
+      # 3.1: ordered BY COMPUTER, never by input value. Sorting on the hex puts
+      # the same two computers in opposite orders on two panels, purely by which
+      # socket each happened to be plugged into -- so the block and the
+      # `computers` line above would disagree about the order for no reason.
+      _row=''
+      for _c in $(config_known_computers); do
+        _v=$(config_input_for "$_l" "$_c")
+        [ -n "$_v" ] || continue
+        if [ "$_c" = "$_this" ]; then _c="$_c (this one)"; fi
+        if [ "$_v" = AMBIGUOUS ]; then
+          _row="$_row, two inputs both name $_c -- fix the config"
+        else
+          _row="$_row, $(printf '0x%02X' "$_v") -> $_c"
+        fi
+      done
+      _row=${_row#, }
+      [ -n "$_row" ] || _row='no inputs configured'
+      if [ "$_first" = y ]; then
+        printf 'inputs   : %-8s %s\n' "$_l" "$_row"; _first=n
+      else
+        printf '           %-8s %s\n' "$_l" "$_row"
+      fi
+    done
+    # Each normative fragment stays whole inside ONE printf. The conformance
+    # check reads this source, not the output, so wrapping a fragment across two
+    # lines here would render correctly and fail to conform -- and the string it
+    # could not find is the one thing this block exists to say.
+    printf '           ^ asserted, never verified. If a cable moved to another input\n'
+    printf '             on the monitor, pull silently switches that panel to a dead input\n'
+    printf '             -- black, with a success in the log.  Fix: trigger-kvm configure\n'
+  fi
   exit 0
 }
