@@ -119,9 +119,19 @@ function Skip-Case {
 
 # ---- assertions -------------------------------------------------------------
 
+# -cne, NOT -ne. PowerShell's -ne is case-INSENSITIVE, so this helper silently
+# passed `usb:046d:c547@BadCase` against `usb:046d:c547@badcase` -- and case is
+# exactly what several assertions here are ABOUT: hex ids canonicalise, a
+# `[a-z0-9-]` suffix is checked rather than folded, and getting that wrong lets
+# one platform accept what another refuses. It is the same trap the code side
+# already documents for -match vs -cmatch, sitting in the instrument.
+#
+# Found by a surviving mutation: lower-casing an entry's stored text changed
+# nothing any test could see. The whole suite was green the moment this was
+# tightened, so nothing was relying on the looseness -- it was blind spot only.
 function Assert-Equal {
     param($Expected, $Actual, [string]$Because)
-    if ("$Expected" -ne "$Actual") {
+    if ("$Expected" -cne "$Actual") {
         throw ("expected '{0}', got '{1}'{2}" -f $Expected, $Actual,
                $(if ($Because) { " -- $Because" } else { '' }))
     }

@@ -617,10 +617,20 @@ function Get-InputMapReport {
 # are on the other computer, which is exactly when somebody runs `status` to ask
 # why nothing switched. So the absence is stated plainly and the footnote says it
 # is normal, rather than leaving a blank that reads as broken.
+#
+# TAKES THE RAW CONFIG VALUE and parses it here, through the one parser every
+# consumer uses. It used to take a pre-normalised list of keys, and the caller
+# doing that normalising is what let `status` disagree with the watcher about the
+# same line of the same file -- see ConvertFrom-TriggerDevices in config.ps1.
+#
+# [CmdletBinding()] so a caller left on the old -Devices name THROWS. A simple
+# function swallows an undeclared named argument into $args without a word, and
+# this one would then report "none configured" for a perfectly good config.
 function Get-TriggerReport {
-    param([string[]]$Devices, $Candidates)
+    [CmdletBinding()]
+    param([string[]]$Entries, $Candidates)
 
-    $devs = @($Devices | Where-Object { $_ })
+    $devs = @(ConvertFrom-TriggerDevices $Entries)
     if ($devs.Count -eq 0) { return @('triggers : none configured  <- nothing will ever fire') }
 
     $by = @{}
@@ -628,12 +638,31 @@ function Get-TriggerReport {
 
     $out     = @()
     $missing = 0
+    $bad     = 0
     for ($i = 0; $i -lt $devs.Count; $i++) {
         $label = $(if ($i -eq 0) { 'triggers :' } else { '          ' })
-        $c = $by[$devs[$i]]
-        if ($c) { $name = Get-CandidateLabel $c }
-        else    { $name = '-- not attached right now'; $missing++ }
-        $out += ('{0} {1,-20} {2}' -f $label, $devs[$i], $name)
+        $d = $devs[$i]
+        # Malformed FIRST, and it is not a kind of missing. Counted as missing it
+        # would draw the "normal when the switch is on the other computer" note,
+        # which is the tool reassuring somebody about the exact entry that is
+        # stopping the watcher from starting.
+        if (-not $d.Ok) {
+            $name = 'MALFORMED -- the watcher will refuse to start on this'
+            $bad++
+        }
+        elseif ($by.Contains($d.Identity)) { $name = Get-CandidateLabel $by[$d.Identity] }
+        else { $name = '-- not attached right now'; $missing++ }
+        # AS WRITTEN, never canonicalised: this is the string to go looking for
+        # in the config file, and for a malformed entry it is the only way the
+        # screen and the file say the same thing.
+        $out += ('{0} {1,-20} {2}' -f $label, $d.Raw, $name)
+    }
+    # NAMED, not pointed at with a `^`. The absent-device note below already owns
+    # that arrow, and when both fire two arrows point up at different rows with
+    # nothing to say which is which.
+    if ($bad -gt 0) {
+        $out += '           a MALFORMED line is not a device: the watcher will not start'
+        $out += '           until it is fixed or removed.  Fix:  trigger-kvm configure'
     }
     if ($missing -gt 0) {
         $out += '           ^ normal when the switch is on the other computer: that is'
@@ -2701,8 +2730,12 @@ function Invoke-Configure {
 
     $devices = @()
     if ($seed.Contains('trigger.device')) {
-        $devices = @(($seed['trigger.device'] -replace '\s','') -split ',' | Where-Object { $_ } | ForEach-Object {
-            Get-DeviceIdentity $(if ($_ -match '^(usb:|bt:)') { $_.ToLower() } else { 'usb:' + $_.ToLower() }) })
+        # A malformed entry keeps its RAW text, and that is the whole point: it
+        # is what gets shown, and what Write-ConfigFile puts back. Rewriting it
+        # into something that parses would edit somebody's file behind them and
+        # still not start the watcher.
+        $devices = @(ConvertFrom-TriggerDevices $seed['trigger.device'] |
+                     ForEach-Object { if ($_.Ok) { $_.Identity } else { $_.Raw } })
     }
     $cands = @(Get-TriggerCandidates)
 
@@ -2755,7 +2788,12 @@ function Invoke-Configure {
                 (@($devices | ForEach-Object {
                     $d = $_
                     $c = @($cands | Where-Object { $_.Key -eq $d }) | Select-Object -First 1
-                    if ($c) { $c.Name } else { $d }
+                    # An entry the reader would refuse is SAID to be refused, here
+                    # as in `status`. Without it this row shows a hand-edited
+                    # typo as though it were simply a device that is elsewhere.
+                    if     ($c) { $c.Name }
+                    elseif (-not (ConvertFrom-TriggerDevices $d)[0].Ok) { "$d (malformed)" }
+                    else   { $d }
                 }) -join ', ') })
             $(switch ($newTier) { 's4u' { 'from boot' } 'manual' { 'no' }
                                   'user' { 'from login' } default { 'not set' } })
@@ -3909,14 +3947,18 @@ if ($Command -eq 'discover') {
     if (Test-Path -LiteralPath $CONFIG) {
         $c = Read-Config -Path $CONFIG
         if ($c.Contains('trigger.device')) {
-            # Normalise to the same form the candidate keys use. A config entry may
-            # be bare (VVVV:PPPP), which means usb -- without this the "currently a
-            # trigger" markers silently stop appearing for every pre-Bluetooth
-            # config, which reads as "none of these are configured" and is worse
-            # than no marker at all.
-            $cur = @(($c['trigger.device'] -replace '\s','') -split ',' | Where-Object { $_ } | ForEach-Object {
-                Get-DeviceIdentity $(if ($_ -match '^(usb:|bt:)') { $_.ToLower() } else { 'usb:' + $_.ToLower() })
-            })
+            # Canonicalise to the same form the candidate keys use. A config entry
+            # may be bare (VVVV:PPPP), which means usb -- without this the
+            # "currently a trigger" markers silently stop appearing for every
+            # pre-Bluetooth config, which reads as "none of these are configured"
+            # and is worse than no marker at all.
+            #
+            # ONLY a well-formed entry earns a marker. A malformed one matches
+            # nothing here, which is correct: the watcher will not start on it, so
+            # marking a row as configured because of it would be a third screen
+            # disagreeing with the file.
+            $cur = @(ConvertFrom-TriggerDevices $c['trigger.device'] |
+                     Where-Object { $_.Ok } | ForEach-Object { $_.Identity })
         }
     }
 
@@ -4111,14 +4153,15 @@ if ($Command -eq 'status') {
 
     # What the watcher is actually waiting for. Without this line, "it is running"
     # and "it will fire" looked like the same claim.
-    $devices = @()
-    if ($c.Contains('trigger.device')) {
-        $devices = @(($c['trigger.device'] -replace '\s','') -split ',' | Where-Object { $_ } | ForEach-Object {
-            Get-DeviceIdentity $(if ($_ -match '^(usb:|bt:)') { $_.ToLower() } else { 'usb:' + $_.ToLower() }) })
-    }
+    #
+    # The RAW value goes in. Parsing it here, one normalisation looser than the
+    # watcher's, is what used to make this screen call a malformed entry a
+    # configured device that was merely somewhere else.
+    #
     # Named through the same door the walkthrough uses, so `status` and
     # `discover` can never disagree about what a device is called.
-    Get-TriggerReport -Devices $devices -Candidates (Get-TriggerCandidates) |
+    $entries = @(if ($c.Contains('trigger.device')) { $c['trigger.device'] })
+    Get-TriggerReport -Entries $entries -Candidates (Get-TriggerCandidates) |
         ForEach-Object { Write-Host $_ }
 
     exit $(if ($t) { 0 } else { 1 })
@@ -4269,7 +4312,10 @@ if (-not $cfg.Contains('trigger.device') -or -not "$($cfg['trigger.device'])".Tr
     Write-Log 'run:  trigger-kvm configure'
     exit 2
 }
-$devices  = $cfg['trigger.device'] -replace '\s', ''
+# VERBATIM. Stripping whitespace here printed a line that did not appear in the
+# file, for a value the watcher was about to refuse -- so install said one thing,
+# the config said another, and the watcher would not start on either.
+$devices  = "$($cfg['trigger.device'])".Trim()
 $debounce = $(if ($cfg.Contains('trigger.debounce')) { $cfg['trigger.debounce'] }                 else { $DEFAULT_DEBOUNCE })
 $settle   = $(if ($cfg.Contains('trigger.settle'))   { $cfg['trigger.settle'] }                   else { $DEFAULT_SETTLE })
 Write-Log "config says: watch $devices  (debounce ${debounce}s, settle ${settle}s)"

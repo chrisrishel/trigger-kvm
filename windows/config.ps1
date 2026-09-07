@@ -127,18 +127,94 @@ function ConvertTo-DeviceToken {
     return (($Text.ToLower() -replace '[^a-z0-9]+', '-').Trim('-'))
 }
 
-# A device entry WITHOUT its remembered spot -- `usb:VVVV:PPPP[@token]`.
+# THE device-entry grammar, and the only copy of it -- specs/detector.md 4.1.
 #
-# The spot is not part of a device's identity: specs/detector.md 4.1 confines it
-# to breaking a tie, so an entry whose device moved sockets is still the SAME
-# entry. Everything that asks "is this device configured?" compares this, or a
-# device that moved would show as unconfigured and its "currently a trigger"
-# marker would vanish -- which reads as "my setup was lost".
-function Get-DeviceIdentity {
-    param([string]$Entry)
-    $p = "$Entry" -split '@'
-    if ($p.Count -le 1) { return "$Entry" }
-    return ($p[0] + '@' + $p[1])
+# HERE for the same reason ConvertTo-DeviceToken is here: install.ps1 DISPLAYS
+# entries, event-watch.ps1 MATCHES on them, and the two must not disagree about
+# what an entry is. They did, and the shape of it is why this function exists
+# rather than four tidier copies of a regex.
+#
+# What shipped: three call sites in install.ps1 deleted ALL whitespace and
+# lower-cased the WHOLE entry before showing it, so `usb:046d:c547@has space`
+# displayed as the well-formed `usb:046d:c547@hasspace` and `@BadCase` as
+# `@badcase`. The watcher reads the raw file value, trims only, and matches
+# case-sensitively -- so it refused both and would not start, while `status`
+# showed the first as a configured trigger that was merely "not attached right
+# now" and printed the note explaining that an absent trigger is normal. The
+# screen someone checks when a trigger stops working told them nothing was
+# wrong, in different characters from the ones in their file.
+#
+# So: ONE parse, and every consumer is handed the same verdict. Callers that
+# show an entry to a person show `Raw`; callers that match use `Key` or
+# `Identity`. Nothing re-parses, and nothing normalises on the way to a screen.
+#
+# Two case rules, and neither is cosmetic. The ID half is hex and canonicalises
+# to upper (`Vid`/`Prod`) for a WQL query and to lower (`Key`) for a candidate
+# key -- both are derived here so a caller never case-folds an entry itself.
+# The SUFFIX half is `[a-z0-9-]` and is CHECKED, never folded: config-format.md
+# requires a lower-case token rather than a normalised one, precisely so one
+# platform cannot accept what another refuses. Hence -cmatch.
+#
+# `Spot`, not `Where`: PowerShell gives every object an intrinsic `.Where()`,
+# and the watcher's watch entries already call this field Spot for that reason.
+function ConvertFrom-TriggerDevices {
+    param([string[]]$Text)
+
+    # Split on commas as well as taking a real array: launched via
+    # `powershell.exe -File` every argument arrives as one literal string, so a
+    # comma-separated -Device is a single element there.
+    $out = @()
+    foreach ($entry in (@($Text) -split ',')) {
+        # TRIMMED, NOT STRIPPED. The whitespace a list has to tolerate is what
+        # follows a comma, and that is at an entry's ends. Deleting it
+        # everywhere is what turned `@has space` into a valid-looking entry.
+        $raw = "$entry".Trim()
+        if (-not $raw) { continue }
+
+        $e = [PSCustomObject]@{
+            Raw = $raw; Ok = $false; Kind = ''; Vid = ''; Prod = ''
+            Token = ''; Spot = ''; Addr = ''; Key = ''; Identity = ''
+        }
+
+        # EXACTLY four hex digits, a colon, four more -- no whitespace inside
+        # the entry. It used to allow `\s*:\s*`, which accepted `046d : 0843`
+        # that the macOS reader refuses, so one config could have described two
+        # different sets of watched devices depending on which computer read it.
+        # Two OPTIONAL suffixes -- absent, which is every config written before
+        # they existed, the entry means exactly what it always meant.
+        if ($raw -cmatch '^(?:[Uu][Ss][Bb]:)?([0-9A-Fa-f]{4}):([0-9A-Fa-f]{4})(?:@([a-z0-9-]+))?(?:@([a-z0-9-]+))?$') {
+            $e.Ok    = $true
+            $e.Kind  = 'usb'
+            $e.Vid   = $Matches[1].ToUpper()
+            $e.Prod  = $Matches[2].ToUpper()
+            $e.Token = $(if ($Matches[3]) { $Matches[3] } else { '' })
+            $e.Spot  = $(if ($Matches[4]) { $Matches[4] } else { '' })
+            # The spot is NOT part of a device's identity: 4.1 confines it to
+            # breaking a tie, so an entry whose device moved sockets is still
+            # the SAME entry. Everything asking "is this configured?" compares
+            # Identity, or a device that moved would show as unconfigured and
+            # its "currently a trigger" marker would vanish -- which reads as
+            # "my setup was lost".
+            $e.Identity = ('usb:{0}:{1}' -f $e.Vid, $e.Prod).ToLower() +
+                          $(if ($e.Token) { "@$($e.Token)" } else { '' })
+            $e.Key      = $e.Identity + $(if ($e.Spot) { "@$($e.Spot)" } else { '' })
+        }
+        # -match here, -cmatch above, and the difference is not an oversight: an
+        # address is hex in either case and is folded down, so there is no
+        # lower-case-only class for a case-insensitive match to let through.
+        elseif ($raw -match '^[Bb][Tt]:([0-9A-Fa-f]{12})$') {
+            $e.Ok       = $true
+            $e.Kind     = 'bt'
+            $e.Addr     = $Matches[1].ToLower()
+            # A Bluetooth address already names one device, so there is nothing
+            # to disambiguate and no suffix to carry.
+            $e.Identity = "bt:$($e.Addr)"
+            $e.Key      = $e.Identity
+        }
+
+        $out += $e
+    }
+    return $out
 }
 
 # Would writing this value change it? For an IDENTIFIER -- something matched on

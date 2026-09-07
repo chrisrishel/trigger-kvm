@@ -16,6 +16,9 @@ Import-Subject -Script 'install.ps1'     -Functions @(
 Import-Subject -Script 'install.ps1'     -Variables @('GENERIC_NAMES')
 Import-Subject -Script 'install.ps1'     -Variables @('DESKTOP_TRANSPORTS')
 Import-Subject -Script 'event-watch.ps1' -Functions @('Get-SwitcherArguments')
+# Get-TriggerReport parses the raw config value itself, through the one parser
+# the watcher uses. Real callers get this by dot-sourcing config.ps1.
+Import-Subject -Script 'config.ps1'      -Functions @('ConvertFrom-TriggerDevices')
 
 # ---- the task action carries every path, the config included -----------------
 #
@@ -344,22 +347,73 @@ $cands = @(
     [PSCustomObject]@{ Key = 'usb:046d:c547'; Name = 'G915 X LIGHTSPEED TKL'; Roles = @('mouse','keyboard'); State = ''; Twinned = $false; Ambiguous = $false }
     [PSCustomObject]@{ Key = 'usb:1235:820a'; Name = 'Clarett+ 2Pre'; Roles = @(); State = ''; Twinned = $false; Ambiguous = $false }
 )
-$tr = @(Get-TriggerReport -Devices @('usb:046d:c547','usb:1235:820a') -Candidates $cands) -join "`n"
+# THE RAW CONFIG VALUE goes in, exactly as Read-Config returns it -- the spaces
+# after the commas included. The report parses it itself, through the one parser
+# the watcher uses, because a caller normalising on the way in is the defect this
+# whole shape exists to prevent.
+$tr = @(Get-TriggerReport -Entries 'usb:046d:c547, usb:1235:820a' -Candidates $cands) -join "`n"
 Assert-Match $tr 'triggers : usb:046d:c547\s+G915 X LIGHTSPEED TKL\s+\(mouse, keyboard\)'
 Assert-Match $tr 'usb:1235:820a\s+Clarett\+ 2Pre'
 Assert-NoMatch $tr 'not attached' 'nothing is missing, so nothing is said about missing'
+Assert-NoMatch $tr 'MALFORMED'    'and nothing is wrong with either of them'
+
+# A bare VVVV:PPPP means usb, and a device that moved sockets keeps its marker:
+# the spot is not part of an identity.
+$bare = @(Get-TriggerReport -Entries '046D:C547@usb-receiver@port-9' -Candidates @(
+    [PSCustomObject]@{ Key = 'usb:046d:c547@usb-receiver'; Name = 'G915 X LIGHTSPEED TKL'
+                       Roles = @(); State = ''; Twinned = $false; Ambiguous = $false })) -join "`n"
+Assert-Match $bare 'G915 X LIGHTSPEED TKL' 'a bare, tokened, spotted entry still resolves'
+Assert-Match $bare ([regex]::Escape('046D:C547@usb-receiver@port-9')) `
+    'and is shown as WRITTEN, not canonicalised -- it is the string to look for in the file'
 
 # A TRIGGER THAT IS NOT HERE IS THE ORDINARY CASE, not a fault -- the peripherals
 # are on the other computer, which is exactly when somebody runs status to ask
 # why nothing switched. Say so, or the blank reads as broken.
-$gone = @(Get-TriggerReport -Devices @('usb:046d:c547','bt:0011223344ee') -Candidates $cands) -join "`n"
+$gone = @(Get-TriggerReport -Entries 'usb:046d:c547,bt:0011223344ee' -Candidates $cands) -join "`n"
 Assert-Match $gone 'bt:0011223344ee\s+-- not attached right now'
 Assert-Match $gone 'normal when the switch is on the other computer' `
     'and the absence is explained, once, rather than left to read as a fault'
 
-Assert-Match (@(Get-TriggerReport -Devices @() -Candidates $cands) -join "`n") `
+# ---- a malformed entry is SAID to be malformed --------------------------------
+#
+# The defect this replaced: `status` deleted all whitespace and lower-cased the
+# whole entry before displaying it, so `@has space` showed as the well-formed
+# `@hasspace` and `@BadCase` as `@badcase`. The watcher reads the raw value,
+# trims only and matches case-sensitively, so it refused both and would not
+# start -- while this screen showed a configured trigger that was merely "not
+# attached right now", the note explaining that an absent trigger is normal
+# included. The screen someone checks when a trigger stops working told them
+# nothing was wrong, in characters that were not the ones in their file.
+foreach ($bad in 'usb:046d:c547@has space', 'usb:046d:c547@BadCase', 'nonsense',
+                 'usb:046d:c547@a@b@c', 'usb:046d:c547@under_score') {
+    $r = @(Get-TriggerReport -Entries $bad -Candidates $cands) -join "`n"
+    Assert-Match $r 'MALFORMED' "'$bad' is called malformed"
+    Assert-Match $r ([regex]::Escape($bad)) `
+        "and shown EXACTLY as written, or it cannot be found in the file: '$bad'"
+    Assert-Match $r 'watcher will not start' 'and the consequence is stated'
+    # THE POINT. Counted as missing, a malformed entry draws the note that says
+    # an absent trigger is normal -- the tool reassuring somebody about the one
+    # line that is stopping the watcher from starting.
+    Assert-NoMatch $r 'not attached right now' `
+        "malformed is not a kind of absent: '$bad'"
+    Assert-NoMatch $r 'normal when the switch is on the other computer' `
+        "and must never draw the reassurance: '$bad'"
+}
+
+# Both at once: the good one still resolves, the bad one is still named, and each
+# note appears for its own reason.
+$mixed = @(Get-TriggerReport -Entries 'usb:046d:c547@BadCase, bt:0011223344ee' -Candidates $cands) -join "`n"
+Assert-Match $mixed 'MALFORMED'
+Assert-Match $mixed ([regex]::Escape('@BadCase')) 'the case is preserved, not folded to @badcase'
+Assert-Match $mixed 'not attached right now'                  'the absent one is still absent'
+Assert-Match $mixed 'normal when the switch is on the other'  'and still explained'
+
+Assert-Match (@(Get-TriggerReport -Entries @() -Candidates $cands) -join "`n") `
     'none configured  <- nothing will ever fire' `
     'no triggers at all is a different statement from a trigger that is elsewhere'
+Assert-Match (@(Get-TriggerReport -Entries '   ' -Candidates $cands) -join "`n") `
+    'none configured  <- nothing will ever fire' `
+    'and so is a value that is nothing but whitespace'
 
 # ---- the pieces above have to be WIRED, not merely each correct ---------------
 #

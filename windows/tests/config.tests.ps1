@@ -152,4 +152,84 @@ Assert-True  (-not (Test-ConfigValueExact 'ACME #1')) 'one that would be altered
 Assert-True  (-not (Test-ConfigValueExact 'trailing ')) 
 Assert-True  (Test-ConfigValueExact 'ACME = 42') 'and `=` does not make a value inexact'
 
+# ---- the device-entry grammar, which has exactly one copy ---------------------
+#
+# specs/detector.md 4.1. This is the parser install.ps1 shows entries with and
+# event-watch.ps1 matches on, and it is one function because it was once two
+# spellings: three call sites in install.ps1 deleted ALL whitespace and
+# lower-cased the WHOLE entry, so the UI accepted what the watcher refused.
+#
+# The properties below are the ones that defect violated. Each is a separate
+# assertion because each failed separately.
+
+function Get-Entry { param([string]$Text) return (ConvertFrom-TriggerDevices $Text)[0] }
+
+# WELL-FORMED, in every spelling the format allows.
+foreach ($ok in 'usb:046d:c547', '046d:c547', 'USB:046D:C547', '046D:C547',
+                'usb:046d:c547@usb-receiver', 'usb:046d:c547@usb-receiver@port-0003-hub-0005',
+                'bt:0011223344ee', 'BT:0011223344ee') {
+    Assert-True (Get-Entry $ok).Ok "'$ok' is a device"
+}
+
+# MALFORMED, and the first two are the shipped defect: neither may be repaired
+# into validity on the way to a screen.
+foreach ($bad in 'usb:046d:c547@has space', 'usb:046d:c547@BadCase', 'usb:046d:c547@BAD',
+                 'nonsense', '046d:084', 'usb:046d', 'bt:00112233', 'bt:0011223344fg',
+                 '046d : c547', '0x046d:0xc547', 'usb:046d:c547@', 'usb:046d:c547@ok@',
+                 'usb:046d:c547@a@b@c', 'usb:046d:c547@under_score') {
+    $e = Get-Entry $bad
+    Assert-True (-not $e.Ok)      "'$bad' is not a device"
+    Assert-Equal $bad $e.Raw      "and is kept VERBATIM, or it cannot be found in the file: '$bad'"
+    Assert-Equal '' $e.Identity   "and has no identity to match a candidate with: '$bad'"
+}
+
+# The two case rules, which are not the same rule. The ID half is hex and
+# canonicalises; the SUFFIX half is CHECKED lower-case and never folded --
+# config-format.md requires that, so one platform cannot accept what another
+# refuses.
+$u = Get-Entry 'USB:046D:C547@usb-receiver@port-9'
+Assert-Equal '046D' $u.Vid           'hex canonicalises UP, for the WQL query'
+Assert-Equal 'C547' $u.Prod
+Assert-Equal 'usb:046d:c547@usb-receiver' $u.Identity 'and DOWN for a candidate key'
+Assert-Equal 'usb:046d:c547@usb-receiver@port-9' $u.Key
+Assert-Equal 'usb-receiver' $u.Token
+Assert-Equal 'port-9'       $u.Spot  'named Spot, not Where: every object has an intrinsic .Where()'
+Assert-True  (-not (Get-Entry 'usb:046d:c547@UsbReceiver').Ok) 'a suffix is checked, never folded'
+
+# IDENTITY EXCLUDES THE SPOT. A device that moved sockets is the same entry, or
+# its "currently a trigger" marker vanishes and the config round trip breaks.
+Assert-Equal (Get-Entry 'usb:046d:c547@tok@port-1').Identity `
+             (Get-Entry 'usb:046d:c547@tok@port-9').Identity `
+             'the same device in two sockets is one entry'
+
+# A LIST: split on commas, and each entry TRIMMED rather than stripped. The
+# whitespace a list must tolerate is what follows a comma, and that is at an
+# entry's ends -- deleting it everywhere is what made `@has space` look valid.
+$list = @(ConvertFrom-TriggerDevices 'usb:046d:c547 , bt:0011223344ee,,  ')
+Assert-Equal 2 $list.Count            'empty entries are skipped, as they always were'
+Assert-Equal 'usb:046d:c547'  $list[0].Raw
+Assert-Equal 'bt:0011223344ee' $list[1].Raw
+Assert-Equal 'usb' $list[0].Kind
+Assert-Equal 'bt'  $list[1].Kind
+$inner = @(ConvertFrom-TriggerDevices 'usb:046d:c547@has space')
+Assert-Equal 1 $inner.Count
+Assert-True (-not $inner[0].Ok) 'whitespace INSIDE an entry is not whitespace after a comma'
+
+# A REAL ARRAY as well as a comma-separated string: launched via `powershell.exe
+# -File` every argument arrives as one literal string, so the watcher's -Device
+# is a single element there and an array everywhere else.
+Assert-Equal 2 (@(ConvertFrom-TriggerDevices @('usb:046d:c547','bt:0011223344ee')).Count)
+Assert-Equal 0 (@(ConvertFrom-TriggerDevices @()).Count)
+Assert-Equal 0 (@(ConvertFrom-TriggerDevices '').Count)
+Assert-Equal 0 (@(ConvertFrom-TriggerDevices '   ').Count)
+
+# A Bluetooth address already names one device, so there is nothing to
+# disambiguate -- and the fields are PRESENT and empty, because Set-StrictMode
+# makes reading a property that is not there terminating.
+$b = Get-Entry 'BT:0011223344ee'
+Assert-Equal 'bt:0011223344ee' $b.Key
+Assert-Equal '' $b.Token
+Assert-Equal '' $b.Spot
+Assert-Equal '' $b.Vid
+
 exit 0

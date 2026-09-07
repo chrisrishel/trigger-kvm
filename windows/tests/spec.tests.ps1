@@ -113,11 +113,74 @@ Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
 # in the loop anyway, because the day it grows a normative string is the day
 # nobody will think to add it here.
 #
-# status.md since revision 8, and it is why THIS LIST is a hazard of its own: a
-# new spec file is checked by nobody until someone adds it here, so the changelog
-# entry has to name the file and say to. Recorded as the conformance check's third
-# blind spot in ..\..\specs\README.md, "Knowing you are behind".
-foreach ($spec in 'configure', 'config-format', 'detector', 'status') {
+# status.md since revision 8.
+$CHECKED = @('configure', 'config-format', 'detector', 'status')
+
+# The two files in specs/ that are NOT contracts, and why each is not:
+#
+#   README.md    its ```normative block is the worked EXAMPLE of the marker
+#                format, not an obligation -- checking it would demand those
+#                fragments of every implementation
+#   CHANGELOG.md the revision ledger, checked below by number instead
+#
+$NOT_CONTRACTS = @('README.md', 'CHANGELOG.md')
+
+# ---- the list above is COMPLETE ----------------------------------------------
+#
+# THE HAZARD THIS CLOSES, and it is not hypothetical. A suite that loops over a
+# list of spec names it holds itself cannot check a file nobody added to that
+# list, and the suite stays GREEN while doing it: specs/README.md records this as
+# the conformance check's third blind spot. status.md landed at revision 8 and
+# went unchecked on macOS for revisions 8 through 12 -- five revisions reporting
+# conformance while six normative fragments were absent. The only thing that
+# caught it was revision 8's changelog entry happening to say "add status.md to
+# your conformance loop"; an entry that merely described the behaviour would have
+# got the revision bumped and the strings skipped for good.
+#
+# So the list is not trusted, it is CHECKED. A new spec file fails here until
+# somebody decides which it is -- a contract to check, or a meta-file to name --
+# and that failure is loud, where forgetting was silent.
+#
+# The alternative is to DERIVE the list by globbing specs/*.md, which macOS does.
+# Deriving is not what makes this safe; this assertion is. Kept as a list because
+# it is the smaller change and a glob has a quiet failure of its own -- one that
+# matches nothing passes vacuously, which is why that case is asserted below.
+function Get-UncoveredSpecs {
+    param([string[]]$Files, [string[]]$Checked, [string[]]$NotContracts)
+    # A glob that matched nothing is not "everything is covered", it is a broken
+    # check reporting success -- the exact failure shape this whole section is
+    # about, one level up.
+    if (@($Files).Count -eq 0) { return @('specs/ has no .md files at all -- the check is broken, not passing') }
+    $known = @($Checked | ForEach-Object { "$_.md" }) + @($NotContracts)
+    return @($Files | Where-Object { $known -notcontains $_ })
+}
+
+# The instrument first, as above: an assertion that cannot fail is decoration.
+Assert-Equal 0 (@(Get-UncoveredSpecs -Files @('configure.md','README.md') `
+                                     -Checked @('configure') -NotContracts @('README.md')).Count) `
+    'a fully covered specs/ is covered'
+Assert-Equal 'new.md' (@(Get-UncoveredSpecs -Files @('configure.md','new.md') `
+                                            -Checked @('configure') -NotContracts @()) )[0] `
+    'a spec file in neither list is NAMED -- this is the whole point'
+Assert-Equal 1 (@(Get-UncoveredSpecs -Files @() -Checked @('configure') -NotContracts @()).Count) `
+    'and a listing that found nothing FAILS, rather than passing vacuously'
+
+# Now the real one.
+$onDisk = @(Get-ChildItem -LiteralPath $Specs -Filter '*.md' -File | ForEach-Object { $_.Name })
+$uncovered = @(Get-UncoveredSpecs -Files $onDisk -Checked $CHECKED -NotContracts $NOT_CONTRACTS)
+Assert-Equal 0 $uncovered.Count ( @(
+    "specs/ holds a .md nobody checks: $($uncovered -join ', ')"
+    'Add it to $CHECKED if it is a contract, or to $NOT_CONTRACTS if it is not.'
+    'A spec checked by nobody is why this assertion exists -- see the comment above.') -join "`n" )
+
+# EVERY name in the list is a file that exists, or a typo silently checks nothing
+# -- the same blind spot wearing the other hat.
+foreach ($spec in $CHECKED + $NOT_CONTRACTS) {
+    $name = $(if ($spec -like '*.md') { $spec } else { "$spec.md" })
+    Assert-True ($onDisk -contains $name) "the list names specs/$name, which does not exist"
+}
+
+foreach ($spec in $CHECKED) {
     $r = Invoke-Checker (Join-Path $Specs "$spec.md")
     Assert-Equal 0 $r.Code "windows does not conform to specs/$spec.md:`n$($r.Text)"
 }

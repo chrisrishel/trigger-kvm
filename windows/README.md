@@ -752,6 +752,15 @@ against a name alone.
 not attached right now — which is the normal case, since that is where the
 peripherals being elsewhere shows up.
 
+**A hand-edited entry that is not a device is called MALFORMED there**, shown
+exactly as you typed it, with the note that the watcher will not start until that
+line is fixed. That matters because "not attached right now" is reassuring and
+*wrong* for a typo: the two used to be indistinguishable, since the screen
+canonicalised the entry before showing it — `@Bad Case` displayed as the
+well-formed `@badcase` — while the watcher read the raw line and refused it. The
+grammar now has exactly one implementation, in `config.ps1`, which both the
+screens and the watcher go through.
+
 **Ask `cfgmgr32`, never `Get-PnpDeviceProperty`.** Same property, same nodes:
 ~200 ms per call through the cmdlet — **70 seconds** for this desk — against
 0.14 ms through the API it wraps. The registry copy is fast and unreadable

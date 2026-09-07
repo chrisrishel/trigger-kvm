@@ -616,54 +616,49 @@ if ($ListUsb) {
 # switch", not "my USB things and separately my Bluetooth things". The transport is
 # metadata the installer detects for you, not a choice to impose.
 #
-# Split on commas as well as taking a real array: launched via `powershell.exe
-# -File` (which is how the Scheduled Task runs it) every argument arrives as one
-# literal string, so -Device 046d:0843,1235:820a is a single element there.
+# The grammar itself is ConvertFrom-TriggerDevices in config.ps1 -- one copy,
+# because install.ps1 shows these entries to a person while this file matches on
+# them, and a UI that accepts what this reader refuses is a screen that calls a
+# trigger fine while the watcher will not start on it. That shipped once; the
+# history is at that function.
 $watch = @()
-foreach ($d in ($Device -split ',')) {
-    $t = $d.Trim()
-    if (-not $t) { continue }
+foreach ($e in (ConvertFrom-TriggerDevices $Device)) {
+    if (-not $e.Ok) {
+        # NAMED, and never prefixed into a `usb:` entry that can match nothing.
+        # NAMES THE WHOLE GRAMMAR, suffixes included: somebody hand-editing a
+        # config should not have to learn that `@token` exists by having an entry
+        # rejected without being shown it. AS IT WAS WRITTEN, so it can be found
+        # in the file -- the parser trims and never rewrites for this reason.
+        Deny-Startup ("trigger.device entry '{0}' is not a device; expected usb:VVVV:PPPP[@token[@where]] (or bare VVVV:PPPP) or bt:AAAAAAAAAAAA. A token and a where are lower-case letters, digits and dashes." -f $e.Raw)
+    }
 
-    # EXACTLY four hex digits, a colon, four more -- no whitespace inside the
-    # entry. It used to allow `\s*:\s*`, which accepted `046d : 0843` that the
-    # macOS reader refuses, so one config could have described two different
-    # sets of watched devices depending on which computer read it.
-    # Two OPTIONAL suffixes, each [a-z0-9-]+ -- specs/detector.md 4.1. Absent,
-    # which is every config written before they existed, the entry means exactly
-    # what it always meant and none of the matching below it runs.
-    # -cmatch, not -match. PowerShell's -match is case-INSENSITIVE, so `[a-z0-9-]`
-    # silently accepted `@BAD` -- a token the spec does not allow, which this
-    # platform would then have taken and another could refuse. The id half is
-    # unaffected: its classes spell both cases out.
-    if ($t -cmatch '^(?:[Uu][Ss][Bb]:)?([0-9A-Fa-f]{4}):([0-9A-Fa-f]{4})(?:@([a-z0-9-]+))?(?:@([a-z0-9-]+))?$') {
-        # Not $pid: that is a read-only automatic variable (this process's id).
-        $vid   = $Matches[1].ToUpper()
-        $prod  = $Matches[2].ToUpper()
-        $token = $(if ($Matches[3]) { $Matches[3] } else { '' })
-        $where = $(if ($Matches[4]) { $Matches[4] } else { '' })
+    if ($e.Kind -eq 'usb') {
         $watch += [PSCustomObject]@{
             Kind = 'usb'
-            Key  = "usb:$vid`:$prod" + $(if ($token) { "@$token" } else { '' }) +
-                                       $(if ($where) { "@$where" } else { '' })
+            # UPPER hex here, lower in $e.Key. This one is the watcher's own
+            # label, printed beside the WQL it was built with; the candidate
+            # keys install.ps1 matches against are the lower-case ones. Do not
+            # converge them -- they are read in different places.
+            Key  = "usb:$($e.Vid)`:$($e.Prod)" + $(if ($e.Token) { "@$($e.Token)" } else { '' }) +
+                                                 $(if ($e.Spot)  { "@$($e.Spot)"  } else { '' })
             # Backslash is the WQL LIKE escape character, hence the doubling.
             # STILL THE WHOLE ID: the query finds every candidate, and the token
             # narrows them afterwards. Putting a token in the WQL would need it
             # to appear in a DeviceID, which is exactly what it does not do.
-            Wql  = "DeviceID LIKE 'USB\\VID_$vid&PID_$prod%'"
+            Wql  = "DeviceID LIKE 'USB\\VID_$($e.Vid)&PID_$($e.Prod)%'"
             # WHICH device among those sharing the id, and where it was when it
             # was configured. Spot is a TIEBREAK ONLY -- consulted when and only
             # when Token still matches more than one present device, so that
             # moving a dongle to another socket cannot stop a trigger firing.
-            Token = $token
-            Spot  = $where
+            Token = $e.Token
+            Spot  = $e.Spot
             Addr  = $null
         }
     }
-    elseif ($t -match '^[Bb][Tt]:([0-9A-Fa-f]{12})$') {
-        $addr = $Matches[1].ToLower()
+    else {
         $watch += [PSCustomObject]@{
             Kind = 'bt'
-            Key  = "bt:$addr"
+            Key  = $e.Key
             Wql  = $null
             # A Bluetooth address already names one device, so there is nothing
             # to disambiguate. Present and empty rather than absent, because
@@ -671,15 +666,8 @@ foreach ($d in ($Device -split ',')) {
             # terminating, and every consumer of a watch entry reads these.
             Token = ''
             Spot  = ''
-            Addr  = $addr
+            Addr  = $e.Addr
         }
-    }
-    else {
-        # NAMED, and never prefixed into a `usb:` entry that can match nothing.
-        # NAMES THE WHOLE GRAMMAR, suffixes included: somebody hand-editing a
-        # config should not have to learn that `@token` exists by having an entry
-        # rejected without being shown it.
-        Deny-Startup ("trigger.device entry '{0}' is not a device; expected usb:VVVV:PPPP[@token[@where]] (or bare VVVV:PPPP) or bt:AAAAAAAAAAAA. A token and a where are lower-case letters, digits and dashes." -f $t)
     }
 }
 

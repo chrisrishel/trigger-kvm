@@ -881,6 +881,24 @@ Assert-NoMatch $said 'Triggers\s+usb:046d:0843'   'rather than repeating their i
 
 Reset-Printed
 
+# A HAND-EDITED entry the reader would refuse is SAID to be refused, here as in
+# `status`. This row used to strip all whitespace and lower-case the whole entry
+# before showing it, so a typo displayed as a well-formed device -- and on Save
+# the rewritten version went back to the file, losing what had been typed.
+Set-Config @($CONFIGURED | ForEach-Object {
+    if ($_ -like 'trigger.device*') { 'trigger.device = 046d:0843@Bad Case,1235:820a' } else { $_ } })
+Set-Outcomes @()
+Reset-Printed
+Set-Answers @('11')
+Invoke-Configure
+$said = Get-Printed
+Assert-Match $said ([regex]::Escape('046d:0843@Bad Case')) `
+    'the entry appears exactly as it was typed, or it cannot be found in the file'
+Assert-Match $said 'malformed' 'and is called what it is'
+Assert-Match $said 'Clarett'   'while the entry beside it still resolves to a name'
+
+Reset-Printed
+
 # ---- a TRANSPORT can be the reason the boot tier is unavailable --------------
 #
 # specs/configure.md 8. The two disabled cases are different facts and must not

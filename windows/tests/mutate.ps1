@@ -410,12 +410,19 @@ Invoke-Mutation 'detector: a malformed settle is cast' `
     }" ''
 Invoke-Mutation 'detector: a bad device entry is thrown, not logged' `
     'event-watch.ps1' 'detector.tests.ps1' `
-    "        Deny-Startup (""trigger.device entry '{0}' is not a device; expected usb:VVVV:PPPP[@token[@where]] (or bare VVVV:PPPP) or bt:AAAAAAAAAAAA. A token and a where are lower-case letters, digits and dashes."" -f `$t)" `
-    "        throw ""bad -Device '`$t'"""
+    "        Deny-Startup (""trigger.device entry '{0}' is not a device; expected usb:VVVV:PPPP[@token[@where]] (or bare VVVV:PPPP) or bt:AAAAAAAAAAAA. A token and a where are lower-case letters, digits and dashes."" -f `$e.Raw)" `
+    "        throw ""bad -Device '`$(`$e.Raw)'"""
+# The grammar lives in config.ps1 now -- one copy, shared by the watcher that
+# matches on it and the UI that displays it. These two prove the WATCHER still
+# refuses through it; the config.tests pair below prove the parser itself does.
 Invoke-Mutation 'detector: whitespace inside a device entry is accepted' `
-    'event-watch.ps1' 'detector.tests.ps1' `
-    "    if (`$t -cmatch '^(?:[Uu][Ss][Bb]:)?([0-9A-Fa-f]{4}):([0-9A-Fa-f]{4})(?:@([a-z0-9-]+))?(?:@([a-z0-9-]+))?`$') {" `
-    "    if (`$t -cmatch '^(?:[Uu][Ss][Bb]:)?([0-9A-Fa-f]{4})\s*:\s*([0-9A-Fa-f]{4})(?:@([a-z0-9-]+))?(?:@([a-z0-9-]+))?`$') {"
+    'config.ps1' 'detector.tests.ps1' `
+    "        if (`$raw -cmatch '^(?:[Uu][Ss][Bb]:)?([0-9A-Fa-f]{4}):([0-9A-Fa-f]{4})(?:@([a-z0-9-]+))?(?:@([a-z0-9-]+))?`$') {" `
+    "        if (`$raw -cmatch '^(?:[Uu][Ss][Bb]:)?([0-9A-Fa-f]{4})\s*:\s*([0-9A-Fa-f]{4})(?:@([a-z0-9-]+))?(?:@([a-z0-9-]+))?`$') {"
+Invoke-Mutation 'detector: an entry is stripped of whitespace, not trimmed' `
+    'config.ps1' 'detector.tests.ps1' `
+    '        $raw = "$entry".Trim()' `
+    "        `$raw = ""`$entry"" -replace '\s',''"
 Invoke-Mutation 'detector: settle asks whether ANY watched device is present' `
     'event-watch.ps1' 'detector.tests.ps1' `
     '        $stillHere = @($arrived | Where-Object { $present[$_] })' `
@@ -642,6 +649,60 @@ Invoke-Mutation 'writer: an identifier that would be altered is stored anyway' `
     'config.ps1' 'config.tests.ps1' `
     '    return ((ConvertTo-ConfigValue $Text) -ceq "$Text")' `
     '    return $true'
+
+# ---- the device-entry grammar, and the normalising that shipped ---------------
+#
+# The defect these hold down: install.ps1 deleted ALL whitespace and lower-cased
+# the WHOLE entry before showing it, so `@has space` displayed as the well-formed
+# `@hasspace` and `@BadCase` as `@badcase` -- both refused by the watcher, which
+# reads the raw value. `status` then called a malformed entry a configured device
+# that was merely "not attached right now".
+
+Invoke-Mutation 'grammar: an entry is stripped of whitespace, so @has space looks valid' `
+    'config.ps1' 'config.tests.ps1' `
+    '        $raw = "$entry".Trim()' `
+    "        `$raw = ""`$entry"" -replace '\s',''"
+Invoke-Mutation 'grammar: the suffix is matched case-insensitively, so @BadCase is accepted' `
+    'config.ps1' 'config.tests.ps1' `
+    "        if (`$raw -cmatch '^(?:[Uu][Ss][Bb]:)?([0-9A-Fa-f]{4}):([0-9A-Fa-f]{4})(?:@([a-z0-9-]+))?(?:@([a-z0-9-]+))?`$') {" `
+    "        if (`$raw -match '^(?:[Uu][Ss][Bb]:)?([0-9A-Fa-f]{4}):([0-9A-Fa-f]{4})(?:@([a-z0-9-]+))?(?:@([a-z0-9-]+))?`$') {"
+Invoke-Mutation 'grammar: a malformed entry keeps a canonicalised Raw, not what was written' `
+    'config.ps1' 'config.tests.ps1' `
+    '            Raw = $raw; Ok = $false; Kind = ''''; Vid = ''''; Prod = ''''' `
+    '            Raw = $raw.ToLower(); Ok = $false; Kind = ''''; Vid = ''''; Prod = '''''
+Invoke-Mutation 'grammar: the spot is part of an identity, so a moved device reads as unconfigured' `
+    'config.ps1' 'config.tests.ps1' `
+    "            `$e.Key      = `$e.Identity + `$(if (`$e.Spot) { ""@`$(`$e.Spot)"" } else { '' })" `
+    "            `$e.Identity = `$e.Identity + `$(if (`$e.Spot) { ""@`$(`$e.Spot)"" } else { '' }); `$e.Key = `$e.Identity"
+
+# ---- status tells the truth about a malformed entry ---------------------------
+
+Invoke-Mutation 'status: a malformed trigger is counted as merely absent' `
+    'install.ps1' 'install.tests.ps1' `
+    '            $bad++' `
+    '            $missing++'
+Invoke-Mutation 'status: a trigger row is canonicalised, so it is not the string in the file' `
+    'install.ps1' 'install.tests.ps1' `
+    "        `$out += ('{0} {1,-20} {2}' -f `$label, `$d.Raw, `$name)" `
+    "        `$out += ('{0} {1,-20} {2}' -f `$label, `$d.Key, `$name)"
+Invoke-Mutation 'status: a malformed trigger is reported as a device that is elsewhere' `
+    'install.ps1' 'install.tests.ps1' `
+    '        if (-not $d.Ok) {' `
+    '        if ($false) {'
+
+# ---- the conformance loop knows when a spec file is checked by nobody ---------
+#
+# A suite that loops over a list of spec names it holds itself cannot check a
+# file nobody added to that list, and it stays GREEN while doing it -- status.md
+# went unchecked on macOS for five revisions that way.
+Invoke-Mutation 'spec: a listing that finds nothing passes vacuously' `
+    'tests\spec.tests.ps1' 'spec.tests.ps1' `
+    "    if (@(`$Files).Count -eq 0) { return @('specs/ has no .md files at all -- the check is broken, not passing') }" `
+    '    if (@($Files).Count -eq 0) { return @() }'
+Invoke-Mutation 'spec: a spec file in neither list goes unnoticed' `
+    'tests\spec.tests.ps1' 'spec.tests.ps1' `
+    '    return @($Files | Where-Object { $known -notcontains $_ })' `
+    '    return @()'
 Invoke-Mutation 'writer: the display name goes to the file unsanitised' `
     'install.ps1' 'walkthrough.tests.ps1' `
     '            ("display.{0}.name      = {1}" -f $d.Label, (ConvertTo-ConfigValue $d.Name))' `
@@ -692,12 +753,16 @@ Invoke-Mutation 'naming: a device presenting a keyboard stops sorting first' `
     '                Rank  = $(if ($false) { 0 }'
 Invoke-Mutation 'naming: the review menu goes back to listing ids' `
     'install.ps1' 'walkthrough.tests.ps1' `
-    '                    if ($c) { $c.Name } else { $d }' `
-    '                    $d'
+    '                    if     ($c) { $c.Name }' `
+    '                    if     ($false) { $c.Name }'
+Invoke-Mutation 'naming: the review menu shows a malformed entry as an ordinary device' `
+    'install.ps1' 'walkthrough.tests.ps1' `
+    '                    elseif (-not (ConvertFrom-TriggerDevices $d)[0].Ok) { "$d (malformed)" }' `
+    '                    elseif ($false) { "$d (malformed)" }'
 Invoke-Mutation 'naming: status reports the trigger keys with no names' `
     'install.ps1' 'install.tests.ps1' `
-    '        if ($c) { $name = Get-CandidateLabel $c }' `
-    "        if (`$c) { `$name = '' }"
+    '        elseif ($by.Contains($d.Identity)) { $name = Get-CandidateLabel $by[$d.Identity] }' `
+    "        elseif (`$by.Contains(`$d.Identity)) { `$name = '' }"
 Invoke-Mutation 'naming: an absent trigger is left reading as a fault' `
     'install.ps1' 'install.tests.ps1' `
     '    if ($missing -gt 0) {' `
