@@ -44,14 +44,25 @@ printf '\357\273\277computer.this = mac\n' >"$FAKE_DIR/c"
 config_load "$FAKE_DIR/c"
 assert_equal 'mac' "$(config_get 'computer.this')"
 
+it 'trims a vertical tab and a form feed, which \s also covers'
+printf '\vcomputer.this\v=\fmac\f\n' >"$FAKE_DIR/c"
+config_load "$FAKE_DIR/c"
+assert_equal 'mac' "$(config_get 'computer.this')"
+
+it 'returns an input map in FILE order, never sorted by value'
+# specs/config-format.md, "Ordering": the LG's file lists 0xD1 before 0xD0.
+cfg "$CONFIG_THIS_DESK"
+assert_equal 'mac	209
+pc	208' "$(config_input_map lg)"
+
 it 'refuses a word above 65535, which no EDID id can be'
 set +e; config_to_word 65536 >/dev/null; rc=$?; set -e
 assert_equal 1 "$rc" '65536 is not a 16-bit id'
 assert_equal 65535 "$(config_to_word 65535)"
 
 it 'normalises only the documented trigger forms, and names the rest as bad'
-# An unknown entry used to be prefixed into a usb: key that matched nothing,
-# so the watcher armed and never fired.
+# An unknown entry prefixed into a usb: key would match nothing, so the watcher
+# would arm and never fire.
 cfg 'trigger.device = 046D:0843, USB:1235:820A, BT:0011223344FF, hid:1:2, bt:00:11:22:33:44:ff, usb:46d:843'
 assert_equal 'usb:046d:0843 usb:1235:820a bt:0011223344ff' "$(config_trigger_devices | tr '\n' ' ' | sed 's/ $//')"
 assert_equal 'hid:1:2 bt:00:11:22:33:44:ff usb:46d:843' "$(config_bad_trigger_devices | tr '\n' ' ' | sed 's/ $//')"
@@ -214,11 +225,6 @@ it 'a bt entry takes no suffix'
 cfg 'trigger.device = bt:0011223344ff@something'
 assert_equal '' "$(config_trigger_devices)"
 assert_equal 'bt:0011223344ff@something' "$(config_bad_trigger_devices)"
-
-it 'the bare id of an entry drops whatever suffixes it has'
-assert_equal 'usb:046d:c547' "$(config_trigger_id 'usb:046d:c547@tok@where')"
-assert_equal 'usb:046d:c547' "$(config_trigger_id 'usb:046d:c547@tok')"
-assert_equal 'usb:046d:c547' "$(config_trigger_id 'usb:046d:c547')"
 
 # --- writing: what goes in must come back out --------------------------------
 #

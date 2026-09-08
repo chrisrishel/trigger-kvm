@@ -21,10 +21,13 @@
 # the same commit. Both test suites assert the exact packets below.
 #
 # Hard rule 2 applies to everything here: never verify a switch by reading a VCP
-# value back. Reads lie on both of these panels (the PG42UQ returns 0 for every
-# feature; the LG returns -7 while its link renegotiates). Confirm by looking.
+# value back. Reads lie on both of these panels (docs/measurements.md, "DDC
+# reads"). Confirm by looking.
 #
-# All values confirmed visually, in both directions, from both platforms.
+# Each value below says how it was confirmed. "both platforms" means watched
+# from the Apple Silicon and Windows switchers; "instrument" means watched from
+# the Intel measuring instrument only (docs/decisions/004); "documented" means
+# never sent from anything here.
 
 # ---------------------------------------------------------------------------
 
@@ -61,12 +64,12 @@ edid_product   = "per-input; use what `trigger-kvm list` shows on this computer"
 method = "lg-alt"
 
 [monitor.input]
-displayport = 0xD0   # 208
-usb-c       = 0xD1   # 209 -- NOTE: ddcutil's wiki calls 0xD1 "DisplayPort 2" and lists
-                     #        USB-C as 0xD2. On this panel 0xD1 is correct and 0xD2 was
-                     #        never needed. Confirmed from both platforms.
-hdmi1       = 0x90   # 144 -- documented, not exercised
-hdmi2       = 0x91   # 145 -- documented, not exercised
+displayport = 0xD0   # 208 -- both platforms, and the instrument
+usb-c       = 0xD1   # 209 -- both platforms, and the instrument. ddcutil's wiki calls
+                     #        0xD1 "DisplayPort 2" and lists USB-C as 0xD2; on this
+                     #        panel 0xD1 is correct and 0xD2 was never needed.
+hdmi1       = 0x90   # 144 -- documented
+hdmi2       = 0x91   # 145 -- documented
 
 # ---------------------------------------------------------------------------
 
@@ -88,6 +91,6 @@ osd_auto_input = "Auto Input Detection"  # MUST be OFF. Named differently from t
 method = "standard"
 
 [monitor.input]
-displayport = 0x0F   # 15
-hdmi1       = 0x11   # 17
-hdmi2       = 0x12   # 18 -- documented, not exercised
+displayport = 0x0F   # 15 -- both platforms, and the instrument
+hdmi1       = 0x11   # 17 -- both platforms
+hdmi2       = 0x12   # 18 -- instrument only (2026-09-01, docs/measurements.md)

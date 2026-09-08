@@ -1,41 +1,29 @@
 # shellcheck shell=bash
 # shellcheck disable=SC2034  # a sourced library: its variables are read by its callers
 
-# The two checks, and the only part of this program that deliberately moves a
-# monitor while someone is watching.
+# The two checks: the only part of this program that deliberately moves a
+# monitor while someone is watching (specs/configure.md 10 and 11).
 #
-# WHAT IS UNDER TEST IS THE CLAIM THAT INPUT V OF PANEL P IS COMPUTER C. A panel
-# that answers every command perfectly while its inputs are mapped to the wrong
-# computers fails this and is not broken. Hence "test the monitor inputs".
-#
-# A SWITCH IS CONFIRMED BY A HUMAN LOOKING AT IT. Never by a return code and
-# never by reading a VCP value back -- reads lie on both panels here, and have
-# already produced false negatives. Every question below is asked about
-# something the person just watched.
+# What is under test is the claim that input V of panel P is computer C. A
+# switch is confirmed by a person looking at it, never by a return code and
+# never by reading a value back.
 
-# How long a panel is held on the candidate input before it is brought back,
-# and how long to let the return settle. Eight seconds is the point on hardware
-# -- it is what someone needs to look up, see the switch, and look back -- and
-# dead weight in a test, so the suite turns them down rather than sleeping for
-# minutes.
+# How long a panel is held away before it is brought back, and how long the
+# return is given to settle. Turned down by the suite.
 TK_HOLD=${TK_HOLD:-8}
 TK_SETTLE_BACK=${TK_SETTLE_BACK:-2}
 TK_WALK_HOLD=${TK_WALK_HOLD:-6}
 
-# The ONE place a check moves a monitor. Everything that switches a panel goes
-# through here -- a batched round, a single retry, a blind walk -- so there is a
-# single line to read when asking "what can send a packet?", and a single thing
-# for a test harness to stand in for.
+# The one place a check moves a monitor, so a test harness has one thing to
+# stand in for.
 wt_send_input() {
   "$TK_SELF" set --only "$1" --value "$2" --config "$3" >/dev/null 2>&1 || true
 }
 
-# What the monitor's own menu calls an input value, so recovery instructions can
-# say "choose HDMI 1" rather than "choose 0x11". Nobody's OSD shows hex.
+# What the monitor's own menu calls a value, from the channel's own table:
+# recovery instructions say "choose HDMI 1", never "choose 0x11" or "choose pc".
 wt_input_name() {
   local _i
-  # The channel's own table only, never the map: a computer name like "pc" is
-  # what THIS tool calls an input, and the monitor's menu has never heard of it.
   wt_input_table "$1" ''
   _i=0
   while [ "$_i" -lt "${#IT_VALUES[@]}" ]; do
@@ -49,52 +37,47 @@ wt_input_name() {
 
 # --- the monitor inputs ------------------------------------------------------
 
-# Prove the display answers BEFORE anything is written, against a throwaway
-# config. The switcher takes its map from a config file rather than the command
-# line -- deliberately, so a panel has one description and not two -- so testing
-# early means writing a temp one, not weakening the rule that nothing is written
-# until you save.
+# The check runs against a throwaway config: the switcher takes its map from a
+# file, and nothing is written until Save.
+WT_RAN_DISPLAYS=''
+WT_DISPLAYS_OK=''
+WT_PASS_SIG=''
+WT_CHECKED_SIG=''
 wt_check_displays() {
-  local _tmp _scope _i _scoped _others _c _bad _skipped _target _panels _np
-  local _nscoped _rounds _head _last _old _round _f
+  local _tmp _scope _i _attached _scoped _others _targets _c _bad _skipped _target
+  local _panels _np _nscoped _rounds _head _last _old _round _f
   _tmp=$(mktemp -t trigger-kvm-check)
   # shellcheck disable=SC2064
   trap "rm -f '$_tmp'" RETURN
   wt_write_config "$_tmp"
 
-  # Which monitor to check -- their intent, not the tool's convenience. It used
-  # to ask where this window was so it could schedule that panel last; the same
-  # protection comes from saying what is about to move and letting someone act
-  # on it, which is one fewer question and one they could not answer
-  # confidently anyway.
+  # Only attached panels can be checked (10.1).
+  _attached=$(wt_attached_managed | tr '\n' ' ')
+  if [ -z "$_attached" ]; then
+    printf '\n  None of the managed monitors is attached right now.\n' >&2
+    WT_RAN_DISPLAYS='not checked'; WT_DISPLAYS_OK=''; return 0
+  fi
+
   _scope=''
-  if [ "${#WT_A_KEY[@]}" -gt 1 ]; then
+  if [ "$(printf '%s' "$_attached" | wc -w | tr -d ' ')" -gt 1 ]; then
     printf '\n  Which monitor do you want to check?\n' >&2
     menu_reset
     menu_add 'All of them' ''
-    _i=0
-    while [ "$_i" -lt "${#WT_A_KEY[@]}" ]; do menu_add "${WT_A_NAME[$_i]}" ''; _i=$(( _i + 1 )); done
+    for _i in $_attached; do wt_rec "$_i"; menu_add "$R_NAME" ''; done
     select_one --default 0 --escapable
     if [ "$MENU_PICK" -lt 0 ]; then
-      # Neither a pass nor a failure (specs 4.2): OK is left empty, so the
-      # cursor moves on rather than landing on Monitors.
+      # Neither a pass nor a failure (4.2).
       WT_RAN_DISPLAYS='not checked'; WT_DISPLAYS_OK=''; return 0
     fi
-    [ "$MENU_PICK" -gt 0 ] && _scope=$(( MENU_PICK - 1 ))
+    [ "$MENU_PICK" -gt 0 ] && _scope=$(printf '%s' "$_attached" | tr ' ' '\n' | sed -n "${MENU_PICK}p")
   fi
-
-  # The panels in scope, as indices.
-  _scoped=''
-  if [ -n "$_scope" ]; then _scoped=$_scope
-  else
-    _i=0
-    while [ "$_i" -lt "${#WT_A_KEY[@]}" ]; do _scoped="$_scoped $_i"; _i=$(( _i + 1 )); done
-  fi
+  if [ -n "$_scope" ]; then _scoped=$_scope; else _scoped=$_attached; fi
 
   # Every other computer any scoped panel claims.
   _others=''
   for _i in $_scoped; do
-    for _c in $(map_computers "${WT_A_MAP[$_i]}"); do
+    wt_rec "$_i"
+    for _c in $(map_computers "$R_MAP"); do
       [ "$_c" = "$WT_THIS" ] && continue
       case " $_others " in *" $_c "*) ;; *) _others="$_others $_c" ;; esac
     done
@@ -102,34 +85,24 @@ wt_check_displays() {
 
   _bad=''
   _skipped=0
-
-  if [ -z "$_others" ]; then
-    # Nothing else is on this desk, so there is no claim to check beyond "the
-    # transport reaches each panel".
-    for _i in $_scoped; do
-      if ! wt_check_one "$_i" '' "$_tmp"; then _bad="$_bad
-${WT_A_NAME[$_i]}"; fi
-    done
-  fi
-
-  for _target in $_others; do
-    # Panels that know BOTH this computer and the target.
+  # With no other computer there is no claim to check beyond "the transport
+  # reaches each panel": one pass, sending each to another of its inputs (10.2).
+  _targets=$_others
+  [ -n "$_targets" ] || _targets='-'
+  for _target in $_targets; do
+    [ "$_target" = '-' ] && _target=''
     _panels=''
     for _i in $_scoped; do
-      if [ -n "$(map_get "${WT_A_MAP[$_i]}" "$_target")" ] &&
-         [ -n "$(map_get "${WT_A_MAP[$_i]}" "$WT_THIS")" ]; then
-        _panels="$_panels $_i"
-      fi
+      wt_rec "$_i"
+      [ -n "$(map_get "$R_MAP" "$WT_THIS")" ] || continue
+      if [ -z "$_target" ] || [ -n "$(map_get "$R_MAP" "$_target")" ]; then _panels="$_panels $_i"; fi
     done
     [ -n "$_panels" ] || continue
 
-    # HARD RULE 4: one panel always stays on this computer, so the question
-    # arrives on a screen you can still read. When every panel being checked
-    # claims this computer, that means TWO ROUNDS -- the second covers the one
-    # held back.
+    # HARD RULE 4: one panel always stays on this computer. When every panel
+    # being checked would move, that is two rounds.
     _np=$(printf '%s' "$_panels" | wc -w | tr -d ' ')
     _nscoped=$(printf '%s' "$_scoped" | wc -w | tr -d ' ')
-    _rounds=''
     if [ "$_np" -eq "$_nscoped" ] && [ "$_np" -gt 1 ]; then
       _head='' _last=''
       for _i in $_panels; do _head="$_head $_last"; _last=$_i; done
@@ -143,9 +116,7 @@ ${WT_A_NAME[$_i]}"; fi
       IFS=$_old
       [ -n "$_round" ] || { IFS='|'; continue; }
       wt_check_round "$_round" "$_target" "$_tmp"
-      # NEWLINE-separated, not space: a panel is called "LG ULTRAGEAR+", and a
-      # space-separated list turned that into two failures called "LG" and
-      # "ULTRAGEAR+" in the row someone reads to find out what went wrong.
+      # Newline-separated: a panel is called "LG ULTRAGEAR+".
       while IFS= read -r _f; do
         [ -n "$_f" ] || continue
         case "
@@ -163,7 +134,9 @@ INNER
     IFS=$_old
   done
 
-  # Declining is not a failure and must not read as a pass either.
+  # A pass is bound to what was checked (10.8); an edit retires it.
+  WT_CHECKED_SIG=$(wt_answers_signature)
+  WT_PASS_SIG=''
   if [ "$_skipped" = "1" ]; then
     WT_RAN_DISPLAYS='not checked'; WT_DISPLAYS_OK=''; return 0
   fi
@@ -174,52 +147,81 @@ INNER
   else
     WT_RAN_DISPLAYS='all responded'
     WT_DISPLAYS_OK=1
+    # shellcheck disable=SC2086  # a list of indices, meant to split
+    WT_PASS_SIG=$(wt_pass_signature $_scoped)
   fi
   return 0
 }
 
-# One round: send a group of panels to one computer together, bring them all
-# back, and ask ONCE.
-#
-# BATCHED ACROSS PANELS, NEVER ACROSS COMPUTERS. Monitors sit side by side, so
-# several are confirmed in one glance; a SEQUENCE over half a minute has to be
-# held in memory and reported afterwards, and memory is the weak link.
-#
-# The win is the question, not the wall clock. Asking "did they all show pc?"
-# makes the common case -- everything worked -- one keystroke, and the four-way
-# diagnosis only appears for the panels someone says went wrong.
-WT_ROUND_BAD=''
+# May the trigger check pull for real? Only with a current pass covering every
+# managed, attached panel (10.8, 11).
+wt_pull_allowed() {
+  [ "$WT_DISPLAYS_OK" = "1" ] || return 1
+  # shellcheck disable=SC2046  # a list of indices, meant to split
+  [ "$WT_PASS_SIG" = "$(wt_pass_signature $(wt_attached_managed))" ]
+}
+
+# Where a panel goes for a check: the target computer's input, or with no
+# target the first value on its channel that is not this computer's. Sets
+# WT_CAND and WT_CAND_NAME; false when the panel has nowhere to go.
+WT_CAND=''
+WT_CAND_NAME=''
+wt_candidate() {
+  local _here _j
+  wt_rec "$1"
+  WT_CAND='' WT_CAND_NAME=''
+  if [ -n "$2" ]; then
+    WT_CAND=$(map_get "$R_MAP" "$2"); WT_CAND_NAME=$2
+    [ -n "$WT_CAND" ]
+    return
+  fi
+  _here=$(map_get "$R_MAP" "$WT_THIS")
+  wt_input_table "$R_METHOD" "$R_MAP"
+  _j=0
+  while [ "$_j" -lt "${#IT_VALUES[@]}" ]; do
+    if [ "$(tk_lower "${IT_VALUES[$_j]}")" != "$(tk_lower "$_here")" ]; then
+      WT_CAND=${IT_VALUES[$_j]}; WT_CAND_NAME=${IT_NAMES[$_j]}; return 0
+    fi
+    _j=$(( _j + 1 ))
+  done
+  return 1
+}
+
+# THE SWING: send a group of panels away, hold, bring them all back, settle.
+# Every path that moves a panel goes through here, and through its preamble
+# (10.2, 10.7). WT_ROUND_SKIPPED=1 when the person declined.
 WT_ROUND_SKIPPED=0
-wt_check_round() {
-  local _round _target _cfg _hold _names _i _namelist _stays _staylist _n
-  local _verb _solo _back _bname _count _q _wrong _idx _p
+wt_swing() {
+  local _round _target _cfg _hold _names _i _namelist _stays _staylist _n _verb
+  local _solo _back _bname _what
   _round=$1 _target=$2 _cfg=$3 _hold=${4:-$TK_HOLD}
-  WT_ROUND_BAD=''
   WT_ROUND_SKIPPED=0
 
   _names=''
-  for _i in $_round; do _names="$_names
-${WT_A_NAME[$_i]}"; done
+  for _i in $_round; do wt_rec "$_i"; _names="$_names
+$R_NAME"; done
   _namelist=$(printf '%s' "${_names#
 }" | tk_join_names)
 
-  # WHAT STAYS is measured against EVERY MANAGED PANEL, not just this round's:
-  # a panel nobody asked to check is still on this computer, and still somewhere
-  # to put a window.
+  # What stays is every managed, attached panel not in this round.
   _stays=''
-  _i=0
-  while [ "$_i" -lt "${#WT_A_KEY[@]}" ]; do
+  for _i in $(wt_attached_managed); do
     case " $_round " in
       *" $_i "*) ;;
-      *) _stays="$_stays
-${WT_A_NAME[$_i]}" ;;
+      *) wt_rec "$_i"; _stays="$_stays
+$R_NAME" ;;
     esac
-    _i=$(( _i + 1 ))
   done
 
-  printf '\n  Sending %s to %s for %ss, then back automatically.\n' "$_namelist" "$_target" "$_hold" >&2
-  printf '  If %s is asleep or off you will see No Signal, which still proves the\n' "$_target" >&2
-  printf '  switch worked.\n' >&2
+  if [ -n "$_target" ]; then _what=$_target; else _what='another input'; fi
+  printf '\n  Sending %s to %s for %ss, then back automatically.\n' "$_namelist" "$_what" "$_hold" >&2
+  if [ -n "$_target" ]; then
+    printf '  If %s is asleep or off you will see No Signal, which still proves the\n' "$_target" >&2
+    printf '  switch worked.\n' >&2
+  else
+    printf '  It only has to CHANGE: if nothing is plugged into that input it will say\n' >&2
+    printf '  No Signal, and that still proves the switch worked.\n' >&2
+  fi
 
   if [ -n "$_stays" ]; then
     _staylist=$(printf '%s' "${_stays#
@@ -228,26 +230,18 @@ ${WT_A_NAME[$_i]}" ;;
 }" | grep -c . || true)
     if [ "$_n" -eq 1 ]; then _verb=stays; else _verb=stay; fi
     printf '\n  %s %s here, so you can read this.\n' "$_staylist" "$_verb" >&2
-    # TOLD EVERY ROUND rather than asked once. This cannot see where the window
-    # is, and asking made someone answer a question about the tool's
-    # scheduling; saying what is about to move lets them act on it only if it
-    # applies.
+    # Said every round: this cannot see where the window is.
     printf '  If this window is on %s, drag it to %s first: if the switch back\n' \
            "$_namelist" "$(printf '%s' "${_stays#
 }" | head -1)" >&2
     printf '  fails, the window goes dark with it and there is no way to answer.\n' >&2
-    # Last, and blocking: it is the thing to act on, so nothing may print after
-    # it and be read too late.
     menu_read_line '  Enter when ready' '' >/dev/null || menu_eof
   else
-    # ONE MONITOR AND NOTHING TO HOLD BACK. If the switch back fails, this
-    # person is looking at a black screen with no way to read a prompt, ask a
-    # question or undo anything. That is unavoidable -- but being stranded
-    # WITHOUT HAVING BEEN TOLD how to get back is not, and the telling has to
-    # happen while there is still a screen to read it on.
+    # The only monitor: say how to get back while there is a screen to read it on.
     _solo=$(printf '%s' "$_round" | awk '{print $1}')
-    _back=$(map_get "${WT_A_MAP[$_solo]}" "$WT_THIS")
-    _bname=$(wt_input_name "${WT_A_METHOD[$_solo]}" "$_back")
+    wt_rec "$_solo"
+    _back=$(map_get "$R_MAP" "$WT_THIS")
+    _bname=$(wt_input_name "$R_METHOD" "$_back")
     printf '\n  READ THIS FIRST -- this is your only monitor.\n' >&2
     printf '  You will not be able to read anything while it is away.\n\n' >&2
     printf '  IF IT DOES NOT COME BACK there is nothing this tool can do for you --\n' >&2
@@ -267,26 +261,48 @@ ${WT_A_NAME[$_i]}" ;;
   fi
 
   for _i in $_round; do
-    wt_send_input "${WT_A_LABEL[$_i]}" "$(map_get "${WT_A_MAP[$_i]}" "$_target")" "$_cfg"
+    wt_candidate "$_i" "$_target" || continue
+    wt_send_input "$R_LABEL" "$WT_CAND" "$_cfg"
   done
   sleep "$_hold"
   for _i in $_round; do
-    wt_send_input "${WT_A_LABEL[$_i]}" "$(map_get "${WT_A_MAP[$_i]}" "$WT_THIS")" "$_cfg"
+    wt_rec "$_i"
+    wt_send_input "$R_LABEL" "$(map_get "$R_MAP" "$WT_THIS")" "$_cfg"
   done
   sleep "$TK_SETTLE_BACK"
+  return 0
+}
 
-  printf '\n' >&2
+# One round: swing a group of panels together and ask ONCE; narrow only on a
+# no (10.3). Batched across panels, never across computers.
+WT_ROUND_BAD=''
+wt_check_round() {
+  local _round _target _cfg _names _i _namelist _count _q _wrong _idx _p
+  _round=$1 _target=$2 _cfg=$3
+  WT_ROUND_BAD=''
+
+  wt_swing "$_round" "$_target" "$_cfg"
+  [ "$WT_ROUND_SKIPPED" = "1" ] && return 0
+
+  _names=''
+  for _i in $_round; do wt_rec "$_i"; _names="$_names
+$R_NAME"; done
+  _namelist=$(printf '%s' "${_names#
+}" | tk_join_names)
   _count=$(printf '%s' "$_round" | wc -w | tr -d ' ')
-  if [ "$_count" -eq 1 ]; then _q="  Did $_namelist show $_target, then come back?"
+  printf '\n' >&2
+  if [ -z "$_target" ]; then
+    if [ "$_count" -eq 1 ]; then _q="  Did $_namelist change, then come back?"
+    else _q='  Did all of them change, then come back?'; fi
+  elif [ "$_count" -eq 1 ]; then _q="  Did $_namelist show $_target, then come back?"
   else _q="  Did all of them show $_target, then come back?"; fi
   if read_yesno "$_q" y; then return 0; fi
 
-  # Only now does anyone have to think. One panel needs no narrowing question.
   _wrong=$_round
   if [ "$_count" -gt 1 ]; then
     printf '\n  Which ones did not?\n' >&2
     menu_reset
-    for _i in $_round; do menu_add "${WT_A_NAME[$_i]}" "${WT_A_LABEL[$_i]}"; done
+    for _i in $_round; do wt_rec "$_i"; menu_add "$R_NAME" "$R_LABEL"; done
     select_many
     _wrong=''
     _idx=0
@@ -298,52 +314,28 @@ ${WT_A_NAME[$_i]}" ;;
 
   for _i in $_wrong; do
     if ! wt_check_one "$_i" "$_target" "$_cfg"; then
+      wt_rec "$_i"
       WT_ROUND_BAD="$WT_ROUND_BAD
-${WT_A_NAME[$_i]}"
+$R_NAME"
     fi
   done
   WT_ROUND_BAD=$(printf '%s' "$WT_ROUND_BAD" | grep -v '^$' || true)
   return 0
 }
 
-# Switch one display to a candidate input, hold, bring it BACK automatically,
-# and only then ask.
-#
-# The return is what makes this safe to run against the display you are reading:
-# the question always arrives on a panel that has already come back, so this
-# never needs to know which monitor its own window is on, and a wrong guess
-# costs a few seconds of black rather than a stranded session.
-#
-# Asked AS IT HAPPENED, IN THE ORDER IT HAPPENED: did it go, and did it come
-# back. One question with four answers made the reader hold every failure in
-# mind at once to find their own; this asks the thing they just watched, and
-# only the "no" leads anywhere else.
-#
-# Returns 0 correct, 1 changed to the WRONG thing, 2 went and did not come back,
-# 3 nothing happened.
+# Swing one panel and ask what happened, in the order it happened (10.4).
+# WT_OUTCOME: 0 correct, 1 changed to the wrong thing, 2 went and did not come
+# back, 3 nothing happened, 4 declined.
 WT_OUTCOME=0
 wt_probe_one() {
-  local _i _candidate _candname _cfg _hold _name _here _ismachine
-  _i=$1 _candidate=$2 _candname=$3 _cfg=$4 _hold=${5:-$TK_HOLD}
-  _name=${WT_A_NAME[$_i]}
-  _here=$(map_get "${WT_A_MAP[$_i]}" "$WT_THIS")
-  _ismachine=$6
+  local _i _target _cfg
+  _i=$1 _target=$2 _cfg=$3
+  wt_candidate "$_i" "$_target" || { WT_OUTCOME=0; return 0; }
+  wt_swing "$_i" "$_target" "$_cfg"
+  [ "$WT_ROUND_SKIPPED" = "1" ] && { WT_OUTCOME=4; return 0; }
+  wt_rec "$_i"
 
-  printf '\n  Sending %s to %s for %ss, then back automatically.\n' "$_name" "$_candname" "$_hold" >&2
-  if [ "$_ismachine" = "1" ]; then
-    printf '  Watch that monitor -- you should see %s on it.\n' "$_candname" >&2
-    printf '  If that computer is asleep or off it will say No Signal, which still\n' >&2
-    printf '  proves the switch worked.\n' >&2
-  else
-    printf '  Watch that monitor. It only has to CHANGE -- if nothing is plugged into\n' >&2
-    printf '  that input it will say No Signal, and that still proves the switch worked.\n' >&2
-  fi
-
-  wt_send_input "${WT_A_LABEL[$_i]}" "$_candidate" "$_cfg"
-  sleep "$_hold"
-  if [ -n "$_here" ]; then wt_send_input "${WT_A_LABEL[$_i]}" "$_here" "$_cfg"; sleep "$TK_SETTLE_BACK"; fi
-
-  printf '\n  Did the %s change to %s, and back to %s?\n' "$_name" "$_candname" "$WT_THIS" >&2
+  printf '\n  Did the %s change to %s, and back to %s?\n' "$R_NAME" "$WT_CAND_NAME" "$WT_THIS" >&2
   menu_reset
   menu_add "Yes, and it changed back to $WT_THIS"     'everything works'
   menu_add "Yes, but it did not change back to $WT_THIS" "the input for $WT_THIS is wrong"
@@ -354,107 +346,78 @@ wt_probe_one() {
     1) WT_OUTCOME=2; return 0 ;;
   esac
 
-  # Only a "no" needs taking apart, and only when there was a computer to
-  # expect: testing a bare input value, any change at all proves the transport,
-  # so there is nothing left to ask.
-  if [ "$_ismachine" != "1" ]; then WT_OUTCOME=3; return 0; fi
+  # Testing a bare input value, any change proves the transport; only a target
+  # computer leaves a second question.
+  if [ -z "$_target" ]; then WT_OUTCOME=3; return 0; fi
 
-  printf '\n  Did the %s change at all?\n' "$_name" >&2
+  printf '\n  Did the %s change at all?\n' "$R_NAME" >&2
   menu_reset
-  menu_add "Yes, but it was not $_candname" "that input is not $_candname"
-  menu_add 'No, nothing happened'           'this panel does not answer on this channel'
+  menu_add "Yes, but it was not $_target" "that input is not $_target"
+  menu_add 'No, nothing happened'         'this panel does not answer on this channel'
   select_one --default 1
   if [ "$MENU_PICK" = "0" ]; then WT_OUTCOME=1; else WT_OUTCOME=3; fi
   return 0
 }
 
-# One panel, one computer: send it there, bring it back, act on what the human
-# saw. Fixes retry IN PLACE, because bouncing out to the review menu to change
-# one value and come back is a worse way to say "try that again".
-#
-# ONE RETRY PER FIX, then take the answer. Do not loop.
+# One panel, one computer: swing it, act on what the person saw, retry ONCE
+# per fix. Returns 0 when it passed.
 wt_check_one() {
-  local _i _target _cfg _attempt _here _cand _candname _j _vendor _di _what
-  local _keep _c _allownone _alt _to _offer
+  local _i _target _cfg _attempt _here _vendor _di _what _alt _to _offer _j _keep _c _allownone
   _i=$1 _target=$2 _cfg=$3 _attempt=${4:-1}
 
-  # Write before every attempt: escalating to a dialect changes the method, and
-  # the switcher reads the method from the file.
+  # Written before every attempt: a fix changes the file the switcher reads.
   wt_write_config "$_cfg"
-
-  _here=$(map_get "${WT_A_MAP[$_i]}" "$WT_THIS")
-  if [ -n "$_target" ]; then
-    wt_probe_one "$_i" "$(map_get "${WT_A_MAP[$_i]}" "$_target")" "$_target" "$_cfg" "$TK_HOLD" 1
-  else
-    # Nothing else is on this panel, so there is no claim to check beyond "the
-    # transport reaches it". Any other input value will do.
-    wt_input_table "${WT_A_METHOD[$_i]}" "${WT_A_MAP[$_i]}"
-    _cand='' _candname=''
-    _j=0
-    while [ "$_j" -lt "${#IT_VALUES[@]}" ]; do
-      if [ "$(tk_lower "${IT_VALUES[$_j]}")" != "$(tk_lower "$_here")" ]; then
-        _cand=${IT_VALUES[$_j]}; _candname=${IT_NAMES[$_j]}; break
-      fi
-      _j=$(( _j + 1 ))
-    done
-    [ -n "$_cand" ] || return 0
-    wt_probe_one "$_i" "$_cand" "$_candname" "$_cfg" "$TK_HOLD" 0
-  fi
+  wt_probe_one "$_i" "$_target" "$_cfg"
+  wt_rec "$_i"
+  _here=$(map_get "$R_MAP" "$WT_THIS")
 
   [ "$WT_OUTCOME" = "0" ] && return 0
-  [ "$_attempt" -ge 2 ] && return 1     # bounded: one retry per fix
+  [ "$WT_OUTCOME" = "4" ] && return 1
+  [ "$_attempt" -ge 2 ] && return 1
 
-  # 1: the panel obeys and the value for this computer is right -- that input is
-  # just not the computer we thought.
+  # 1: the panel obeys; that input is just not the computer we thought.
   if [ "$WT_OUTCOME" = "1" ] && [ -n "$_target" ]; then
     printf '\n  So that input is not %s. Which one is?\n' "$_target" >&2
-    wt_read_input "${WT_A_METHOD[$_i]}" "${WT_A_MAP[$_i]}" \
-      "On the ${WT_A_NAME[$_i]}, which input is '$_target' on?" '' \
-      "$(map_get "${WT_A_MAP[$_i]}" "$_target")" "$_target" 1
+    wt_read_input "$R_METHOD" "$R_MAP" \
+      "On the $R_NAME, which input is '$_target' on?" '' \
+      "$(map_get "$R_MAP" "$_target")" "$_target" 1
     if [ "$WT_INPUT_NONE" = "1" ]; then
-      WT_A_MAP[_i]=$(map_del "${WT_A_MAP[$_i]}" "$_target")
+      wt_answer_set "$_i" map "$(map_del "$R_MAP" "$_target")"
       return 0
     fi
-    WT_A_MAP[_i]=$(map_set "${WT_A_MAP[$_i]}" "$_target" "$WT_INPUT_VALUE")
+    wt_answer_set "$_i" map "$(map_set "$R_MAP" "$_target" "$WT_INPUT_VALUE")"
     wt_check_one "$_i" "$_target" "$_cfg" $(( _attempt + 1 ))
     return $?
   fi
 
-  # 2: the panel obeys, so the channel is right; the value for THIS computer is
-  # not.
+  # 2: the channel is right; the value for THIS computer is not.
   if [ "$WT_OUTCOME" = "2" ]; then
-    printf '\n  So %s responds -- the channel is right. The input for this\n' "${WT_A_NAME[$_i]}" >&2
+    printf '\n  So %s responds -- the channel is right. The input for this\n' "$R_NAME" >&2
     printf "  computer is not. Use that monitor's own buttons to bring it back,\\n" >&2
     printf '  then tell me which input that is.\n\n' >&2
     if read_yesno '  Do you know which input it is?' y; then
-      wt_read_input "${WT_A_METHOD[$_i]}" "${WT_A_MAP[$_i]}" \
-        "On the ${WT_A_NAME[$_i]}, which input is '$WT_THIS' on?" '' "$_here" "$WT_THIS" 0
-      WT_A_MAP[_i]=$(map_set "${WT_A_MAP[$_i]}" "$WT_THIS" "$WT_INPUT_VALUE")
+      wt_read_input "$R_METHOD" "$R_MAP" \
+        "On the $R_NAME, which input is '$WT_THIS' on?" '' "$_here" "$WT_THIS" 0
+      wt_answer_set "$_i" map "$(map_set "$R_MAP" "$WT_THIS" "$WT_INPUT_VALUE")"
     else
       if ! wt_blind_walk "$_i" "$_cfg"; then return 1; fi
-      WT_A_MAP[_i]=$(map_set "${WT_A_MAP[$_i]}" "$WT_THIS" "$WT_WALK_FOUND")
+      wt_answer_set "$_i" map "$(map_set "$R_MAP" "$WT_THIS" "$WT_WALK_FOUND")"
     fi
     wt_check_one "$_i" "$_target" "$_cfg" $(( _attempt + 1 ))
     return $?
   fi
 
-  # 3: nothing at all. The channel is wrong. This is where a method change is
-  # OFFERED -- offered, from documented values, never probed.
-  #
-  # SYMMETRIC, because specs/configure.md section 6.2 lets someone choose the
-  # manufacturer method up front: a panel can arrive here already on it, and
-  # telling that person "no manufacturer values are known" would be false and a
-  # dead end. So a panel on standard is offered the manufacturer method, and a
-  # panel on the manufacturer method is offered standard.
-  _vendor=$(printf '%s' "${WT_A_KEY[$_i]}" | cut -d: -f1)
+  # 3: nothing at all. The channel is wrong, and a method change is OFFERED
+  # from documented values, in either direction (10.5).
+  _vendor=$(printf '%s' "$R_KEY" | cut -d: -f1)
   if _di=$(wt_dialect_for "$_vendor"); then
     _what=${DIALECT_WHAT[$_di]}
     _alt=${DIALECT_METHOD[$_di]}
 
-    if [ "${WT_A_METHOD[$_i]}" != "$_alt" ]; then
+    if [ "$R_METHOD" != "$_alt" ]; then
       _to=$_alt
       printf '\n  %s did not answer the standard channel. It is %s, and some %s\n' \
-             "${WT_A_NAME[$_i]}" "$_what" "$_what" >&2
+             "$R_NAME" "$_what" "$_what" >&2
       printf '  panels put input switching on a manufacturer channel instead. These\n' >&2
       printf '  values are documented for %s, and are the only ones that will be\n' "$_what" >&2
       printf '  sent -- nothing is guessed at on a manufacturer channel:\n\n' >&2
@@ -462,7 +425,7 @@ wt_check_one() {
     else
       _to=standard
       printf '\n  %s is on %s'"'"'s own method and did not answer it. The standard method\n' \
-             "${WT_A_NAME[$_i]}" "$_what" >&2
+             "$R_NAME" "$_what" >&2
       printf '  is the other thing to try. These are its documented values:\n\n' >&2
       _offer='Yes, try the standard method'
     fi
@@ -475,25 +438,22 @@ wt_check_one() {
     done
     printf '\n' >&2
 
-    # A menu, like every other decision in the walkthrough. This used to be the
-    # last y/n confirm left, which made the most consequential question in the
-    # program look like the least considered.
     menu_reset
     menu_add "$_offer" 'and say which input each computer is on'
     menu_add 'No, leave this monitor out' 'everything else stays configured'
     select_one --default 0 --escapable
     if [ "$MENU_PICK" = "0" ]; then
-      # Every value in the old map was for a channel that does not work, so the
-      # map starts again rather than carrying meaningless numbers across.
-      WT_A_METHOD[_i]=$_to
-      _keep=$(map_computers "${WT_A_MAP[$_i]}")
-      WT_A_MAP[_i]=''
+      # The old map was for a channel that does not work; it starts again.
+      _keep=$(map_computers "$R_MAP")
+      wt_answer_set "$_i" method "$_to"
+      wt_answer_set "$_i" map ''
       for _c in $_keep; do
+        wt_rec "$_i"
         _allownone=1
         [ "$_c" = "$WT_THIS" ] && _allownone=0
-        wt_read_input "${WT_A_METHOD[$_i]}" "${WT_A_MAP[$_i]}" \
-          "On the ${WT_A_NAME[$_i]}, which input is '$_c' on?" '' '' "$_c" "$_allownone"
-        [ "$WT_INPUT_NONE" = "1" ] || WT_A_MAP[_i]=$(map_set "${WT_A_MAP[$_i]}" "$_c" "$WT_INPUT_VALUE")
+        wt_read_input "$R_METHOD" "$R_MAP" \
+          "On the $R_NAME, which input is '$_c' on?" '' '' "$_c" "$_allownone"
+        [ "$WT_INPUT_NONE" = "1" ] || wt_answer_set "$_i" map "$(map_set "$R_MAP" "$_c" "$WT_INPUT_VALUE")"
       done
       wt_check_one "$_i" "$_target" "$_cfg" $(( _attempt + 1 ))
       return $?
@@ -501,44 +461,39 @@ wt_check_one() {
     return 1
   fi
 
-  printf '\n  %s did not answer the standard channel, and no manufacturer values\n' "${WT_A_NAME[$_i]}" >&2
-  printf '  are known here for %s. That panel may not support DDC/CI input\n' \
-         "$(printf '%s' "${WT_A_KEY[$_i]}" | cut -d: -f1)" >&2
+  printf '\n  %s did not answer the standard channel, and no manufacturer values\n' "$R_NAME" >&2
+  printf '  are known here for %s. That panel may not support DDC/CI input\n' "$_vendor" >&2
   printf '  switching at all, or may use a channel nobody has documented.\n\n' >&2
   printf '  Everything else is still configured; this monitor just will not follow\n' >&2
   printf '  the switch. Leave it out with Monitors -> "Manage this monitor? no".\n' >&2
   return 1
 }
 
-# Last resort: send each standard input value in turn until the panel comes back
-# to this computer.
-#
-# STANDARD DDC/CI ONLY, MCCS values only, one at a time, and NEVER on a
-# manufacturer sidechannel, where a value we have not been told is a value
-# nobody should send. Offered, never automatic, and the cost is stated first.
+# Last resort: each standard input value in turn until the panel comes back
+# (10.6). Standard DDC/CI only, offered with its cost, refused for the only
+# monitor.
 WT_WALK_FOUND=''
 wt_blind_walk() {
   local _i _cfg _j
   _i=$1 _cfg=$2
   WT_WALK_FOUND=''
+  wt_rec "$_i"
 
   printf '\n--- try the standard values one at a time ---\n' >&2
-  if [ "${WT_A_METHOD[$_i]}" != "standard" ]; then
+  if [ "$R_METHOD" != "standard" ]; then
     printf '  Only offered on the standard channel. A manufacturer channel takes\n' >&2
     printf '  values from documentation or from you -- never from us guessing.\n' >&2
     return 1
   fi
-  # HARD RULE 4. With nothing else on this computer, a wrong guess blacks out
-  # the screen this question is printed on.
-  if [ "${#WT_A_KEY[@]}" -lt 2 ]; then
-    printf '  Not offered: the %s is the only monitor on this computer, so a\n' "${WT_A_NAME[$_i]}" >&2
+  if [ "$(wt_attached_managed | wc -l | tr -d ' ')" -lt 2 ]; then
+    printf '  Not offered: the %s is the only monitor on this computer, so a\n' "$R_NAME" >&2
     printf '  wrong guess would black out the screen you are reading. Use the\n' >&2
     printf "  monitor's own buttons to see which input this computer is on, then\\n" >&2
     printf '  enter that value.\n' >&2
     return 1
   fi
 
-  printf '  I will send each standard input value to the %s in turn and ask\n' "${WT_A_NAME[$_i]}" >&2
+  printf '  I will send each standard input value to the %s in turn and ask\n' "$R_NAME" >&2
   printf '  whether it came back. Your other monitor stays on this computer\n' >&2
   printf '  throughout, so you can keep reading this.\n\n' >&2
   printf '  COST: every wrong value moves that panel to another input. If none of\n' >&2
@@ -549,9 +504,9 @@ wt_blind_walk() {
   _j=0
   while [ "$_j" -lt "${#MCCS_VALUES[@]}" ]; do
     printf '\n  Trying %s ...\n' "${MCCS_VALUES[$_j]}" >&2
-    wt_send_input "${WT_A_LABEL[$_i]}" "${MCCS_VALUES[$_j]}" "$_cfg"
+    wt_send_input "$R_LABEL" "${MCCS_VALUES[$_j]}" "$_cfg"
     sleep "$TK_WALK_HOLD"
-    if read_yesno "  Is the ${WT_A_NAME[$_i]} showing THIS computer now?" n; then
+    if read_yesno "  Is the $R_NAME showing THIS computer now?" n; then
       printf '\n  Found it: %s is %s on this panel.\n' "${MCCS_VALUES[$_j]}" "${MCCS_NAMES[$_j]}" >&2
       WT_WALK_FOUND=${MCCS_VALUES[$_j]}
       return 0
@@ -566,24 +521,19 @@ wt_blind_walk() {
 
 # --- the trigger -------------------------------------------------------------
 
-# Checked AFTER the monitor inputs, and that ordering is the point: once the
-# input values are confirmed, the flip BACK can pull the monitors for real, so
-# it stops being "an event was observed" and becomes the whole thing working.
-# Restore the watcher the trigger check stood down. Called from a RETURN trap, so
-# it covers every way out of the check.
+# Restore a watcher the trigger check stood down. Run from a RETURN trap, so it
+# covers every way out; it reports and still returns 0.
 wt_resume_watcher() {
-  [ "$1" = "1" ] || return 0
-  # This check stood the watcher DOWN on purpose, so a failed restore leaves the
-  # machine with nothing watching -- the one outcome that must never be silent.
-  # Called from a RETURN trap, so it reports and still returns 0: aborting here
-  # would take the walkthrough down with it.
-  if ! tk_bootstrap "$(tk_domain)" "$TK_PLIST"; then
+  [ -n "$1" ] || return 0
+  if ! tk_bootstrap "$(tk_domain)" "$1"; then
     tk_log "could not restart the watcher this check paused: $TK_BOOTSTRAP_ERR"
     tk_log 'NOTHING IS WATCHING until you run:  trigger-kvm restart'
   fi
   return 0
 }
 
+WT_RAN_TRIGGERS=''
+WT_TRIGGERS_OK=''
 wt_check_triggers() {
   local _pull _tmp _d _rc _paused
   if [ "${#WT_DEVICES[@]}" -eq 0 ]; then
@@ -593,7 +543,7 @@ wt_check_triggers() {
   fi
 
   _pull=0
-  [ "$WT_DISPLAYS_OK" = "1" ] && _pull=1
+  wt_pull_allowed && _pull=1
 
   printf '\n--- test the trigger ---\n' >&2
   printf '  Flip your switch AWAY from this computer, then back again. The way\n' >&2
@@ -607,29 +557,23 @@ wt_check_triggers() {
   fi
 
   # The installed watcher would see the same flip and pull against the SAVED
-  # config after the one-shot's pull, so a correct new answer would read as the
-  # monitors failing (specs 11). Stand it down where that needs no password --
-  # the login tier -- and restore it on every way out; the boot tier lives in
-  # the system domain, so say it will fire rather than ask for a password here.
-  _paused=0
+  # config. Stand it down where that needs no password, and restore it on every
+  # way out; the boot tier is left running and said so (11).
+  _paused=''
   case $(tk_installed_tier) in
-    login)
+    login|no)
       if tk_agent_loaded; then
         "$TK_LAUNCHCTL" bootout "$(tk_domain)/$TK_LABEL" >/dev/null 2>&1 || true
-        _paused=1
+        _paused=$(tk_agent_plist)
         printf '\n  The running watcher is paused for this check.\n' >&2
       fi ;;
     boot)
       printf '\n  The running watcher will also fire, using the saved configuration.\n' >&2 ;;
   esac
 
-  # A throwaway config, for the same reason the monitor check uses one: the
-  # answers are not written yet, and pulling against the SAVED config would move
-  # the panels to whatever was configured before rather than to what is on
-  # screen now.
   _tmp=$(mktemp -t trigger-kvm-trig)
   # shellcheck disable=SC2064
-  trap "rm -f '$_tmp'; wt_resume_watcher $_paused" RETURN
+  trap "rm -f '$_tmp'; wt_resume_watcher '$_paused'" RETURN
   wt_write_config "$_tmp"
 
   set -- --test-trigger
@@ -657,8 +601,7 @@ wt_check_triggers() {
     WT_RAN_TRIGGERS='fired, monitors followed'; WT_TRIGGERS_OK=1
     return 0
   fi
-  # A "no" here is a MONITORS fault with the trigger passing, which is a
-  # different diagnosis from "nothing arrived".
+  # A monitors fault with the trigger passing.
   printf '\n  The trigger fired, so the devices are right. Something about the\n' >&2
   printf '  monitors is not -- check them again from the row above.\n' >&2
   WT_RAN_TRIGGERS='fired, but the monitors did not follow'; WT_TRIGGERS_OK=0

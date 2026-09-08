@@ -40,16 +40,26 @@ assert_true "$([ -x "$CHECK" ] && echo 0 || echo 1)" "$CHECK"
 # Naming those two is safe in a way that naming the specs is not -- a new spec
 # joins the loop by existing, while a new meta-file would fail loudly here and
 # be added deliberately.
+# The checker's exit status is the verdict; its output names what is missing.
+conforms() {
+  local _out _rc
+  set +e; _out=$("$CHECK" "$1" "${SOURCES[@]}" 2>&1); _rc=$?; set -e
+  [ "$_rc" = 0 ] || _fail "$_out"
+}
+
 CHECKED=0
 for spec in "$SPECS"/*.md; do
   case ${spec##*/} in README.md | CHANGELOG.md) continue ;; esac
   CHECKED=$(( CHECKED + 1 ))
   it "this implementation conforms to specs/${spec##*/}"
-  out=$("$CHECK" "$spec" "${SOURCES[@]}" 2>&1) || true
-  case $out in
-    *"are missing"*) _fail "$out" ;;
-  esac
+  conforms "$spec"
 done
+
+it 'a checker that could not run is not a pass'
+# A spec it cannot read exits 2 with no "missing" line; the verdict must still
+# be red. Run in a subshell so this file's own tally is not touched.
+set +e; ( FAILED=0; conforms "$FAKE_DIR/no-such-spec.md" 2>/dev/null; exit "$FAILED" ); rc=$?; set -e
+assert_true "$([ "$rc" -gt 0 ] && echo 0 || echo 1)" 'an unreadable spec must fail the verdict'
 
 # Self-test of the derivation above: every .md in specs/ is either checked or one
 # of the two named exclusions. Catches the glob matching nothing, and catches an
@@ -101,6 +111,20 @@ it 'the fixture still carries its byte-order mark and CRLF lines'
 # says. .gitattributes marks the file -text; this notices if that is undone.
 assert_equal 'efbbbf' "$(head -c 3 "$SPECS/config-fixture/input.conf" | xxd -p)"
 assert_true "$([ "$(grep -c $'\r' "$SPECS/config-fixture/input.conf")" -ge 3 ] && echo 0 || echo 1)" 'CRLF lines must survive checkout'
+
+it 'the checker refuses a spec it cannot read, rather than reporting all 0 present'
+set +e; out=$("$CHECK" "$FAKE_DIR/no-such-spec.md" "${SOURCES[@]}" 2>&1); rc=$?; set -e
+assert_equal 2 "$rc" "$out"
+assert_no_match "$out" 'are present'
+
+it 'a fragment that survives only in a comment is reported missing'
+# A comment is not source: a config-file header or a note that quotes the
+# spec's words must not stand in for the wording the person sees.
+printf '%s\n' '# --- somewhere only a comment says ---' >"$FAKE_DIR/commented.sh"
+# shellcheck disable=SC2016  # the backticks are the spec's own fence syntax
+printf '# x\n\n```normative\n--- somewhere only a comment says ---\n```\n' >"$FAKE_DIR/comment-spec.md"
+set +e; out=$("$CHECK" "$FAKE_DIR/comment-spec.md" "$FAKE_DIR/commented.sh" 2>&1); rc=$?; set -e
+assert_equal 1 "$rc" "$out"
 
 it 'the checker actually fails when a normative string is absent'
 # A conformance check that cannot fail is decoration. Prove it bites, against a

@@ -6,38 +6,18 @@
 //   vendor|product|mfg|connector|serial|uuid|name
 //   1E6D|9E9F|GSM|DP|00001111|AAAAAAAA-0000-4000-8000-000000000001|LG ULTRAGEAR+
 //
-// Name is LAST because it is the only free-text field; any '|' in it is replaced
-// with a space so the row stays splittable. Everything before it is fixed-width
-// hex or a UUID.
+// Name is last because it is the only free-text field; a '|' in it becomes a
+// space so the row stays splittable.
 //
-// WHY CoreGraphics AND IOKit, and not either alone:
+// CoreGraphics gives identity and the handle in one call: CGDisplayVendorNumber
+// and CGDisplayModelNumber are the EDID manufacturer and product code, and
+// CGDisplayCreateUUIDFromDisplayID is the UUID `m1ddc display <uuid>` takes, so
+// what the config matches on and what the write is aimed at cannot drift apart.
+// IOKit supplies the panel's own name, EDID descriptor tag 0xFC, which
+// CoreGraphics has no API for. The two are joined on vendor+product+serial.
 //
-//   CoreGraphics gives identity and the handle in one call.
-//   CGDisplayVendorNumber/CGDisplayModelNumber return exactly the EDID
-//   manufacturer and product code -- verified against the raw EDID bytes in
-//   ioreg on 2026-08-31, 0x1E6D/0x9E9F and 0x06B3/0x42E0 -- and
-//   CGDisplayCreateUUIDFromDisplayID returns the same UUID `m1ddc display list`
-//   prints, which is what `m1ddc display <uuid> set ...` takes. So the identity
-//   the config matches on and the handle the write is aimed at come from one
-//   place and cannot drift apart.
-//
-//   IOKit supplies the panel's own NAME, which CoreGraphics has no API for. It
-//   lives in EDID descriptor tag 0xFC, so the raw EDID has to be read, and it is
-//   in the I/O registry. Asking the hardware beats a table, which only ever knows
-//   the monitors its author owned.
-//
-// The two are joined on vendor+product+SERIAL. That is strictly stronger than
-// what the switcher itself matches on (vendor+product, which it refuses when it
-// is ambiguous), so the join can never be the weak link.
-//
-// NEVER an index. m1ddc's [1]/[2] numbers shift when a display drops, and on
-// Windows the two DISPLAYn numbers were observed swapping outright across a
-// reboot. Index 1 silently becoming the other monitor would aim LG
-// service-channel writes at the ASUS. Nothing here caches, and nothing here
-// writes an ordering down.
-//
-// Reads nothing over DDC and writes nothing at all: this program cannot move a
-// monitor.
+// Never an index: display numbering is not stable (../AGENTS.md). Reads nothing
+// over DDC and writes nothing at all: this program cannot move a monitor.
 //
 // Build: clang -O2 -Wall -Wextra -o display-probe display-probe.c \
 //          -framework CoreFoundation -framework IOKit -framework ApplicationServices

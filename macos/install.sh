@@ -1,43 +1,24 @@
 #!/bin/bash
 #
-# Install trigger-kvm on this Mac. Run from the source tree:
+# Install trigger-kvm on this Mac, from the source tree:
 #
 #     cd macos && ./install.sh
+#     ./install.sh uninstall        remove the program; keep the config and log
 #
-# THIS IS WHAT INSTALLING IS, and it is why there is no `install` verb on the
-# CLI: installing is what produces the command. Upgrading and repairing both
-# mean "fetch the source and run its installer", which works because the install
-# is SELF-CONTAINED -- this script copies itself alongside the program, so
-# managing and removing keep working after the source tree is gone.
+# Installing is what produces the command, so there is no `install` verb;
+# upgrading and repairing both mean running this again. The install is
+# self-contained: this script copies itself alongside the program, so
+# uninstalling works after the source tree is gone.
 #
-# Afterwards it is one command from anywhere:
+# When the watcher starts is a property of the host (../specs/configure.md 8):
 #
-#     trigger-kvm configure     the walkthrough; applies what you changed
-#     trigger-kvm status        is it running, what that covers, version
-#     trigger-kvm discover      what is attached, in the form the config wants
-#     trigger-kvm restart       make a hand-edited config take effect now
-#     trigger-kvm logs / pause / uninstall
+#   install.autostart = boot    LaunchDaemon with UserName set, as the user,
+#                               unelevated. sudo once, here, to install it.
+#   install.autostart = login   LaunchAgent in ~/Library/LaunchAgents.
+#   install.autostart = no      loaded now, for this session only.
 #
-# WHEN IT STARTS is a property of the HOST, not of the switcher, so all of that
-# logic lives here. Nothing in trigger-kvm or event-watch knows or asks when it
-# was started; if either ever needs to, the abstraction is wrong.
-#
-# TWO TIERS, and they are mutually exclusive -- installing one removes the other,
-# because two live watchers would both fire on the same arrival and the debounce
-# is per-process, so it cannot dedupe across them.
-#
-#   install.autostart = boot    a LaunchDaemon in /Library/LaunchDaemons with
-#                               UserName set. Starts at boot, before any login.
-#                               Runs AS THE USER, UNELEVATED. sudo ONCE, here,
-#                               to install it into the system domain -- nothing
-#                               elevated runs on the switch path afterwards.
-#   install.autostart = login   a LaunchAgent in ~/Library/LaunchAgents. No
-#                               password, ever. Covers everything from login
-#                               onward, including while the screen is locked.
-#
-# Only the boot tier asks for a password, and only while installing. If it
-# cannot be obtained -- a headless or non-interactive run -- it falls back to
-# login and says so. Nothing elevates without someone choosing it.
+# Only the boot tier asks for a password, and if it cannot be obtained it falls
+# back to login and says so.
 
 set -euo pipefail
 
@@ -62,19 +43,12 @@ say() { printf 'install: %s\n' "$*"; }
 
 DOMAIN="gui/$(id -u)"
 
-# Neither verb may run as root: install would write a root daemon and root-owned
-# files, uninstall would delete inside root's home. See tk_refuse_root.
+# Neither verb may run as root: install would write a root daemon and
+# root-owned files, uninstall would delete inside root's home.
 tk_refuse_root || exit 2
 
-# --- the pre-rename install --------------------------------------------------
-#
-# This was called display-switch until 2026-08-30. An install from before the
-# rename left a LaunchAgent under the old label running a watcher called
-# usb-watch, and nothing removed it -- so it kept firing its own switcher on
-# every flip beside the new one (two watchers, the condition AGENTS.md forbids),
-# and after its switcher was deleted it kept failing to spawn it. Removed on
-# install and on uninstall; the old log is left, as logs are. Delete this block
-# once no machine can plausibly still have one.
+# An install from before this project was renamed (display-switch, with a
+# watcher called usb-watch) is removed, so two watchers cannot both fire.
 OLD_LABEL="com.chrisrishel.displayswitch"
 remove_prerename_install() {
   "$TK_LAUNCHCTL" bootout "$DOMAIN/$OLD_LABEL" >/dev/null 2>&1 || true
@@ -97,10 +71,7 @@ if [ "$VERB" = "uninstall" ]; then
   fi
   rm -f "$TK_BINDIR/trigger-kvm"
   rm -rf "$TK_PREFIX" && say "removed $TK_PREFIX"
-  # The log and the config are LEFT IN PLACE. The log is the only record of what
-  # happened, and a config can represent real work -- reinstalling should not
-  # make you redo it. Both live outside the program directory for exactly this
-  # reason.
+  # The log is the only record of what happened, and a config is real work.
   say 'uninstalled.'
   say "config and log kept: $TK_SUPPORT/config"
   exit 0
@@ -108,9 +79,7 @@ fi
 
 # --- preflight ---------------------------------------------------------------
 #
-# Everything a stranger's Mac can lack is checked BEFORE anything is built or
-# copied, so "this will not work here" is the first thing said, not the last.
-# Each stop leaves the machine exactly as it was.
+# Everything a Mac can lack is checked before anything is built or copied.
 
 refuse() { say "$@"; say 'Nothing was installed.'; exit 1; }
 
@@ -118,7 +87,6 @@ if ! command -v clang >/dev/null 2>&1; then
   refuse 'clang not found. Install the Xcode command line tools: xcode-select --install'
 fi
 
-# m1ddc, which does the DDC writing, supports Apple Silicon only.
 ARCH=$(uname -m)
 if [ "$ARCH" != "arm64" ]; then
   refuse "this Mac is $ARCH. m1ddc, the tool that talks to the monitors, supports Apple Silicon only."
@@ -128,12 +96,10 @@ if [ ! -x "${M1DDC:-/opt/homebrew/bin/m1ddc}" ]; then
   refuse "m1ddc not found at ${M1DDC:-/opt/homebrew/bin/m1ddc}. Install it with:  brew install m1ddc"
 fi
 
-# --- build -------------------------------------------------------------------
+# --- build and copy ----------------------------------------------------------
 
 say 'building'
 make -C "$SRC" -s all
-
-# --- copy --------------------------------------------------------------------
 
 mkdir -p "$TK_PREFIX/lib" "$TK_BINDIR" "$TK_SUPPORT" "$(dirname "$TK_LOG")"
 
@@ -141,17 +107,10 @@ install -m 755 "$SRC/trigger-kvm"   "$TK_PREFIX/trigger-kvm"
 install -m 755 "$SRC/event-watch"   "$TK_PREFIX/event-watch"
 install -m 755 "$SRC/display-probe" "$TK_PREFIX/display-probe"
 install -m 644 "$SRC"/lib/*.sh      "$TK_PREFIX/lib/"
-# Itself, so uninstalling works after the source tree is gone.
 install -m 755 "$0"                 "$TK_PREFIX/install.sh"
 
-# What is running, and how old it is. `status` prints this, because "am I
-# running what I think I am running?" is otherwise unanswerable -- the installed
-# copy is what `trigger-kvm` resolves to, NOT the source tree you just edited,
-# and a stale install looks exactly like a missing feature.
-# Through config_line like every other key = value this project writes: this
-# file is not the config, but it is the same shape and it is READ BACK, so the
-# same rule applies. `source` is a path, and a checkout under a directory whose
-# name contains `#` would otherwise be stored truncated.
+# What is installed and how old it is; `status` prints it, because the
+# installed copy is what `trigger-kvm` resolves to, not the source tree.
 {
   config_line 'version'   "$TK_VERSION"
   config_line 'installed' "$(date '+%Y-%m-%d %H:%M:%S')"
@@ -163,15 +122,11 @@ install -m 755 "$0"                 "$TK_PREFIX/install.sh"
 } > "$TK_PREFIX/version.txt"
 say "installed to $TK_PREFIX"
 
-# ONLY a directory holding the launcher goes on PATH -- one symlink, never the
-# program directory, which would publish every file in it as a command.
+# One symlink on PATH, never the program directory.
 ln -sf "$TK_PREFIX/trigger-kvm" "$TK_BINDIR/trigger-kvm"
 say "linked $TK_BINDIR/trigger-kvm"
 
-# --- configure, if there is nothing to install from --------------------------
-#
-# No config means nothing to install FROM: values describe one specific desk and
-# would be wrong for anyone else. Walk the user through it instead.
+# --- configure, or start -----------------------------------------------------
 
 CONFIG="$TK_SUPPORT/config"
 if [ ! -f "$CONFIG" ]; then
@@ -185,13 +140,6 @@ if [ ! -f "$CONFIG" ]; then
   "$TK_PREFIX/trigger-kvm" configure || exit $?
   exit 0
 fi
-
-# --- start -------------------------------------------------------------------
-#
-# The tier work and the closing words live in lib/manage.sh, because
-# `configure` has to do exactly the same things and there must be one
-# implementation of each. Applying is a CONSEQUENCE of configuring, not
-# something a user invokes -- which is why there is no apply verb on the CLI.
 
 tk_apply_tier
 tk_say_done

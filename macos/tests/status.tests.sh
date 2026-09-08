@@ -66,6 +66,34 @@ run_tk status --config "$CFG"
 assert_no_match "$TK_OUT" 'watchers :'
 assert_match "$TK_OUT" 'watcher  : running'
 
+it 'names the session-only tier and what it does not cover'
+SESSION_PLIST="$HOME/.local/share/trigger-kvm/com.chrisrishel.trigger-kvm.plist"
+mkdir -p "$(dirname "$SESSION_PLIST")"; : >"$SESSION_PLIST"
+run_tk status --config "$CFG"
+assert_match "$TK_OUT" 'autostart: no  (started by hand, for this session only)'
+assert_match "$TK_OUT" 'NOT covered: after a restart or a new login'
+rm -f "$SESSION_PLIST"
+
+# =============================================================================
+# pause tells the truth
+# =============================================================================
+
+it 'pause reports a watcher that is still running, and fails'
+# The lock is the authority. A boot-tier watcher that declined the password,
+# or any watcher launchd did not stand down, must not be reported as paused.
+fake_lock running
+run_tk pause --config "$CFG"
+assert_equal 1 "$TK_RC" "$TK_OUT"
+assert_match "$TK_OUT" 'STILL RUNNING'
+assert_no_match "$TK_OUT" 'paused:'
+
+it 'and says nothing is watching, naming the configured devices for a hand run'
+fake_lock none
+run_tk pause --config "$CFG"
+assert_equal 0 "$TK_RC" "$TK_OUT"
+assert_match "$TK_OUT" 'paused: NOTHING IS WATCHING'
+assert_match "$TK_OUT" '--device usb:046d:0843 --device usb:1235:820a'
+
 # =============================================================================
 # 3. the input map, and the claim it cannot make
 # =============================================================================

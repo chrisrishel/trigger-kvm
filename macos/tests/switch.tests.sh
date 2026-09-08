@@ -315,6 +315,16 @@ assert_equal 1 "$TK_RC"
 assert_match "$TK_OUT" 'REFUSING to send the LG service channel'
 assert_nothing_sent 'source 0x50 must never reach a non-GSM panel'
 
+it 'and a DRY RUN refuses it too, rather than printing a packet the gate would stop'
+# The gate sits in front of the dry-run print, so what a dry run shows is what
+# a real run would send.
+fake_reset
+run_tk pull --dry-run --config "$wrong"
+assert_equal 1 "$TK_RC"
+assert_match "$TK_OUT" 'REFUSING to send the LG service channel'
+assert_no_match "$TK_OUT" 'DRY RUN'
+assert_nothing_sent
+
 it 'allows the LG channel on the LG'
 fake_reset
 run_tk pull --only lg --config "$CFG"

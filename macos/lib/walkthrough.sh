@@ -1,140 +1,17 @@
 # shellcheck shell=bash
 # shellcheck disable=SC2034  # a sourced library: its variables are read by its callers
 # shellcheck disable=SC2016  # the backticks below are prose, quoting command names
-#                              in prompts and in the config's own comments
+# shellcheck disable=SC2153  # WT_F is assigned in answers.sh
 
-# The walkthrough.
-#
-# THE MENU IS THE FLOW. There is no separate first-run questionnaire: an empty
-# install is this same menu with "not set" in it and the cursor already on the
-# first thing that needs an answer, and a configured one is the same menu with
-# the answers in it. Two flows meant two places for a change to have to be made,
-# and meant that finishing a section on a fresh install dropped you into the
-# NEXT section rather than back to the menu -- which is not what "done" means
-# anywhere else in this program.
-#
-# NOTHING IS WRITTEN UNTIL SAVE, so an interrupted run leaves a working setup
-# untouched rather than a half-written config plus an agent pointing at it.
+# The walkthrough: specs/configure.md. THE MENU IS THE FLOW, and nothing is
+# written until Save. The state it edits lives in lib/answers.sh.
 
-# --- the researched tables ---------------------------------------------------
-
-# Standard MCCS input values, in the channel's own order.
-MCCS_NAMES=('DisplayPort 1' 'DisplayPort 2' 'HDMI 1' 'HDMI 2' 'DVI 1' 'DVI 2' 'VGA 1' 'USB-C')
-MCCS_VALUES=(0x0F 0x10 0x11 0x12 0x03 0x04 0x01 0x1B)
-
-# What a MANUFACTURER's panels answer to when the standard channel does not.
-#
-# Keyed by EDID VENDOR alone, never by model. A vendor:product key was one row
-# per monitor someone here happened to own, on a panel whose product id is
-# per-INPUT, so the key was nearly per-cable and nobody else's monitor would
-# ever be in it.
-#
-# A dialect is OFFERED, never probed, and only after standard DDC/CI has been
-# shown not to work -- most panels of every make answer 0x60 perfectly well, and
-# reaching for a manufacturer channel that is not needed is how monitors get
-# bricked. Values here come from documentation and measurement, never a search.
-# A panel absent from this table is offered standard DDC/CI only.
-# One "name=value,name=value" string per vendor rather than a per-vendor array
-# name: reaching those needs eval, and an eval that builds a variable name from
-# data is a thing to avoid in a program whose whole job is aiming writes.
-DIALECT_VENDORS=(1E6D)
-DIALECT_WHAT=(LG)
-DIALECT_METHOD=(lg-alt)
-DIALECT_INPUTS=('DisplayPort=0xD0,USB-C=0xD1,HDMI 1=0x90,HDMI 2=0x91')
-
-# The dialect index for an EDID vendor, or nothing.
-wt_dialect_for() {
-  local _i
-  _i=0
-  while [ "$_i" -lt "${#DIALECT_VENDORS[@]}" ]; do
-    [ "${DIALECT_VENDORS[$_i]}" = "$1" ] && { printf '%s\n' "$_i"; return 0; }
-    _i=$(( _i + 1 ))
-  done
-  return 1
-}
-
-# --- the per-panel map, as a string ------------------------------------------
-#
-# "mac=0xD1,pc=0xD0" -- ordered by the order the computers were listed in, not
-# by input value. Reading the config sorts by key, which is the hex, so the same
-# two computers came out "mac, pc" on one panel and "pc, mac" on the next purely
-# because of which socket they happened to be plugged into. The order someone
-# listed their computers in is the one they will look for.
-#
-# A string rather than an associative array because /bin/bash on macOS is 3.2
-# and has none, and because a map has to live inside an ARRAY of answers, which
-# even bash 4 cannot do.
-
-map_get() {
-  printf '%s' "$1" | tr ',' '\n' |
-    awk -F= -v k="$2" '$1 == k { print $2; exit }'
-}
-
-map_has() { [ -n "$(map_get "$1" "$2")" ]; }
-
-map_computers() { printf '%s' "$1" | tr ',' '\n' | awk -F= 'NF { print $1 }'; }
-
-map_values() { printf '%s' "$1" | tr ',' '\n' | awk -F= 'NF { print $2 }'; }
-
-map_count() { map_computers "$1" | grep -c . || true; }
-
-# Set, preserving position for an existing key and appending a new one.
-map_set() {
-  local _m _k _v _out _found _old _e
-  _m=$1 _k=$2 _v=$3 _out='' _found=0
-  _old=$IFS; IFS=,
-  for _e in $_m; do
-    IFS=$_old
-    [ -n "$_e" ] || { IFS=,; continue; }
-    case $_e in
-      "$_k="*) _out="$_out,$_k=$_v"; _found=1 ;;
-      *)       _out="$_out,$_e" ;;
-    esac
-    IFS=,
-  done
-  IFS=$_old
-  [ "$_found" = "0" ] && _out="$_out,$_k=$_v"
-  printf '%s\n' "${_out#,}"
-}
-
-map_del() {
-  local _m _k _out _old _e
-  _m=$1 _k=$2 _out=''
-  _old=$IFS; IFS=,
-  for _e in $_m; do
-    IFS=$_old
-    [ -n "$_e" ] || { IFS=,; continue; }
-    case $_e in "$_k="*) ;; *) _out="$_out,$_e" ;; esac
-    IFS=,
-  done
-  IFS=$_old
-  printf '%s\n' "${_out#,}"
-}
-
-# Which computer holds a given input value on this panel, or nothing.
-map_who_has() {
-  printf '%s' "$1" | tr ',' '\n' |
-    awk -F= -v v="$2" 'tolower($2) == tolower(v) { print $1; exit }'
-}
-
-# Rename a computer throughout a map, keeping its position.
-map_rename() {
-  printf '%s' "$1" | tr ',' '\n' |
-    awk -F= -v o="$2" -v n="$3" 'NF { if ($1 == o) print n "=" $2; else print $0 }' |
-    paste -sd, -
-}
-
-# --- computer names ----------------------------------------------------------
+# --- names -------------------------------------------------------------------
 
 COMPUTER_NAME_RULE='Lowercase letters, digits and dashes.'
 
-# What a computer may be called.
-#
-# ONE name, not a slug plus a friendly name. This name is a config value, an
-# argument you type (`trigger-kvm to mac`) and a label in every prompt -- a
-# second "display name" field would be a second thing to keep in step for the
-# sake of capital letters. So the one name has to be typeable without quoting,
-# which is what the character rule is for.
+# One name per computer: a config value, an argument you type and a label in
+# every prompt, so it has to be typeable without quoting.
 wt_format_name() {
   printf '%s' "$1" |
     tr '[:upper:]' '[:lower:]' |
@@ -144,9 +21,7 @@ wt_format_name() {
         -e 's/^-//' -e 's/-$//'
 }
 
-# Suggests rather than silently mangling. The first version stripped what it did
-# not like, so "My Mac" quietly became "mymac" and the person was left wondering
-# where their space went.
+# Suggests a corrected name rather than silently mangling one.
 wt_read_name() {
   local _prompt _default _taken _what _raw _n
   _prompt=$1 _default=${2:-} _taken=${3:-} _what=${4:-computer}
@@ -167,8 +42,7 @@ wt_read_name() {
     fi
     case " $_taken " in
       *" $_n "*)
-        # Two literal lines rather than one with a %s: both are normative
-        # wording, and the conformance check looks for each as written.
+        # Two literal lines: both are normative wording.
         if [ "$_what" = "monitor" ]; then
           printf '  There is already a monitor called %s.\n' "$_n" >&2
         else
@@ -181,119 +55,17 @@ wt_read_name() {
   done
 }
 
-# --- state -------------------------------------------------------------------
-
-WT_THIS=''
-WT_COMPUTERS=()
-WT_DEVICES=()
-WT_TIER=''
-WT_WANTPATH=''
-WT_ONPATH=0
-
-# One record per MANAGED display, parallel arrays indexed together.
-WT_A_KEY=(); WT_A_LABEL=(); WT_A_NAME=(); WT_A_METHOD=()
-WT_A_VENDOR=(); WT_A_PRODUCT=(); WT_A_MAP=()
-
-# One record per ATTACHED display, from display-probe. WT_F_TWINS holds how many
-# attached panels answer to that row's identity -- 1 for every ordinary panel.
-WT_F_KEY=(); WT_F_VENDOR=(); WT_F_PRODUCT=(); WT_F_MFG=(); WT_F_NAME=(); WT_F_TWINS=()
-
-# The answer record for an identity, or nothing.
-#
-# There is AT MOST ONE, which is a property wt_load_found cannot have: two
-# attached panels of the same model are two found rows and one identity, so the
-# first index is the only index. Before 6.4 that made this function a silent
-# overwrite -- both rows resolved here, and an answer given for the second
-# landed on top of the first, so someone configured two monitors and had
-# configured one. What closes it is the refusal in wt_monitors, which never lets
-# the second row be picked; this stays a first-match lookup because with the
-# refusal in place there is nothing else for it to find.
-wt_answer_index() {
-  local _i
-  _i=0
-  while [ "$_i" -lt "${#WT_A_KEY[@]}" ]; do
-    [ "${WT_A_KEY[$_i]}" = "$1" ] && { printf '%s\n' "$_i"; return 0; }
-    _i=$(( _i + 1 ))
-  done
-  return 1
-}
-
-wt_load_found() {
-  local _v _p _mfg _conn _ser _uuid _name _all _i
-  WT_F_KEY=(); WT_F_VENDOR=(); WT_F_PRODUCT=(); WT_F_MFG=(); WT_F_NAME=(); WT_F_TWINS=()
-  # Enumerated ONCE and counted from that, rather than probing per row.
-  _all=$(display_enumerate)
-  # `_ser` and `_uuid` are named because `read` cannot skip a field in the middle
-  # of a line, and DISCARDED deliberately -- not forgotten. The CoreGraphics UUID
-  # is not a stable per-port handle (../AGENTS.md), and the switcher resolves it
-  # fresh at switch time rather than from anything stored here. The EDID serial
-  # IS stable across inputs and is the obvious raw material for telling two
-  # identical panels apart -- but that design is not built on either platform
-  # (../ideas/telling-two-identical-monitors-apart.md), and storing a field
-  # nothing reads would be a mapping written down and trusted, which is the one
-  # thing ../AGENTS.md's conventions forbid outright.
-  while IFS='|' read -r _v _p _mfg _conn _ser _uuid _name; do
-    [ -n "$_v" ] || continue
-    WT_F_KEY+=("$_v:$_p")
-    WT_F_VENDOR+=("0x$_v")
-    WT_F_PRODUCT+=("0x$_p")
-    WT_F_MFG+=("$_mfg")
-    if [ -n "$_name" ]; then WT_F_NAME+=("$_name"); else WT_F_NAME+=("$_mfg panel $_v:$_p"); fi
-  done <<EOF
-$_all
-EOF
-  # A second pass, because the count is a property of the whole enumeration and
-  # not of a row. One row per attached panel either way: the count is what makes
-  # the duplication visible, and merging the rows is what 6.4 forbids.
-  _i=0
-  while [ "$_i" -lt "${#WT_F_KEY[@]}" ]; do
-    WT_F_TWINS+=("$(display_identity_count "$_all" "${WT_F_KEY[$_i]}")")
-    _i=$(( _i + 1 ))
-  done
-}
-
-# Rebuild the answers straight from a config, asking nothing. What the menu
-# opens with on a re-run.
-wt_load_answers() {
-  local _i _l _v _p _vn _pn _map _c _val
-  WT_A_KEY=(); WT_A_LABEL=(); WT_A_NAME=(); WT_A_METHOD=()
-  WT_A_VENDOR=(); WT_A_PRODUCT=(); WT_A_MAP=()
-  _i=0
-  while [ "$_i" -lt "${#WT_F_KEY[@]}" ]; do
-    # At most ONE answer record per identity. Two attached panels of one model
-    # are two found rows sharing a key, and without this each of them would
-    # build a record from the same config label -- so Save would write that
-    # panel's keys twice and wt_answer_index would only ever see the first.
-    if wt_answer_index "${WT_F_KEY[$_i]}" >/dev/null; then _i=$(( _i + 1 )); continue; fi
-    for _l in $(config_display_labels); do
-      _v=$(config_get "display.$_l.vendor"); _p=$(config_get "display.$_l.product")
-      _vn=$(config_to_word "$_v") || { continue; }
-      _pn=$(config_to_word "$_p") || { continue; }
-      if [ "$(printf '%04X:%04X' "$_vn" "$_pn")" != "${WT_F_KEY[$_i]}" ]; then continue; fi
-
-      # Ordered by the configured order of computers, not by input value.
-      _map=''
-      for _c in ${WT_COMPUTERS[@]+"${WT_COMPUTERS[@]}"}; do
-        _val=$(config_input_for "$_l" "$_c")
-        [ -n "$_val" ] && [ "$_val" != "AMBIGUOUS" ] && _map=$(map_set "$_map" "$_c" "$(printf '0x%02X' "$_val")")
-      done
-      WT_A_KEY+=("${WT_F_KEY[$_i]}")
-      WT_A_LABEL+=("$_l")
-      WT_A_NAME+=("$(config_display_field "$_l" name "${WT_F_NAME[$_i]}")")
-      WT_A_METHOD+=("$(config_display_field "$_l" method standard)")
-      WT_A_VENDOR+=("${WT_F_VENDOR[$_i]}")
-      WT_A_PRODUCT+=("${WT_F_PRODUCT[$_i]}")
-      WT_A_MAP+=("$_map")
-      break
-    done
-    _i=$(( _i + 1 ))
-  done
+# The host name, reduced to the character rule.
+wt_default_this() {
+  local _n
+  _n=$(wt_format_name "$(scutil --get ComputerName 2>/dev/null || hostname -s 2>/dev/null || echo mac)")
+  printf '%s\n' "${_n:-mac}"
 }
 
 # --- computers ---------------------------------------------------------------
 
-# Asked BEFORE the monitors, so a computer is described once rather than once
-# per screen, and so every panel then offers the same names.
+# Asked BEFORE the monitors, so a computer is described once and every panel
+# offers the same names (specs 5).
 wt_computers() {
   local _first_run _me _rest _c _n _a _i _q _addrow _removerow _donerow _pick
   local _idx _victim _others _new
@@ -311,9 +83,7 @@ wt_computers() {
     [ "$_c" = "$WT_THIS" ] || _rest+=("$_c")
   done
 
-  # Nothing configured yet: ask for a COUNT and then that many names. "One per
-  # line, blank line when there are no more" made people guess both how to
-  # finish and whether a blank meant cancel.
+  # First run: a count, then that many names.
   if [ "$_first_run" = "1" ]; then
     _me=$(wt_read_name 'What should I call THIS computer?' "$(wt_default_this)")
     _n=-1
@@ -334,10 +104,7 @@ wt_computers() {
     done
   fi
 
-  # Then, always, a list to correct. Renaming is the common edit -- a name is
-  # typed once and lived with -- so it is what selecting a row does. Removing
-  # is a ROW, never a blank answer: enter is what people press, so a blank
-  # keeps the name here like at every other prompt (specs/configure.md 5.0).
+  # Then, always, the list. Picking a name renames it; removing is a row (5.3).
   while :; do
     menu_reset
     menu_add "$_me" 'this computer'
@@ -382,37 +149,8 @@ wt_computers() {
   WT_COMPUTERS=("$_me" ${_rest[@]+"${_rest[@]}"})
 }
 
-# Carry a rename or a removal into every panel's map THE MOMENT IT HAPPENS,
-# rather than making someone answer the monitors again -- re-asking threw away
-# answers nobody asked to change. Adding a computer leaves the maps alone; the
-# Monitors row then shows which panels do not know about it yet.
-#
-# Applied as it happens, not inferred afterwards: lining the old list up
-# against the new one to work out what changed went wrong the moment one
-# sitting held both a rename and a removal, because the removal shifted every
-# position after it and the wrong computer was renamed.
-#
-# An edit that changes a map invalidates a monitor-input pass: the values that
-# passed are no longer the values configured. One that changes nothing -- a
-# rename to the same name, a removal of a computer no panel has -- does not.
-wt_maps_edit() {
-  local _fn _i _was
-  _fn=$1; shift
-  _i=0
-  while [ "$_i" -lt "${#WT_A_MAP[@]}" ]; do
-    _was=${WT_A_MAP[$_i]}
-    WT_A_MAP[_i]=$("$_fn" "$_was" "$@")
-    [ "${WT_A_MAP[$_i]}" = "$_was" ] || WT_RAN_DISPLAYS=''
-    _i=$(( _i + 1 ))
-  done
-}
-
-# specs/configure.md 5.3. The other computers, as a list to remove from; the
-# survivors are left in WT_REMAINING once Done or esc is chosen. Not a printed
-# result, because a command substitution is a subshell and the map edits made
-# here would be lost in it. This computer is never offered: its name is what
-# `pull` resolves, and a config without it is one the switcher declines to act
-# on.
+# The other computers as a list to remove from; the survivors are left in
+# WT_REMAINING. This computer is never offered: its name is what `pull` resolves.
 WT_REMAINING=()
 wt_remove_computer() {
   local _rest _c _i _on _donerow _pick _victim _next
@@ -420,11 +158,11 @@ wt_remove_computer() {
   while [ "${#_rest[@]}" -gt 0 ]; do
     menu_reset
     for _c in "${_rest[@]}"; do
-      # Which panels lose an input if this one goes -- said in the value column,
-      # so the cost is visible BEFORE the row is chosen, not only after.
+      # The cost, in the value column, before the row is chosen.
       _on=$(_i=0
-            while [ "$_i" -lt "${#WT_A_MAP[@]}" ]; do
-              map_has "${WT_A_MAP[$_i]}" "$_c" && printf '%s\n' "${WT_A_LABEL[$_i]}"
+            while [ "$_i" -lt "${#WT_A[@]}" ]; do
+              wt_rec "$_i"
+              map_has "$R_MAP" "$_c" && printf '%s\n' "$R_LABEL"
               _i=$(( _i + 1 ))
             done | tk_join_names)
       if [ -n "$_on" ]; then menu_add "$_c" "on $_on"
@@ -443,8 +181,6 @@ wt_remove_computer() {
 
     _victim=${_rest[$_pick]}
     printf '\n  Its input on every monitor is cleared too. Nothing else changes.\n' >&2
-    # Defaults to NO. This is the destructive half of the menu, and the whole
-    # reason removal stopped being a blank answer.
     read_yesno "  Remove '$_victim'?" n || continue
     wt_maps_edit map_del "$_victim"
     _next=()
@@ -454,27 +190,10 @@ wt_remove_computer() {
   WT_REMAINING=("${_rest[@]+${_rest[@]}}")
 }
 
-# A sensible name for this computer, before anyone has said one. The host name
-# is what people already call it, and it is never typed in anger -- `pull` is
-# the verb.
-wt_default_this() {
-  local _n
-  _n=$(config_this_computer)
-  [ -n "$_n" ] && { printf '%s\n' "$_n"; return; }
-  _n=$(wt_format_name "$(scutil --get ComputerName 2>/dev/null || hostname -s 2>/dev/null || echo mac)")
-  [ -n "$_n" ] && { printf '%s\n' "$_n"; return; }
-  printf 'mac\n'
-}
-
 # --- inputs ------------------------------------------------------------------
 
-# The inputs to offer for a panel: the channel's own value set, in the channel's
-# OWN ORDER, plus any value already assigned that the channel does not list.
-#
-# It used to put assigned computers' names at the FRONT, replacing the input's
-# name -- so answering for the second computer showed "pc  0x11" where "HDMI 1
-# 0x11" had been, and the rows moved under you. The monitor's own menu says
-# HDMI 1; that is the only label worth showing, and it should stay where it was.
+# The inputs to offer for a panel: the channel's own values in the channel's
+# own order, plus any assigned value the channel does not list (6.1).
 IT_NAMES=(); IT_VALUES=()
 wt_input_table() {
   local _method _map _di _i _val _seen _known _old _e
@@ -500,8 +219,6 @@ wt_input_table() {
     IT_NAMES=("${MCCS_NAMES[@]}"); IT_VALUES=("${MCCS_VALUES[@]}")
   fi
 
-  # A value someone typed by hand is not in the channel's list, and would
-  # otherwise be invisible -- including to the "already assigned" marking.
   for _val in $(map_values "$_map"); do
     _seen=0
     for _known in "${IT_VALUES[@]}"; do
@@ -511,8 +228,10 @@ wt_input_table() {
   done
 }
 
-# Ask which input something is on, for one panel. Prints the value, or nothing
-# when --allow-none is given and that computer is not on this panel at all.
+# Ask which input a computer is on, for one panel (6.1). Leaves the value in
+# WT_INPUT_VALUE, or sets WT_INPUT_NONE (not on this monitor) or WT_INPUT_ESC.
+#
+#   wt_read_input method map prompt subtitle default forwhom allownone [escapable]
 WT_INPUT_VALUE=''
 WT_INPUT_NONE=0
 WT_INPUT_ESC=0
@@ -523,8 +242,7 @@ wt_read_input() {
 
   WT_INPUT_NONE=0
   WT_INPUT_ESC=0
-  # The canonical spelling is 0xNN, so a hand-edited `17` finds its row and
-  # collides with `0x11` (specs 6.1: collision is by value, not by spelling).
+  # Canonical 0xNN, so a hand-edited `17` finds its row and collides with 0x11.
   if _n=$(config_to_byte "$_default" 2>/dev/null); then _default=$(printf '0x%02X' "$_n"); fi
   _esc=''
   [ "$_escapable" = "1" ] && _esc=--escapable
@@ -541,9 +259,8 @@ wt_read_input() {
     while [ "$_i" -lt "${#IT_NAMES[@]}" ]; do
       _v=${IT_VALUES[$_i]}
       _holder=$(map_who_has "$_map" "$_v")
-      # Two computers cannot share a socket, so an assigned input is not merely
-      # discouraged -- it is not an answer. It stays in place, says who has it,
-      # and the cursor skips it.
+      # An input another computer has is not an answer: drawn, annotated,
+      # skipped.
       if [ -n "$_holder" ] && [ "$_holder" != "$_forwhom" ]; then
         menu_add "${IT_NAMES[$_i]}" "$_v   assigned to $_holder"
         menu_disable "$_i"
@@ -563,9 +280,8 @@ wt_read_input() {
       menu_add 'Not on this monitor' ''
     fi
 
-    # Start on the configured value's row, so a re-run is a review rather than a
-    # re-entry. An unlisted value starts on "type a value", which is where it
-    # came from; a computer with no answer yet starts on "not on this monitor".
+    # The cursor starts on the configured value; an unlisted value on "type";
+    # no answer yet on "not on this monitor". Never on a row it cannot choose.
     if [ -z "$_default" ]; then
       if [ "$_allownone" = "1" ]; then _row=$_nonerow; else _row=$_typerow; fi
     elif [ "$_now" -lt 0 ]; then
@@ -585,8 +301,8 @@ wt_read_input() {
     fi
     if [ "$_pick" = "$_typerow" ]; then
       if [ "$_method" != "standard" ]; then
-        # A typed byte is the one thing that reaches a manufacturer channel from
-        # outside the documented table (specs 6.1). Say what that means first.
+        # A typed byte is the one thing that reaches a manufacturer channel
+        # from outside the documented table.
         printf "\n  This is the manufacturer's service channel. Type only a value you have\n" >&2
         printf '  from documentation; an unknown value here has made monitors unusable.\n' >&2
       fi
@@ -600,10 +316,8 @@ wt_read_input() {
       _v=${IT_VALUES[$_pick]}
     fi
 
-    # Two computers on one input makes `to` ambiguous, and the switcher refuses
-    # rather than guess -- so refuse HERE instead, where the person can still
-    # say which one they meant. Marking it in the list was not enough: a typed
-    # value can still reach it.
+    # Collision is by value, not spelling, and a typed value can reach an
+    # assigned input the list disabled.
     _holder=$(map_who_has "$_map" "$_v")
     if [ -n "$_holder" ] && [ "$_holder" != "$_forwhom" ]; then
       printf '  %s is already %s on this monitor. Two computers cannot share one input.\n' \
@@ -617,21 +331,9 @@ wt_read_input() {
 
 # --- monitors ----------------------------------------------------------------
 
-# Which method to use on a panel whose vendor has a documented alternative.
-#
-# OFFERED UP FRONT, not only after standard has failed. Someone who already
-# knows their model needs the alternative should not have to run a check that
-# moves a panel and sends packets purely in order to fail -- and someone who
-# knows they need it, watches standard fail, and has not been told the
-# alternative exists may reasonably decide the tool does not know about it.
-#
-# This changes WHEN the choice is offered and nothing else. Values still come
-# only from the documented table or from what the user types in that moment;
-# nothing is probed, swept or guessed; and the transport gate still refuses a
-# manufacturer channel to a panel whose EDID vendor does not match. See
-# AGENTS.md hard rule 1b, amended for this, and specs/configure.md section 6.2.
-#
-# Standard stays the default and stays where the cursor starts.
+# Which method to use on a panel whose vendor has a documented alternative
+# (6.2). Offered up front; standard stays the default. Prints the method, or
+# BACK for esc.
 wt_choose_method() {
   local _di _current _what _alt _now _default
   _di=$1 _current=$2
@@ -641,9 +343,6 @@ wt_choose_method() {
   printf '\n--- how to talk to this monitor ---\n' >&2
   printf '  Nearly every monitor takes the standard method, including most %s ones.\n' "$_what" >&2
   printf '  A few %s models ignore it and need %s'"'"'s own method instead.\n\n' "$_what" "$_what" >&2
-  # The consequence, named where the choice is made (specs/configure.md 6.2):
-  # this is the moment a person commits to a service channel, and the rules
-  # that keep it safe live in a file they never open.
   printf '  %s'"'"'s own method talks to a service channel on the monitor. It is\n' "$_what" >&2
   printf '  sent only the values written down for it: unknown values on that\n' >&2
   printf '  channel have made monitors unusable.\n\n' >&2
@@ -664,69 +363,50 @@ wt_choose_method() {
   case $MENU_PICK in
     0) printf 'standard\n' ;;
     1) printf '%s\n' "$_alt" ;;
-    *) printf 'BACK\n' ;;   # esc: the panel's questions are one submenu; back out of it
+    *) printf 'BACK\n' ;;
   esac
 }
 
-# Whether another managed panel already has this short name. Two panels with one
-# label would be written as one and read back as a merge of both.
-wt_label_taken() {
-  local _i
-  _i=0
-  while [ "$_i" -lt "${#WT_A_KEY[@]}" ]; do
-    if [ "${WT_A_LABEL[$_i]}" = "$1" ] && [ "${WT_A_KEY[$_i]}" != "$2" ]; then return 0; fi
-    _i=$(( _i + 1 ))
-  done
-  return 1
-}
-
-# Every label but this panel's own, for wt_read_name's duplicate check.
+# Every managed label but this panel's own, for the duplicate check.
 wt_labels_except() {
   local _i _out
   _i=0 _out=''
-  while [ "$_i" -lt "${#WT_A_KEY[@]}" ]; do
-    [ "${WT_A_KEY[$_i]}" != "$1" ] && _out="$_out ${WT_A_LABEL[$_i]}"
+  while [ "$_i" -lt "${#WT_A[@]}" ]; do
+    wt_rec "$_i"
+    [ "$R_KEY" != "$1" ] && _out="$_out $R_LABEL"
     _i=$(( _i + 1 ))
   done
   printf '%s\n' "$_out"
 }
 
-# One display: identity is already known; what we need from the human is whether
-# to manage it, what to call it, and which input each computer is on.
+# One panel's questions, as one submenu (6): manage it, a short name, the
+# method where the vendor has one, then each computer's input. Prints the new
+# answer record, KEEP (backed out or declined to stop), or REMOVE.
 #
-# MACHINES-MAJOR, not inputs-major: a panel has eight possible inputs and two
-# real ones. Standard DDC/CI is the answer for everyone here, whatever the make;
-# a manufacturer dialect is only reached for later, if the check shows standard
-# does not work.
+#   wt_display_answers key name mfg vendor product attached
 wt_display_answers() {
-  local _fi _key _desc _ai _defaultlabel _method _prior _label _map _c _was
-  local _sub _allownone _di
-  _fi=$1
-  _key=${WT_F_KEY[$_fi]}
-  _desc=${WT_F_NAME[$_fi]}
+  local _key _desc _mfg _vendor _product _attached _ai _defaultlabel _method _prior
+  local _label _map _c _was _sub _allownone _di
+  _key=$1 _desc=$2 _mfg=$3 _vendor=$4 _product=$5 _attached=$6
 
-  printf '\n  %s   EDID %s   %s\n' "$_desc" "$_key" "${WT_F_MFG[$_fi]}" >&2
+  printf '\n  %s   EDID %s   %s\n' "$_desc" "$_key" "$_mfg" >&2
 
   if _ai=$(wt_answer_index "$_key"); then
-    _defaultlabel=${WT_A_LABEL[$_ai]}
-    _method=${WT_A_METHOD[$_ai]}
-    _prior=${WT_A_MAP[$_ai]}
+    wt_rec "$_ai"
+    _defaultlabel=$R_LABEL
+    _method=$R_METHOD
+    _prior=$R_MAP
   else
     _defaultlabel=$(wt_format_name "$(printf '%s' "$_desc" | awk '{print $1}')")
-    [ -n "$_defaultlabel" ] || _defaultlabel=$(tk_lower "${WT_F_MFG[$_fi]}")
-    # An existing method is a settled answer -- it was proven by someone
-    # watching the screen. Every panel starts on standard.
+    [ -n "$_defaultlabel" ] || _defaultlabel=$(tk_lower "$_mfg")
+    # Every panel starts on standard; an existing method is a settled answer.
     _method=standard
     _prior=''
   fi
 
   if ! read_yesno '  Manage this monitor?' y; then
-    # "No" is DESTRUCTIVE when there is something to lose: it forgets which
-    # computer is on which input. "Manage" reads like a flag, so the loss is
-    # named and confirmed -- the same rule as removing a computer
-    # (specs/configure.md 5.3), and the symmetry worth having between the two
-    # menus. A panel with nothing configured has nothing to lose and is not
-    # asked twice.
+    # Forgetting which computer is on which input is confirmed when there is
+    # something to lose.
     if [ "$(map_count "$_prior")" -gt 0 ]; then
       printf '\n  Which computer is on which of its inputs is forgotten. Nothing else\n' >&2
       printf '  changes, and nothing is written until you save.\n' >&2
@@ -736,16 +416,16 @@ wt_display_answers() {
     return 0
   fi
 
-  # The same rule, prompt and duplicate check as a computer name (specs 5.1, 6):
-  # suggested and asked, never silently mangled, and unique across panels.
   _label=$(wt_read_name 'Short name for it' "$_defaultlabel" "$(wt_labels_except "$_key")" monitor)
 
-  # BEFORE the inputs, because which values are on offer depends on the answer.
-  # Esc here, or at any input below, backs out of the whole panel unchanged: a
-  # panel's questions are one submenu (specs 6), and half a map is not an answer.
+  # Before the inputs: which values are on offer depends on the answer. Esc
+  # here or at any input backs out of the whole panel.
   if _di=$(wt_dialect_for "$(printf '%s' "$_key" | cut -d: -f1)"); then
+    _was=$_method
     _method=$(wt_choose_method "$_di" "$_method")
     [ "$_method" = "BACK" ] && { printf 'KEEP\n'; return 0; }
+    # A changed method clears the map: its values were for the other channel.
+    [ "$_method" = "$_was" ] || _prior=''
   fi
 
   _map=''
@@ -763,36 +443,41 @@ wt_display_answers() {
     [ "$WT_INPUT_NONE" = "1" ] || _map=$(map_set "$_map" "$_c" "$WT_INPUT_VALUE")
   done
 
-  printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
-    "$_key" "$_label" "$_desc" "$_method" "${WT_F_VENDOR[$_fi]}|${WT_F_PRODUCT[$_fi]}" "$_map"
+  wt_record "$_key" "$_label" "$_desc" "$_method" "$_vendor" "$_product" "$_map" "$_attached"
 }
 
-# The monitors, as a list you pick from -- the same shape as the computers list,
-# and for the same reason. Walking every panel in sequence to change one value
-# meant answering for all of them, which is what a menu exists to avoid.
+# The monitors as a list: every attached panel, then every configured panel
+# that is not attached today (6).
 wt_monitors() {
-  local _i _ai _donerow _land _pick _before _row _key _ambiguous
+  local _i _ai _nf _absent _donerow _land _pick _key _row _ambiguous
   while :; do
     menu_reset
-    _i=0
     _ambiguous=0
-    while [ "$_i" -lt "${#WT_F_KEY[@]}" ]; do
-      if [ "${WT_F_TWINS[$_i]}" -gt 1 ]; then
-        # specs/configure.md 6.4. Drawn, and unpickable: the second panel must
-        # not be invisible, and configuration written against this identity
-        # could never switch anything, because display_resolve already refuses
-        # to resolve an id matching more than one output. So the walkthrough
-        # declines to write configuration it knows the switcher cannot use --
-        # the same rule that makes it refuse a duplicate name (6).
-        menu_add "${WT_F_NAME[$_i]}" \
-          "$(printf '%s monitors report the same id and cannot be told apart' "${WT_F_TWINS[$_i]}")"
+    _i=0
+    while [ "$_i" -lt "${#WT_F[@]}" ]; do
+      wt_found "$_i"
+      if [ "$F_TWINS" -gt 1 ]; then
+        # 6.4: drawn and unpickable. Configuration written against this
+        # identity could never switch anything.
+        menu_add "$F_NAME" "$F_TWINS monitors report the same id and cannot be told apart"
         menu_disable "$_i"
         _ambiguous=1
-      elif _ai=$(wt_answer_index "${WT_F_KEY[$_i]}"); then
-        menu_add "${WT_F_NAME[$_i]}" "$(printf '%s: %s' "${WT_A_LABEL[$_ai]}" \
-                    "$(map_computers "${WT_A_MAP[$_ai]}" | paste -sd/ -)")"
+      elif _ai=$(wt_answer_index "$F_KEY"); then
+        wt_rec "$_ai"
+        menu_add "$F_NAME" "$R_LABEL: $(map_computers "$R_MAP" | paste -sd/ -)"
       else
-        menu_add "${WT_F_NAME[$_i]}" 'not managed'
+        menu_add "$F_NAME" 'not managed'
+      fi
+      _i=$(( _i + 1 ))
+    done
+    _nf=${#WT_F[@]}
+    _absent=()
+    _i=0
+    while [ "$_i" -lt "${#WT_A[@]}" ]; do
+      wt_rec "$_i"
+      if [ "$R_ATTACHED" -lt 0 ]; then
+        _absent+=("$_i")
+        menu_add "$R_NAME" "$R_LABEL: $(map_computers "$R_MAP" | paste -sd/ -), not attached"
       fi
       _i=$(( _i + 1 ))
     done
@@ -800,13 +485,13 @@ wt_monitors() {
     _donerow=${#MENU_ITEMS[@]}
     menu_add 'Done' ''
 
-    # The first panel nobody has answered for, else the way out. Never lands on
-    # one it would refuse: the cursor starting on an unpickable row reads as the
-    # menu being broken rather than as the panel being the problem.
+    # The first attached panel nobody has answered for, else Done; never a row
+    # it would refuse.
     _land=$_donerow
     _i=0
-    while [ "$_i" -lt "${#WT_F_KEY[@]}" ]; do
-      if [ "${WT_F_TWINS[$_i]}" -le 1 ] && ! wt_answer_index "${WT_F_KEY[$_i]}" >/dev/null; then
+    while [ "$_i" -lt "${#WT_F[@]}" ]; do
+      wt_found "$_i"
+      if [ "$F_TWINS" -le 1 ] && ! wt_answer_index "$F_KEY" >/dev/null; then
         _land=$_i; break
       fi
       _i=$(( _i + 1 ))
@@ -816,9 +501,6 @@ wt_monitors() {
     printf 'Which of these should follow the switch, and which input is each\n' >&2
     printf 'computer on?\n\n' >&2
     if [ "$_ambiguous" = 1 ]; then
-      # 6.4 is explicit that guessing is barred -- not the first, not the active
-      # one, not the lowest index -- for the reason ../AGENTS.md gives about
-      # display indices: a wrong guess aims a real switch at the wrong panel.
       printf '  A switch cannot aim at one of them, so a greyed row cannot be set up.\n' >&2
       printf '  Unplugging one is the honest remedy today.\n\n' >&2
     fi
@@ -827,63 +509,28 @@ wt_monitors() {
     [ "$_pick" -lt 0 ] && return 0
     [ "$_pick" -eq "$_donerow" ] && return 0
 
-    _before=$(wt_answers_signature)
-    _row=$(wt_display_answers "$_pick")
-    # Declining to stop managing it: nothing was answered, so nothing changes.
-    [ "$_row" = "KEEP" ] && continue
-    _key=${WT_F_KEY[$_pick]}
-    wt_answer_remove "$_key"
-    if [ "$_row" != "REMOVE" ]; then wt_answer_add "$_row"; fi
-    # A pass belongs to the values that passed. Carrying it across an edit would
-    # show "all responded" beside numbers nothing tried -- but looking at the
-    # list and changing nothing is not an edit.
-    [ "$_before" != "$(wt_answers_signature)" ] && WT_RAN_DISPLAYS=''
-  done
-}
-
-wt_answers_signature() {
-  local _i _s
-  _i=0 _s=''
-  while [ "$_i" -lt "${#WT_A_KEY[@]}" ]; do
-    _s="$_s|${WT_A_LABEL[$_i]}=${WT_A_METHOD[$_i]}=${WT_A_MAP[$_i]}"
-    _i=$(( _i + 1 ))
-  done
-  printf '%s\n' "$_s"
-}
-
-wt_answer_remove() {
-  local _k _K _L _N _M _V _P _MP _i
-  _k=$1
-  _K=(); _L=(); _N=(); _M=(); _V=(); _P=(); _MP=()
-  _i=0
-  while [ "$_i" -lt "${#WT_A_KEY[@]}" ]; do
-    if [ "${WT_A_KEY[$_i]}" != "$_k" ]; then
-      _K+=("${WT_A_KEY[$_i]}"); _L+=("${WT_A_LABEL[$_i]}"); _N+=("${WT_A_NAME[$_i]}")
-      _M+=("${WT_A_METHOD[$_i]}"); _V+=("${WT_A_VENDOR[$_i]}"); _P+=("${WT_A_PRODUCT[$_i]}")
-      _MP+=("${WT_A_MAP[$_i]}")
+    if [ "$_pick" -lt "$_nf" ]; then
+      wt_found "$_pick"
+      _key=$F_KEY
+      _row=$(wt_display_answers "$F_KEY" "$F_NAME" "$F_MFG" "$F_VENDOR" "$F_PRODUCT" "$_pick")
+    else
+      wt_rec "${_absent[$(( _pick - _nf ))]}"
+      _key=$R_KEY
+      _row=$(wt_display_answers "$R_KEY" "$R_NAME" '' "$R_VENDOR" "$R_PRODUCT" -1)
     fi
-    _i=$(( _i + 1 ))
+    [ "$_row" = "KEEP" ] && continue
+    wt_answer_remove "$_key"
+    [ "$_row" = "REMOVE" ] || wt_answer_add "$_row"
   done
-  WT_A_KEY=("${_K[@]+${_K[@]}}"); WT_A_LABEL=("${_L[@]+${_L[@]}}"); WT_A_NAME=("${_N[@]+${_N[@]}}")
-  WT_A_METHOD=("${_M[@]+${_M[@]}}"); WT_A_VENDOR=("${_V[@]+${_V[@]}}")
-  WT_A_PRODUCT=("${_P[@]+${_P[@]}}"); WT_A_MAP=("${_MP[@]+${_MP[@]}}")
-}
-
-wt_answer_add() {
-  local _old
-  _old=$IFS; IFS=$(printf '\t')
-  # shellcheck disable=SC2086
-  set -- $1
-  IFS=$_old
-  WT_A_KEY+=("$1"); WT_A_LABEL+=("$2"); WT_A_NAME+=("$3"); WT_A_METHOD+=("$4")
-  WT_A_VENDOR+=("${5%%|*}"); WT_A_PRODUCT+=("${5#*|}"); WT_A_MAP+=("${6:-}")
 }
 
 # --- triggers ----------------------------------------------------------------
 
+# A multi-select over what the watcher lists (7). A saved entry its device
+# cannot be matched to today stays selected as saved.
 wt_triggers() {
   local _keys _labels _details _kind _key _state _name _role _tok _where
-  local _checked _i _d _new _n _rows _same _uniq _entry _what _detail
+  local _checked _i _d _new _n _rows _same _uniq _entry _what _detail _seen
   printf '\n--- triggers ---\n' >&2
   printf 'Which devices move to this computer when you flip the switch?\n' >&2
   printf 'USB rows are attached right now; Bluetooth rows are everything paired.\n\n' >&2
@@ -893,40 +540,23 @@ wt_triggers() {
   while IFS='|' read -r _kind _key _state _name _role _tok _where; do
     [ -n "$_key" ] || continue
 
-    # specs/detector.md 4.1: what this row would be WRITTEN as. Absent a twin the
-    # entry is the bare id, exactly as before, so nothing already written changes.
+    # What this row is WRITTEN as (specs/detector.md 4.1): a token held by
+    # exactly one device sharing the id; the shared token plus the port where
+    # the token cannot decide; else the bare id.
     _entry=$_key
     _same=$(printf '%s\n' "$_rows" | awk -F'|' -v k="$_key" '$2 == k' | wc -l | tr -d ' ')
     if [ "$_same" -gt 1 ]; then
-      # A token is chosen for UNIQUENESS, not quality: the best name for a device
-      # is not necessarily one that distinguishes it. Measured on this desk, both
-      # LIGHTSPEED receivers report `usb-receiver` -- so there is NO token here
-      # and `where` is the only route, the opposite of Windows where a token
-      # resolves it. Where no value is held by exactly one, write none.
       _uniq=$(printf '%s\n' "$_rows" |
               awk -F'|' -v k="$_key" -v t="$_tok" '$2 == k && $6 == t' | wc -l | tr -d ' ')
       if [ -n "$_tok" ] && [ "$_uniq" = 1 ]; then
-        # `where` is NOT added here. 4.1 confines it to breaking a tie, and a
-        # remembered port beside a token that already resolves would make moving
-        # the dongle to another socket stop the trigger firing, silently.
         _entry="$_key@$_tok"
       elif [ -n "$_tok" ] && [ -n "$_where" ]; then
-        # The tiebreak row of 4.1's table: several devices carry this token and
-        # one of them is at this port. Reaching that row REQUIRES writing the
-        # shared token, because the grammar has no way to give a `where` without
-        # one -- so "write no token where none is unique" cannot be absolute
-        # without making `where` unreachable. A device with no name at all is the
-        # case that stays below: there is no token to carry the port, so the
-        # entry stays the bare id and means both devices, exactly as it always
-        # did. Inventing a placeholder token would match NOTHING, which is worse
-        # than matching both.
         _entry="$_key@$_tok@$_where"
       fi
     fi
 
     _keys+=("$_entry")
-    # 7.1: the row says WHAT THE DEVICE IS; the id it is matched on stays beside
-    # it. The reverse -- an id as the row -- is not a choice anybody can make.
+    # 7.1: the row says WHAT the device is; the id stays beside it.
     _what=$_name
     [ -n "$_role" ] && _what="$_name ($_role)"
     _labels+=("$(tk_pad "$_what" 34)")
@@ -936,6 +566,16 @@ wt_triggers() {
   done <<EOF
 $_rows
 EOF
+
+  # A saved entry nothing above matches is offered as saved, still selected.
+  for _d in ${WT_DEVICES[@]+"${WT_DEVICES[@]}"}; do
+    _seen=0
+    for _entry in ${_keys[@]+"${_keys[@]}"}; do [ "$_entry" = "$_d" ] && _seen=1; done
+    [ "$_seen" = 1 ] && continue
+    _keys+=("$_d")
+    _labels+=("$(tk_pad "$_d" 34)")
+    _details+=('not attached now  -- kept as saved')
+  done
 
   if [ "${#_keys[@]}" -eq 0 ]; then
     printf '  No devices found.\n' >&2
@@ -958,34 +598,27 @@ EOF
   moves. The full vendor+product is matched, so pick the exact rows.'
 
   [ "$MENU_ESCAPED" = "1" ] && return 0
+  # Saved entries keep their order; new ones follow.
   _new=()
-  for _n in $MENU_PICKED; do _new+=("${_keys[$_n]}"); done
+  for _d in ${WT_DEVICES[@]+"${WT_DEVICES[@]}"}; do
+    for _n in $MENU_PICKED; do [ "${_keys[$_n]}" = "$_d" ] && _new+=("$_d"); done
+  done
+  for _n in $MENU_PICKED; do
+    _seen=0
+    for _d in ${_new[@]+"${_new[@]}"}; do [ "$_d" = "${_keys[$_n]}" ] && _seen=1; done
+    [ "$_seen" = 1 ] || _new+=("${_keys[$_n]}")
+  done
   WT_DEVICES=("${_new[@]+${_new[@]}}")
   WT_RAN_TRIGGERS=''
 }
 
 # --- autostart ---------------------------------------------------------------
 
-# From boot is offered FIRST and is the default, because a computer sitting at a
-# login screen should still follow the switch. The cost is one sudo prompt
-# during setup, and asking for it once beats discovering months later that
-# switching quietly does nothing until you log in.
-#
-# It runs AS THE USER, UNELEVATED -- a LaunchDaemon with UserName set. Root
-# installs it into the system domain; root does not run it. That is the same
-# property the Windows tier has, and the tier would not be worth having without
-# it: nothing elevated may run on the switch path.
-#
-# This row was disabled for a while, reading "not available on macOS -- needs
-# root", on two claims that were both measured wrong. A LaunchDaemon with
-# UserName does not run as root; and reading the displays does not need a
-# logged-in session -- IOKit identity, m1ddc and a full `pull` were all measured
-# working from a LaunchDaemon with no session at all. See specs/CHANGELOG.md
-# revision 4.
-# Can this account obtain root? Membership of the admin group is what sudoers
-# grants on a stock Mac; a standard account is refused at the prompt.
+# Can this account obtain root? Membership of admin is what sudoers grants.
 wt_is_admin() { id -Gn 2>/dev/null | tr ' ' '\n' | grep -qx admin; }
 
+# Three rows, from boot highlighted (8). The boot tier runs as the user,
+# unelevated; the password installs it.
 wt_tier() {
   local _now _default
   printf '\n--- should it start on its own? ---\n' >&2
@@ -996,9 +629,6 @@ wt_tier() {
   printf '  back after a restart until you run:  trigger-kvm restart\n\n' >&2
 
   menu_reset
-  # Drawn, and disabled with the reason, for an account that cannot elevate:
-  # sudo would refuse it, and the row must not send someone into a prompt for
-  # a different account's password (specs 8).
   if wt_is_admin; then
     menu_add 'From boot' 'needs your password once, to install'
   else
@@ -1045,142 +675,37 @@ wt_path() {
   case $MENU_PICK in 0) WT_WANTPATH=yes ;; 1) WT_WANTPATH=no ;; esac
 }
 
-# --- writing -----------------------------------------------------------------
-
-wt_write_config() {
-  local _path _i _l _c _w _other
-  _path=$1
-  mkdir -p "$(dirname "$_path")"
+# Append one line to the login shell's rc file: the bin directory only.
+wt_add_to_path() {
+  local _rc
+  case $SHELL in
+    */zsh)  _rc="$HOME/.zshrc" ;;
+    */bash) _rc="$HOME/.bash_profile" ;;
+    *)      _rc="$HOME/.profile" ;;
+  esac
+  if [ -f "$_rc" ] && grep -qF "$TK_BINDIR" "$_rc" 2>/dev/null; then
+    tk_log "$TK_BINDIR is already named in $_rc"
+    return 0
+  fi
   {
-    echo '# trigger-kvm configuration'
-    echo '#'
-    echo '# Written by `trigger-kvm configure`. Safe to edit by hand.'
-    echo '#'
-    echo '# Everything here is read at the point it is used, so there is no separate'
-    echo '# apply step: display edits take effect on the next switch, and trigger edits'
-    echo '# when the watcher next starts --  trigger-kvm restart'
-    echo '#'
-    echo '# Displays are identified by the EDID read off the output, never by an index'
-    echo '# -- display numbering is not stable. See what is attached with:'
-    echo '#   trigger-kvm list'
     echo ''
-    echo '# --- install ----------------------------------------------------------'
-    config_line 'install.autostart' "${WT_TIER:-login}"
-    echo ''
-    echo '# --- computers --------------------------------------------------------'
-    echo '# What this computer is called below. `trigger-kvm pull` means "point every'
-    echo '# display at this one"; `trigger-kvm to mac` names any other.'
-    echo ''
-    config_line 'computer.this' "$WT_THIS"
-    echo ''
-    echo '# --- displays ---------------------------------------------------------'
-    echo '# method: standard (I2C src 0x51, VCP 0x60) -- what nearly every panel takes'
-    echo '#         lg-alt   (src 0x50, VCP 0xF4) -- LG panels whose 0x60 is stubbed'
-    echo '# input.<value> = <computer>: which computer is on which input of that panel.'
-    echo '#         This is the whole map. pull and to are the same lookup against it,'
-    echo '#         differing only in which name they look up, so the two can never'
-    echo '#         disagree about where a computer is.'
-    echo ''
-    _i=0
-    while [ "$_i" -lt "${#WT_A_KEY[@]}" ]; do
-      _l=${WT_A_LABEL[$_i]}
-      # The width that lines this block up is the longest key in it,
-      # `display.<label>.product` -- computed rather than written out, so a
-      # longer label still aligns instead of shifting one row.
-      _w=$(( 16 + ${#_l} ))
-      config_line "display.$_l.vendor"  "${WT_A_VENDOR[$_i]}"  "$_w"
-      config_line "display.$_l.product" "${WT_A_PRODUCT[$_i]}" "$_w"
-      config_line "display.$_l.name"    "${WT_A_NAME[$_i]}"    "$_w"
-      config_line "display.$_l.method"  "${WT_A_METHOD[$_i]}"  "$_w"
-      # specs/configure.md 6.3: a platform with one transport ASKS nothing and
-      # STORES the transport it used. There is no menu and no WT_ answer behind
-      # this -- there is nothing to choose between -- but the file says what the
-      # panel was verified with, which is the whole reason the key exists.
-      config_line "display.$_l.transport" "$DDC_TRANSPORT" "$_w"
-      for _c in $(map_computers "${WT_A_MAP[$_i]}"); do
-        config_line "display.$_l.input.$(tk_lower "$(map_get "${WT_A_MAP[$_i]}" "$_c")")" "$_c"
-      done
-      echo ''
-      _i=$(( _i + 1 ))
-    done
-    echo '# --- triggers ---------------------------------------------------------'
-    echo '#'
-    echo '# A trigger is anything that runs:  trigger-kvm pull'
-    echo '# The one shipped here watches device presence. A hotkey or a Stream Deck'
-    echo '# button needs no support from this tool -- it just runs that command.'
-    echo '#'
-    echo '# Triggers run `pull` and nothing else. Never wire one to another computer:'
-    echo '# a name like `pc` describes inputs on hardware this computer cannot observe,'
-    echo '# and a stale one would then be able to cause an AUTOMATIC switch to a dead'
-    echo '# input. Getting there by hand, watching, is a different risk entirely.'
-    echo '#'
-    echo '# device: usb:VVVV:PPPP (bare VVVV:PPPP means usb) or bt:AAAAAAAAAAAA.'
-    echo '#         Bluetooth fires on CONNECTED, and every PAIRED device is offered.'
-    echo ''
-    config_line 'trigger.device'   "$(printf '%s' "${WT_DEVICES[*]+${WT_DEVICES[*]}}" | sed 's/ /, /g')" 16
-    config_line 'trigger.debounce' "$(wt_keep 'trigger.debounce' '3.0')"  16
-    config_line 'trigger.settle'   "$(wt_keep 'trigger.settle' '0.75')"   16
-    echo ''
-    # Every key this walkthrough did not write is carried across
-    # (specs/config-format.md, "Hand edits survive"): someone's hand edit, or
-    # a newer version's setting. Dropping it on Save is a loss nobody notices.
-    _other=$(wt_other_keys)
-    if [ -n "$_other" ]; then
-      echo '# --- kept from the previous file (not something configure asks about) --'
-      printf '%s\n' "$_other"
-      echo ''
-    fi
-  } > "$_path"
-}
-
-# The keys in the loaded config that wt_write_config does not itself write, as
-# `key = value` lines, last duplicate winning. A display.<label>.* key is kept
-# only while that panel is still managed: unmanaging a panel is the one answer
-# that means "forget", and it forgets the whole panel.
-wt_other_keys() {
-  local _line _k _v _l _rest _i _managed
-  _managed=' '
-  _i=0
-  while [ "$_i" -lt "${#WT_A_LABEL[@]}" ]; do _managed="$_managed${WT_A_LABEL[$_i]} "; _i=$(( _i + 1 )); done
-  printf '%s\n' "$CONFIG_DATA" | awk -F'\t' 'NF { seen[$1] = $0 } END { for (k in seen) print seen[k] }' |
-  while IFS=$'\t' read -r _k _v; do
-    [ -n "$_k" ] || continue
-    case $_k in
-      install.autostart|computer.this|trigger.device|trigger.debounce|trigger.settle) continue ;;
-      display.*)
-        _rest=${_k#display.}; _l=${_rest%%.*}; _rest=${_rest#*.}
-        case " $_managed " in *" $_l "*) ;; *) continue ;; esac
-        case $_rest in vendor|product|name|method|transport|input.*) continue ;; esac ;;
-    esac
-    # Carried through, and sanitised on the way like everything else. A value
-    # read from the file has already been cut at `#` by the reader, so this
-    # cannot restore what was lost -- and must not pretend to. What it does
-    # prevent is a hand edit surviving one round trip and breaking the next.
-    config_line "$_k" "$_v"
-  done | sort
-}
-
-# A hand-written value the walkthrough never asks about survives a rewrite.
-wt_keep() {
-  local _v
-  _v=$(config_get "$1")
-  if [ -n "$_v" ]; then printf '%s\n' "$_v"; else printf '%s\n' "$2"; fi
+    echo '# added by trigger-kvm'
+    printf 'export PATH="%s:$PATH"\n' "$TK_BINDIR"
+  } >> "$_rc"
+  tk_log "added $TK_BINDIR to PATH in $_rc (open a new terminal for it to take)"
 }
 
 # --- the menu IS the flow ----------------------------------------------------
 
-WT_RAN_DISPLAYS=''
-WT_RAN_TRIGGERS=''
-WT_DISPLAYS_OK=0
-WT_TRIGGERS_OK=0
+# A monitor-input check belongs to the answers it was given (10.8). Any edit
+# since retires it, whatever it said.
+wt_forget_check() {
+  WT_RAN_DISPLAYS=''; WT_DISPLAYS_OK=''; WT_PASS_SIG=''
+  WT_CHECKED_SIG=$(wt_answers_signature)
+}
 
-# The walkthrough. Current settings pre-fill everything, so a re-run is a review
-# rather than a replay -- unless --fresh, which starts from nothing.
-#
-# Two distinct roles for the old config, and --fresh separates them: it supplies
-# DEFAULTS, and it holds values that must SURVIVE. Dropping both would silently
-# discard anything hand-written, so --fresh clears the first and never touches
-# the second.
+# The walkthrough (4). The current config pre-fills everything; --fresh
+# pre-fills nothing but still carries hand-written keys through on Save.
 cmd_configure() {
   local _fresh _isfirst _i _c _d _pathrow _claims _disprow _trigrow _saverow
   local _land _pick _missing
@@ -1190,8 +715,6 @@ cmd_configure() {
   _isfirst=1
   [ -f "$CONFIG" ] && _isfirst=0
 
-  # Said HERE as well as in `status`: configure is where a stale install shows
-  # up, as a row that is missing or wrong.
   tk_warn_if_stale
 
   printf '\n==============================================================\n' >&2
@@ -1205,23 +728,21 @@ cmd_configure() {
   fi
 
   wt_load_found
-  if [ "${#WT_F_KEY[@]}" -eq 0 ]; then
+  if [ "${#WT_F[@]}" -eq 0 ]; then
     tk_log 'no external displays found -- nothing to configure.'
     exit 2
   fi
 
-  printf '\n--- monitors found (%s) ---\n' "${#WT_F_KEY[@]}" >&2
+  printf '\n--- monitors found (%s) ---\n' "${#WT_F[@]}" >&2
   _i=0
-  while [ "$_i" -lt "${#WT_F_KEY[@]}" ]; do
-    printf '  %-24s EDID %s\n' "${WT_F_NAME[$_i]}" "${WT_F_KEY[$_i]}" >&2
+  while [ "$_i" -lt "${#WT_F[@]}" ]; do
+    wt_found "$_i"
+    printf '  %-24s EDID %s\n' "$F_NAME" "$F_KEY" >&2
     _i=$(( _i + 1 ))
   done
 
-  # --fresh clears the SEED. What must survive is re-read at write time.
   if [ "$_fresh" = "1" ]; then
-    WT_THIS=''; WT_COMPUTERS=(); WT_DEVICES=(); WT_TIER=''
-    WT_A_KEY=(); WT_A_LABEL=(); WT_A_NAME=(); WT_A_METHOD=()
-    WT_A_VENDOR=(); WT_A_PRODUCT=(); WT_A_MAP=()
+    WT_THIS=''; WT_COMPUTERS=(); WT_DEVICES=(); WT_TIER=''; WT_A=()
   else
     WT_THIS=$(config_this_computer)
     WT_COMPUTERS=()
@@ -1244,14 +765,16 @@ cmd_configure() {
   WT_ONPATH=0
   case ":$PATH:" in *":$TK_BINDIR:"*) WT_ONPATH=1 ;; esac
   WT_WANTPATH=''
+  wt_forget_check
 
   while :; do
+    [ "$(wt_answers_signature)" = "$WT_CHECKED_SIG" ] || wt_forget_check
+
     menu_reset
 
-    # ONE PUNCTUATION RULE down the value column, because it is read as a
-    # column: ", " separates items, ": " separates a label from its value, "/"
-    # joins things sharing one label. Not cosmetic -- the wrapper breaks at
-    # ", ", so a row using anything else cannot wrap.
+    # One punctuation rule down the value column: ", " separates items, ": "
+    # a label from its value, "/" things sharing a label. The wrapper breaks
+    # at ", ".
     if [ "${#WT_COMPUTERS[@]}" -eq 0 ]; then _d='not set'; else
       _d=''
       for _c in "${WT_COMPUTERS[@]}"; do
@@ -1261,11 +784,12 @@ cmd_configure() {
     fi
     menu_add 'Computers' "$_d"
 
-    if [ "${#WT_A_KEY[@]}" -eq 0 ]; then _d='not set'; else
+    if [ "${#WT_A[@]}" -eq 0 ]; then _d='not set'; else
       _d=''
       _i=0
-      while [ "$_i" -lt "${#WT_A_KEY[@]}" ]; do
-        _d="$_d, ${WT_A_LABEL[$_i]}: $(map_computers "${WT_A_MAP[$_i]}" | paste -sd/ -)"
+      while [ "$_i" -lt "${#WT_A[@]}" ]; do
+        wt_rec "$_i"
+        _d="$_d, $R_LABEL: $(map_computers "$R_MAP" | paste -sd/ -)"
         _i=$(( _i + 1 ))
       done
       _d=${_d#, }
@@ -1276,10 +800,8 @@ cmd_configure() {
     else _d=$(printf '%s' "${WT_DEVICES[*]}" | sed 's/ /, /g'); fi
     menu_add 'Triggers' "$_d"
 
-    # NOTHING IS PRESET. Autostart and PATH have obvious answers, but the
-    # suggestion belongs on the highlighted row INSIDE their menu, not in the
-    # value column of a menu nobody has opened. One of those answers edits a
-    # PATH; showing an answer nobody gave is the tool answering on their behalf.
+    # Nothing is preset (4.3): the suggestion is the highlighted row inside
+    # the submenu.
     case $WT_TIER in
       boot)  _d='from boot' ;;
       login) _d='from login' ;;
@@ -1288,9 +810,7 @@ cmd_configure() {
     esac
     menu_add 'Autostart?' "$_d"
 
-    # ALWAYS DRAWN, even when there is nothing to decide. Hiding it moved every
-    # row below it and left the cursor apparently skipping a step, with no way
-    # to tell whether PATH had been handled or forgotten.
+    # Always drawn; disabled when there is nothing to decide (9).
     _pathrow=${#MENU_ITEMS[@]}
     if [ "$WT_ONPATH" = "1" ]; then _d='already on PATH'
     elif [ -z "$WT_WANTPATH" ]; then _d='not set'
@@ -1300,14 +820,12 @@ cmd_configure() {
 
     menu_sep
 
-    # "the monitor inputs", not "the monitors": what is under test is the claim
-    # that input V of panel P is computer C. A panel that answers every command
-    # perfectly while its inputs are mapped to the wrong computers fails this
-    # and is not broken.
+    # Singular when there is exactly one thing to check.
     _claims=0
     _i=0
-    while [ "$_i" -lt "${#WT_A_MAP[@]}" ]; do
-      for _c in $(map_computers "${WT_A_MAP[$_i]}"); do
+    while [ "$_i" -lt "${#WT_A[@]}" ]; do
+      wt_rec "$_i"
+      for _c in $(map_computers "$R_MAP"); do
         [ "$_c" = "$WT_THIS" ] || _claims=$(( _claims + 1 ))
       done
       _i=$(( _i + 1 ))
@@ -1324,12 +842,10 @@ cmd_configure() {
     menu_add 'Save configuration and run' ''
     menu_add 'Cancel (discard changes)' ''
 
-    # Where the cursor lands is the recommendation, and it is just "the next
-    # thing that is not done": the unanswered sections in order, then the
-    # checks, then Save. A FAILED check sends the cursor to the setting that
-    # failed, not onward.
+    # Where the cursor lands is the recommendation (4.2): the next thing not
+    # done; a failed check sends it to the setting that failed.
     if   [ "${#WT_COMPUTERS[@]}" -eq 0 ]; then _land=0
-    elif [ "${#WT_A_KEY[@]}"     -eq 0 ]; then _land=1
+    elif [ "${#WT_A[@]}"         -eq 0 ]; then _land=1
     elif [ "${#WT_DEVICES[@]}"   -eq 0 ]; then _land=2
     elif [ -z "$WT_TIER" ];             then _land=3
     elif [ "$WT_ONPATH" = "0" ] && [ -z "$WT_WANTPATH" ]; then _land=$_pathrow
@@ -1340,15 +856,13 @@ cmd_configure() {
     else _land=$_saverow; fi
 
     printf '\n' >&2
-    if [ "${#WT_A_KEY[@]}" -gt 0 ] && [ "${#WT_DEVICES[@]}" -gt 0 ]; then
+    if [ "${#WT_A[@]}" -gt 0 ] && [ "${#WT_DEVICES[@]}" -gt 0 ]; then
       printf -- '--- review configuration ---\n\n' >&2
     else
       printf -- '--- configuration ---\n\n' >&2
     fi
 
-    # esc moves the cursor to Cancel; it does not take it. A setup still cannot
-    # be discarded by a stray keypress -- enter on a row that says
-    # "Cancel (discard changes)" is still required.
+    # Esc moves the cursor to Cancel; it does not take it (3.3).
     select_one --default "$_land" --escape-to $(( _saverow + 1 ))
     _pick=$MENU_PICK
 
@@ -1358,12 +872,10 @@ cmd_configure() {
     fi
 
     if [ "$_pick" -eq "$_saverow" ]; then
-      # Saving half a setup would write a config the switcher then refuses to
-      # act on, which is a worse way to find out.
       _missing=''
       [ "${#WT_COMPUTERS[@]}" -eq 0 ] && _missing="$_missing
 Computers"
-      [ "${#WT_A_KEY[@]}"     -eq 0 ] && _missing="$_missing
+      [ "${#WT_A[@]}"         -eq 0 ] && _missing="$_missing
 Monitors"
       [ "${#WT_DEVICES[@]}"   -eq 0 ] && _missing="$_missing
 Triggers"
@@ -1395,26 +907,4 @@ Add to PATH?"; fi
   printf '\n' >&2
   tk_log 'configured. Applying...'
   return 0
-}
-
-# Put the launcher's directory on PATH by appending one line to the login shell's
-# rc file. Only the bin directory, never the program directory: that would
-# publish every file in it as a command.
-wt_add_to_path() {
-  local _rc
-  case $SHELL in
-    */zsh)  _rc="$HOME/.zshrc" ;;
-    */bash) _rc="$HOME/.bash_profile" ;;
-    *)      _rc="$HOME/.profile" ;;
-  esac
-  if [ -f "$_rc" ] && grep -qF "$TK_BINDIR" "$_rc" 2>/dev/null; then
-    tk_log "$TK_BINDIR is already named in $_rc"
-    return 0
-  fi
-  {
-    echo ''
-    echo '# added by trigger-kvm'
-    printf 'export PATH="%s:$PATH"\n' "$TK_BINDIR"
-  } >> "$_rc"
-  tk_log "added $TK_BINDIR to PATH in $_rc (open a new terminal for it to take)"
 }
