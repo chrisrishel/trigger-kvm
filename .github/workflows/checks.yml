@@ -1,0 +1,33 @@
+# The file-only checks, on every push and pull request: each platform's spec
+# conformance and revision check, and its structural conventions. Neither job
+# needs hardware, and neither can move a monitor. The full suites run on the
+# desks (`make test`, `tests\run.ps1`), where the watcher tests have devices.
+name: checks
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: brew install shellcheck
+      - run: cd macos && make && bash tests/run.sh spec
+      - run: cd macos && bash tests/run.sh --no-lint conventions
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - shell: powershell
+        run: |
+          cd windows\tests
+          .\run.ps1 spec
+          exit $LASTEXITCODE
+      - shell: powershell
+        run: |
+          cd windows\tests
+          .\run.ps1 conventions
+          exit $LASTEXITCODE
