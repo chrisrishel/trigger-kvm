@@ -13,6 +13,20 @@ arrived within the 15 seconds observed), and "reading the displays needs a
 logged-in session" (it does not, at all). Run the thing in the context you are
 making a claim about; if you cannot, say that instead of concluding.
 
+| section | what it settles | rules resting on it |
+|---|---|---|
+| [Naming a device](#naming-a-device) | what each platform can read off a USB device, and the cost of reading it | `specs/configure.md` 7.1, `specs/detector.md` 4.1, `windows/AGENTS.md` (cfgmgr32) |
+| [Detectors](#detectors) | edges, bursts, session 0, the paired-arrival case, Bluetooth presence | `specs/detector.md`, `AGENTS.md` "one device in the log", `macos/AGENTS.md` (TCC) |
+| [Sleep, wake and the monitors](#sleep-wake-and-the-monitors) | nothing fires on sleep/wake; the monitors defect with auto-input on; S3 hangs the PC | `AGENTS.md` "wake is not a trigger", `windows/AGENTS.md` (hibernate only) |
+| [Display identity](#display-identity) | EDID ids, serials, NVAPI ids and GDI names across reboots, cable moves and a driver update | `AGENTS.md` "resolve by EDID", "product id per input" |
+| [Intel DDC route](#intel-ddc-route) | the framebuffer I2C route reaches both panels from an Intel Mac | decision 004 |
+| [The dxva2 route](#the-dxva2-route-on-the-onboard-intel-gpu-windows) | dxva2 switches a standard panel on any adapter and sees nothing in session 0 | decision 003 |
+| [DDC reads](#ddc-reads) | read-back values lie on both panels | `AGENTS.md` hard rule 2 |
+| [The LG service channel](#the-lg-service-channel) | what `0xF4` did to the ASUS when it was sprayed | `AGENTS.md` hard rule 5 |
+| [Asking whether a watcher is running](#asking-whether-a-watcher-is-running) | the lock answers; a process count cannot on Windows | `specs/status.md` 2 |
+| [Logs](#logs) | copy-truncate under launchd leaves no hole | `macos/AGENTS.md` |
+| [PowerShell console and language](#powershell-console-and-language) | session-boundary blindness, PATH kinds, console clamping, argument passing | `windows/AGENTS.md` |
+
 ## Naming a device
 
 **2026-09-04, Windows -- three trigger candidates were called `USB Input
@@ -721,7 +735,8 @@ panels on the NVIDIA card.
 
 **2026-09-01, Windows -- session 0 gives dxva2 no usable handle, with the ASUS
 on the Intel output.** From an unelevated S4U on-demand task (`tk-dxva2-s0`,
-principal `rishe`, `LogonType S4U`, `RunLevel Limited`, `LastTaskResult 0`),
+principal the owner's account, `LogonType S4U`, `RunLevel Limited`,
+`LastTaskResult 0`),
 running as `sessionId=0 interactive=False`:
 
 ```
@@ -789,6 +804,19 @@ route, and the LG's `0x50` service channel remains reachable only through
 No DisplayPort motherboard output was tried, only HDMI. And this says nothing
 about a machine with **no** NVIDIA card at all: the LG's own switch still needs
 NVAPI here, so this desk cannot be run from the iGPU alone.
+
+## DDC reads
+
+**2026-08-30, both platforms -- read-back values lie on both panels.** The
+PG42UQ returned `0` for luminance, contrast, volume and `max luminance` on every
+reading, whether or not it was the active input, while writes worked. The LG
+returned real values on a settled active link and `-7` while the link was
+inactive or renegotiating: it read `-7` immediately after a switch that had in
+fact succeeded, then `100` seconds later. Recorded on the project's first day
+(`ce4015f`), before this ledger existed; hard rule 2 rests on it. The
+2026-09-01 Intel readings above add one nuance without changing the rule: the
+ASUS's `0x60` input read tracked a real change while the `max` field beside it
+was garbage, and the LG's `0x60` read `0x0F` whatever it displayed.
 
 ## The LG service channel
 

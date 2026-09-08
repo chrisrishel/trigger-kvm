@@ -76,7 +76,26 @@ budget that fails a test is the only version of this that survives the next
 
 ## Consequences
 
-Adding a rule now means finding the file it belongs in and moving evidence out to
-make room, not appending. The old sentence "every hardware-learned hazard stays in
-THIS file" is gone; its purpose -- one home per fact -- is kept by the placement
-rule instead.
+Adding a rule means finding the file it belongs in and moving evidence out to
+make room, not appending. One home per fact is kept by the placement rule.
+
+## Amended 2026-09-07
+
+- Both suites enforce the budget (`windows/tests/conventions.tests.ps1` mirrors
+  the macOS check).
+- Re-verified against current vendor documentation and the Codex source on
+  `main`: Codex still concatenates the `AGENTS.md` chain from the git root down
+  to the working directory once at launch, truncates mid-line at
+  `project_doc_max_bytes` (32 KiB default) with a log-only warning, and loads
+  nothing on demand. Claude Code loads `@` imports at launch and a subdirectory
+  `CLAUDE.md` when a file there is first read, and now also offers path-scoped
+  `.claude/rules/*.md`; that mechanism is not used here because Codex cannot see
+  it and the two agents would read different instructions.
+- Consequence: a platform `AGENTS.md` reaches a Codex session started at the
+  repo root only because the root file says to read it. A deeper file
+  (`<platform>/tests/AGENTS.md`) would reach both agents the same way, by one
+  instructed-read line, so no measurement is needed before adding one. None is
+  needed today: after the 2026-09-07 rewrite the chain is about 14 KB.
+- The caps did not fail; the content did. In nine days both platform files
+  filled to within 100 bytes of their cap with evidence and history the placement
+  rule already said to move out. The rewrite moved it.

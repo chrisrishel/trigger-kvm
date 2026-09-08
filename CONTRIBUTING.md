@@ -20,19 +20,19 @@ command returning success does not count, and neither does reading a value back
 ## How the repo is worked
 
 `AGENTS.md` and the `CLAUDE.md` files are instructions for AI coding agents,
-which do much of the implementation here under human direction. Every behaviour
-change is confirmed on real hardware by a person before it lands. Contributions
-from agents are welcome and held to the same rules as contributions from
-people: the safety rules, specs first, tests that can fail.
+which do much of the implementation here under human direction. A change that
+moves a monitor is confirmed on real hardware by a person before it is called
+working; anything unwatched is said to be unwatched. Contributions from agents
+are welcome and held to the same rules as contributions from people: the safety
+rules, specs first, tests that can fail.
 
 ## Before you open a pull request
 
 1. Read `AGENTS.md`, then the `AGENTS.md` of the platform you are changing
    (`macos/AGENTS.md` or `windows/AGENTS.md`).
-2. If the change alters behaviour both platforms share, change `specs/` first,
-   then the implementation, then `specs/CHANGELOG.md` and your platform's
-   `SPEC-REVISION`. The other platform's suite will fail and name what it owes;
-   that is how it finds out. Do not edit the other platform's directory.
+2. If the change alters behaviour both platforms share, follow
+   `specs/README.md`, "How a change flows". Do not edit the other platform's
+   directory.
 3. Run the suite. It needs no hardware and cannot move a monitor:
    - macOS: `cd macos && make test`
    - Windows: `cd windows\tests; .\run.ps1`
