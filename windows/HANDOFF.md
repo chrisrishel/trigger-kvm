@@ -349,3 +349,30 @@ Owed:     strip comment lines from the sources before matching, and refuse an
           `specs/check-conformance.sh` now does both and its two self-tests are
           in `macos/tests/spec.tests.sh`
 Verified: read only against `windows/tests/check-conformance.ps1`; not run.
+
+## Shape the tree as if it had been written from the specs
+
+Kind:     defect report
+Spec:     specs/README.md (what an implementation is built FROM); ../AGENTS.md,
+          "Conventions"
+Why:      `install.ps1` is one ~4,600-line file holding the menus, the
+          walkthrough, the checks, discovery and every host verb, with the
+          walkthrough's state in thirteen parallel arrays; a reader cannot tell
+          what it does from what it once did, and every rule about it is a scan
+Owed:     land revision 14 INSIDE this reshaping, not on top of it. The shape
+          `macos/lib` has: `windows/lib/{menu,walkthrough,checks,discover,host}.ps1`
+          (about thirty test-import edits, the five copy lines in the installer,
+          one glob); one record per panel instead of the parallel `WT_*`-style
+          arrays, edited through one setter; one swing primitive that every path
+          moving a panel goes through; dead code out (`$carry`,
+          `Test-ConfigValueExact`, `Get-EffectiveTier` silently accepting an
+          unknown `install.autostart`, the usage text advertising a `-Config`
+          the installer lacks, `discover` and `status` telling people to "re-run
+          install.ps1"); a decision on the one-machine pre-rename block; then
+          the scans and mutations that only policed copies go. Comments say
+          what and why in a few lines and point at the spec, a measurement or a
+          decision. The test at the end is to read each file fresh and ask
+          whether it looks designed this way from the start; where it does not,
+          it is not finished.
+Verified: sizes and counts measured at cf149fe; the reshaping itself is a
+          judgement, made on macOS in 4871fbb, which is the worked example.
