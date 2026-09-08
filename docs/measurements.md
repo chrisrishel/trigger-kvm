@@ -364,9 +364,8 @@ Every value identical to the baseline. **On this machine `OutputId` is a port
 identity, not a per-boot handle**, and `displayId` is equally stable. Three
 further observations widen the span, with all four values agreeing throughout:
 
-- **The same four values were recorded by the phase-1 probe runs**
-  (`ideas/nvapi-transport.md`), the last of them 2026-08-30 16:13 -- the runs the
-  `isActive` entry below is drawn from. Three cold boots are logged since: 16:21
+- **The same four values were recorded by the 2026-08-30 probe runs**, the
+  last of them 16:13 -- the runs the `isActive` entry below is drawn from. Three cold boots are logged since: 16:21
   that same day, 2026-09-01 22:36, and 2026-09-05 19:59.
 - **The ASUS left the card entirely and came back to the same values.** Its PC
   cable moved to the motherboard HDMI output on 2026-09-01 and back to the 4090

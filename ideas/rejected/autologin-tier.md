@@ -1,7 +1,7 @@
 # Rejected: autologin as a pre-login install tier
 
-**Status:** rejected 2026-08-30, by the user, during the pre-login design discussion.
-Do not re-propose without new information that addresses the blocking objection below.
+**Status:** rejected 2026-08-30, by the maintainer. Do not re-propose without
+new information that addresses the blocking objection below.
 
 ## The idea
 
@@ -74,4 +74,6 @@ from an at-startup task after a cold boot. So an S4U task delivers what this ide
 was reaching for, without converting "powered on" into "session live". Its one cost
 is admin rights *to register* -- at runtime it holds ordinary user privileges.
 
-See [[nvapi-transport]] for the transport it depends on and the measurements.
+The transport it depends on is described in
+[`../../docs/nvapi-bindings.md`](../../docs/nvapi-bindings.md); the measurements
+are in `docs/measurements.md`, "Detectors".
