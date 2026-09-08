@@ -70,9 +70,10 @@ macos/
 windows/
 ├── event-watch.ps1         the detector
 ├── trigger-kvm.ps1         the switcher: NVAPI I2C or dxva2, per panel
-├── config.ps1              the config reader and writer, shared by all three
+├── config.ps1              the shared vocabulary: config format, verbs, transports
 ├── nvapi-probe.ps1         read-only display enumeration probe
-└── install.ps1             the walkthrough, discovery, task registration, every management verb
+├── install.ps1             the bootstrap: paths, parameters, and the verb dispatch
+└── lib/*.ps1               menu, answers, walkthrough, checks, discover, host
 ```
 
 Every platform is the same two roles: a **detector** ("do I own the peripherals

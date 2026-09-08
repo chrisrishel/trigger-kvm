@@ -9,8 +9,10 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest          # as install.ps1 runs
 . (Join-Path $PSScriptRoot 'lib.ps1')
 
-Import-Subject -Script 'install.ps1' -Variables @('RENAMED_KEYS') -Functions @(
-    'Read-Default','Read-YesNo','Invoke-TriggerTest','Get-CarriedKeys','Write-ConfigFile')
+Import-Subject -Script 'lib\menu.ps1'    -Functions @('Read-Default','Read-YesNo')
+Import-Subject -Script 'lib\answers.ps1' -Variables @('RENAMED_KEYS') -Functions @(
+    'Get-CarriedKeys','Write-ConfigFile')
+Import-Subject -Script 'lib\checks.ps1'  -Functions @('Invoke-TriggerTest')
 # Write-ConfigFile sanitises through ConvertTo-ConfigValue, which lives beside
 # the reader in config.ps1 -- specs/config-format.md, "A writer must not write
 # what it cannot read back".

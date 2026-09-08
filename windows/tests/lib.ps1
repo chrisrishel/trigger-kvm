@@ -6,8 +6,9 @@
 # but stock PowerShell. A test here is a script that throws when something is wrong,
 # which is all the framework this needs.
 #
-# The unit tests pull functions OUT of install.ps1 by name rather than dot-sourcing
-# it, because dot-sourcing would run the installer.
+# The unit tests pull functions OUT of a script by name rather than dot-sourcing
+# it, because dot-sourcing install.ps1 or either of the two runnable scripts
+# would run them. config.ps1 is pure definitions and IS dot-sourced.
 
 # As the scripts under test run. Without this a whole class of failure is invisible
 # here and hits the user instead: indexing [0] into an empty match, reading a
@@ -17,6 +18,11 @@
 Set-StrictMode -Version Latest
 
 $script:WinDir = Split-Path -Parent $PSScriptRoot
+
+# Where the shipped scripts live. install.ps1 resolves this once and every file
+# under lib\ reads it, because $PSScriptRoot inside lib\ is lib\ -- so an
+# imported function that looks for a sibling script needs it defined here too.
+$global:TK_HOME = $script:WinDir
 
 function Import-Subject {
     <#
@@ -50,12 +56,29 @@ function Import-Subject {
         $def = $m.Value -replace "^function\s+$fn", "function global:$fn"
         Invoke-Expression ($def -replace [regex]::Escape('$PSScriptRoot'), $script:WinDir)
     }
+    # A variable's definition is read by BRACKET DEPTH, not by looking for the
+    # next closing brace at column 0. That older rule was right for a `@{...}`
+    # block and wrong for everything else: a one-line assignment matched from
+    # its own line all the way to the end of whatever function came next, and
+    # imported that function too. It worked by accident, and the accident is
+    # exactly the kind of thing this reshaping exists to remove.
     foreach ($v in $Variables) {
-        # Either a block that ends in a brace at column 0, or a one-line assignment.
-        $m = [regex]::Match($src, "(?ms)^\`$$v = .*?^\}")
-        if (-not $m.Success) { $m = [regex]::Match($src, "(?m)^\`$$v = .*$") }
-        if (-not $m.Success) { throw "$Script has no variable $v" }
-        Invoke-Expression ($m.Value -replace ('^\$' + $v), ('$global:' + $v))
+        $lines = $src -split "`r?`n"
+        $start = -1
+        for ($i = 0; $i -lt $lines.Count; $i++) {
+            if ($lines[$i] -match ('^\$' + [regex]::Escape($v) + '\s*=')) { $start = $i; break }
+        }
+        if ($start -lt 0) { throw "$Script has no variable $v" }
+
+        $depth = 0
+        $text  = @()
+        for ($i = $start; $i -lt $lines.Count; $i++) {
+            $text  += $lines[$i]
+            $depth += ([regex]::Matches($lines[$i], '[\{\(\[]')).Count
+            $depth -= ([regex]::Matches($lines[$i], '[\}\)\]]')).Count
+            if ($depth -le 0) { break }
+        }
+        Invoke-Expression ((($text -join "`n") -replace ('^\$' + [regex]::Escape($v)), ('$global:' + $v)))
     }
 }
 
@@ -216,6 +239,11 @@ function Test-CanPrompt   { $true }
 function Start-Sleep { param([int]$Seconds, [int]$Milliseconds) }
 
 # ---- nothing may touch a monitor -------------------------------------------
+
+# Where a sibling script is. The real one falls back to the installed copy when
+# the source tree is gone; here there is only the source tree. A test that means
+# to stub the CALL stubs Invoke-Sibling, which is a different question.
+function Get-Sibling { param([string]$Name) Join-Path $script:WinDir $Name }
 
 # Send-Input is the single place the installer emits a packet. Stubbing it is what
 # keeps the suite from switching the developer's own displays mid-test.

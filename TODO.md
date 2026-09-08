@@ -48,3 +48,13 @@ Milestones are `ROADMAP.md`; what each platform owes the other is its
   and transcript per case, asserted on output; keep `normative` fences for the
   safety and refusal strings. Trigger: the next spec revision that changes
   wording without changing behaviour, or the next string-check false positive.
+
+- **Delete `$EARLIER_LAYOUT` and the pre-rename tolerances that remain.** The
+  `display-switch`-era task, directory and log cleanup went in the 2026-09-08
+  reshaping, since this machine had none of them left. What is still carried:
+  `install.ps1`'s `$EARLIER_LAYOUT` list, `$RENAMED_KEYS` and the install
+  warning for it, `Get-EffectiveTier`'s `install.start` / `install.tier` rows,
+  and `Stop-Watchers`' `usb-watch.ps1` alternative. Trigger: when no machine can
+  plausibly still hold a config or a program directory that predates the
+  2026-08-30 rename.
+

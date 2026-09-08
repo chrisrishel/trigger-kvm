@@ -276,6 +276,18 @@ about 60 ms.
 webcam is never logged, on both platforms; the second arrival falls inside the
 debounce window.
 
+**2026-08-31, Windows -- three routes to Bluetooth connection state, ruled out
+before `bthprops.cpl`.** Recorded so none is re-tried:
+
+| route | result |
+|---|---|
+| widen the PnP match to `BTHENUM\` | presence there means PAIRED: a device keeps its node for years after it last connected, so no arrival edge ever happens |
+| `Register-ObjectEvent` on the WinRT `BluetoothLEDevice` | `Windows PowerShell cannot subscribe to Windows RT events` |
+| `Add-Type -ReferencedAssemblies` a `.winmd` | `0x80131047`, the metadata file cannot be loaded |
+
+The classic API answers directly: `BluetoothGetDeviceInfo` fills
+`BLUETOOTH_DEVICE_INFO.fConnected`, which is distinct from `fRemembered`.
+
 ## Sleep, wake and the monitors
 
 **2026-08-30, macOS -- a real `pmset sleepnow` / wake cycle produced zero log
@@ -511,6 +523,31 @@ across two readings on one input.
 with `UserName` set and no logged-in session: IOKit display identity worked with
 no CoreGraphics, `m1ddc display list` worked, and a full `trigger-kvm pull` ran
 as uid 501 with both writes sent.
+
+**2026-09-08, Windows -- over Remote Desktop, `user32` presents the RDP virtual
+display and NONE of the physical panels.** Measured from a session opened with
+mstsc while both monitors were pointed at the Mac:
+
+```
+qwinsta            session 1 = rdp-tcp#28 (Active, rishe), session 3 = console (Conn)
+SM_REMOTESESSION   1                    <- a remote session
+$env:SESSIONNAME   Console              <- STALE. Do not use it to detect one
+SM_CMONITORS       1
+EnumDisplayMonitors  1 -> \\.\DISPLAY1, GetNumberOfPhysicalMonitorsFromHMONITOR ok=True n=1
+Win32_VideoController  NVIDIA RTX 4090 (OK), Microsoft Remote Display Adapter (OK),
+                       Intel UHD 770 (OK), Virtual Desktop Monitor (Error)
+```
+
+`trigger-kvm list` in that session reported BOTH panels, `reachable by nvapi`
+only: NVAPI is unaffected because it reads the GPU's outputs rather than the
+desktop. `dxva2` identified nothing (`DXVA2 enumerated: nothing`) and the switch
+REFUSED -- so this fails by REFUSING, where the same root cause in session 0
+fails by MIS-RESOLVING onto a phantom (2026-08-30, above). The EDID gate is what
+turns both into a refusal rather than a mis-aimed write.
+
+**What this adds to the session-0 finding**: "needs a desktop" is too weak.
+`dxva2` needs a LOCAL CONSOLE session. A remote one is a logged-in desktop by
+every other measure and still has none of the real monitors in it.
 
 ## Intel DDC route
 

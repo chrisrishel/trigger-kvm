@@ -182,7 +182,7 @@ Invoke-Mutation 'docs: a CLAUDE.md becomes a second copy instead of an import' `
 # Replaced rather than deleted: dropping the last element of the array would
 # leave a dangling comma, and a mutant that does not parse tests nothing.
 Invoke-Mutation 'launch: the task action does not name the config' `
-    'install.ps1' 'install.tests.ps1' `
+    'lib\host.ps1' 'install.tests.ps1' `
     "        '-Config', ""``""`$ConfigFile``""""" "        '-Arg', 'pull'"
 Invoke-Mutation 'launch: the switcher is left to re-derive the config path' `
     'event-watch.ps1' 'install.tests.ps1' `
@@ -195,38 +195,34 @@ Invoke-Mutation 'launch: an absent log becomes an empty -LogFile' `
 # --- registering the task ------------------------------------------------------
 
 Invoke-Mutation 'install: a failed registration is a bare stack trace' `
-    'install.ps1' 'conventions.tests.ps1' `
-    'try {
-    Register-ScheduledTask @register `
-        -Description "trigger-kvm: pull the configured monitors to this computer when the shared peripherals arrive." | Out-Null
-} catch {' `
-    'if ($true) {
-    Register-ScheduledTask @register `
-        -Description "trigger-kvm: pull the configured monitors to this computer when the shared peripherals arrive." | Out-Null
-} else {'
+    'lib\host.ps1' 'conventions.tests.ps1' `
+    '    try {
+        Register-ScheduledTask @register `
+            -Description "trigger-kvm: pull the configured monitors to this computer when the shared peripherals arrive." | Out-Null
+    } catch {' `
+    '    if ($true) {
+        Register-ScheduledTask @register `
+            -Description "trigger-kvm: pull the configured monitors to this computer when the shared peripherals arrive." | Out-Null
+    } else {'
 
 # --- the user PATH -------------------------------------------------------------
 
 Invoke-Mutation 'path: the read expands other people''s %VAR% entries' `
-    'install.ps1' 'install.tests.ps1' `
+    'lib\host.ps1' 'install.tests.ps1' `
     "            return [string]`$k.GetValue('Path', '',
                        [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)" `
     "            return [string]`$k.GetValue('Path', '')"
 Invoke-Mutation 'path: the write downgrades REG_EXPAND_SZ to REG_SZ' `
-    'install.ps1' 'install.tests.ps1' `
+    'lib\host.ps1' 'install.tests.ps1' `
     "    if (`$Value -match '%')            { return 'ExpandString' }
     if (`$Current -eq 'ExpandString')  { return 'ExpandString' }" ''
 
-# --- the pre-rename cleanup ---------------------------------------------------
+# --- an incomplete copy -------------------------------------------------------
 
-Invoke-Mutation 'legacy: any display-switch directory is deleted' `
+Invoke-Mutation 'install: a half-copied install throws instead of saying so' `
     'install.ps1' 'install.tests.ps1' `
-    "    if (-not (Test-Path -LiteralPath `$vbs -PathType Leaf)) { return `$false }" `
-    "    return `$true"
-Invoke-Mutation 'legacy: any task of that name is unregistered' `
-    'install.ps1' 'install.tests.ps1' `
-    "    if (`$act -match '(usb|event)-watch\.ps1') { return `$true }" `
-    "    return `$true"
+    "if (-not (Test-Path -LiteralPath `$libDir -PathType Container)) {" `
+    "if (`$false) {"
 
 # --- the config reader and its converters -------------------------------------
 
@@ -271,17 +267,17 @@ Invoke-Mutation 'config: a malformed timing reads as zero rather than being refu
 # --- the walkthrough parses what the switcher parses ---------------------------
 
 Invoke-Mutation 'values: the typed prompt keeps its own regex' `
-    'install.ps1' 'walkthrough.tests.ps1' `
+    'lib\walkthrough.ps1' 'walkthrough.tests.ps1' `
     '            $v = Format-Byte $typed
             if (-not $v) { Write-Host ''  Not a byte.''; continue }' `
     '            if ($typed -notmatch ''^(0[xX])?[0-9A-Fa-f]{1,2}$'') { Write-Host ''  Not a byte.''; continue }
             $v = $typed'
 Invoke-Mutation 'values: only a hex input key is read back from the config' `
-    'install.ps1' 'walkthrough.tests.ps1' `
+    'lib\answers.ps1' 'walkthrough.tests.ps1' `
     "            if (`$k -match ('^display\.' + [regex]::Escape(`$Label) + '\.input\.(.+)`$')) {" `
     "            if (`$k -match ('^display\.' + [regex]::Escape(`$Label) + '\.input\.(0x[0-9a-f]{1,2})`$')) {"
 Invoke-Mutation 'values: EDID ids are compared as hex text' `
-    'install.ps1' 'walkthrough.tests.ps1' `
+    'lib\answers.ps1' 'walkthrough.tests.ps1' `
     '        $ven = ConvertTo-Word $Existing["display.$l.vendor"]
         $pro = ConvertTo-Word $Existing["display.$l.product"]
         if ($null -eq $ven -or $null -eq $pro) { continue }
@@ -291,102 +287,102 @@ Invoke-Mutation 'values: EDID ids are compared as hex text' `
         if (($Existing["display.$l.product"] -replace ''^0[xX]'','''').ToUpper().PadLeft(4,''0'') -ne $Key.Split('':'')[1]) { continue }'
 
 Invoke-Mutation 'values: outcome 2 re-asks without the map, so an input can be taken twice' `
-    'install.ps1' 'monitor-check.tests.ps1' `
+    'lib\checks.ps1' 'monitor-check.tests.ps1' `
     '                -Default $Answer.Map[$This] -Taken $taken -Method $Answer.Method `' `
     '                -Default $Answer.Map[$This] -Method $Answer.Method `'
 
 # --- the typed fallback --------------------------------------------------------
 
 Invoke-Mutation 'menus: q is dead on the top menu in the typed fallback' `
-    'install.ps1' 'menus.tests.ps1' `
+    'lib\menu.ps1' 'menus.tests.ps1' `
     '            if ($EscapeTo -ge 0 -and $pick -eq ''q'' -and $sel -contains $EscapeTo) {
                 $Default = $EscapeTo
                 continue
             }' ''
 Invoke-Mutation 'menus: q on the top menu chooses Cancel outright' `
-    'install.ps1' 'menus.tests.ps1' `
+    'lib\menu.ps1' 'menus.tests.ps1' `
     '                $Default = $EscapeTo
                 continue' '                return $EscapeTo'
 Invoke-Mutation 'menus: q moves the cursor onto a disabled row' `
-    'install.ps1' 'menus.tests.ps1' `
+    'lib\menu.ps1' 'menus.tests.ps1' `
     "            if (`$EscapeTo -ge 0 -and `$pick -eq 'q' -and `$sel -contains `$EscapeTo) {" `
     "            if (`$EscapeTo -ge 0 -and `$pick -eq 'q') {"
 
 # --- the service channel says what it is --------------------------------------
 
 Invoke-Mutation 'safety: the method chooser does not name the consequence' `
-    'install.ps1' 'walkthrough.tests.ps1' `
+    'lib\walkthrough.ps1' 'walkthrough.tests.ps1' `
     "    Write-Host ('  {0}''s own method talks to a service channel on the monitor. It is' -f `$d.What)" ''
 Invoke-Mutation 'safety: typing onto a manufacturer channel is not warned about' `
-    'install.ps1' 'walkthrough.tests.ps1' `
+    'lib\walkthrough.ps1' 'walkthrough.tests.ps1' `
     '            if ($Method -ne ''standard'') {' '            if ($false) {'
 Invoke-Mutation 'safety: the warning is shown on the standard channel too' `
-    'install.ps1' 'walkthrough.tests.ps1' `
+    'lib\walkthrough.ps1' 'walkthrough.tests.ps1' `
     '            if ($Method -ne ''standard'') {' '            if ($true) {'
 
 # --- the checks --------------------------------------------------------------
 
 Invoke-Mutation 'checks: backing out of a check reads as a failure' `
-    'install.ps1' 'walkthrough.tests.ps1' `
+    'lib\walkthrough.ps1' 'walkthrough.tests.ps1' `
     '            elseif (-not $ranDisplays.Ok -and -not $ranDisplays.Backed) { 1 }' `
     '            elseif (-not $ranDisplays.Ok) { 1 }'
 Invoke-Mutation 'checks: a real failure no longer lands on its setting' `
-    'install.ps1' 'walkthrough.tests.ps1' `
+    'lib\walkthrough.ps1' 'walkthrough.tests.ps1' `
     '            elseif (-not $ranDisplays.Ok -and -not $ranDisplays.Backed) { 1 }' ''
 
 # --- hand edits survive ---------------------------------------------------------
 
 Invoke-Mutation 'config: an unknown key is dropped on Save' `
-    'install.ps1' 'walkthrough.tests.ps1' `
+    'lib\answers.ps1' 'walkthrough.tests.ps1' `
     '    $carried = @(Get-CarriedKeys -Existing $Existing -Displays $Displays)' `
     '    $carried = @()'
 Invoke-Mutation 'config: an unmanaged panel''s keys are kept anyway' `
-    'install.ps1' 'walkthrough.tests.ps1' `
+    'lib\answers.ps1' 'walkthrough.tests.ps1' `
     '            if ($managed -notcontains $Matches[1]) { continue }' ''
 Invoke-Mutation 'config: a superseded key name is carried beside the new one' `
-    'install.ps1' 'walkthrough.tests.ps1' `
+    'lib\answers.ps1' 'walkthrough.tests.ps1' `
     '        if ($RENAMED_KEYS.Contains($k)) { continue }' ''
 
 # --- names -------------------------------------------------------------------
 
 Invoke-Mutation 'names: two monitors may share one short name' `
-    'install.ps1' 'walkthrough.tests.ps1' `
+    'lib\walkthrough.ps1' 'walkthrough.tests.ps1' `
     "                       -Taken `$Labels -Noun 'monitor'" `
     "                       -Noun 'monitor'"
 Invoke-Mutation 'names: a panel clashes with its own short name' `
-    'install.ps1' 'walkthrough.tests.ps1' `
+    'lib\walkthrough.ps1' 'walkthrough.tests.ps1' `
     '        $others = @($out | Where-Object { $_.Key -ne $key } | ForEach-Object { $_.Label })' `
     '        $others = @($out | ForEach-Object { $_.Label })'
 Invoke-Mutation 'names: the short name is mangled instead of asked about' `
-    'install.ps1' 'walkthrough.tests.ps1' `
+    'lib\walkthrough.ps1' 'walkthrough.tests.ps1' `
     "    `$label = Read-Name -Prompt 'Short name for it' -Default `$defaultLabel ``
                        -Taken `$Labels -Noun 'monitor'" `
     "    `$label = Read-Default '  Short name for it' `$defaultLabel
     `$label = (`$label -replace '[^A-Za-z0-9_-]', '').ToLower()
     if (-not `$label) { `$label = `$defaultLabel }"
 Invoke-Mutation 'names: a duplicate is accepted rather than refused' `
-    'install.ps1' 'walkthrough.tests.ps1' `
+    'lib\menu.ps1' 'walkthrough.tests.ps1' `
     '        if ($Taken -contains $n) {' '        if ($false) {'
 Invoke-Mutation 'names: an underscore survives the character rule' `
-    'install.ps1' 'walkthrough.tests.ps1' `
-    "    `$n = `$n -replace '[\s._]+', '-'          # spaces, dots and underscores separate" `
+    'lib\menu.ps1' 'walkthrough.tests.ps1' `
+    "    `$n = `$n -replace '[\s._]+', '-'" `
     "    `$n = `$n -replace '[\s.]+', '-'"
 
 # --- the trigger check stands the watcher down --------------------------------
 
 Invoke-Mutation 'trigger check: it runs with no devices chosen' `
-    'install.ps1' 'trigger-check.tests.ps1' `
+    'lib\checks.ps1' 'trigger-check.tests.ps1' `
     '    if (@($Devices).Count -eq 0) {' '    if ($false) {'
 Invoke-Mutation 'trigger check: the live watcher fires alongside the one-shot' `
-    'install.ps1' 'trigger-check.tests.ps1' `
+    'lib\checks.ps1' 'trigger-check.tests.ps1' `
     "        'can' {
             Suspend-Watcher" `
     "        'can' {"
 Invoke-Mutation 'trigger check: the watcher is left disabled afterwards' `
-    'install.ps1' 'trigger-check.tests.ps1' `
+    'lib\checks.ps1' 'trigger-check.tests.ps1' `
     '        if ($paused) { Resume-Watcher }' ''
 Invoke-Mutation 'trigger check: an admin-owned watcher is disabled anyway' `
-    'install.ps1' 'trigger-check.tests.ps1' `
+    'lib\checks.ps1' 'trigger-check.tests.ps1' `
     "        'needs-admin' {
             Write-Host ''
             Write-Host '  The running watcher will also fire, using the saved configuration.'
@@ -454,7 +450,7 @@ Invoke-Mutation 'running: a lock owned by an unreachable token reads as no watch
     '            return $true    # exists, owned by a token we cannot open' `
     '            continue'
 Invoke-Mutation 'running: install.ps1 goes back to counting processes' `
-    'install.ps1' 'conventions.tests.ps1' `
+    'lib\host.ps1' 'conventions.tests.ps1' `
     '    Invoke-Sibling -Script $ew -Arguments @(''-IsRunning'') | Out-Null
     return ($LASTEXITCODE -eq 0)' `
     '    return (@(Get-CimInstance Win32_Process -Property ProcessId,Name,CommandLine -Verbose:$false |
@@ -462,34 +458,34 @@ Invoke-Mutation 'running: install.ps1 goes back to counting processes' `
 # --- installing clears the watcher it replaces --------------------------------
 
 Invoke-Mutation 'install: the watcher under the task survives the upgrade' `
-    'install.ps1' 'conventions.tests.ps1' `
-    "    Stop-Watchers
-    try {
-        Unregister-ScheduledTask -TaskName `$TASK -Confirm:`$false -ErrorAction Stop" `
-    "    try {
-        Unregister-ScheduledTask -TaskName `$TASK -Confirm:`$false -ErrorAction Stop"
+    'lib\host.ps1' 'conventions.tests.ps1' `
+    "        Stop-Watchers
+        try {
+            Unregister-ScheduledTask -TaskName `$TASK -Confirm:`$false -ErrorAction Stop" `
+    "        try {
+            Unregister-ScheduledTask -TaskName `$TASK -Confirm:`$false -ErrorAction Stop"
 Invoke-Mutation 'install: a registered task with nothing watching reads as success' `
-    'install.ps1' 'conventions.tests.ps1' `
+    'lib\host.ps1' 'conventions.tests.ps1' `
     "        Write-Log 'WARNING: the task is registered but NO WATCHER is running.'" `
     "        Write-Log 'installed.'"
 
 # --- the input map says it cannot be verified ---------------------------------
 
 Invoke-Mutation 'inputs: the map is shown without saying nothing can check it' `
-    'install.ps1' 'install.tests.ps1' `
+    'lib\host.ps1' 'install.tests.ps1' `
     "    `$out += '           ^ asserted, never verified. If a cable moved to another input on'
     `$out += '             the monitor, pull switches that panel to a dead input and it goes'
     `$out += '             black, with a success in the log. Fix: trigger-kvm configure'" ''
 Invoke-Mutation 'inputs: the warning drops what actually goes wrong' `
-    'install.ps1' 'install.tests.ps1' `
+    'lib\host.ps1' 'install.tests.ps1' `
     "    `$out += '             the monitor, pull switches that panel to a dead input and it goes'" `
     "    `$out += '             the monitor this will not work.'"
 Invoke-Mutation 'inputs: the warning stops saying how to fix it' `
-    'install.ps1' 'install.tests.ps1' `
+    'lib\host.ps1' 'install.tests.ps1' `
     "    `$out += '             black, with a success in the log. Fix: trigger-kvm configure'" `
     "    `$out += '             black, with a success in the log.'"
 Invoke-Mutation 'inputs: the map sorts by input value, so two panels disagree' `
-    'install.ps1' 'install.tests.ps1' `
+    'lib\host.ps1' 'install.tests.ps1' `
     "        `$map = @(`$rows |
             Sort-Object @{ Expression = {
                 `$i = [array]::IndexOf([string[]]`$Computers, `$_.Who)
@@ -497,15 +493,15 @@ Invoke-Mutation 'inputs: the map sorts by input value, so two panels disagree' `
     "        `$map = @(`$rows |
             Sort-Object Value |"
 Invoke-Mutation 'inputs: this computer is not marked, so the map reads as somebody else''s' `
-    'install.ps1' 'install.tests.ps1' `
+    'lib\host.ps1' 'install.tests.ps1' `
     "                    `$(if (`$_.Who -eq `$This) { ' (this one)' } else { '' })" `
     "                    ''"
 Invoke-Mutation 'inputs: a panel with no inputs mapped prints an empty row' `
-    'install.ps1' 'install.tests.ps1' `
+    'lib\host.ps1' 'install.tests.ps1' `
     "                 `$(if (`$map) { `$map -join ', ' } else { 'no inputs mapped' }))" `
     "                 (`$map -join ', '))"
 Invoke-Mutation 'inputs: the whole block is dropped from status' `
-    'install.ps1' 'spec.tests.ps1' `
+    'lib\host.ps1' 'spec.tests.ps1' `
     "    `$out += '           ^ asserted, never verified. If a cable moved to another input on'" ''
 
 Invoke-Mutation 'running: the test-only mutex name reaches the real lock' `
@@ -517,11 +513,11 @@ Invoke-Mutation 'running: the test-only mutex name reaches the real lock' `
 
 Invoke-Mutation 'transport: dxva2 quietly carries lg-alt instead of refusing' `
     'trigger-kvm.ps1' 'resolve.tests.ps1' `
-    "    if (`$Display.Method -eq 'lg-alt' -and `$Display.Transport -eq 'dxva2') {" `
+    "    if (`$Display.Method -eq 'lg-alt' -and `$Display.Transport -in `$SOURCELESS_TRANSPORTS) {" `
     "    if (`$false) {"
 Invoke-Mutation 'transport: an unknown transport falls back instead of refusing' `
     'trigger-kvm.ps1' 'resolve.tests.ps1' `
-    "    if (`$Display.Transport -notin @('nvapi', 'dxva2')) {" `
+    "    if (`$Display.Transport -notin `$TRANSPORT_NAMES) {" `
     "    if (`$false) { `$Display.Transport = 'nvapi' }
     if (`$false) {"
 Invoke-Mutation 'transport: an absent transport key stops meaning nvapi' `
@@ -544,51 +540,51 @@ Invoke-Mutation 'transport: a second embedded-source block goes unscanned' `
 # the program has already promised.
 
 Invoke-Mutation 'transport: the question is asked even with one transport' `
-    'install.ps1' 'walkthrough.tests.ps1' `
+    'lib\walkthrough.ps1' 'walkthrough.tests.ps1' `
     '    if ($t.Count -le 1) {' `
     '    if ($false) {'
 Invoke-Mutation 'transport: dxva2 becomes the default instead of the covering one' `
-    'install.ps1' 'walkthrough.tests.ps1' `
+    'lib\walkthrough.ps1' 'walkthrough.tests.ps1' `
     "    `$now  = `$(if (`$Current -eq 'dxva2') { 1 } elseif (`$Current -eq 'nvapi') { 0 } else { -1 })" `
     "    `$now  = `$(if (`$Current -eq 'dxva2') { 1 } elseif (`$Current -eq 'nvapi') { 0 } else { 1 })"
 Invoke-Mutation 'transport: the dialect question is asked and then refused' `
-    'install.ps1' 'walkthrough.tests.ps1' `
+    'lib\walkthrough.ps1' 'walkthrough.tests.ps1' `
     "    if (`$Transport -in `$SOURCELESS_TRANSPORTS) { return 'standard' }" `
     '    if ($false) { }'
 Invoke-Mutation 'transport: the method question stops being told which transport' `
-    'install.ps1' 'walkthrough.tests.ps1' `
+    'lib\walkthrough.ps1' 'walkthrough.tests.ps1' `
     '    $method = Read-Method -Vendor $Found.EdidVendor -Current $was -Transport $transport' `
     '    $method = Read-Method -Vendor $Found.EdidVendor -Current $was'
 Invoke-Mutation 'transport: the choice is never written to the config' `
-    'install.ps1' 'walkthrough.tests.ps1' `
+    'lib\answers.ps1' 'walkthrough.tests.ps1' `
     '            ("display.{0}.transport = {1}" -f $d.Label, $(if ($d.Transport) { $d.Transport } else { ''nvapi'' }))' `
     ''
 Invoke-Mutation 'transport: a configured one is walked back to the default on a re-run' `
-    'install.ps1' 'walkthrough.tests.ps1' `
-    '            Transport = $(if ($prior.Transport) { $prior.Transport } else { ''nvapi'' })' `
-    "            Transport = 'nvapi'"
+    'lib\answers.ps1' 'walkthrough.tests.ps1' `
+    '            -Transport $(if ($prior.Transport) { $prior.Transport } else { ''nvapi'' }) `' `
+    '            -Transport ''nvapi'' `'
 Invoke-Mutation 'transport: the boot row stays pickable with a panel that cannot reach it' `
-    'install.ps1' 'walkthrough.tests.ps1' `
+    'lib\walkthrough.ps1' 'walkthrough.tests.ps1' `
     '    if (-not $canElevate -or $stranded.Count -gt 0) { $off += 0 }' `
     '    if (-not $canElevate) { $off += 0 }'
 Invoke-Mutation 'transport: the two disabled reasons are merged into one' `
-    'install.ps1' 'walkthrough.tests.ps1' `
+    'lib\walkthrough.ps1' 'walkthrough.tests.ps1' `
     "        `$why += ('{0} cannot switch before login' -f (Join-Names `$stranded))" `
     "        `$why += 'needs an administrator account'"
 Invoke-Mutation 'transport: an impossible boot tier is kept rather than downgraded' `
-    'install.ps1' 'walkthrough.tests.ps1' `
+    'lib\walkthrough.ps1' 'walkthrough.tests.ps1' `
     "                if (`$newTier -eq 's4u' -and `$loginOnly.Count -gt 0) {" `
     '                if ($false) {'
 Invoke-Mutation 'transport: status reports the tier and hides what it costs' `
-    'install.ps1' 'install.tests.ps1' `
+    'lib\host.ps1' 'install.tests.ps1' `
     '    if ($FromBoot -and $stranded.Count -gt 0) {' `
     '    if ($false) {'
 Invoke-Mutation 'transport: status defaults an unrecognised transport instead of naming it' `
-    'install.ps1' 'install.tests.ps1' `
-    "            default { 'UNRECOGNISED -- the switch will refuse this panel' }" `
-    "            default { 'through the graphics card' }"
+    'lib\host.ps1' 'install.tests.ps1' `
+    "        `$note = `$(if (`$row) { `$row.Note } else { 'UNRECOGNISED -- the switch will refuse this panel' })" `
+    "        `$note = `$(if (`$row) { `$row.Note } else { 'through the graphics card' })"
 Invoke-Mutation 'transport: the walkthrough may offer one the switcher refuses' `
-    'install.ps1' 'conventions.tests.ps1' `
+    'lib\walkthrough.ps1' 'conventions.tests.ps1' `
     "    return `$(if (`$pick -eq 1) { 'dxva2' } else { 'nvapi' })" `
     "    return `$(if (`$pick -eq 1) { 'adl' } else { 'nvapi' })"
 
@@ -598,19 +594,19 @@ Invoke-Mutation 'transport: the walkthrough may offer one the switcher refuses' 
 # that each is separately selectable, and that a token identifies exactly one.
 
 Invoke-Mutation 'token: the best name is taken rather than a unique one' `
-    'install.ps1' 'install.tests.ps1' `
+    'lib\discover.ps1' 'install.tests.ps1' `
     '                    (@($mine | Where-Object { $_.Tokens -contains $t }).Count -eq 1)' `
     '                    $true'
 Invoke-Mutation 'token: two devices on one id collapse back into one row' `
-    'install.ps1' 'install.tests.ps1' `
+    'lib\discover.ps1' 'install.tests.ps1' `
     "        `$id = '{0}|{1}' -f `$f[0], `$key" `
     "        `$id = `$key"
 Invoke-Mutation 'token: a device alone on its id is given one anyway' `
-    'install.ps1' 'install.tests.ps1' `
+    'lib\discover.ps1' 'install.tests.ps1' `
     '        $alone = ($mine.Count -eq 1)' `
     '        $alone = $false'
 Invoke-Mutation 'token: hubs come back, because the chosen name is filtered' `
-    'install.ps1' 'install.tests.ps1' `
+    'lib\discover.ps1' 'install.tests.ps1' `
     "            if (@(`$d.Names | Where-Object { `$_ -match 'Hub|Host Controller|Root Complex' })) { continue }" `
     "            if (`$name -match 'Hub|Host Controller|Root Complex') { continue }"
 Invoke-Mutation 'token: the remembered spot is consulted before the token resolves' `
@@ -645,10 +641,10 @@ Invoke-Mutation 'writer: an equals sign is stripped, though a value may hold one
     'config.ps1' 'config.tests.ps1' `
     "    return (`$Text -replace '[#\r\n]', ' ' -replace '\s+', ' ').Trim()" `
     "    return (`$Text -replace '[#=\r\n]', ' ' -replace '\s+', ' ').Trim()"
-Invoke-Mutation 'writer: an identifier that would be altered is stored anyway' `
+Invoke-Mutation 'writer: a device token keeps characters the format would eat' `
     'config.ps1' 'config.tests.ps1' `
-    '    return ((ConvertTo-ConfigValue $Text) -ceq "$Text")' `
-    '    return $true'
+    "    return ((`$Text.ToLower() -replace '[^a-z0-9]+', '-').Trim('-'))" `
+    '    return $Text.ToLower()'
 
 # ---- the device-entry grammar, and the normalising that shipped ---------------
 #
@@ -678,15 +674,15 @@ Invoke-Mutation 'grammar: the spot is part of an identity, so a moved device rea
 # ---- status tells the truth about a malformed entry ---------------------------
 
 Invoke-Mutation 'status: a malformed trigger is counted as merely absent' `
-    'install.ps1' 'install.tests.ps1' `
+    'lib\host.ps1' 'install.tests.ps1' `
     '            $bad++' `
     '            $missing++'
 Invoke-Mutation 'status: a trigger row is canonicalised, so it is not the string in the file' `
-    'install.ps1' 'install.tests.ps1' `
+    'lib\host.ps1' 'install.tests.ps1' `
     "        `$out += ('{0} {1,-20} {2}' -f `$label, `$d.Raw, `$name)" `
     "        `$out += ('{0} {1,-20} {2}' -f `$label, `$d.Key, `$name)"
 Invoke-Mutation 'status: a malformed trigger is reported as a device that is elsewhere' `
-    'install.ps1' 'install.tests.ps1' `
+    'lib\host.ps1' 'install.tests.ps1' `
     '        if (-not $d.Ok) {' `
     '        if ($false) {'
 
@@ -704,7 +700,7 @@ Invoke-Mutation 'spec: a spec file in neither list goes unnoticed' `
     '    return @($Files | Where-Object { $known -notcontains $_ })' `
     '    return @()'
 Invoke-Mutation 'writer: the display name goes to the file unsanitised' `
-    'install.ps1' 'walkthrough.tests.ps1' `
+    'lib\answers.ps1' 'walkthrough.tests.ps1' `
     '            ("display.{0}.name      = {1}" -f $d.Label, (ConvertTo-ConfigValue $d.Name))' `
     '            ("display.{0}.name      = {1}" -f $d.Label, $d.Name)'
 
@@ -714,15 +710,15 @@ Invoke-Mutation 'writer: the display name goes to the file unsanitised' `
 # never travel. These are the assertions that stop it going back.
 
 Invoke-Mutation 'naming: a generic name wins again' `
-    'install.ps1' 'install.tests.ps1' `
+    'lib\discover.ps1' 'install.tests.ps1' `
     '    $named = @($all | Where-Object { $_ -notmatch $GENERIC_NAMES -and $_ -notmatch ''^USB '' })' `
     '    $named = @($all)'
 Invoke-Mutation 'naming: a bus-prefixed name stops losing to a real one' `
-    'install.ps1' 'install.tests.ps1' `
+    'lib\discover.ps1' 'install.tests.ps1' `
     '    $named = @($all | Where-Object { $_ -notmatch $GENERIC_NAMES -and $_ -notmatch ''^USB '' })' `
     '    $named = @($all | Where-Object { $_ -notmatch $GENERIC_NAMES })'
 Invoke-Mutation 'naming: "USB " becomes a veto rather than a preference' `
-    'install.ps1' 'install.tests.ps1' `
+    'lib\discover.ps1' 'install.tests.ps1' `
     '    $good = @($all | Where-Object { $_ -notmatch $GENERIC_NAMES })
     if ($good.Count -gt 0) { return $good[0] }' `
     ''
@@ -731,40 +727,40 @@ Invoke-Mutation 'naming: a driver name is allowed to identify a device' `
     "            `$tok = `$(if (`$Devices[`$k].Own -contains `$n) { ConvertTo-DeviceToken `$n } else { '' })" `
     "            `$tok = ConvertTo-DeviceToken `$n"
 Invoke-Mutation 'naming: a bare HIDClass child counts as an input role' `
-    'install.ps1' 'install.tests.ps1' `
+    'lib\discover.ps1' 'install.tests.ps1' `
     "        if (`$d.Class -notin @('Mouse', 'Keyboard')) { continue }" `
     "        if (-not `$d.Class) { continue }"
 Invoke-Mutation 'naming: roles stop reaching the row' `
-    'install.ps1' 'install.tests.ps1' `
+    'lib\discover.ps1' 'install.tests.ps1' `
     '    if ($Candidate.Roles) { $s += (''  ({0})'' -f (@($Candidate.Roles) -join '', '')) }' `
     ''
 Invoke-Mutation 'naming: the state goes back into the name and breaks the columns' `
-    'install.ps1' 'install.tests.ps1' `
+    'lib\discover.ps1' 'install.tests.ps1' `
     '    if ($Candidate.Roles) { $s += (''  ({0})'' -f (@($Candidate.Roles) -join '', '')) }' `
     '    if ($Candidate.Roles) { $s += (''  ({0})'' -f (@($Candidate.Roles) -join '', '')) }
     if ($Candidate.State) { $s += ("  ({0})" -f $Candidate.State) }'
 Invoke-Mutation 'naming: the menu goes back to picking by vendor:product' `
-    'install.ps1' 'walkthrough.tests.ps1' `
+    'lib\walkthrough.ps1' 'walkthrough.tests.ps1' `
     '        -Items  @($Cands | ForEach-Object { Get-CandidateLabel $_ }) `' `
     '        -Items  @($Cands | ForEach-Object { ''{0,-20} {1,-4}'' -f $_.Key, $_.Bus }) `'
 Invoke-Mutation 'naming: a device presenting a keyboard stops sorting first' `
-    'install.ps1' 'install.tests.ps1' `
+    'lib\discover.ps1' 'install.tests.ps1' `
     '                Rank  = $(if ($roles[$d.Key]) { 0 }' `
     '                Rank  = $(if ($false) { 0 }'
 Invoke-Mutation 'naming: the review menu goes back to listing ids' `
-    'install.ps1' 'walkthrough.tests.ps1' `
+    'lib\walkthrough.ps1' 'walkthrough.tests.ps1' `
     '                    if     ($c) { $c.Name }' `
     '                    if     ($false) { $c.Name }'
 Invoke-Mutation 'naming: the review menu shows a malformed entry as an ordinary device' `
-    'install.ps1' 'walkthrough.tests.ps1' `
+    'lib\walkthrough.ps1' 'walkthrough.tests.ps1' `
     '                    elseif (-not (ConvertFrom-TriggerDevices $d)[0].Ok) { "$d (malformed)" }' `
     '                    elseif ($false) { "$d (malformed)" }'
 Invoke-Mutation 'naming: status reports the trigger keys with no names' `
-    'install.ps1' 'install.tests.ps1' `
+    'lib\host.ps1' 'install.tests.ps1' `
     '        elseif ($by.Contains($d.Identity)) { $name = Get-CandidateLabel $by[$d.Identity] }' `
     "        elseif (`$by.Contains(`$d.Identity)) { `$name = '' }"
 Invoke-Mutation 'naming: an absent trigger is left reading as a fault' `
-    'install.ps1' 'install.tests.ps1' `
+    'lib\host.ps1' 'install.tests.ps1' `
     '    if ($missing -gt 0) {' `
     '    if ($false) {'
 
@@ -775,33 +771,33 @@ Invoke-Mutation 'naming: an absent trigger is left reading as a fault' `
 # while hiding three that did.
 
 Invoke-Mutation 'verbs: a bare command switches the monitors again' `
-    'install.ps1' 'conventions.tests.ps1' `
+    'lib\host.ps1' 'conventions.tests.ps1' `
     '    ''if "%~1"=="" goto :usage''' `
     '    ''if "%~1"=="" goto :switch'''
 Invoke-Mutation 'verbs: a usage path diverges from macOS by reporting success' `
-    'install.ps1' 'conventions.tests.ps1' `
+    'lib\host.ps1' 'conventions.tests.ps1' `
     "    'exit /b %ERRORLEVEL%'" `
     "    'exit /b 0'"
 Invoke-Mutation 'verbs: the usage screen stops reading like the macOS one' `
-    'install.ps1' 'conventions.tests.ps1' `
+    'lib\host.ps1' 'conventions.tests.ps1' `
     "        'usage: trigger-kvm <verb> [options]'" `
     "        'trigger-kvm -- two computers, two monitors, one switch'"
 Invoke-Mutation 'verbs: an unknown one falls through to the binding error again' `
-    'install.ps1' 'conventions.tests.ps1' `
+    'lib\host.ps1' 'conventions.tests.ps1' `
     "    'goto :unknown'" `
     "    'goto :manage'"
 Invoke-Mutation 'verbs: a switching verb stops being routed' `
-    'install.ps1' 'conventions.tests.ps1' `
+    'lib\host.ps1' 'conventions.tests.ps1' `
     "    foreach (`$v in (`$VERBS | Where-Object { `$_.Where -eq 'switch' })) {" `
     "    foreach (`$v in (`$VERBS | Where-Object { `$_.Where -eq 'switch' -and `$_.Verb -ne 'list' })) {"
 Invoke-Mutation 'verbs: install is offered on the usage screen' `
-    'install.ps1' 'conventions.tests.ps1' `
+    'config.ps1' 'conventions.tests.ps1' `
     "    @{ Verb = 'pull';      Where = 'switch'; Arg = ''" `
     "    @{ Verb = 'install';   Where = 'manage'; Arg = ''
        Help = 'install it' }
     @{ Verb = 'pull';      Where = 'switch'; Arg = ''"
 Invoke-Mutation 'verbs: set reaches the public surface' `
-    'install.ps1' 'conventions.tests.ps1' `
+    'config.ps1' 'conventions.tests.ps1' `
     "    @{ Verb = 'list';      Where = 'switch'; Arg = ''" `
     "    @{ Verb = 'set';       Where = 'switch'; Arg = '<value>'
        Help = 'write a value' }
@@ -828,25 +824,25 @@ Invoke-Mutation 'gate: the vendor check leaves the gate' `
 # --- the boot tier ------------------------------------------------------------
 
 Invoke-Mutation 'tier: a declined prompt leaves the config claiming boot' `
-    'install.ps1' 'elevation.tests.ps1' `
+    'lib\host.ps1' 'elevation.tests.ps1' `
     "    Write-Log 'falling back to starting at login.'" `
     "    Write-Log 'nothing was changed.'; return 's4u'"
 Invoke-Mutation 'tier: the fallback does not record what was installed' `
-    'install.ps1' 'elevation.tests.ps1' `
+    'lib\host.ps1' 'elevation.tests.ps1' `
     "    Set-ConfigValue -Path `$CONFIG -Key 'install.autostart' -Value 'login'" ''
 Invoke-Mutation 'tier: the From boot row is offered to an account that cannot elevate' `
-    'install.ps1' 'walkthrough.tests.ps1' `
+    'lib\walkthrough.ps1' 'walkthrough.tests.ps1' `
     '    if (-not $canElevate -or $stranded.Count -gt 0) { $off += 0 }' `
     '    if ($stranded.Count -gt 0) { $off += 0 }'
 Invoke-Mutation 'tier: the row is hidden instead of disabled' `
-    'install.ps1' 'walkthrough.tests.ps1' `
+    'lib\walkthrough.ps1' 'walkthrough.tests.ps1' `
     "    if (-not `$canElevate) { `$why += 'needs an administrator account' }"  `
     "    if (-not `$canElevate) { `$why += 'not available here' }"
 
 # --- the monitors list --------------------------------------------------------
 
 Invoke-Mutation 'monitors: the list disables a row it does not own' `
-    'install.ps1' 'walkthrough.tests.ps1' `
+    'lib\walkthrough.ps1' 'walkthrough.tests.ps1' `
     '        $pick = Select-One -Items $items -Detail $detail -Default $land -Escapable' `
     '        $pick = Select-One -Items $items -Detail $detail -Default $land -Disabled $off -Escapable'
 
@@ -891,28 +887,28 @@ Invoke-Mutation 'identity: a smaller count from one transport lowers the other' 
 # An older switcher sends no field 8. Defaulting it to 0 rather than 1 makes
 # every upgraded desk read as "fewer than one panel", which is not a state.
 Invoke-Mutation 'identity: a row with no panel count defaults to zero' `
-    'install.ps1' 'identity.tests.ps1' `
+    'lib\discover.ps1' 'identity.tests.ps1' `
     '                            [int]$f[7]
                         } else { 1 }' `
     '                            [int]$f[7]
                         } else { 0 }'
 
 Invoke-Mutation 'identity: an unparseable panel count is cast anyway' `
-    'install.ps1' 'identity.tests.ps1' `
+    'lib\discover.ps1' 'identity.tests.ps1' `
     '$(if ($f.Count -ge 8 -and $f[7] -match ''^\d+$'') {' `
     '$(if ($f.Count -ge 8) {'
 
 # The refusal is the whole point: without it the walkthrough asks about an id it
 # cannot aim at, and the second answer overwrites the first.
 Invoke-Mutation 'identity: the walkthrough takes an answer for an ambiguous id' `
-    'install.ps1' 'identity.tests.ps1' `
+    'lib\walkthrough.ps1' 'identity.tests.ps1' `
     '        if ($f.Panels -gt 1) {
             Write-Host ''''' `
     '        if ($false) {
             Write-Host '''''
 
 Invoke-Mutation 'identity: the Monitors row does not say the id is unmanageable' `
-    'install.ps1' 'identity.tests.ps1' `
+    'lib\walkthrough.ps1' 'identity.tests.ps1' `
     '$detail += $(if ($f.Panels -gt 1) { ''{0} monitors share this id -- cannot manage'' -f $f.Panels }' `
     '$detail += $(if ($false) { ''{0} monitors share this id -- cannot manage'' -f $f.Panels }'
 
@@ -923,12 +919,12 @@ Invoke-Mutation 'identity: the Monitors row does not say the id is unmanageable'
 # catch would report a surviving bug that is not one. The threshold below IS
 # mutable, and is what actually decides.
 Invoke-Mutation 'identity: status reports on a single attached panel' `
-    'install.ps1' 'identity.tests.ps1' `
+    'lib\host.ps1' 'identity.tests.ps1' `
     '        if ($Attached[$key] -le 1) { continue }' `
     '        if ($Attached[$key] -le 0) { continue }'
 
 Invoke-Mutation 'identity: status offers configure as the fix it does not have' `
-    'install.ps1' 'identity.tests.ps1' `
+    'lib\host.ps1' 'identity.tests.ps1' `
     '           follow. Unplug one of each pair -- nothing here can tell them apart.' `
     '           follow. Fix: trigger-kvm configure'
 

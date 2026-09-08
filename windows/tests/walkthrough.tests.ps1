@@ -11,21 +11,27 @@
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'lib.ps1')
 
-Import-Subject -Script 'install.ps1' -Variables @('DIALECTS','MCCS_INPUTS','NAME_RULE','BACK','RENAMED_KEYS',
-                                                  'DESKTOP_TRANSPORTS','SOURCELESS_TRANSPORTS') -Functions @(
+# config.ps1 is pure definitions -- the transport table and the verb surface --
+# so it is dot-sourced rather than picked at.
+. (Join-Path $WinDir 'config.ps1')
+Import-Subject -Script 'lib\menu.ps1'        -Variables @('NAME_RULE','BACK') -Functions @(
     'Read-Default','Read-YesNo','Get-MenuWidth','Write-MenuFrame','Clear-ToLineEnd',
     'Split-Detail','Get-ItemWidth','Get-MenuRow',
-    'Select-One','Select-Many','Join-Names','Get-InputName',
+    'Select-One','Select-Many','Join-Names','Format-Name','Read-Name')
+Import-Subject -Script 'lib\answers.ps1'     -Variables @('DIALECTS','MCCS_INPUTS','RENAMED_KEYS') -Functions @(
+    'New-PanelAnswer','Set-PanelAnswer','Edit-PanelMaps','Get-LoginOnlyPanels',
+    'Format-Byte','Get-InputTable','Get-InputName','Get-DisplayMap','Get-PriorDisplay',
+    'Get-ConfiguredAnswers','Get-CarriedKeys','Write-ConfigFile')
+Import-Subject -Script 'lib\walkthrough.ps1' -Functions @(
     'Get-DefaultComputerName','Get-KnownComputers','Read-Computers','Read-ComputerRemovals',
-    'Edit-PanelMaps','Format-Name','Read-Name',
-    'Format-Byte','Read-InputValue','Get-InputTable','Get-DisplayMap','Read-Method',
-    'Read-Transport','Get-LoginOnlyPanels',
-    'Get-DisplayAnswers','Get-ConfiguredAnswers','Get-PriorDisplay','Read-Monitors',
-    'ConvertFrom-DisplayRow',
+    'Read-InputValue','Read-Method','Read-Transport',
+    'Get-DisplayAnswers','Read-Monitors','Read-Triggers','Read-Tier','Read-PathChoice',
+    'Invoke-Configure')
+Import-Subject -Script 'lib\checks.ps1'      -Functions @(
+    'Show-MovePreamble','Move-PanelsAndBack',
     'Invoke-DisplayTest','Invoke-TestRound','Invoke-TestRoundBody','Test-OneComputer',
-    'Test-DisplayInput','Test-OneValue','Invoke-BlindWalk',
-    'Read-Triggers','Read-Tier','Read-PathChoice','Get-CandidateLabel',
-    'Invoke-Configure','Get-CarriedKeys','Write-ConfigFile')
+    'Test-DisplayInput','Test-OneValue','Invoke-BlindWalk')
+Import-Subject -Script 'lib\discover.ps1'    -Functions @('ConvertFrom-DisplayRow','Get-CandidateLabel')
 . (Join-Path (Split-Path -Parent $PSScriptRoot) 'config.ps1')
 
 # ---- the machine this suite pretends to be sitting at ------------------------

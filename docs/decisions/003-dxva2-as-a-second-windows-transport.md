@@ -17,6 +17,11 @@ question measurable (`docs/measurements.md`, "The dxva2 route"):
    fires from).
 2. In session 0, `user32` reports one phantom monitor named `WinDisc` with no
    interface path and no physical-monitor handle. No handle, no write, no EDID.
+   Measured again 2026-09-08 in the other shape: over Remote Desktop `user32`
+   reports the RDP virtual display and none of the physical panels, so `dxva2`
+   identifies nothing and refuses. **"Confined to the login tier" is therefore
+   too weak -- it is confined to a LOCAL CONSOLE session**, and a remote desktop
+   is a logged-in session by every other measure.
 3. EDID vendor+product is one key across NVAPI, WMI and the dxva2 PnP interface
    path; moving the panel between adapters changed its GDI name and PnP instance
    but not `AUS42E0`.
@@ -26,7 +31,7 @@ question measurable (`docs/measurements.md`, "The dxva2 route"):
 ## Decision
 
 A `dxva2` transport beside `nvapi`, **per panel**, **chosen at configure time
-and never a fallback**, **confined to the login tier**.
+and never a fallback**, **confined to a local console session**.
 
 - `configure` asks for the transport (`specs/configure.md` 6.3) before the
   dialect question, and only where a panel enumerated on more than one

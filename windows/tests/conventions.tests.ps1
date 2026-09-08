@@ -55,7 +55,15 @@ function Get-TopLevelFunction {
 
 # ---- no script defines the same function twice ------------------------------
 
-$scripts = @(Get-ChildItem -LiteralPath $WinDir -Filter '*.ps1' -File) +
+# Every shipped script, lib\ included: a duplicate in one of those shadows
+# just as silently, and the whole point of splitting install.ps1 was that the
+# next reader can see which file a function lives in.
+function Get-ShippedScript {
+    return @(Get-ChildItem -LiteralPath $WinDir -Filter '*.ps1' -File) +
+           @(Get-ChildItem -LiteralPath (Join-Path $WinDir 'lib') -Filter '*.ps1' -File)
+}
+
+$scripts = @(Get-ShippedScript) +
            @(Get-ChildItem -LiteralPath $PSScriptRoot -Filter '*.ps1' -File)
 
 $complaints = @()
@@ -85,7 +93,7 @@ Assert-Equal 0 $complaints.Count ("duplicate definitions:`n  " + ($complaints -j
 # depends on it.
 
 $shadowed = @()
-foreach ($s in @(Get-ChildItem -LiteralPath $WinDir -Filter '*.ps1' -File)) {
+foreach ($s in (Get-ShippedScript)) {
     foreach ($name in (Get-TopLevelFunction $s.FullName).Keys) {
         $builtin = Get-Command -Name $name -CommandType Cmdlet -ErrorAction SilentlyContinue
         if ($builtin) {
@@ -129,7 +137,7 @@ function Get-UserVisibleLine {
 }
 
 $saidMachine = @()
-foreach ($s in @(Get-ChildItem -LiteralPath $WinDir -Filter '*.ps1' -File)) {
+foreach ($s in (Get-ShippedScript)) {
     foreach ($l in (Get-UserVisibleLine $s.FullName)) {
         # -cmatch: "Machine" capitalised at the start of a sentence counts too.
         if ($l.Text -imatch '\bmachines?\b') {
@@ -140,116 +148,45 @@ foreach ($s in @(Get-ChildItem -LiteralPath $WinDir -Filter '*.ps1' -File)) {
 
 Assert-Equal 0 $saidMachine.Count ("the user must never be shown ""machine"":`n  " + ($saidMachine -join "`n  "))
 
-# ---- the elevated relaunch's arguments bind against this script's param() ----
+# ---- the elevated relaunch forwards what it was given ------------------------
 #
-# install.ps1 relaunches ITSELF elevated, by name, with an argument list built as a
-# literal. Nothing checks that list against the parameters the script declares, and
-# the failure is invisible from the parent: `param()` is [CmdletBinding()], which
-# THROWS on an unknown named argument, and the child runs in a hidden window whose
-# output the parent only prints if the child got far enough to write any.
+# install.ps1 relaunches ITSELF elevated, by name. The argument list used to be
+# written out literally at each call site, so nothing checked it against the
+# parameters the script declares -- and the failure is invisible from the
+# parent: param() is [CmdletBinding()], which THROWS on an unknown named
+# argument, and the child runs in a hidden window.
 #
-# That shipped. One of the three relaunch sites passed `-Tier $EffectiveTier`, a
-# parameter that has never existed, so the documented recovery from an
-# admin-owned task died at parameter binding while the parent reported that the
-# task had been left exactly as it was.
-
-function Get-ScriptParameter {
-    param([string]$Path)
-    $errors = $null
-    $ast = [System.Management.Automation.Language.Parser]::ParseFile($Path, [ref]$null, [ref]$errors)
-    if ($errors) { throw ("{0} does not parse: {1}" -f $Path, ($errors[0].Message)) }
-    if (-not $ast.ParamBlock) { return @() }
-    $names = @()
-    foreach ($p in $ast.ParamBlock.Parameters) {
-        $names += $p.Name.VariablePath.UserPath
-        # An alias binds just as well as the parameter's own name.
-        foreach ($a in $p.Attributes) {
-            if ($a -is [System.Management.Automation.Language.AttributeAst] -and $a.TypeName.Name -eq 'Alias') {
-                foreach ($arg in $a.PositionalArguments) {
-                    if ($arg -is [System.Management.Automation.Language.StringConstantExpressionAst]) { $names += $arg.Value }
-                }
-            }
-        }
-    }
-    return $names
-}
-
-function Get-RelaunchFlag {
-    <#
-      .SYNOPSIS
-      Every '-Something' handed to the elevated child, as name -> line.
-
-      .DESCRIPTION
-      Keyed on the DOOR -- what is passed to Request-Elevation's -ChildArgs -- and
-      not on the name of a variable. An earlier version of this check looked for
-      assignments to $childArgs, and when the call sites were rewritten to pass
-      their array inline the check went on passing while guarding nothing: the
-      only thing left called $ChildArgs was Request-Elevation's own parameter.
-      A check that cannot see the thing it is about is worse than no check.
-
-      A flag computed at run time is out of reach here and is not what this is
-      for -- every site writes its arguments literally.
-    #>
-    param([string]$Path)
-
-    $errors = $null
-    $ast = [System.Management.Automation.Language.Parser]::ParseFile($Path, [ref]$null, [ref]$errors)
-    if ($errors) { throw ("{0} does not parse: {1}" -f $Path, ($errors[0].Message)) }
-
-    # The array each caller hands over, plus the append inside Request-Elevation
-    # that adds the identity to it. Both end up in the child's argument list.
-    $lists = @()
-    foreach ($c in $ast.FindAll({ $args[0] -is [System.Management.Automation.Language.CommandAst] }, $true)) {
-        if ($c.GetCommandName() -ne 'Request-Elevation') { continue }
-        $els = @($c.CommandElements)
-        for ($i = 0; $i -lt $els.Count - 1; $i++) {
-            if ($els[$i] -is [System.Management.Automation.Language.CommandParameterAst] -and
-                $els[$i].ParameterName -eq 'ChildArgs') { $lists += $els[$i + 1] }
-        }
-    }
-    foreach ($asn in $ast.FindAll({ $args[0] -is [System.Management.Automation.Language.AssignmentStatementAst] }, $true)) {
-        $left = $asn.Left
-        if ($left -isnot [System.Management.Automation.Language.VariableExpressionAst]) { continue }
-        if ($left.VariablePath.UserPath -ne 'ChildArgs') { continue }
-        $lists += $asn.Right
-    }
-
-    $found = @()
-    foreach ($l in $lists) {
-        foreach ($s in $l.FindAll({ $args[0] -is [System.Management.Automation.Language.StringConstantExpressionAst] }, $true)) {
-            if ($s.Value -match '^-\w') {
-                $found += [pscustomobject]@{ Flag = $s.Value; Line = $s.Extent.StartLineNumber }
-            }
-        }
-    }
-    return $found
-}
+# Get-ChildArguments now builds it from $PSBoundParameters, so a flag is
+# forwarded by existing and cannot be misspelled. That makes the property
+# BEHAVIOURAL rather than structural, and elevation.tests.ps1 asserts it --
+# including that -AddToPath is never delegated, because in an elevated child on
+# a standard account HKCU is the ADMIN's hive.
+#
+# What stays here is the one thing a behavioural test cannot see: that no call
+# site has gone back to writing a list of its own.
 
 $installer = Join-Path $WinDir 'install.ps1'
-$declared  = @(Get-ScriptParameter $installer)
-$flags     = @(Get-RelaunchFlag $installer)
+$hostLib   = Join-Path $WinDir 'lib\host.ps1'
 
-Assert-True ($flags.Count -gt 0) 'the relaunch check must have found some flags to check'
-
-$unbound = @()
-foreach ($f in $flags) {
-    if ($declared -notcontains $f.Flag.TrimStart('-')) {
-        $unbound += ("install.ps1:{0}: {1} is not a parameter of install.ps1" -f $f.Line, $f.Flag)
+$literal = @()
+foreach ($f in (Get-ShippedScript)) {
+    $errors = $null
+    $ast = [System.Management.Automation.Language.Parser]::ParseFile($f.FullName, [ref]$null, [ref]$errors)
+    if ($errors) { throw ("{0} does not parse: {1}" -f $f.Name, $errors[0].Message) }
+    foreach ($c in $ast.FindAll({ $args[0] -is [System.Management.Automation.Language.CommandAst] }, $true)) {
+        if ($c.GetCommandName() -ne 'Request-Elevation') { continue }
+        foreach ($str in $c.FindAll({ $args[0] -is [System.Management.Automation.Language.StringConstantExpressionAst] }, $true)) {
+            if ($str.Value -match '^-\w') {
+                $literal += ("{0}:{1}: {2}" -f $f.Name, $str.Extent.StartLineNumber, $str.Value)
+            }
+        }
     }
 }
-Assert-Equal 0 $unbound.Count ("the elevated relaunch passes what it cannot bind:`n  " + ($unbound -join "`n  "))
-
-# ---- the relaunch never hands the child the PATH edit ------------------------
-#
-# Add-ToUserPath and Remove-FromUserPath write the 'User' scope, which is
-# HKCU\Environment -- and in an elevated child on a STANDARD account, HKCU is the
-# ADMIN's hive. A child asked to do it would edit the wrong person's PATH and
-# report success. PATH is per-user and never needed elevation, so the parent keeps
-# it: see Set-InstalledPath.
-
-$delegated = @($flags | Where-Object { $_.Flag -eq '-AddToPath' })
-Assert-Equal 0 $delegated.Count ("the PATH edit must not be delegated to the elevated child, at line(s) " +
-                                 (($delegated | ForEach-Object { $_.Line }) -join ', '))
+Assert-Equal 0 $literal.Count `
+    ("a caller is handing the elevated child a flag of its own; it forwards `$PSBoundParameters instead:`
+  " +
+     ($literal -join "`
+  "))
 
 # ---- one door for "whose install is this?" -----------------------------------
 #
@@ -276,11 +213,13 @@ Assert-Equal 0 $identity.Count ("only `$ME and `$APPDATA may read whose account 
 
 # ...and the task is registered as that user, never as whoever is running.
 $asWho = @()
-foreach ($l in (Select-String -LiteralPath $installer -Pattern 'New-ScheduledTaskPrincipal|New-ScheduledTaskTrigger\s+-AtLogOn')) {
+foreach ($l in (Select-String -LiteralPath $hostLib -Pattern 'New-ScheduledTaskPrincipal|New-ScheduledTaskTrigger\s+-AtLogOn')) {
     if ($l.Line -notmatch '\$FORUSER') {
-        $asWho += ("install.ps1:{0}: {1}" -f $l.LineNumber, $l.Line.Trim())
+        $asWho += ("lib\host.ps1:{0}: {1}" -f $l.LineNumber, $l.Line.Trim())
     }
 }
+Assert-True ($asWho.Count -ge 0 -and (Select-String -LiteralPath $hostLib -Pattern 'New-ScheduledTaskPrincipal').Count -gt 0) `
+    'the principal check must have found the registration to check'
 Assert-Equal 0 $asWho.Count ("every task principal and logon trigger names `$FORUSER:`n  " + ($asWho -join "`n  "))
 
 # ---- registering the task is allowed to fail, and must explain itself --------
@@ -317,9 +256,9 @@ function Test-InsideTry {
     return $true
 }
 
-Assert-True (Test-InsideTry -Path $installer -Command 'Register-ScheduledTask') `
+Assert-True (Test-InsideTry -Path $hostLib -Command 'Register-ScheduledTask') `
     'Register-ScheduledTask must be caught: the old task is already gone by then'
-Assert-True (Test-InsideTry -Path $installer -Command 'Unregister-ScheduledTask') `
+Assert-True (Test-InsideTry -Path $hostLib -Command 'Unregister-ScheduledTask') `
     'and so must Unregister, which is where the ownership trap surfaces'
 
 # The check can see an unguarded call, and does not fire on a guarded one.
@@ -497,62 +436,54 @@ foreach ($l in @($dxvaBody | Where-Object { $_ -match '^\s*public\s+static\b.*\(
 
 # ---- one verb surface, in one place ------------------------------------------
 #
-# "Which verbs exist" was written down THREE times -- the shim's routing table,
-# install.ps1's ValidateSet, trigger-kvm.ps1's ValidateSet -- and none could see
-# the others, so they drifted and the drift was invisible until somebody typed a
-# wrong verb. What they got was a raw PowerShell binding error naming
+# "Which verbs exist" was written down THREE times -- the shim's routing table
+# and each script's own ValidateSet -- and none could see the others, so they
+# drifted and the drift was invisible until somebody typed a wrong verb. What
+# they got was a raw PowerShell binding error naming
 # "install,configure,status,discover,restart,logs,pause,uninstall": it OMITTED
 # pull, to and list, because the shim routes those away before install.ps1 is
 # reached, and it OFFERED install, which the shim itself refuses.
 #
-# Structural, because no behavioural test can see it: each file is internally
-# consistent and correct on its own terms. Only the three together are wrong.
+# There is now ONE table, in config.ps1, which both entry scripts check what
+# they were given against. So the copies cannot drift -- and what is left to
+# assert is that neither script has grown a second answer.
 
-Import-Subject -Script 'install.ps1' -Variables @('VERBS') -Functions @('Get-UsageText','Get-ShimLines')
+. (Join-Path $WinDir 'config.ps1')
+Import-Subject -Script 'lib\host.ps1' -Functions @('Get-UsageText','Get-ShimLines')
 
 $switchVerbs = @($VERBS | Where-Object { $_.Where -eq 'switch' } | ForEach-Object { $_.Verb })
 $manageVerbs = @($VERBS | Where-Object { $_.Where -eq 'manage' } | ForEach-Object { $_.Verb })
 Assert-True ($switchVerbs.Count -gt 0) 'the table must name the switching verbs'
 Assert-True ($manageVerbs.Count -gt 0) 'and the management ones'
 
-function Get-ValidateSet {
-    param([string]$Path)
-    $m = [regex]::Match(((Get-Content -LiteralPath $Path) -join "`n"),
-                        "(?s)\[ValidateSet\((.*?)\)\]")
-    if (-not $m.Success) { throw "$Path no longer declares a ValidateSet; this check is blind" }
-    return @([regex]::Matches($m.Groups[1].Value, "'([a-z-]+)'") | ForEach-Object { $_.Groups[1].Value })
+# NEITHER SCRIPT MAY DECLARE ITS OWN SET. A ValidateSet cannot read a variable,
+# so one is by construction a second copy of this table.
+foreach ($rel in 'install.ps1', 'trigger-kvm.ps1') {
+    $src = Get-Content -Raw -LiteralPath (Join-Path $WinDir $rel)
+    Assert-NoMatch $src '\[ValidateSet\([^)]*''pull''' `
+        ("$rel declares its own verb set; the surface is `$VERBS in config.ps1")
+    Assert-NoMatch $src '\[ValidateSet\([^)]*''status''' `
+        ("$rel declares its own verb set; the surface is `$VERBS in config.ps1")
+    Assert-Match $src 'Get-Verbs -Where' ("$rel must check what it was given against `$VERBS")
 }
 
-# install.ps1's set is the management verbs, plus two the SHIM never routes:
-# `install`, which is what running this script from the source tree means and
-# which the shim refuses by name, and `help`, which the shim calls to print the
-# usage rather than spelling it out in batch echo lines.
-$instSet = Get-ValidateSet $installer
-foreach ($v in $manageVerbs) {
-    Assert-True ($instSet -contains $v) ("the shim routes '{0}' to install.ps1, which rejects it" -f $v)
-}
-foreach ($v in $instSet) {
-    if ($v -in @('install', 'help')) { continue }
-    Assert-True ($manageVerbs -contains $v) `
-        ("install.ps1 accepts '{0}', which the usage screen never mentions" -f $v)
-}
-Assert-True ($instSet -contains 'help') 'install.ps1 must accept the verb the shim calls for usage'
+# The two extras each script accepts without being on the public surface, and
+# the reason each is off it.
+$manageAccepts = @(Get-Verbs -Where 'manage')
+$switchAccepts = @(Get-Verbs -Where 'switch')
+foreach ($v in $manageVerbs) { Assert-True ($manageAccepts -contains $v) ("the shim routes '{0}' to install.ps1, which rejects it" -f $v) }
+foreach ($v in $switchVerbs) { Assert-True ($switchAccepts -contains $v) ("the shim routes '{0}' to trigger-kvm.ps1, which rejects it" -f $v) }
+
+Assert-True ($manageAccepts -contains 'help') 'install.ps1 must accept the verb the shim calls for usage'
+Assert-True ($manageAccepts -contains 'install') 'and the one that running it from the source tree means'
 Assert-True (-not ($VERBS.Verb -contains 'install')) `
-    'install must NOT be in the usage screen: the shim refuses it, and offering a verb that is refused is how the old error misled'
-
-# The switching verbs must all be verbs the switcher accepts, or the shim routes
-# to a script that will reject them.
-$swSet = Get-ValidateSet $Switcher
-foreach ($v in $switchVerbs) {
-    Assert-True ($swSet -contains $v) ("the shim routes '{0}' to trigger-kvm.ps1, which rejects it" -f $v)
-}
+    'install must NOT be on the usage screen: the shim refuses it, and offering a verb that is refused is how the old error misled'
 
 # `set` IS DELIBERATELY UNROUTED, and this asserts the deliberateness. The
-# switcher accepts it for the installer's guided input discovery; a general
-# "write any value to a monitor" verb on the public surface invites the poking at
-# panels hard rule 1 exists to discourage. If someone ever "fixes" the omission
-# by adding it to the table, this fails and says why.
-Assert-True ($swSet -contains 'set') 'the switcher still has set, for guided discovery'
+# switcher accepts it for the walkthrough's guided discovery; a general "write
+# any value to a monitor" verb on the public surface invites the poking at
+# panels hard rule 1 exists to discourage.
+Assert-True ($switchAccepts -contains 'set') 'the switcher still has set, for guided discovery'
 Assert-True (-not ($VERBS.Verb -contains 'set')) `
     'set must stay off the public verb surface -- see the -Value parameter in trigger-kvm.ps1'
 
@@ -605,55 +536,56 @@ foreach ($alias in @('help', '--help', '-h')) {
 }
 Assert-Match $shim '"%~1"=="/\?" goto :help'
 
-# ---- the installer must not offer a pair the switcher refuses ----------------
+# ---- the walkthrough cannot offer a pair the switcher refuses ----------------
 #
-# Two scripts hold one fact between them, and they hold DIFFERENT HALVES of it on
-# purpose: Switch-Display REFUSES a transport it does not know and refuses
-# lg-alt on a transport with no source byte (that is the gate a hand-edited
-# config meets), while the walkthrough simply never OFFERS either. Neither is a
-# copy of the other -- but they can still drift apart, and the drift is silent
-# and nasty: a walkthrough offering a transport the switch rejects writes a
-# config that configures nothing, and the person finds out when a monitor does
-# not move.
+# The two scripts hold DIFFERENT HALVES of one fact on purpose: Switch-Display
+# REFUSES a transport it does not know and refuses lg-alt on a transport with no
+# source byte -- that is the gate a hand-edited config meets -- while the
+# walkthrough simply never OFFERS either. Neither is a copy of the other.
 #
-# So the check is not "the same code twice", it is "the two vocabularies agree".
-# Structural, because no behavioural test can reach it: each script is right on
-# its own terms in isolation, and only the pair is wrong.
+# What they must not do is disagree, and the drift is silent and nasty: a
+# walkthrough offering a transport the switch rejects writes a config that
+# configures nothing, and the person finds out when a monitor does not move.
+#
+# There is now one table in config.ps1 and both read it, so the assertion is
+# that they still do rather than that two lists match.
 
-$swSrc = (Get-Content -LiteralPath $Switcher) -join "`n"
+$swSrc   = (Get-Content -LiteralPath $Switcher) -join "`n"
+$walkSrc = (Get-Content -LiteralPath (Join-Path $WinDir 'lib\walkthrough.ps1')) -join "`n"
 
-# The one place Switch-Display says which transports exist -- windows/AGENTS.md's
-# one-rule-one-place, and the reason Resolve-Panel throws rather than repeating it.
-$known = [regex]::Match($swSrc, "Transport\s+-notin\s+@\(([^)]*)\)")
-Assert-True $known.Success 'the switcher must state its transports in one place'
-$knownSet = @([regex]::Matches($known.Groups[1].Value, "'([a-z0-9]+)'") |
-              ForEach-Object { $_.Groups[1].Value } | Sort-Object)
-Assert-Equal 'dxva2 nvapi' ($knownSet -join ' ') `
+Assert-True ($TRANSPORT_NAMES.Count -ge 1) 'the transport table must name at least one transport'
+Assert-Equal 'dxva2 nvapi' ((@($TRANSPORT_NAMES) | Sort-Object) -join ' ') `
     'and those are the two this platform has'
 
-# Every transport the installer can WRITE into a config. Anything it can store
-# must be something the switcher will accept, or the walkthrough is a way to
-# configure a panel that never moves.
-$instText = (Get-Content -LiteralPath $installer) -join "`n"
-$readT    = [regex]::Match($instText, "(?s)function Read-Transport\b.*?\n\}")
-Assert-True $readT.Success 'the installer must have exactly one transport question'
-$offered  = @([regex]::Matches($readT.Value, "return\s+\`$\(if\s*\(\`$pick[^)]*\)\s*\{\s*'([a-z0-9]+)'\s*\}\s*else\s*\{\s*'([a-z0-9]+)'") |
-              ForEach-Object { $_.Groups[1].Value; $_.Groups[2].Value })
-Assert-True ($offered.Count -ge 2) 'and it must offer both of them by name'
+# The switcher reads the table rather than a list of its own.
+Assert-Match   $swSrc 'Transport\s+-notin\s+\$TRANSPORT_NAMES' `
+    'the switcher must take its known transports from config.ps1'
+Assert-NoMatch $swSrc "Transport\s+-notin\s+@\(" `
+    'and must not carry a second copy of the list'
+
+# Every transport the walkthrough can WRITE into a config must be one the
+# switcher will accept.
+$readT = [regex]::Match($walkSrc, "(?s)function Read-Transport\b.*?\n\}")
+Assert-True $readT.Success 'the walkthrough must have exactly one transport question'
+$offered = @([regex]::Matches($readT.Value, "'([a-z0-9]+)'") |
+             ForEach-Object { $_.Groups[1].Value } |
+             Where-Object { $_ -ne 'standard' } | Sort-Object -Unique)
+Assert-True ($offered.Count -ge 2) 'and it must name them'
 foreach ($t in $offered) {
-    Assert-True ($knownSet -contains $t) `
+    Assert-True ($TRANSPORT_NAMES -contains $t) `
         ("the walkthrough offers transport '{0}', which the switcher would refuse" -f $t)
 }
 
-# The impossible cell, from both sides. dxva2 cannot express an I2C source byte,
-# so the switcher refuses lg-alt on it and the installer must not ask a question
-# whose answer is already fixed -- specs/configure.md 6.3.
-Assert-Match $swSrc "Method\s+-eq\s+'lg-alt'\s+-and\s+.*Transport\s+-eq\s+'dxva2'" `
-    'the switcher refuses the impossible pair'
-Assert-Match $instText '\$SOURCELESS_TRANSPORTS\s*=\s*@\(\s*''dxva2''\s*\)' `
-    'and the installer names the same transport as the one that cannot carry a dialect'
-Assert-Match $instText 'if \(\$Transport -in \$SOURCELESS_TRANSPORTS\) \{ return ''standard'' \}' `
-    'so the method question is skipped rather than asked and then refused'
+# The impossible cell, from both sides -- specs/configure.md 6.3. A transport
+# that cannot address an I2C source byte cannot carry a manufacturer dialect, so
+# the switcher refuses the pair and the walkthrough never asks a question whose
+# answer is already fixed. Both name the same set, and it is the table's.
+Assert-Match $swSrc "Method\s+-eq\s+'lg-alt'\s+-and\s+.*Transport\s+-in\s+\`$SOURCELESS_TRANSPORTS" `
+    'the switcher refuses the impossible pair, against the shared list'
+Assert-Match $walkSrc 'if \(\$Transport -in \$SOURCELESS_TRANSPORTS\) \{ return ''standard'' \}' `
+    'and the method question is skipped rather than asked and then refused'
+Assert-Equal 'dxva2' (@($SOURCELESS_TRANSPORTS) -join ' ') `
+    'and dxva2 is what the table says cannot carry one'
 
 # ---- "is a watcher running" is asked of the lock, not the process table ------
 #
@@ -667,22 +599,22 @@ Assert-Match $instText 'if \(\$Transport -in \$SOURCELESS_TRANSPORTS\) \{ return
 # cannot create a session-0 process, which is the only context where the two
 # answers differ. A revert to counting would pass everything else.
 
-$instSrc = @(Get-Content -LiteralPath $installer)
+$hostSrc = @(Get-Content -LiteralPath $hostLib)
 
 # Stop-Watchers still needs PIDs to kill and runs elevated, so ONE query stays.
 # More than one means a "is it running?" caller has gone back to counting.
-$procAt = @(0..($instSrc.Count - 1) |
-            Where-Object { $instSrc[$_] -match 'Get-CimInstance\s+Win32_Process' })
+$procAt = @(0..($hostSrc.Count - 1) |
+            Where-Object { $hostSrc[$_] -match 'Get-CimInstance\s+Win32_Process' })
 Assert-Equal 1 $procAt.Count `
-    ("install.ps1 may enumerate processes in exactly one place (Stop-Watchers, which needs PIDs to kill). " +
+    ("lib\host.ps1 may enumerate processes in exactly one place (Stop-Watchers, which needs PIDs to kill). " +
      "Whether a watcher RUNS is the lock's question -- see event-watch.ps1 -IsRunning.")
 
 # ...and it is Stop-Watchers': between that definition and the next function.
-$stopAt = @(0..($instSrc.Count - 1) | Where-Object { $instSrc[$_] -match '^function\s+Stop-Watchers\b' })
+$stopAt = @(0..($hostSrc.Count - 1) | Where-Object { $hostSrc[$_] -match '^function\s+Stop-Watchers\b' })
 Assert-Equal 1 $stopAt.Count 'Stop-Watchers must be defined exactly once'
-$nextFn = @(0..($instSrc.Count - 1) |
-            Where-Object { $_ -gt $stopAt[0] -and $instSrc[$_] -match '^function\s' })
-$stopEnd = if ($nextFn.Count) { ($nextFn | Measure-Object -Minimum).Minimum } else { $instSrc.Count }
+$nextFn = @(0..($hostSrc.Count - 1) |
+            Where-Object { $_ -gt $stopAt[0] -and $hostSrc[$_] -match '^function\s' })
+$stopEnd = if ($nextFn.Count) { ($nextFn | Measure-Object -Minimum).Minimum } else { $hostSrc.Count }
 Assert-True ($procAt[0] -gt $stopAt[0] -and $procAt[0] -lt $stopEnd) `
     ("the surviving process query must be Stop-Watchers'; it is on line " + ($procAt[0] + 1))
 
@@ -717,23 +649,34 @@ Assert-Equal 0 $leaked.Count `
 # (..\..\docs\measurements.md). Structural, because the suite must not register a
 # task or kill a real watcher, so the behaviour itself is out of reach.
 
-# The invariant is about STARTING one, not about unregistering: no watcher of ours
-# may still be alive when a new one starts, or the new one exits on the lock. So
-# the install path's Start-ScheduledTask -- the last one in the file; the other is
-# Resume-Watcher's -- must have a Stop-Watchers before it.
-$startAt = @(0..($instSrc.Count - 1) |
-             Where-Object { $instSrc[$_] -match 'Start-ScheduledTask\s+-TaskName\s+\$TASK' })
+# The invariant is about STARTING one, not about unregistering: no watcher of
+# ours may still be alive when a new one starts, or the new one exits on the
+# lock. So Invoke-Install's Start-ScheduledTask must have a Stop-Watchers before
+# it, inside the same function.
+function Get-FunctionRange {
+    param([string[]]$Lines, [string]$Name)
+    $at = @(0..($Lines.Count - 1) | Where-Object { $Lines[$_] -match ('^function\s+' + [regex]::Escape($Name) + '\b') })
+    if ($at.Count -ne 1) { throw "$Name must be defined exactly once; found $($at.Count)" }
+    $next = @(0..($Lines.Count - 1) | Where-Object { $_ -gt $at[0] -and $Lines[$_] -match '^function\s' })
+    $end  = if ($next.Count) { ($next | Measure-Object -Minimum).Minimum } else { $Lines.Count }
+    return @{ Start = $at[0]; End = $end }
+}
+
+$installFn   = Get-FunctionRange -Lines $hostSrc -Name 'Invoke-Install'
+$uninstallFn = Get-FunctionRange -Lines $hostSrc -Name 'Invoke-Uninstall'
+
+$stopAt = @(0..($hostSrc.Count - 1) | Where-Object { $hostSrc[$_] -match '^\s*Stop-Watchers\s*$' })
+
+$startAt = @($installFn.Start..($installFn.End - 1) |
+             Where-Object { $hostSrc[$_] -match 'Start-ScheduledTask\s+-TaskName\s+\$TASK' })
 Assert-True ($startAt.Count -ge 1) 'the install check must have found a Start-ScheduledTask'
 $installStart = ($startAt | Measure-Object -Maximum).Maximum
 
-$stopAt = @(0..($instSrc.Count - 1) | Where-Object { $instSrc[$_] -match '^\s*Stop-Watchers\s*$' })
-
-# Anchored to the INSTALL path's own task-replacement block, not merely to
-# "somewhere earlier in the file": uninstall has a Stop-Watchers of its own, and it
-# sits before this line while being unreachable from here -- so a laxer check
-# passed with the install path's call deleted. That mutation is in mutate.ps1.
-$replaceAt = @(0..($instSrc.Count - 1) |
-               Where-Object { $instSrc[$_] -match '^if \(Get-ScheduledTask -TaskName \$TASK' })
+# Anchored to the task-replacement block, not merely to "somewhere earlier":
+# Invoke-Uninstall has a Stop-Watchers of its own, and a laxer check passed with
+# the install path's call deleted. That mutation is in mutate.ps1.
+$replaceAt = @($installFn.Start..($installFn.End - 1) |
+               Where-Object { $hostSrc[$_] -match '^\s*if \(Get-ScheduledTask -TaskName \$TASK' })
 Assert-True ($replaceAt.Count -ge 1) 'the install check must have found the task-replacement block'
 $installReplace = ($replaceAt | Measure-Object -Maximum).Maximum
 
@@ -744,15 +687,12 @@ Assert-True (@($stopAt | Where-Object { $_ -gt $installReplace -and $_ -lt $inst
 
 # Uninstall clears them too -- order does not matter there, since nothing is
 # started afterwards, only that no watcher outlives the files it runs from.
-$uninstallAt = @(0..($instSrc.Count - 1) |
-                 Where-Object { $instSrc[$_] -match "^if \(\`$Command -eq 'uninstall'\)" })
-Assert-Equal 1 $uninstallAt.Count 'the uninstall command must be found exactly once'
-Assert-True (@($stopAt | Where-Object { $_ -gt $uninstallAt[0] -and $_ -lt $installStart }).Count -gt 0) `
+Assert-True (@($stopAt | Where-Object { $_ -gt $uninstallFn.Start -and $_ -lt $uninstallFn.End }).Count -gt 0) `
     'uninstall must stop the watchers before removing the files they run from'
 
 # And the install says so when nothing came up, because "registered and started"
 # is a claim about the TASK -- the two came apart silently for a whole day.
-Assert-Match ($instSrc -join "`n") 'the task is registered but NO WATCHER is running' `
+Assert-Match ($hostSrc -join "`n") 'the task is registered but NO WATCHER is running' `
     'a registered task with nothing watching must be stated, not implied'
 
 # ---- the instruction files fit the tools that load them ----------------------
@@ -829,40 +769,39 @@ function Outer-B { function Helper { 'b' }; Helper }
 $fns = Get-TopLevelFunction $nested
 Assert-True (-not $fns.ContainsKey('Helper')) 'a function scoped inside another is not a duplicate'
 
-# ...and the relaunch check sees a flag its own param() does not declare, in both
-# the assignment and the append, while leaving a declared one and an alias alone.
-$relaunch = Join-Path $tmp 'relaunch.ps1'
+# ...and Import-Subject reads a variable's WHOLE definition and stops at its
+# end. The rule it replaced looked for the next closing brace at column 0, which
+# is right for a `@{...}` block and wrong for a one-line assignment: that
+# matched from its own line through the end of whatever function came next, and
+# imported that function too. It worked by accident.
+$vars = Join-Path $tmp 'vars.ps1'
 @'
-[CmdletBinding()]
-param(
-    [string]$Command = 'install',
-    [Alias('Path')]
-    [switch]$AddToPath
-)
-$rc = Request-Elevation -ChildArgs @('install', '-Tier', $EffectiveTier)
-exit (Request-Elevation -ChildArgs @('install', '-AddToPath'))
-function Request-Elevation {
-    param([string[]]$ChildArgs)
-    $ChildArgs = @($ChildArgs) + @('-Path', $FORUSER)
+$ONE_LINE = 'just this'
+
+# A comment in between.
+function Not-Imported { 'this must not come along' }
+
+$A_BLOCK = @{
+    'k' = 'v'
 }
-$other = @('-NotEvenLookedAt')
-'@ | Set-Content -LiteralPath $relaunch -Encoding ASCII
 
-$declaredT = @(Get-ScriptParameter $relaunch)
-Assert-Equal 'Command,AddToPath,Path' ($declaredT -join ',') 'an alias binds too, so it counts as declared'
+$A_LIST = @(
+    @{ Name = 'first' }
+    @{ Name = 'second' }
+)
+'@ | Set-Content -LiteralPath $vars -Encoding ASCII
 
-$flagsT = @(Get-RelaunchFlag $relaunch)
-Assert-Equal '-Tier,-AddToPath,-Path' (($flagsT | ForEach-Object { $_.Flag }) -join ',') `
-    'every call site and the identity append are read, and nothing else is'
-
-$badT = @($flagsT | Where-Object { $declaredT -notcontains $_.Flag.TrimStart('-') })
-Assert-Equal 1       $badT.Count 'the check must see an undeclared flag'
-Assert-Equal '-Tier' $badT[0].Flag
-
-# The mutation that got past the earlier version of this check: a call site that
-# hands the child the PATH edit.
-Assert-Equal 1 @($flagsT | Where-Object { $_.Flag -eq '-AddToPath' }).Count `
-    'a delegated PATH edit must be visible at the call site'
+Copy-Item -LiteralPath $vars -Destination (Join-Path $WinDir 'tk-import-probe.ps1')
+try {
+    Import-Subject -Script 'tk-import-probe.ps1' -Variables @('ONE_LINE', 'A_BLOCK', 'A_LIST')
+    Assert-Equal 'just this' $ONE_LINE 'a one-line assignment imports as itself'
+    Assert-Equal 'v'         $A_BLOCK['k'] 'a hashtable block imports whole'
+    Assert-Equal 2           @($A_LIST).Count 'and so does an array of them'
+    Assert-True (-not (Get-Command -Name 'Not-Imported' -ErrorAction SilentlyContinue)) `
+        'a one-line variable must not drag the next function in with it'
+} finally {
+    Remove-Item -LiteralPath (Join-Path $WinDir 'tk-import-probe.ps1') -Force -ErrorAction SilentlyContinue
+}
 
 # ...and the source-gate check sees a second door, in each of the three shapes
 # it exists to forbid. Against a THROWAWAY COPY, not by breaking the real one:

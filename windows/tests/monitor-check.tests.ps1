@@ -6,13 +6,18 @@
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'lib.ps1')
 
-Import-Subject -Script 'install.ps1' -Variables @('DIALECTS','MCCS_INPUTS','RENAMED_KEYS') -Functions @(
+. (Join-Path $WinDir 'config.ps1')
+Import-Subject -Script 'lib\menu.ps1'        -Functions @(
     'Read-Default','Read-YesNo','Get-MenuWidth','Write-MenuFrame','Clear-ToLineEnd',
-    'Split-Detail','Get-ItemWidth','Get-MenuRow',
-    'Select-One','Select-Many','Join-Names','Get-InputName','Get-InputTable',
-    'Format-Byte','Read-InputValue','Get-DisplayMap','Invoke-BlindWalk','Test-OneValue',
+    'Split-Detail','Get-ItemWidth','Get-MenuRow','Select-One','Select-Many','Join-Names')
+Import-Subject -Script 'lib\answers.ps1'     -Variables @('DIALECTS','MCCS_INPUTS','RENAMED_KEYS') -Functions @(
+    'Set-PanelAnswer','Get-InputName','Get-InputTable','Format-Byte','Get-DisplayMap',
+    'Get-CarriedKeys','Write-ConfigFile')
+Import-Subject -Script 'lib\walkthrough.ps1' -Functions @('Read-InputValue')
+Import-Subject -Script 'lib\checks.ps1'      -Functions @(
+    'Show-MovePreamble','Move-PanelsAndBack','Invoke-BlindWalk','Test-OneValue',
     'Invoke-DisplayTest','Invoke-TestRound','Invoke-TestRoundBody','Test-OneComputer',
-    'Test-DisplayInput','Get-CarriedKeys','Write-ConfigFile')
+    'Test-DisplayInput')
 # Write-ConfigFile sanitises through ConvertTo-ConfigValue, which lives beside
 # the reader in config.ps1 -- specs/config-format.md, "A writer must not write
 # what it cannot read back".

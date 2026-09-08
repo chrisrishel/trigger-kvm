@@ -11,8 +11,8 @@
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'lib.ps1')
 
-Import-Subject -Script 'install.ps1' -Functions @(
-    'Format-ChildArguments', 'Request-Elevation', 'Invoke-BootTierElevation')
+Import-Subject -Script 'lib\host.ps1' -Functions @(
+    'Format-ChildArguments', 'Get-ChildArguments', 'Request-Elevation', 'Invoke-BootTierElevation')
 
 # ---- flags stay bare, values get quoted --------------------------------------
 #
@@ -51,22 +51,70 @@ Assert-Equal "install|True|HOME\O'Brien Smith|C:\Users\O'Brien Smith\AppData\Loc
 
 Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
 
+# ---- what the child is given is built from what this process was given -------
+#
+# It used to be a literal list at each call site, so nothing checked it against
+# the parameters install.ps1 declares -- and one site passed `-Tier`, which has
+# never been a parameter, so the documented recovery from an admin-owned task
+# died at parameter binding in a hidden window while the parent reported that
+# the task had been left exactly as it was.
+#
+# Built from $PSBoundParameters, a flag is forwarded by EXISTING. Three names
+# are excluded, and the middle one is the one that matters.
+
+$global:FORUSER = 'HOME\First Last'
+$global:APPDATA = 'C:\Users\First Last\AppData\Local'
+
+$bound = @{ Command = 'configure'; Fresh = [switch]$true; NoElevate = [switch]$false
+            AddToPath = [switch]$true; Relaunched = [switch]$true
+            ForUser = 'somebody-else'; ForAppData = 'C:\wrong' }
+$args1 = @(Get-ChildArguments -Verb 'install' -Bound $bound)
+
+Assert-Equal 'install' $args1[0] 'the verb the caller asked for comes first'
+Assert-True ($args1 -contains '-Fresh') 'a switch that was given is forwarded'
+Assert-True (-not ($args1 -contains '-NoElevate')) 'one that was not is not'
+Assert-True (-not ($args1 -contains '-Command')) 'and the old verb is replaced, not carried'
+
+# ONLY A PROCESS RUNNING AS A USER MAY EDIT THAT USER'S PATH. In an elevated
+# child on a standard account HKCU is the ADMIN's hive, so a child asked to do
+# it would edit the wrong person's PATH and report success.
+Assert-True (-not ($args1 -contains '-AddToPath')) `
+    'the PATH edit is never delegated to the elevated child'
+
+# -Relaunched is the caller's to add, on the command line it builds; forwarding
+# it here would make the child think it had already tried.
+Assert-True (-not ($args1 -contains '-Relaunched')) 'and -Relaunched is not forwarded'
+
+# The identity is recomputed from the parent's answers, never passed through.
+$i = [array]::IndexOf($args1, '-ForUser')
+Assert-True ($i -ge 0) 'the child is told who it is installing for'
+Assert-Equal 'HOME\First Last' $args1[$i + 1] 'and it is the PARENT''s answer, not the caller''s'
+Assert-True (-not ($args1 -contains 'somebody-else')) 'a stale value is not carried through'
+
+# Every flag it forwards must be a parameter install.ps1 declares, or the child
+# dies at binding in a hidden window.
+$errs = $null
+$ast = [System.Management.Automation.Language.Parser]::ParseFile(
+           (Join-Path $WinDir 'install.ps1'), [ref]$null, [ref]$errs)
+$declared = @($ast.ParamBlock.Parameters | ForEach-Object { $_.Name.VariablePath.UserPath })
+foreach ($a in $args1) {
+    if ($a -notmatch '^-\w') { continue }
+    Assert-True ($declared -contains $a.TrimStart('-')) `
+        ("{0} is handed to the child and is not a parameter of install.ps1" -f $a)
+}
+
 # ---- the identity travels on EVERY relaunch, whatever the caller asked for ----
 #
-# Not the caller's job to remember. Request-Elevation appends it, so a relaunch
-# site added later cannot forget it -- which is how this was wrong to begin with.
-#
-# -NoElevate is the branch that prints the command instead of running it, so this
-# exercises the real function and starts no process.
+# -NoElevate is the branch that prints the command instead of running it, so
+# this exercises the real function and starts no process.
 
-$global:Relaunched = $false
-$global:NoElevate  = $true
-$global:FORUSER    = 'HOME\First Last'
-$global:APPDATA    = 'C:\Users\First Last\AppData\Local'
+$global:Relaunched   = $false
+$global:NoElevate    = $true
+$global:INVOKED_WITH = @{ Command = 'install' }
 
 Reset-Printed
 function Write-Host { param($Object, [switch]$NoNewline) Add-Printed -Object $Object -NoNewline:$NoNewline }
-$rc = Request-Elevation -ChildArgs @('install')
+$rc = Request-Elevation -Verb 'install'
 $said = Get-Printed
 
 Assert-Equal 1 $rc 'declining to elevate is a failure, not a silent success'
@@ -91,7 +139,7 @@ function Set-ConfigValue { param([string]$Path, [string]$Key, [string]$Value)
     $script:written += ('{0}={1}' -f $Key, $Value)
 }
 function Set-InstalledPath { throw 'the PATH is the parent''s, and only after the child came back clean' }
-function Request-Elevation { param([string[]]$ChildArgs) return $script:elevationResult }
+function Request-Elevation { param([string]$Verb) return $script:elevationResult }
 # lib.ps1's Write-Log swallows its argument unless TK_TEST_VERBOSE is set, and
 # what this case is about is what the person is TOLD.
 function Write-Log { param([string]$m) Add-Printed -Object "install: $m" }

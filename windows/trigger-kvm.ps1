@@ -85,12 +85,11 @@ param(
     #         trigger ever runs.
     # to   -- point them at another machine, by name. Manual use only.
     [Parameter(Position = 0)]
-    # Only the switching verbs live here. setup/status/logs/pause/uninstall are
-    # handled by install.ps1; `trigger-kvm.cmd` routes between the two, so a user
-    # types one command and never has to know there are two scripts. Anyone
-    # reaching this script directly with a manage verb gets told where to go, via
-    # the ValidateSet error naming the valid set.
-    [ValidateSet('pull', 'to', 'list', 'set')]
+    # Only the switching verbs run here; the management ones are install.ps1's,
+    # and `trigger-kvm.cmd` routes between the two so a user types one command
+    # and never has to know there are two scripts. Checked against $VERBS in
+    # config.ps1 below rather than by a ValidateSet, because the verb surface is
+    # written down once and a ValidateSet cannot read it.
     [string]$Command = 'pull',
 
     # Which machine, for `to`. A name from the config's input map -- `mac`, say.
@@ -140,17 +139,25 @@ $ErrorActionPreference = 'Stop'
 
 # --- configuration ----------------------------------------------------------
 
-# Shared config reader AND the two value converters. Dot-sourced rather than
-# duplicated: three consumers parsing the same format independently is a drift
-# risk where the watcher and the switcher could silently disagree about what is
-# configured -- and the walkthrough could accept a value this script then drops.
+# The shared vocabulary: the config reader, the two value converters, the verb
+# surface and the transport table. Dot-sourced rather than duplicated, because
+# three consumers parsing the same format independently is a drift risk where
+# the watcher and the switcher silently disagree about what is configured.
 #
 # ConvertTo-Byte and ConvertTo-Word return $null on anything unrecognised rather
-# than guessing or defaulting. A misparsed input value is a write aimed at the
-# wrong input, and a misparsed EDID id is a write aimed at the wrong PANEL --
-# silently, since a wrong id simply matches nothing or, worse, something else.
-# $null is "refuse", never zero.
+# than guessing. A misparsed input value is a write aimed at the wrong input,
+# and a misparsed EDID id is a write aimed at the wrong PANEL. $null is
+# "refuse", never zero.
 . (Join-Path $PSScriptRoot 'config.ps1')
+
+# The verb surface is $VERBS', so an unknown verb gets this program's own
+# message rather than a binding error naming a set nobody wrote down twice.
+if ($Command -notin (Get-Verbs -Where 'switch')) {
+    Write-Host ("trigger-kvm: no such verb ""{0}""." -f $Command)
+    Write-Host ("this script runs: {0}" -f ((Get-Verbs -Where 'switch') -join ', '))
+    Write-Host 'the rest are install.ps1''s; `trigger-kvm <verb>` routes to whichever owns it.'
+    exit 2
+}
 
 # Every display the config declares, in file order.
 # display.<label>.input.<value> = <machine>, read back as machine -> value.
@@ -928,18 +935,22 @@ function Switch-Display {
         return $false
     }
 
-    # VALIDATE THE PAIRING ONCE, before anything enumerates. Both switch
-    # statements below still carry a default, but they are unreachable defence:
-    # the rule about which transports exist lives here, in one place, so there is
-    # one thing to change and one thing a mutation can prove.
-    if ($Display.Transport -notin @('nvapi', 'dxva2')) {
-        Write-Log ("REFUSING {0}: unknown transport '{1}'. Use 'nvapi' or 'dxva2'." -f $Display.Label, $Display.Transport)
+    # VALIDATE THE PAIRING ONCE, before anything enumerates, against the one
+    # transport table in config.ps1. Both switch statements below still carry a
+    # default, but they are unreachable defence.
+    if ($Display.Transport -notin $TRANSPORT_NAMES) {
+        Write-Log ("REFUSING {0}: unknown transport '{1}'. Use {2}." -f `
+                   $Display.Label, $Display.Transport, ((@($TRANSPORT_NAMES | ForEach-Object { "'$_'" })) -join ' or '))
         return $false
     }
 
-    if ($Display.Method -eq 'lg-alt' -and $Display.Transport -eq 'dxva2') {
-        Write-Log (("REFUSING {0}: method 'lg-alt' needs an I2C source byte and transport 'dxva2' cannot send one. " +
-                    "Use transport = nvapi for this panel, or method = standard.") -f $Display.Label)
+    # A transport that cannot address an I2C source byte cannot carry a
+    # manufacturer dialect. Refused naming the reason, never silently downgraded
+    # to the standard command: somebody would confirm a panel moved and be wrong
+    # about what moved it (specs/config-format.md, docs/decisions/003).
+    if ($Display.Method -eq 'lg-alt' -and $Display.Transport -in $SOURCELESS_TRANSPORTS) {
+        Write-Log (("REFUSING {0}: method 'lg-alt' needs an I2C source byte and transport '{1}' cannot send one. " +
+                    "Use transport = nvapi for this panel, or method = standard.") -f $Display.Label, $Display.Transport)
         return $false
     }
 
@@ -989,7 +1000,7 @@ function Switch-Display {
             }
         }
         default {
-            Write-Log ("REFUSING {0}: unknown transport '{1}'. Use 'nvapi' or 'dxva2'." -f $Display.Label, $Display.Transport)
+            Write-Log ("REFUSING {0}: unknown transport '{1}'." -f $Display.Label, $Display.Transport)
             return $false
         }
     }

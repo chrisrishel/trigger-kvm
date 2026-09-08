@@ -20,7 +20,7 @@ $Specs   = Join-Path (Split-Path -Parent $WinDir) 'specs'
 $Fixture = Join-Path $Specs 'config-fixture'
 
 . (Join-Path $WinDir 'config.ps1')
-Import-Subject -Script 'install.ps1' -Functions @('Format-Byte')
+Import-Subject -Script 'lib\answers.ps1' -Functions @('Format-Byte')
 
 # ---- the fixture is still the fixture ----------------------------------------
 #
@@ -145,12 +145,21 @@ foreach ($raw in @('ACME #1 Display', "ACME`nDisplay", '   ACME   ', 'ACME = 42'
 }
 Remove-Item -LiteralPath $rt -Force -ErrorAction SilentlyContinue
 
-# An IDENTIFIER is different from a label: a near-miss is stored, looks right and
-# matches nothing, so a caller writing one asks first and refuses.
-Assert-True  (Test-ConfigValueExact 'g915-x-lightspeed-tkl') 'a token survives, so it may be written'
-Assert-True  (-not (Test-ConfigValueExact 'ACME #1')) 'one that would be altered is reported, not quietly stored'
-Assert-True  (-not (Test-ConfigValueExact 'trailing ')) 
-Assert-True  (Test-ConfigValueExact 'ACME = 42') 'and `=` does not make a value inexact'
+# AN IDENTIFIER IS DIFFERENT FROM A LABEL: a near-miss is stored, looks right
+# and matches nothing, so specs/config-format.md says a writer that cannot
+# represent one refuses rather than storing it.
+#
+# Nothing here needs that refusal, and this asserts why rather than asserting a
+# guard nobody calls. Every identifier this program writes is reduced to
+# `[a-z0-9-]` at the boundary it enters by -- a device token through
+# ConvertTo-DeviceToken, a computer or monitor name through Format-Name -- and
+# that class survives the format untouched.
+foreach ($raw in @('G915 X LIGHTSPEED TKL', 'ACME #1', 'trailing ', 'Chris''s AirPods')) {
+    $token = ConvertTo-DeviceToken $raw
+    Assert-Equal $token (ConvertTo-ConfigValue $token) `
+        ("a reduced token is already exact, so writing it cannot alter it: '{0}'" -f $raw)
+    Assert-Match $token '^[a-z0-9-]*$' 'and it is in the one class that survives this format'
+}
 
 # ---- the device-entry grammar, which has exactly one copy ---------------------
 #

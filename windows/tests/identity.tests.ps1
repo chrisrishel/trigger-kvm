@@ -11,8 +11,8 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'lib.ps1')
 
 Import-Subject -Script 'trigger-kvm.ps1' -Functions @('Merge-PanelTally')
-Import-Subject -Script 'install.ps1'     -Functions @('ConvertFrom-DisplayRow',
-                                                      'Get-DisplayAmbiguityReport')
+Import-Subject -Script 'lib\discover.ps1' -Functions @('ConvertFrom-DisplayRow')
+Import-Subject -Script 'lib\host.ps1'     -Functions @('Get-DisplayAmbiguityReport')
 Import-Subject -Script 'config.ps1'      -Functions @('ConvertTo-Word')
 
 # ---- folding the count across transports -------------------------------------
@@ -136,7 +136,7 @@ Assert-Equal 0 $bad.Count 'an unparseable id does not match 0x0000'
 # the second answer would overwrite the first. That is the macOS defect reported
 # in its HANDOFF, and it is the shape this side has to avoid too.
 
-Import-Subject -Script 'install.ps1' -Functions @('Read-Monitors')
+Import-Subject -Script 'lib\walkthrough.ps1' -Functions @('Read-Monitors')
 
 function Write-Host { param([Parameter(ValueFromPipeline=$true)]$Object, [switch]$NoNewline)
     Add-Printed -Object $Object -NoNewline:$NoNewline

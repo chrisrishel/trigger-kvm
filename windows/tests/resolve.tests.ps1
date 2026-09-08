@@ -154,13 +154,30 @@ $asus = @(
  'display.asus.input.0x0f = mac'
 )
 
+# DXVA2 GOES THROUGH user32, WHICH DOES NOT ALWAYS PRESENT THE REAL PANELS. In
+# session 0 it reports a phantom monitor; over Remote Desktop it reports the RDP
+# virtual display and none of the physical ones (../../docs/measurements.md).
+# NVAPI is unaffected, so the guard at the top of this file can pass while dxva2
+# enumerates nothing -- and the case below would then FAIL rather than skip,
+# which is a fact about the session, not about the code.
+$dxvaSees = $false
+foreach ($line in ((Invoke-Switcher @('list', '-Raw', '-Config', $cfg)).Text -split "`n")) {
+    $f = "$line" -split '\|'
+    if ($f.Count -ge 7 -and $f[0] -eq '06B3' -and (($f[6] -split ',') -contains 'dxva2')) { $dxvaSees = $true }
+}
+
 # dxva2 resolves the panel by the SAME EDID key nvapi uses, and says what it will
 # call. No packet bytes: dxva2 builds the DDC frame itself, so printing one would
 # be a fiction dressed as the NVAPI lines.
-Set-OneDisplay ($asus + @('display.asus.method = standard', 'display.asus.transport = dxva2'))
-$r = Invoke-Switcher @('pull', '-WhatIf', '-Config', $cfg)
-Assert-Match $r.Text 'dxva2 SetVCPFeature, VCP 0x60 = 0x11' 'dxva2 resolves and reports the call it would make'
-Assert-NoMatch $r.Text 'src 0x51' 'and does not claim an I2C source it cannot send'
+if (-not $dxvaSees) {
+    Skip-Case 'dxva2 resolves and reports the call it would make' `
+              'dxva2 enumerates no physical panel in this session -- a remote desktop, or no desktop at all'
+} else {
+    Set-OneDisplay ($asus + @('display.asus.method = standard', 'display.asus.transport = dxva2'))
+    $r = Invoke-Switcher @('pull', '-WhatIf', '-Config', $cfg)
+    Assert-Match $r.Text 'dxva2 SetVCPFeature, VCP 0x60 = 0x11' 'dxva2 resolves and reports the call it would make'
+    Assert-NoMatch $r.Text 'src 0x51' 'and does not claim an I2C source it cannot send'
+}
 
 # The impossible cell.
 Set-OneDisplay ($asus + @('display.asus.method = lg-alt', 'display.asus.transport = dxva2'))

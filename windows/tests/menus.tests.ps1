@@ -6,7 +6,7 @@
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'lib.ps1')
 
-Import-Subject -Script 'install.ps1' -Functions @(
+Import-Subject -Script 'lib\menu.ps1' -Functions @(
     'Read-Default','Read-YesNo','Get-MenuWidth','Write-MenuFrame','Clear-ToLineEnd',
     'Split-Detail','Get-ItemWidth','Get-MenuRow',
     'Select-One','Select-Many','Join-Names')
