@@ -1,23 +1,15 @@
 # shellcheck shell=bash
 # shellcheck disable=SC2034  # a sourced library: its variables are read by its callers
 
-# The two menus every list question in the walkthrough is made of, and in both,
-# ENTER DOES WHAT THE HIGHLIGHTED ROW SAYS.
+# The two menus every list question is made of (specs/configure.md 3), and in
+# both ENTER DOES WHAT THE HIGHLIGHTED ROW SAYS: a multi-select has no accept
+# key, it has a `Done` row you move to.
 #
-# That single rule is the whole design. With "space toggles, enter accepts" the
-# first thing people did was accept an empty list, because enter is what you
-# press. So a multi-select has no accept key -- it has a `Done` row you move to.
+# Both fall back to a typed number when the host cannot read individual keys,
+# which is how the suite drives the whole flow; `q` is the fallback's `esc`.
 #
-# Both fall back to a typed number when the host cannot read individual keys: a
-# redirected stdin, a non-terminal, a session that does not forward keys. The
-# fallback is not a nicety -- it is what makes the whole flow testable end to
-# end, and `q` is the fallback's `esc`.
-#
-# Results come back in GLOBALS rather than on stdout. A menu draws while it is
-# deciding, so returning the answer through stdout would mean capturing the
-# drawing too; and $(...) runs a subshell, which cannot hand anything back. So
-# the drawing goes to stderr -- the shell's equivalent of PowerShell writing to
-# the host rather than the pipeline -- and the answer goes in MENU_PICK.
+# The drawing goes to stderr and the answer comes back in a global (MENU_PICK,
+# MENU_PICKED), because a menu draws while it decides and $(...) is a subshell.
 
 MENU_ITEMS=()
 MENU_DETAIL=()
@@ -30,15 +22,11 @@ menu_reset() { MENU_ITEMS=(); MENU_DETAIL=(); MENU_DISABLED=(); }
 
 menu_add() { MENU_ITEMS+=("$1"); MENU_DETAIL+=("${2:-}"); }
 
-# An empty item is a SEPARATOR: drawn as a blank line, skipped by the cursor and
-# unpickable. Grouping a long menu beats renaming its rows to imply grouping.
+# An empty item is a separator: a blank line, skipped by the cursor.
 menu_sep() { MENU_ITEMS+=(""); MENU_DETAIL+=(""); }
 
-# Rows that are shown but cannot be chosen. An input already assigned to another
-# computer is the case this exists for: hiding it would leave a list that
-# changes shape as you answer, and renaming it would lose the only label the
-# monitor's own menu agrees with. So it stays where it was, says who has it, and
-# the cursor passes over it.
+# A disabled row is drawn, annotated, skipped by the cursor and unpickable;
+# hiding it would change the list's shape as you answer (specs 3.2).
 menu_disable() { MENU_DISABLED+=("$1"); }
 
 menu_is_disabled() {
@@ -51,8 +39,8 @@ menu_is_disabled() {
 
 # --- drawing -----------------------------------------------------------------
 
-# The width rows are LAID OUT to. Capped, because a very wide terminal should
-# not stretch a menu across it.
+# The width rows are laid out to, capped so a wide terminal does not stretch
+# a menu across it.
 menu_width() {
   local _w
   _w=$(menu_term_width)
@@ -62,9 +50,7 @@ menu_width() {
   printf '%s\n' "$_w"
 }
 
-# The width the terminal actually WRAPS at, which is a different number and must
-# not be confused with the layout width: the row arithmetic in menu_frame is
-# about where the terminal folds a line, not about where we chose to lay it out.
+# The width the terminal folds a line at; menu_frame counts rows against it.
 menu_term_width() {
   local _w
   _w=${COLUMNS:-0}
@@ -73,13 +59,9 @@ menu_term_width() {
   printf '%s\n' "$_w"
 }
 
-# A row's detail, wrapped to the width left for it -- broken at the ", " between
-# items wherever possible, so a line never ends mid-identifier.
-#
-# NOTHING IN A MENU IS EVER TRUNCATED. The review screen exists to let someone
-# confirm what is about to be written, and an ellipsis there hides exactly the
-# thing they came to check. Growing the menu is the cheaper failure. An
-# unbreakable single item overruns rather than being cut.
+# A row's detail wrapped to the width left for it, broken at the ", " between
+# items. Nothing is ever truncated: the review screen exists to confirm what is
+# about to be written. An unbreakable item overruns rather than being cut.
 menu_split_detail() {
   awk -v w="$2" '
     {
@@ -103,10 +85,7 @@ $1
 EOF
 }
 
-# The item column is 28 unless something does not fit, and then as wide as the
-# longest item + 1, capped at 44. Fixed at 28, a long row ran its detail
-# straight on with no gap -- "Yes, and it changed back to pc everything works"
-# -- which reads as one sentence rather than a choice and its consequence.
+# The item column: 28, or the longest item + 1, capped at 44 (specs 3.1).
 menu_itemw() {
   local _iw _it _l
   _iw=28
@@ -130,9 +109,8 @@ menu_build_row() {
   _pad=$(printf '%*s' ${#_box} '')
 
   _d=${MENU_DETAIL[$_i]}
-  # (current) marks whatever is configured NOW. Starting the cursor there is not
-  # enough on its own: the cursor also means "where you are", so a re-run gave
-  # no way to tell an unchanged default from a deliberate choice.
+  # (current) marks what is configured now; the cursor alone also means "where
+  # you are".
   if [ "$_i" = "$_current" ]; then
     if [ -n "$_d" ]; then _d="$_d   (current)"; else _d="(current)"; fi
   fi
@@ -156,10 +134,8 @@ menu_build_row() {
   done
 }
 
-# Repaint a block in place, returning the number of lines drawn -- which the
-# next call passes back. Counting what was actually drawn is the point: every
-# earlier version of this inferred the height from the inputs and was one line
-# out the moment a caller changed the block's shape.
+# Repaint a block in place. MENU_DRAWN holds the rows the last frame occupied,
+# counted as drawn rather than inferred from the inputs.
 MENU_DRAWN=0
 menu_frame() {
   local _lines _width _term _n _l _rows
@@ -168,17 +144,10 @@ menu_frame() {
   if [ "$MENU_DRAWN" -gt 0 ]; then printf '\033[%dA' "$MENU_DRAWN" >&2; fi
   _n=0
   while IFS= read -r _l; do
-    # ERASE TO END OF LINE rather than padding to width. Padding was done with
-    # printf's %-*s, which counts BYTES, while a terminal column is a
-    # CHARACTER -- so a device name containing a typographic apostrophe padded
-    # two columns short and left the tail of the previous frame showing at the
-    # right edge. \033[K clears the rest of the row whatever is in it.
+    # Erase to end of line rather than pad: padding counts bytes, and a
+    # terminal column is a character.
     printf '%s\033[K\n' "$_l" >&2
-    # Rows this line actually occupies, against the width the TERMINAL folds at.
-    # A line landing exactly on that boundary takes two rows, not one: the
-    # characters fill the row, the cursor moves to the next, and the newline
-    # then moves it again. Counting that as one made the frame stack downward
-    # and repeat itself.
+    # A line landing exactly on the terminal's fold occupies two rows.
     _rows=$(( 1 + ${#_l} / _term ))
     _n=$(( _n + _rows ))
   done <<EOF
@@ -189,8 +158,8 @@ EOF
 
 # --- input -------------------------------------------------------------------
 
-# Can the host read individual keys? A function so a test harness can force the
-# typed path, and so the key-driven half is not shipped unexercised.
+# Can the host read individual keys? A function so the suite can force the
+# typed path.
 menu_can_read_keys() {
   [ -n "${TK_TYPED:-}" ] && return 1
   [ -t 0 ] || return 1
@@ -198,25 +167,13 @@ menu_can_read_keys() {
   return 0
 }
 
-# The one place a key is read. A function so the key-driven path is reachable by
-# a test harness, which can redefine it to play a scripted sequence -- the
-# interactive half would otherwise ship untested.
+# The one place a key is read; a function so the suite can script it, and
+# tests/keys.tests.sh drives the real one through a pty.
 #
-# bash 3.2 (which is what /bin/bash is on macOS) rejects a fractional `read -t`,
-# so an escape sequence cannot be disambiguated from a lone Esc with a short
-# read timeout. VTIME does it instead: 0.1s via stty.
-# It reads the byte ITSELF rather than using `read -rsn1`, and that is not a
-# preference. `read -n` puts the terminal in raw mode and was observed NOT
-# restoring it here: the state captured immediately afterwards was already
-# non-canonical, so saving and restoring around the escape branch wrote that raw
-# state back permanently, VMIN stuck at 0, and the very next read returned
-# nothing at all. One arrow key and the menu was dead. Found by driving the real
-# reader through a pty (tests/keys.tests.sh); every stubbed test passed
-# throughout.
-#
-# Reading the byte as a NUMBER through od also sidesteps the shell's handling of
-# NUL and newline in a command substitution, so Enter is 13 or 10 rather than
-# "the empty string, sometimes".
+# bash 3.2 rejects a fractional `read -t`, so a lone Esc is told from an escape
+# sequence with stty VTIME. The byte is read with dd rather than `read -n`,
+# which leaves the terminal non-canonical, and as a number through od so NUL
+# and newline survive the command substitution.
 menu_read_key() {
   local _saved _b _rest
   _saved=$(stty -g </dev/tty 2>/dev/null || true)
@@ -229,9 +186,7 @@ menu_read_key() {
   fi
 
   if [ "$_b" = "27" ]; then
-    # An arrow sends three bytes at once; a lone Esc sends one and nothing
-    # follows. bash 3.2 rejects a fractional `read -t`, so VTIME decides: 0.1s
-    # to produce a continuation, else it was Esc.
+    # An arrow sends three bytes at once; a lone Esc sends one. 0.1s decides.
     stty -icanon -echo min 0 time 1 </dev/tty 2>/dev/null || true
     _rest=$(dd bs=8 count=1 2>/dev/null </dev/tty)
     [ -n "$_saved" ] && stty "$_saved" </dev/tty 2>/dev/null
@@ -246,10 +201,8 @@ menu_read_key() {
 
   [ -n "$_saved" ] && stty "$_saved" </dev/tty 2>/dev/null
   case $_b in
-    # Measured on a pty: ICRNL is still on -- this clears ICANON and ECHO but not
-    # the input translations -- so a terminal's carriage return arrives as 10.
-    # 13 is for a terminal with -icrnl, where it does not; tests/keys.tests.sh
-    # covers that case explicitly rather than leaving the branch on trust.
+    # ICRNL stays on, so a carriage return usually arrives as 10; 13 is for a
+    # terminal with -icrnl.
     13|10) printf 'Enter\n' ;;
     32)    printf 'Space\n' ;;
     113|81) printf 'Escape\n' ;;  # q / Q
@@ -257,25 +210,17 @@ menu_read_key() {
   esac
 }
 
-# Running out of input is NOT an empty answer, and must not be treated as one.
-# A required prompt that re-asks on a blank answer will re-ask forever once
-# stdin is at EOF -- which is what a redirected or scripted run looks like the
-# moment its answers run out.
-#
-# EOF is signalled by a non-zero RETURN, not by exiting: almost every prompt is
-# read inside $(...), and `exit` there kills only the subshell. The caller then
-# sees an empty answer, re-asks, and spins forever -- measured, a mutation run
-# sat on one configure for 28 minutes. A return status crosses a command
-# substitution, so every call site is `... || menu_eof` and menu_eof runs in the
-# caller's own shell, where exiting means something.
+# Running out of input is not an empty answer (specs 3.5): a required prompt
+# would re-ask forever. A prompt signals EOF by a non-zero RETURN, because most
+# are read inside $(...) where `exit` kills only the subshell; every call site
+# is `... || menu_eof`, which exits in the caller's own shell.
 menu_eof() {
   printf '\n' >&2
   tk_log 'ran out of input. configure needs a terminal, or a complete script of answers.'
   exit 2
 }
 
-# A prompt with a default. Reads from STDIN, which is what makes the walkthrough
-# scriptable end to end.
+# A prompt with a default, read from stdin.
 menu_read_line() {
   local _prompt _default _answer
   _prompt=$1 _default=${2:-}
@@ -309,27 +254,17 @@ read_yesno() {
 #
 # One choice from a list. Sets MENU_PICK to the index, or -1 for esc.
 #
-#   select_one [--default N] [--current N] [--help TEXT] [--escapable]
+#   select_one [--default N] [--current N] [--help TEXT] [--escapable|--escape-to N]
 #
-# Esc always means "take me to the way out", but what the way out IS depends on
-# the menu:
-#
-#   --escapable        returns -1: back, changing nothing. For a submenu you
-#                      entered from somewhere, where backing out is unambiguous.
-#   --escape-to N      MOVES THE CURSOR to row N and activates nothing. For the
-#                      top menu, whose way out is a Cancel row: a setup still
-#                      cannot be discarded by a stray keypress, because enter on
-#                      a row saying "Cancel (discard changes)" is still required.
-#   neither            esc does nothing. For a question that must be answered.
-# Both menus run inside this guard. menu_read_key puts the terminal in raw mode
-# around each byte and restores it on the way out -- but Ctrl-C arrives while
-# it is blocked in dd, kills the process, and the restore never runs: the shell
-# it was called from is left with no echo and no line editing until `reset`.
-# The handler restores the terminal and exits with the conventional 130.
+# What esc does depends on the menu (specs 3.3): --escapable returns -1, back
+# and changing nothing; --escape-to N moves the cursor to row N (the top menu's
+# Cancel) and activates nothing; with neither, esc does nothing.
+
+# Both menus run inside this guard: Ctrl-C arrives while menu_read_key is
+# blocked in dd with the terminal raw, so the handler restores it and exits 130.
 MENU_TTY_SAVED=""
-# The redirections are inside a group: with no controlling terminal (a scripted
-# run) bash reports the failed `</dev/tty` itself, and `2>/dev/null` on the
-# command alone does not cover that message.
+# The redirections are inside a group: with no controlling terminal bash
+# reports the failed `</dev/tty` itself.
 menu_tty_restore() {
   [ -n "$MENU_TTY_SAVED" ] && { stty "$MENU_TTY_SAVED" </dev/tty; } 2>/dev/null
   return 0
@@ -338,8 +273,7 @@ menu_tty_guard() {
   local _rc
   MENU_TTY_SAVED=$({ stty -g </dev/tty; } 2>/dev/null || true)
   trap 'menu_tty_restore; exit 130' INT TERM
-  # Not `"$@"; _rc=$?`: under set -e a non-zero return from the body (running
-  # out of typed input) would exit here instead of reaching the caller.
+  # Not `"$@"; _rc=$?`: under set -e a non-zero return would exit here.
   if "$@"; then _rc=0; else _rc=$?; fi
   trap - INT TERM
   return "$_rc"
@@ -362,8 +296,7 @@ select_one_body() {
     esac
   done
 
-  # The cursor moves over the SELECTABLE rows, not the drawn ones, so a
-  # separator or a disabled row can never be landed on.
+  # The cursor moves over the selectable rows only.
   _sel=()
   _i=0
   while [ "$_i" -lt "${#MENU_ITEMS[@]}" ]; do
@@ -444,7 +377,7 @@ $_help
   done
 }
 
-# The typed fallback. A numbered list and a prompt -- and `q` is its `esc`.
+# The typed fallback: a numbered list and a prompt; `q` is its `esc`.
 select_one_typed() {
   local _default _current _help _escapable _itemw _escapeto _i _l _first _pick
   local _idx _s
@@ -472,8 +405,7 @@ select_one_typed() {
   while :; do
     _pick=$(menu_read_line '  Choice' "$(( _default + 1 ))") || menu_eof
     if [ "$_escapable" = "1" ] && [ "$_pick" = "q" ]; then MENU_PICK=-1; return 0; fi
-    # The typed analogue of moving the cursor: make the way out the default, so
-    # the next bare enter takes it. Still two keystrokes, still not one.
+    # The typed analogue of moving the cursor: the way out becomes the default.
     if [ "$_escapeto" -ge 0 ] && [ "$_pick" = "q" ]; then _default=$_escapeto; continue; fi
     case $_pick in
       ''|*[!0-9]*) ;;
@@ -494,13 +426,9 @@ select_one_typed() {
 
 # --- select_many -------------------------------------------------------------
 #
-# Several choices. Enter TOGGLES the highlighted row, and the last row is the
-# way out -- so "how do I finish?" is answered by the list itself rather than by
-# a hint line nobody reads. Space toggles too, for anyone who reaches for it.
-#
-# Sets MENU_PICKED to the space-separated indices; MENU_ESCAPED=1 for esc, which
-# is distinct from any list of indices and from the empty list this refuses to
-# return.
+# Several choices. Enter (or space) toggles the highlighted row; Done is a row
+# you move to. Sets MENU_PICKED to the space-separated indices, never empty;
+# MENU_ESCAPED=1 for esc.
 select_many_body() {
   local _checked _help _escapable _donelabel _state _i _c _done _cursor _note _itemw
   local _width _buf _m _b _n _s _count _key _out
@@ -541,20 +469,14 @@ select_many_body() {
     while [ "$_i" -lt "${#MENU_ITEMS[@]}" ]; do
       if [ "$_i" = "$_cursor" ]; then _m='  >'; else _m='   '; fi
       if [ "${_state[$_i]}" = "1" ]; then _b='[x]'; else _b='[ ]'; fi
-      # The same builder select_one uses, so the detail WRAPS at ", " instead of
-      # running off the edge. It used to concatenate blindly, which is why a
-      # trigger list of Bluetooth names overflowed an 80-column terminal and
-      # corrupted the redraw.
+      # The same builder select_one uses, so the detail wraps at ", ".
       _buf="$_buf$(menu_build_row "$_i" "$_m" "$_width" "$_itemw" -1 "$_b")
 "
       _i=$(( _i + 1 ))
     done
 
-    # A plain row, aligned with the item text, and the live count sitting in the
-    # detail column where every other menu puts a value. It was a bracketed
-    # button for a while, to stop it reading as a fourth thing to check -- but
-    # the blank line above it and the missing checkbox already say that, and
-    # every other menu in this program ends with a bare Done.
+    # Done: a plain row aligned with the item text, the live count in the
+    # detail column (specs 3.4).
     _n=0
     for _s in ${_state[@]+"${_state[@]}"}; do [ "$_s" = "1" ] && _n=$(( _n + 1 )); done
     if [ "$_cursor" = "$_done" ]; then _m='  >'; else _m='   '; fi
@@ -601,7 +523,6 @@ $_note"
           MENU_PICKED=${_out# }
           return 0
         fi
-        # Enter on Done with nothing checked REFUSES and says so.
         _note='  Nothing is checked -- move to a row and press enter to check it.'
         ;;
       EOF) MENU_PICKED=''; MENU_ESCAPED=1; return 0 ;;

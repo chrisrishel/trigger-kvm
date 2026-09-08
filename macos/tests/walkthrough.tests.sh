@@ -230,8 +230,7 @@ assert_no_match "$WT_OUT" "This is the manufacturer's service channel"
 # =============================================================================
 
 it 'esc at the method question backs out of the panel, leaving it as it was'
-# It used to keep the current method and PROCEED to the input questions, with
-# no key that went back until every computer was answered.
+# specs/configure.md 6: a panel's questions are one submenu.
 rm -f "$CFG"
 PATH=$SAVED_PATH configure_with '1
 mac
@@ -378,6 +377,52 @@ assert_no_match "$c3" 'display.old' 'an unmanaged panel is forgotten whole'
 # an account that cannot elevate is not offered From boot (specs 8)
 # =============================================================================
 
+it 'a configured monitor that is not attached is shown, kept on Save, and not checked'
+# specs/configure.md 6: not being enumerated is not an answer. Only unmanaging
+# forgets a panel.
+cat >"$CFG" <<'EOS'
+computer.this = mac
+display.lg.vendor  = 0x1E6D
+display.lg.product = 0x9E9F
+display.lg.name    = LG ULTRAGEAR+
+display.lg.method  = standard
+display.lg.input.0xD1 = mac
+display.lg.input.0xD0 = pc
+display.dell.vendor  = 0x10AC
+display.dell.product = 0xA123
+display.dell.name    = U2720Q
+display.dell.method  = standard
+display.dell.input.0x0F = mac
+display.dell.input.0x11 = pc
+display.dell.note    = hand written
+trigger.device   = usb:046d:0843
+install.autostart = login
+EOS
+PATH=$SAVED_PATH configure_with '2
+5
+5
+2
+10'
+assert_match "$WT_OUT" 'U2720Q'
+assert_match "$WT_OUT" 'dell: mac/pc, not attached'
+assert_match "$WT_OUT" 'wrote'
+cabs=$(cat "$CFG")
+assert_match "$cabs" 'display.dell.input.0x0f = mac' 'its inputs survive a Save'
+assert_match "$cabs" 'display.dell.note = hand written' 'and so does a hand-written key'
+assert_match "$cabs" 'display.lg.input.0xd1 = mac'
+
+it 'and it can still be unmanaged, which is the one answer that forgets it'
+PATH=$SAVED_PATH configure_with '2
+3
+n
+y
+4
+5
+2
+10'
+assert_match "$WT_OUT" 'wrote'
+assert_no_match "$(cat "$CFG")" 'display.dell'
+
 it 'draws From boot disabled, with the reason, for an account that is not an administrator'
 mkdir -p "$FAKE_DIR/nonadmin"
 cat >"$FAKE_DIR/nonadmin/id" <<'EOS'
@@ -413,8 +458,7 @@ it 'writes the autostart answer'
 assert_match "$c" 'install.autostart = login'
 
 it 'offers the boot tier FIRST, and as a real choice'
-# specs/configure.md 8. It was drawn-and-disabled for a while on the claim that
-# a LaunchDaemon must run as root -- one with UserName set runs as the user, and
+# specs/configure.md 8: a LaunchDaemon with UserName set runs as the user, and
 # root is needed only to install it.
 assert_match "$WT_OUT" 'From boot'
 assert_no_match "$WT_OUT" 'not available on macOS'
@@ -510,6 +554,55 @@ assert_match "$(cat "$TK_FAKE_LAUNCHCTL")" 'bootstrap system'
 it 'and says the password is only for installing'
 assert_match "$WT_OUT" 'needs your password once, to install it'
 assert_match "$WT_OUT" 'Nothing runs as an administrator afterwards'
+
+it 'choosing No starts the watcher now, for this session only'
+# specs/configure.md 8: the plist is kept out of ~/Library/LaunchAgents, so
+# nothing returns at the next login, and loaded now so it runs today.
+NONE='1
+mac
+
+pc
+6
+2
+1
+
+
+
+9
+0xD1
+10
+0xD0
+2
+
+asus
+1
+3
+4
+3
+1,2
+4
+3
+5
+2
+10'
+: >"$TK_FAKE_LAUNCHCTL"
+rm -f "$CFG" "$TK_PLIST"
+SESSION_PLIST="$HOME/.local/share/trigger-kvm/com.chrisrishel.trigger-kvm.plist"
+PATH="$FAKE_DIR/bin:$SAVED_PATH" configure_with "$NONE"
+assert_match "$(cat "$CFG")" 'install.autostart = no' "$WT_OUT"
+assert_true "$([ ! -f "$TK_PLIST" ] && echo 0 || echo 1)" 'nothing may be left in LaunchAgents'
+assert_true "$([ -f "$SESSION_PLIST" ] && echo 0 || echo 1)" "the agent lives with the program: $WT_OUT"
+assert_match "$(cat "$TK_FAKE_LAUNCHCTL")" "bootstrap gui/$(id -u) $SESSION_PLIST"
+assert_match "$WT_OUT" 'for this session only'
+assert_match "$WT_OUT" 'Flip your switch to this computer -- the monitors should follow.'
+
+it 'and a tier that failed to load says so instead of claiming it runs'
+# specs/configure.md 12: the closing words claim only what was reached.
+: >"$TK_FAKE_LAUNCHCTL"
+rm -f "$CFG"
+TK_FAKE_LAUNCHCTL_FAIL=bootstrap PATH="$FAKE_DIR/bin:$SAVED_PATH" configure_with "$NONE"
+assert_match "$WT_OUT" 'installed but NOT running'
+assert_no_match "$WT_OUT" 'is running'
 
 it 'choosing login afterwards removes the boot daemon'
 # Mutually exclusive: two live watchers would both fire on the same arrival,
@@ -701,8 +794,8 @@ dupes=$(grep -E '^[A-Za-z0-9_.-]+[[:space:]]*=' "$CFG" |
 assert_equal '' "$dupes" 'these keys are defined more than once'
 
 it 'a blank answer at the rename prompt KEEPS the name'
-# It used to remove the computer -- the most innocuous keypress there is was
-# the destructive one. The prompt is pre-filled like every other prompt here.
+# specs/configure.md 5.0: the prompt is pre-filled like every other prompt, and
+# the most innocuous keypress there is must not be the destructive one.
 seed_three
 configure_with '1
 2
@@ -844,11 +937,9 @@ assert_match "$WT_OUT" 'cancelled; nothing was changed'
 # 6.4: two attached panels sharing one identity
 # =============================================================================
 #
-# Nobody here owns two identical monitors, so this runs against a fixture. It is
-# the same failure the macOS inbox reported from the other direction: the found
-# list correctly holds two rows, both carrying one key, so an answer given for
-# the second used to land on top of the first's -- someone configures two
-# monitors and has configured one, with nothing said.
+# Nobody here owns two identical monitors, so this runs against a fixture. Two
+# found rows carry one key; an answer given for the second must not land on top
+# of the first's, and neither row may be answered for at all.
 
 fake_displays "$FAKE_LG" "$FAKE_ASUS" "$FAKE_ASUS_TWIN"
 cat >"$CFG" <<'EOS'
@@ -986,6 +1077,20 @@ configure_with '3
 assert_match "$WT_OUT" 'wrote'
 assert_match "$(cat "$CFG")" 'trigger.device   = usb:046d:c547'
 assert_no_match "$(cat "$CFG")" 'usb:046d:c547@'
+
+it 'a saved entry whose device is away today stays selected, and is written as saved'
+# specs/configure.md 7: a `where` is not dropped because the device is not
+# attached right now.
+seed_three
+sed -i '' 's|^trigger.device.*|trigger.device = usb:046d:c547@usb-receiver@00130000, usb:1235:820a|' "$CFG"
+trig_rows "$SOLO"
+configure_with '3
+
+10'
+assert_match "$WT_OUT" 'usb:046d:c547@usb-receiver@00130000'
+assert_match "$WT_OUT" 'kept as saved'
+assert_match "$WT_OUT" 'wrote'
+assert_match "$(cat "$CFG")" 'trigger.device   = usb:046d:c547@usb-receiver@00130000, usb:1235:820a'
 
 it 'the cursor never lands on a row it would refuse'
 # The landing rule is "the first panel nobody has answered for". With the LG

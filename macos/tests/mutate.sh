@@ -5,7 +5,7 @@
 # Mutation check: a passing test proves nothing until it can fail.
 #
 #   ./mutate.sh              every mutation
-#   ./mutate.sh switch       only mutations whose name matches
+#   ./mutate.sh switch       only mutations whose name or target file matches
 #
 # Each entry reintroduces a bug the suite is supposed to catch -- most of them
 # bugs this project has actually shipped -- and asserts that some test goes red.
@@ -79,7 +79,7 @@ make -B -C "$MAC_DIR" -s >/dev/null 2>&1 || true
 # the next test -- or for the developer.
 mutate() {
   name=$1; file=$2; suite=$3; expr=$4
-  case $name in *"$FILTER"*) ;; *) return 0 ;; esac
+  case "$name|$file" in *"$FILTER"*) ;; *) return 0 ;; esac
 
   target="$MAC_DIR/$file"
 
@@ -143,7 +143,7 @@ mutate 'config: leading zero read as octal' lib/config.sh config.tests.sh \
 mutate 'config: no AMBIGUOUS detection' lib/config.sh config.tests.sh \
   's|seen\[\$1\] = "AMBIGUOUS"|seen[$1] = seen[$1]|'
 mutate 'config: value not trimmed' lib/config.sh config.tests.sh \
-  's|gsub(/\^\[ .t\]+/, "", val); ||'
+  's|gsub(/\^\[ .t.v.f\]+/, "", val); ||'
 mutate 'config: first duplicate key wins instead of the last' lib/config.sh config.tests.sh \
   's|{ v = substr($0, length($1) + 2) }|{ if (!f) { v = substr($0, length($1) + 2); f = 1 } }|'
 
@@ -160,7 +160,7 @@ mutate 'switch: checksum omits the 0x6E seed' lib/display.sh switch.tests.sh \
 mutate 'switch: standard method uses the LG VCP' lib/display.sh switch.tests.sh \
   's|ddc_packet "\$DDC_SOURCE_STANDARD" "\$DDC_VCP_STANDARD"|ddc_packet "$DDC_SOURCE_STANDARD" "$DDC_VCP_LG"|'
 mutate 'switch: log lines go to stdout and swallow the refusal' lib/common.sh switch.tests.sh \
-  's|"\$_line" >&2|"$_line"|'
+  's|"\$\*" >&2; }|"$*"; }|'
 mutate 'switch: a dry run sends anyway' lib/display.sh switch.tests.sh \
   's|if \[ "\$_dry" = "1" \]; then|if false; then|'
 mutate 'switch: writes sent once, not twice' lib/display.sh switch.tests.sh \
@@ -172,15 +172,17 @@ mutate 'switch: writes sent once, not twice' lib/display.sh switch.tests.sh \
 # check ran, but that NOTHING WAS SENT. This mutation is the Windows bug --
 # carry on past an unresolvable value and let it reach the wire.
 
-mutate 'switch: unresolvable value moves the panels it CAN resolve' trigger-kvm switch.tests.sh \
+mutate 'switch: unresolvable value moves the panels it CAN resolve' lib/switch.sh switch.tests.sh \
   's|        tk_log "REFUSING: .\$_l. has no input named|        continue \# |'
 
 # --- the watcher -------------------------------------------------------------
 
 mutate 'watch: no single-instance lock' event-watch.c watcher.tests.sh \
-  's@} else if (flock(lockfd, LOCK_EX | LOCK_NB) != 0) {@} else if (false) {@'
-mutate 'watch: rotates the log BEFORE taking the lock' event-watch.c watcher.tests.sh \
-  '/another watcher is already running/{n;s@return 0;@@;}'
+  's@    if (flock(lockfd, LOCK_EX | LOCK_NB) != 0) {@    if (false) {@'
+mutate 'watch: a failed lock open runs unlocked' event-watch.c watcher.tests.sh \
+  's@    if (lockfd < 0) {@    if (false) {@;s@    if (flock(lockfd, LOCK_EX | LOCK_NB) != 0) {@    if (lockfd >= 0 \&\& flock(lockfd, LOCK_EX | LOCK_NB) != 0) {@'
+mutate 'watch: the redundant start rotates the log' event-watch.c watcher.tests.sh \
+  's@logmsg("another watcher is already running; exiting"); return 0;@logmsg("another watcher is already running; exiting"); if (g_log[0]) rotate_log(); return 0;@'
 mutate 'watch: fires for a device already present at startup' event-watch.c watcher.tests.sh \
   's|    if (!w->primed) {|    if (false) {|'
 mutate 'watch: one-shot runs the exec' event-watch.c watcher.tests.sh \
@@ -189,8 +191,12 @@ mutate 'watch: one-shot rotates the log' event-watch.c watcher.tests.sh \
   's@    if (g_testmode) {@    if (g_testmode) { if (g_log[0]) rotate_log();@'
 mutate 'watch: candidate list filters Bluetooth to connected only' event-watch.c watcher.tests.sh \
   's|        bt_each(items, CFSTR("device_not_connected"), false, bt_row, NULL);||'
-mutate 'watch: candidate list keeps hubs' event-watch.c watcher.tests.sh \
-  's@            if (strcasestr(name, "hub")@            if (false@'
+mutate 'watch: candidate list filters hubs by name' event-watch.c watcher.tests.sh \
+  's@        add_row("usb", key, "attached now",@        if (!strcasestr(d->name, "hub")) add_row("usb", key, "attached now",@'
+mutate 'watch: a twin arriving beside the configured device fires' event-watch.c watcher.tests.sh \
+  's@        if (by_where && strcmp(d->where, w->where) != 0) continue;@        ;@'
+mutate 'watch: any arrival of the id fires, whichever device it was' event-watch.c watcher.tests.sh \
+  's@    if (hit == 0) { vlog(@    if (false) { vlog(@'
 mutate 'watch: rotates by RENAME, breaking launchd open descriptor' event-watch.c watcher.tests.sh \
   's@    int live = open(g_log, O_WRONLY);@    rename(g_log, old); int live = open(g_log, O_WRONLY | O_CREAT, 0644);@'
 
@@ -234,7 +240,7 @@ mutate 'walkthrough: the PATH row is hidden when it is already on PATH' lib/walk
   's%    \[ "$WT_ONPATH" = "1" \] && menu_disable "$_pathrow"%    :%'
 mutate 'walkthrough: Cancel writes the config anyway' lib/walkthrough.sh walkthrough.tests.sh \
   '/cancelled; nothing was changed/{n;s%.*%      break%;}'
-mutate 'walkthrough: the input map is written under a key nothing reads' lib/walkthrough.sh walkthrough.tests.sh \
+mutate 'walkthrough: the input map is written under a key nothing reads' lib/answers.sh walkthrough.tests.sh \
   's@"display.\$_l.input.@"display.$_l.inputs.@'
 
 # Enter never destroys (specs/configure.md 5.0, 5.3, 6). Each of these turns a
@@ -263,7 +269,7 @@ mutate 'checks: the single-monitor recovery text is not shown' lib/checks.sh che
 mutate 'checks: declining the single-monitor warning reads as a pass' lib/checks.sh checks.tests.sh \
   's%      WT_ROUND_SKIPPED=1%      WT_ROUND_SKIPPED=0%'
 mutate 'checks: the trigger check pulls before the inputs are verified' lib/checks.sh checks.tests.sh \
-  's%  \[ "$WT_DISPLAYS_OK" = "1" \] && _pull=1%  _pull=1%'
+  's%  wt_pull_allowed && _pull=1%  _pull=1%'
 mutate 'checks: a manufacturer dialect is applied without being offered' lib/checks.sh checks.tests.sh \
   's%    if \[ "$MENU_PICK" = "0" \]; then%    if true; then%'
 mutate 'checks: failures are joined on spaces, splitting panel names' lib/checks.sh checks.tests.sh \
@@ -322,7 +328,7 @@ mutate 'config: a word above 65535 is accepted' lib/config.sh spec.tests.sh \
   's|      \[ \$(( 10#\$1 )) -le 65535 \] \|\| return 1|      :|'
 mutate 'watch: the launcher passes a bad trigger entry through' lib/manage.sh install.tests.sh \
   's|^  _bad=\$(config_bad_trigger_devices)$|  _bad=""|'
-mutate 'walkthrough: Save drops every key it did not ask about' lib/walkthrough.sh walkthrough.tests.sh \
+mutate 'walkthrough: Save drops every key it did not ask about' lib/answers.sh walkthrough.tests.sh \
   's|^    _other=\$(wt_other_keys)$|    _other=""|'
 mutate 'spec: the checker measures a fragment before trimming it' ../specs/check-conformance.sh spec.tests.sh \
   's|      t = trim(line)$|      t = line|'
@@ -353,7 +359,7 @@ mutate 'checks: backing out of the scope question counts as a failed check' lib/
 # --- the tiers own launchd ---------------------------------------------------
 
 mutate 'tier: choosing boot leaves the LaunchAgent behind' lib/manage.sh walkthrough.tests.sh \
-  's|^      rm -f "\$TK_PLIST"$|      :|'
+  's|^      rm -f "\$TK_PLIST" "\$TK_SESSION_PLIST"$|      :|'
 mutate 'tier: autostart read with a comment-blind, case-sensitive sed' lib/manage.sh install.tests.sh \
   's@^  TK_TIER_APPLIED=\$(tk_lower "\$(config_get install.autostart)")$@  TK_TIER_APPLIED=$(sed -n "s/^[[:space:]]*install\\.autostart[[:space:]]*=[[:space:]]*//p" "$CONFIG" | tail -1)@'
 mutate 'walkthrough: configure ends without saying what to do next' trigger-kvm walkthrough.tests.sh \
@@ -391,17 +397,17 @@ mutate 'bootstrap: the boot-tier load is unchecked, so a refusal aborts mid-wind
 mutate 'bootstrap: a daemon launchd refused is left on disk for status to report' lib/manage.sh install.tests.sh \
   's@^      sudo rm -f "\$TK_DAEMON_PLIST" || true$@      :@'
 mutate 'bootstrap: restart claims success whatever launchd did' lib/manage.sh install.tests.sh \
-  's@^  if ! tk_bootstrap "\$(tk_domain)" "\$TK_PLIST"; then@  if false; then@'
+  's@^  if ! tk_bootstrap "\$(tk_domain)" "\$_plist"; then@  if false; then@'
 mutate 'bootstrap: the boot-tier restart claims success whatever launchd did' lib/manage.sh install.tests.sh \
   's@^    if ! tk_bootstrap system "\$TK_DAEMON_PLIST"; then@    if false; then@'
 mutate 'bootstrap: the reason launchd gave is thrown away' lib/manage.sh install.tests.sh \
   's@TK_BOOTSTRAP_ERR=\$(sudo "\$TK_LAUNCHCTL" bootstrap system "\$_plist" 2>&1) || _rc=\$?@sudo "$TK_LAUNCHCTL" bootstrap system "$_plist" >/dev/null 2>\&1 || _rc=$?@'
 mutate 'bootstrap: the trigger check restores the watcher silently, or not at all' lib/checks.sh checks.tests.sh \
-  's@^  if ! tk_bootstrap "\$(tk_domain)" "\$TK_PLIST"; then@  if false; then@'
+  's@^  if ! tk_bootstrap "\$(tk_domain)" "\$1"; then@  if false; then@'
 mutate 'bootstrap: a second door into launchd, outside the seam' lib/manage.sh conventions.tests.sh \
   's@^cmd_restart() {@cmd_restart() {\n  "$TK_LAUNCHCTL" bootstrap "$(tk_domain)" "$TK_PLIST" >/dev/null 2>\&1 || true@'
 mutate 'bootstrap: a caller ignores whether the load worked' lib/manage.sh conventions.tests.sh \
-  's@^  if ! tk_bootstrap "\$(tk_domain)" "\$TK_PLIST"; then@  tk_bootstrap "$(tk_domain)" "$TK_PLIST" || true\n  if false; then@'
+  's@^  if ! tk_bootstrap "\$(tk_domain)" "\$_plist"; then@  tk_bootstrap "$(tk_domain)" "$_plist" || true\n  if false; then@'
 
 # --- the rule 5 gate check is itself testable ---------------------------------
 
@@ -441,7 +447,7 @@ mutate 'method: a vendor with a dialect is given it instead of being asked' lib/
 mutate 'method: choosing it does not change which values are offered' lib/walkthrough.sh walkthrough.tests.sh \
   's%    _method=$(wt_choose_method "$_di" "$_method")%    wt_choose_method "$_di" "$_method" >/dev/null%'
 mutate 'method: the escalation is one-way again' lib/checks.sh checks.tests.sh \
-  's%    if \[ "${WT_A_METHOD\[$_i\]}" != "$_alt" \]; then%    if true; then%'
+  's%    if \[ "$R_METHOD" != "$_alt" \]; then%    if true; then%'
 mutate 'esc: the top menu ignores esc again' lib/menu.sh menu.tests.sh \
   's%        if \[ "$_escapeto" -ge 0 \]; then%        if false; then%'
 mutate 'esc: the top menu ACTIVATES the way out instead of moving to it' lib/menu.sh menu.tests.sh \
@@ -473,7 +479,7 @@ mutate 'tier: a declined password leaves the config claiming boot' lib/manage.sh
 mutate 'status: the watcher question is answered by counting processes' lib/manage.sh status.tests.sh \
   's@--lock-status@--list@'
 mutate 'status: a lock it cannot open reads as no watcher' event-watch.c watcher.tests.sh \
-  's@        printf("running.n");   // present and unopenable@        printf("none\\n"); //@'
+  's@        if (errno == ENOENT) { printf("none.n"); return 1; }@        printf("none\\n"); return 1;@'
 mutate 'status: asking about the lock creates it' event-watch.c watcher.tests.sh \
   's@    int fd = open(path, O_RDWR);@    int fd = open(path, O_RDWR | O_CREAT, 0644);@'
 mutate 'status: the input map is shown with no warning that it is unverified' lib/manage.sh status.tests.sh \
@@ -499,9 +505,9 @@ mutate 'config: the writer does not trim, so the reader has to' lib/config.sh co
   's@  _v=\${_v# }; _v=\${_v% }@  :@'
 mutate 'config: the key padding is written into the key' lib/config.sh config.tests.sh \
   "s@  printf '%-\*s = %s.n' \"\\\${3:-0}\" \"\$1\" \"\$(config_to_value \"\$2\")\"@  printf '%s = %s\\\\n' \"\$(printf '%-*s' \"\${3:-0}\" \"\$1\" | sed 's/ /_/g')\" \"\$(config_to_value \"\$2\")\"@"
-mutate 'config: the panel name is written straight through again' lib/walkthrough.sh conventions.tests.sh \
-  "s@      config_line \"display.\$_l.name\"    \"\\\${WT_A_NAME\[\$_i\]}\"    \"\$_w\"@      printf 'display.%s.name    = %s\\\\n' \"\$_l\" \"\${WT_A_NAME[\$_i]}\"@"
-mutate 'config: carried-through hand edits skip the writer' lib/walkthrough.sh conventions.tests.sh \
+mutate 'config: the panel name is written straight through again' lib/answers.sh conventions.tests.sh \
+  "s@      config_line \"display.\$_l.name\"    \"\$R_NAME\"    \"\$_w\"@      printf 'display.%s.name    = %s\\\\n' \"\$_l\" \"\$R_NAME\"@"
+mutate 'config: carried-through hand edits skip the writer' lib/answers.sh conventions.tests.sh \
   "s@    config_line \"\$_k\" \"\$_v\"@    printf 'k%s = %s\\\\n' \"\${_k#?}\" \"\$_v\"@"
 
 # --- revision 9: transport is a separate axis from method --------------------
@@ -512,9 +518,9 @@ mutate 'transport: refused, then it falls through and sends anyway' lib/display.
   "s@    tk_log \"REFUSING \$_label: transport '\$_transport' does not@    tk_log \"transport '\$_transport' does not@;s@^    return 1\$@    :@"
 mutate 'transport: an ABSENT one is refused, breaking every old config' lib/display.sh switch.tests.sh \
   's@config_display_field "\$_label" transport "\$DDC_TRANSPORT"@config_get "display.$_label.transport"@'
-mutate 'transport: the walkthrough stops recording what it used' lib/walkthrough.sh walkthrough.tests.sh \
+mutate 'transport: the walkthrough stops recording what it used' lib/answers.sh walkthrough.tests.sh \
   's@      config_line "display.\$_l.transport" "\$DDC_TRANSPORT" "\$_w"@      :@'
-mutate 'transport: a hand-written transport is dropped on Save' lib/walkthrough.sh walkthrough.tests.sh \
+mutate 'transport: a hand-written transport is dropped on Save' lib/answers.sh walkthrough.tests.sh \
   's@        case \$_rest in vendor|product|name|method|transport|input\.\*) continue ;; esac ;;@        case $_rest in vendor|product|name|method|input.*) continue ;; esac ;;@'
 
 # --- revision 13: an identity naming more than one attached panel ------------
@@ -530,13 +536,13 @@ mutate 'twins: status offers configure as the fix for something it cannot fix' l
 mutate 'twins: the walkthrough lets an ambiguous identity be picked' lib/walkthrough.sh walkthrough.tests.sh \
   's@        menu_disable "\$_i"@        :@'
 mutate 'twins: the walkthrough merges the two panels into one row' lib/walkthrough.sh walkthrough.tests.sh \
-  's@      if \[ "\${WT_F_TWINS\[\$_i\]}" -gt 1 \]; then@      if [ "${WT_F_TWINS[$_i]}" -gt 1 ] \&\& [ "$_ambiguous" = 0 ]; then@'
-mutate 'twins: the list hides the second panel behind the first' trigger-kvm switch.tests.sh \
+  's@      if \[ "\$F_TWINS" -gt 1 \]; then@      if [ "$F_TWINS" -gt 1 ] \&\& [ "$_ambiguous" = 0 ]; then@'
+mutate 'twins: the list hides the second panel behind the first' lib/switch.sh switch.tests.sh \
   's@    \[ "\$_n" -gt 1 \] && _as=@    [ "$_n" -gt 99 ] \&\& _as=@'
-mutate 'twins: two found rows build two answer records for one panel' lib/walkthrough.sh walkthrough.tests.sh \
-  's@    if wt_answer_index "\${WT_F_KEY\[\$_i\]}" >/dev/null; then _i=\$(( _i + 1 )); continue; fi@    :@'
+mutate 'twins: two attached panels of one model build two answer records' lib/answers.sh walkthrough.tests.sh \
+  's@    if ! wt_answer_index "\$F_KEY" >/dev/null && _l=\$(config_label_for "\$F_KEY"); then@    if _l=$(config_label_for "$F_KEY"); then@'
 mutate 'twins: the cursor lands on a row it will refuse' lib/walkthrough.sh walkthrough.tests.sh \
-  's@      if \[ "\${WT_F_TWINS\[\$_i\]}" -le 1 \] && ! wt_answer_index@      if ! wt_answer_index@'
+  's@      if \[ "\$F_TWINS" -le 1 \] && ! wt_answer_index@      if ! wt_answer_index@'
 
 # --- revisions 10 and 12: the trigger row, and WHICH device ------------------
 
@@ -549,20 +555,20 @@ mutate 'device: an upper-case suffix is lower-cased instead of refused' lib/conf
 mutate 'device: a suffix is accepted with no grammar check at all' event-watch.c watcher.tests.sh \
   's@static bool copy_suffix(const char \*s, size_t n, char \*dst, size_t dstsz) {@static bool copy_suffix(const char *s, size_t n, char *dst, size_t dstsz) { if (n < dstsz) { memcpy(dst, s, n); dst[n] = 0; return true; }@'
 mutate 'device: a token that matches nothing falls back to the whole id' event-watch.c watcher.tests.sh \
-  's@            if (strcmp(slug, token) != 0) { IOObjectRelease(s); continue; }@            (void)slug;@'
+  's@    return strcmp(slug, w->token) == 0;@    return true;@'
 mutate 'device: the port is consulted even when the token already resolves' event-watch.c watcher.tests.sh \
-  's@    if (matched > 1 && where\[0\] && at_where == 1) {@    if (matched >= 1 \&\& where[0] \&\& at_where == 1) {@'
+  's@    if (matched > 1 && w->where\[0\] && at_where == 1) {@    if (matched >= 1 \&\& w->where[0] \&\& at_where == 1) {@'
 mutate 'device: an ambiguous entry is silently treated as present' event-watch.c watcher.tests.sh \
-  's@    bool now_ambiguous = (n > 1 && w->token\[0\]);@    bool now_ambiguous = false;@'
+  's@    bool ambiguous = (n > 1 && w->token\[0\]);@    bool ambiguous = false;@'
 mutate 'device: an all-ambiguous config starts a watcher that can never fire' event-watch.c watcher.tests.sh \
   's@    if (usable == 0) {@    if (false) {@'
-mutate 'device: the arm pass ignores the token and primes off the bare id' event-watch.c watcher.tests.sh \
-  's@    if (w->token\[0\] || w->where\[0\])@    if (false)@'
+mutate 'device: the fixture ignores the port column' event-watch.c watcher.tests.sh \
+  's@        if (field\[3\]) snprintf(d.where, sizeof d.where, "%s", field\[3\]);@        ;@'
 mutate 'device: status stays silent about a port-decided match' lib/manage.sh status.tests.sh \
   "s@        where)@        never-happens)@"
 mutate 'device: status stays silent about a disabled trigger' lib/manage.sh status.tests.sh \
   "s@        ambiguous)@        never-happens)@"
-mutate 'device: the trigger row leads with the id again' lib/manage.sh discover.tests.sh \
+mutate 'device: the trigger row leads with the id again' lib/switch.sh discover.tests.sh \
   "s@      printf '  %s %s %-22s %s%s.n' \\\\@      printf '  %-22s %s %s %s%s\\\\n' \"\$_key\" \\\\@"
 mutate 'device: the walkthrough writes a token that is not unique' lib/walkthrough.sh walkthrough.tests.sh \
   's@      if \[ -n "\$_tok" \] && \[ "\$_uniq" = 1 \]; then@      if [ -n "$_tok" ]; then@'
@@ -570,6 +576,41 @@ mutate 'device: a port is written beside a token that already resolves' lib/walk
   's%^        _entry="\$_key@\$_tok"$%        _entry="$_key@$_tok@$_where"%'
 mutate 'device: twins with no name get a placeholder token matching nothing' lib/walkthrough.sh walkthrough.tests.sh \
   's@      elif \[ -n "\$_tok" \] && \[ -n "\$_where" \]; then@      elif [ -n "$_where" ]; then _tok=${_tok:-x}@'
+
+# --- revision 14 ---------------------------------------------------------------
+
+mutate 'switch: a dry run skips the vendor gate' lib/display.sh switch.tests.sh \
+  's@^ddc_send() {@ddc_send() { if [ "${6:-0}" = 1 ]; then tk_log "DRY RUN: would send $5"; return 0; fi@'
+mutate 'pause: reports paused whatever the lock says' lib/manage.sh status.tests.sh \
+  's@^  tk_watcher_running && { tk_log .a watcher is STILL RUNNING.*@  :@'
+mutate 'tier: No writes its agent into LaunchAgents after all' lib/manage.sh walkthrough.tests.sh \
+  's@^      _plist=\$TK_SESSION_PLIST; rm -f "\$TK_PLIST"$@      _plist=$TK_PLIST@'
+mutate 'tier: the closing words claim it runs whatever launchd said' lib/manage.sh walkthrough.tests.sh \
+  's@^  TK_TIER_LOADED=0$@  TK_TIER_LOADED=1@'
+mutate 'walkthrough: a configured panel that is not attached is dropped on load' lib/answers.sh walkthrough.tests.sh \
+  's@^    wt_load_answer "\$_l" -1$@    :@'
+mutate 'walkthrough: a saved entry whose device is away is dropped' lib/walkthrough.sh walkthrough.tests.sh \
+  's@^    \[ "\$_seen" = 1 \] && continue$@    continue@'
+mutate 'checks: an edit after a pass leaves the pass standing' lib/walkthrough.sh checks.tests.sh \
+  's@^    \[ "\$(wt_answers_signature)" = "\$WT_CHECKED_SIG" \] || wt_forget_check$@    :@'
+mutate 'checks: a one-panel pass authorises a full pull' lib/checks.sh checks.tests.sh \
+  's@^  \[ "\$WT_PASS_SIG" = "\$(wt_pass_signature \$(wt_attached_managed))" \]$@  true@'
+mutate 'checks: the transport-only check sends without the preamble' lib/checks.sh checks.tests.sh \
+  's@^  if \[ -n "\$_stays" \]; then$@  if [ -n "$_stays" ] || [ -z "$_target" ]; then@'
+mutate 'checks: a panel that is not attached is offered for checking' lib/answers.sh checks.tests.sh \
+  's@    \[ "\$R_ATTACHED" -ge 0 \] && printf@    printf@'
+mutate 'config: VT and FF are not whitespace to the reader' lib/config.sh config.tests.sh \
+  's@if (line !~ /\^\[ .t.v.f\]\*\[A-Za-z0-9_.-\]+\[ .t.v.f\]\*=/) next@if (line !~ /^[ \\t]*[A-Za-z0-9_.-]+[ \\t]*=/) next@'
+mutate 'config: keys come back sorted, not in file order' lib/config.sh config.tests.sh \
+  "s@| awk '.seen....++'@| sort -u@"
+mutate 'harness: a bare exit 2 reads as a skip' tests/run.sh conventions.tests.sh \
+  's@^  \[ "\$rc" = 2 \] && ! printf .%s.n. "\$out" | grep -q .^SKIPPED:. && rc=3$@  :@'
+mutate 'spec: the conformance verdict ignores the checker exit status' tests/spec.tests.sh spec.tests.sh \
+  's@^  \[ "\$_rc" = 0 \] || _fail "\$_out"$@  case $_out in *"are missing"*) _fail "$_out" ;; esac@'
+mutate 'spec: a fragment in a comment counts as present' ../specs/check-conformance.sh spec.tests.sh \
+  "s%SOURCES=\$(cat \"\$@\" | grep -v '^\[\[:space:\]\]\*#')%SOURCES=\$(cat \"\$@\")%"
+mutate 'spec: an unreadable spec reports all 0 fragments present' ../specs/check-conformance.sh spec.tests.sh \
+  's@^if \[ ! -r "\$SPEC" \]; then$@if false; then@'
 
 echo
 if [ "$survived" = "0" ]; then

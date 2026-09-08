@@ -64,9 +64,9 @@ macos/
 ├── event-watch.c           the detector: USB and Bluetooth presence -> execs the switcher
 ├── display-probe.c         EDID identity + the m1ddc handle, never an index
 ├── intel-ddc-probe.c       measuring instrument for the Intel route; not built by default
-├── trigger-kvm             the one command, every verb
+├── trigger-kvm             the one command; dispatches to lib/
 ├── install.sh              the bootstrap; copies itself alongside the program
-└── lib/*.sh                config, display, menus, walkthrough, checks, management
+└── lib/*.sh                config, display, switch, manage, menu, answers, walkthrough, checks
 windows/
 ├── event-watch.ps1         the detector
 ├── trigger-kvm.ps1         the switcher: NVAPI I2C or dxva2, per panel

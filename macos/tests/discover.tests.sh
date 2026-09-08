@@ -107,8 +107,7 @@ if [ -x "$MAC_DIR/event-watch" ]; then
   assert_equal 0 "$TK_RC" "$TK_OUT"
   assert_match "$TK_OUT" '=== devices that could be a trigger ==='
   # specs/configure.md 7.1: the row leads with WHAT THE DEVICE IS and the id it
-  # is matched on sits beside it. This asserted the reverse until revision 10 --
-  # `^  usb:...` -- so the id is now found mid-row rather than anchored.
+  # is matched on sits beside it, so the id is found mid-row, not anchored.
   rows=$(printf '%s\n' "$TK_OUT" | grep -E ' (usb:[0-9a-f]{4}:[0-9a-f]{4}|bt:[0-9a-f]{12}) ' || true)
   if [ -z "$rows" ]; then
     assert_match "$TK_OUT" '(none found)' 'no rows means it must say so'

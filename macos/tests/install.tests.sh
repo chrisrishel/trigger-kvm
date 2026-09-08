@@ -70,8 +70,8 @@ assert_match "$INST_OUT" 'x86_64'
 nothing_installed
 
 it 'refuses without m1ddc, and says how to get it'
-# It used to warn and carry on, leaving a full install that could only refuse
-# to switch -- discovered at the first monitor check rather than the first line.
+# Warning and carrying on would leave a full install that can only refuse to
+# switch, discovered at the first monitor check rather than the first line.
 M1DDC="$FAKE_DIR/no-such-m1ddc" run_install
 assert_equal 1 "$INST_RC" "$INST_OUT"
 assert_match "$INST_OUT" 'brew install m1ddc'
@@ -112,10 +112,9 @@ assert_match "$INST_OUT" 'Flip your switch to this computer -- the monitors shou
 assert_match "$INST_OUT" 'log in.'
 
 it 'reads the tier through the config reader, so a trailing comment does not lose it'
-# The tier used to be read with a private sed that kept the comment and was
-# case-sensitive. The spec's own example line -- `install.autostart = boot   #
-# boot | login | no` -- read as neither tier, so an upgrade REMOVED the boot
-# daemon while the config still said boot.
+# The spec's own example line, `install.autostart = boot   # boot | login | no`,
+# read by a private sed would be neither tier, and an upgrade would remove the
+# boot daemon while the config still said boot.
 write_config_with_tier 'Install.Autostart = Boot   # boot | login | no'
 : >"$TK_FAKE_LAUNCHCTL"
 rm -f "$TK_DAEMON_PLIST"
@@ -128,19 +127,36 @@ assert_match "$INST_OUT" 'before anyone logs in'
 it 'and the boot tier leaves no LaunchAgent behind'
 assert_true "$([ ! -f "$TK_PLIST" ] && echo 0 || echo 1)" 'a launchd label is per domain; the agent must go'
 
+it 'installs "no" as an agent outside LaunchAgents, loaded for this session only'
+# specs/configure.md 8: nothing returns after a restart or a new login.
+SESSION_PLIST="$HOME/.local/share/trigger-kvm/com.chrisrishel.trigger-kvm.plist"
+write_config_with_tier 'install.autostart = no'
+: >"$TK_FAKE_LAUNCHCTL"
+PATH="$FAKE_DIR/bin:$PATH" run_install
+assert_equal 0 "$INST_RC" "$INST_OUT"
+assert_true "$([ ! -f "$TK_DAEMON_PLIST" ] && echo 0 || echo 1)" 'the daemon goes'
+assert_true "$([ ! -f "$TK_PLIST" ] && echo 0 || echo 1)" 'nothing in LaunchAgents'
+assert_true "$([ -f "$SESSION_PLIST" ] && echo 0 || echo 1)" "the agent lives with the program: $INST_OUT"
+assert_match "$(cat "$TK_FAKE_LAUNCHCTL")" "bootstrap gui/$(id -u) $SESSION_PLIST"
+assert_match "$INST_OUT" 'for this session only'
+
+it 'and restart starts that session-only agent again'
+: >"$TK_FAKE_LAUNCHCTL"
+set +e; RST_OUT=$("$MAC_DIR/trigger-kvm" restart </dev/null 2>&1); RST_RC=$?; set -e
+assert_equal 0 "$RST_RC" "$RST_OUT"
+assert_match "$(cat "$TK_FAKE_LAUNCHCTL")" "bootstrap gui/$(id -u) $SESSION_PLIST"
+rm -f "$SESSION_PLIST"
+
 # =============================================================================
 # launchd is allowed to refuse, and a refusal must explain itself
 # =============================================================================
 #
 # specs/configure.md 4.4: an interrupted run must leave a working setup
 # untouched, and where it cannot, it has to say what is left. The bootout runs
-# BEFORE the bootstrap, so between them nothing is watching -- and every caller
-# runs under `set -euo pipefail`, so the unchecked `bootstrap system` aborted
-# there, with the daemon installed, the agent booted out, and `status` still
-# reporting "at boot" because it reads the plist off disk.
-#
-# Windows had the same window between Unregister- and Register-ScheduledTask;
-# its fix is commit 9cfa9e0.
+# BEFORE the bootstrap, so between them nothing is watching, and every caller
+# runs under `set -euo pipefail`: an unchecked `bootstrap system` would abort
+# there with the daemon installed, the agent booted out, and `status` reporting
+# "at boot" off the plist on disk.
 
 it 'a refused bootstrap falls back to the login tier and says why'
 write_config_with_tier 'install.autostart = boot'
@@ -284,8 +300,8 @@ assert_equal 0 "$TK_RC" "$TK_OUT"
 # =============================================================================
 
 it 'a bare trigger-kvm prints usage and moves nothing'
-# It used to default to `pull`. The first thing a stranger types to see what a
-# command does is the bare command, and that re-asserted both monitors.
+# The first thing a stranger types to see what a command does is the bare
+# command; a default of `pull` would re-assert both monitors.
 CFG=$(printf '%s' "$CONFIG_THIS_DESK" | make_config)
 fake_displays "$FAKE_LG" "$FAKE_ASUS"
 fake_reset

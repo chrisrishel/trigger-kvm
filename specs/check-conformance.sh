@@ -6,16 +6,11 @@
 #
 # Exits 0 when every fragment is present, 1 otherwise, listing what is missing.
 #
-# WHAT THIS PROVES, AND WHAT IT DOES NOT. It proves a string is PRESENT in the
-# sources. It does not prove that string is REACHABLE -- a shadowed function can
-# still contain it. That gap is real and has already bitten this project once, in
-# windows/install.ps1, where a duplicate definition left the older wording live
-# and the newer wording dead in the same file. Pair this with a structural check
-# for duplicate definitions.
-#
-# The marker format is the cross-platform contract; this script is only the macOS
-# implementation of the check. Windows implements the same check in PowerShell,
-# the same way each platform implements its own transport.
+# It proves a string is PRESENT in the sources' code lines, not that it is
+# REACHABLE: a shadowed function still contains it, so each suite pairs this
+# with a duplicate-definition scan (specs/README.md). Comment lines are not
+# source. The marker format is the cross-platform contract; this script is the
+# macOS implementation of the check, and Windows has its own.
 
 set -uo pipefail
 
@@ -26,19 +21,18 @@ if [ -z "$SPEC" ] || [ $# -eq 0 ]; then
   exit 2
 fi
 
-SOURCES=$(cat "$@")
+if [ ! -r "$SPEC" ]; then
+  echo "check-conformance.sh: cannot read $SPEC" >&2
+  exit 2
+fi
 
-# Every line inside a ```normative fence, split on {placeholders}.
-#
-# The length floor applies only to fragments produced BY SPLITTING. A whole line
-# with no placeholder in it was written down deliberately and is distinctive
-# enough to pin at any length -- "--- monitors ---" is 16 characters and could
-# not match by accident. A piece left between two placeholders often is not, so
-# those carry an 18-character floor.
-#
-# The blanket floor was wrong: it silently dropped every section header in the
-# spec, so renaming one changed nothing and the check stayed green. Found by a
-# mutation that survived.
+# Code lines only: a fragment that survives only in a comment is not present.
+SOURCES=$(cat "$@" | grep -v '^[[:space:]]*#')
+
+# Every line inside a ```normative fence, split on {placeholders}. A whole line
+# is pinned at any length (6, so a stray word is not); a piece produced by
+# splitting carries an 18-character floor, because a short one matches by
+# accident.
 MISSING=0
 TOTAL=0
 
@@ -51,8 +45,7 @@ while IFS= read -r frag; do
   esac
 done <<EOF
 $(awk '
-  # Lengths are measured AFTER trimming (specs/README.md). Measuring first pinned
-  # "     Yes" as a whole line the Windows checker, which trims first, did not.
+  # Lengths are measured after trimming (specs/README.md).
   function trim(s) { gsub(/^[ \t]+/, "", s); gsub(/[ \t]+$/, "", s); return s }
   /^```normative[ \t]*$/ { inblock = 1; next }
   /^```/                 { inblock = 0; next }

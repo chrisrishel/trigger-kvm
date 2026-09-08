@@ -108,11 +108,12 @@ for f in $files; do
   [ -n "$cases" ] || cases=0
   skipped_cases=$(( skipped_cases + cases ))
 
+  # exit_skipped is exit 2 WITH a SKIPPED: line; a bare exit 2 is a crash.
+  [ "$rc" = 2 ] && ! printf '%s\n' "$out" | grep -q '^SKIPPED:' && rc=3
   case $rc in
     0) echo "  PASS  $base"
        say_skips "$out"
        [ -n "${TK_TEST_VERBOSE:-}" ] && printf '%s\n' "$out" ;;
-    # exit_skipped: the whole file could not run here.
     2) echo "  SKIP  $base"
        say_skips "$out"
        skipped_files="$skipped_files $base" ;;

@@ -394,6 +394,21 @@ it 'and the count of files that passed excludes the one that did not run'
 # Three probe files, one skipped: saying "all 3 passed" is the false claim.
 assert_match "$probe_out" 'all 2 test files passed'
 
+it 'a bare exit 2 with no SKIPPED: line is a FAIL, not a skip'
+# A test file that dies with status 2 (a bash usage error, a `menu_eof`) must
+# not read as "could not run here".
+cat >"$probe_dir/crash.tests.sh" <<'EOS'
+#!/bin/bash
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+exit 2
+EOS
+set +e
+crash_out=$(bash "$probe_dir/run.sh" --no-lint crash 2>&1); crash_rc=$?
+set -e
+assert_match "$crash_out" 'FAIL  crash.tests.sh'
+assert_equal 1 "$crash_rc"
+rm -f "$probe_dir/crash.tests.sh"
+
 it 'the probe harness can still go red, so the assertions above are not vacuous'
 cat >"$probe_dir/red.tests.sh" <<'EOS'
 #!/bin/bash
@@ -494,6 +509,25 @@ it 'and config_line is the only place the sanitiser is applied'
 # "everywhere someone remembered" again.
 owner=$(grep -rln 'config_to_value' "$MAC_DIR/lib" | sort)
 assert_equal "$MAC_DIR/lib/config.sh" "$owner"
+
+# =============================================================================
+# No function is defined twice
+# =============================================================================
+#
+# The conformance check proves a normative string is PRESENT, not that it is
+# reachable (specs/README.md). A second definition of a function shadows the
+# first, string and all, so this is the structural half of that check.
+
+function_defs() { grep -h '^[a-z_][A-Za-z0-9_]*() *{' "$@" | sed 's/().*//' | sort | uniq -d; }
+
+it 'no shell function is defined more than once across the program'
+dupes=$(function_defs "$MAC_DIR"/lib/*.sh "$TK" "$MAC_DIR/install.sh")
+assert_equal '' "$dupes" 'these functions are defined twice, and only the last one is in force'
+
+it 'and the scan can see a second definition'
+probe=$(mktemp "$FAKE_DIR/probe.XXXXXX")
+printf '%s\n' 'one() {' '}' 'two() {' '}' 'one() {' '}' >"$probe"
+assert_equal 'one' "$(function_defs "$probe")"
 
 it 'every CLAUDE.md is an import of the AGENTS.md beside it, never a second copy'
 # Claude Code reads CLAUDE.md, not AGENTS.md; the @ import is how it gets the

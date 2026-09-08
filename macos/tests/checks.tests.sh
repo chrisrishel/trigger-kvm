@@ -25,6 +25,7 @@ mkdir -p "$HOME/.local/bin"
 export PATH="$HOME/.local/bin:$PATH"
 
 CFG="$FAKE_DIR/check-config"
+TK_SESSION_PLIST="$HOME/.local/share/trigger-kvm/com.chrisrishel.trigger-kvm.plist"
 LG_UUID=AAAAAAAA-0000-4000-8000-000000000001
 ASUS_UUID=BBBBBBBB-0000-4000-8000-000000000002
 
@@ -184,6 +185,7 @@ check_with '7
 
 n
 1
+
 3
 2
 2
@@ -191,6 +193,14 @@ n
 y
 11'
 assert_match "$CK_OUT" 'Which ones did not?'
+
+it 'and the single-panel retry goes through the preamble too'
+# specs/configure.md 10.2: every path that moves a panel says what stays and
+# waits for enter, the retry of one panel out of a failed batch included.
+n=$(printf '%s\n' "$CK_OUT" | grep -c 'Enter when ready' || true)
+assert_equal 3 "$n" 'the batch, the retry, and the panel held back'
+assert_match "$CK_OUT" 'Sending LG ULTRAGEAR+ to pc'
+assert_match "$CK_OUT" 'PG42UQ and U2720Q stay here'
 
 it 'a failure names the panel IN FULL in the row, and does not read as a pass'
 # "LG ULTRAGEAR+" has a space in it, and a space-separated list of failures
@@ -245,6 +255,7 @@ check_with '7
 
 n
 1
+
 3
 2
 2
@@ -272,6 +283,7 @@ check_with '7
 y
 
 n
+
 3
 2
 11'
@@ -310,13 +322,59 @@ it 'declining reads as NOT CHECKED, never as a pass'
 seed_one
 check_with '7
 n
+8
 11'
 assert_match "$CK_OUT" 'Skipped. Nothing was sent.'
 assert_match "$CK_OUT" 'not checked'
 assert_nothing_sent 'declining must send nothing'
 
 it 'and a decline leaves the trigger check unable to pull for real'
-assert_no_match "$CK_OUT" 'pulled here for real'
+assert_match "$CK_OUT" 'The arrival will be reported but the monitors will NOT be moved'
+
+it 'with no other computer, the transport check still goes through the preamble'
+# specs/configure.md 10.2 and 10.7: the panel is sent to another of its inputs
+# and back, and the only-monitor warning is said first, not skipped.
+cat > "$CFG" <<'EOS'
+computer.this = mac
+install.autostart = login
+display.asus.vendor  = 0x06B3
+display.asus.product = 0x42E0
+display.asus.name    = PG42UQ
+display.asus.method  = standard
+display.asus.input.0x0f = mac
+trigger.device   = usb:046d:0843
+EOS
+fake_displays "$FAKE_ASUS"
+check_with '7
+y
+y
+11'
+assert_match "$CK_OUT" 'READ THIS FIRST -- this is your only monitor'
+assert_match "$CK_OUT" 'Sending PG42UQ to another input'
+assert_match "$CK_OUT" 'Did PG42UQ change, then come back?'
+assert_match "$(fake_sent)" "display $ASUS_UUID set input 16" 'the next standard value, DisplayPort 2'
+assert_match "$(fake_sent)" "display $ASUS_UUID set input 15" 'and back to this computer'
+assert_match "$CK_OUT" 'all responded'
+
+it 'and with two panels and no other computer, one still stays'
+cat >> "$CFG" <<'EOS'
+display.lg.vendor  = 0x1E6D
+display.lg.product = 0x9E9F
+display.lg.name    = LG ULTRAGEAR+
+display.lg.method  = standard
+display.lg.input.0x10 = mac
+EOS
+fake_displays "$FAKE_LG" "$FAKE_ASUS"
+check_with '7
+1
+
+y
+
+y
+11'
+assert_match "$CK_OUT" 'PG42UQ stays here'
+assert_match "$CK_OUT" 'LG ULTRAGEAR+ stays here'
+assert_match "$CK_OUT" 'all responded'
 
 fake_displays "$FAKE_LG" "$FAKE_ASUS"
 
@@ -350,6 +408,54 @@ y
 assert_match "$(fake_sent)" "$ASUS_UUID"
 assert_no_match "$(fake_sent)" "$LG_UUID"
 assert_match "$CK_OUT" 'LG ULTRAGEAR+ stays here'
+
+it 'a pass covering one panel does not let the trigger check pull for real'
+# specs/configure.md 10.8: the pull needs a current pass on EVERY managed,
+# attached panel. One panel's pass stands for nothing about the other.
+seed_two
+check_with '7
+3
+
+y
+8
+11'
+assert_match "$CK_OUT" 'all responded'
+assert_match "$CK_OUT" 'The arrival will be reported but the monitors will NOT be moved'
+
+it 'an edit after a pass retires it, and the row reads untested again'
+# A rename changes every map that names the computer, so the values that
+# passed are no longer the values configured.
+seed_two
+check_with '7
+1
+
+y
+
+y
+1
+2
+box
+6
+8
+11'
+# The menu is drawn three times after the check: with the pass, after the
+# rename, and after the trigger check. Only the first may still say so.
+assert_equal 1 "$(printf '%s\n' "$CK_OUT" | grep -c 'Test the monitor inputs      all responded')" \
+  'the pass must not survive the rename'
+assert_match "$CK_OUT" 'The arrival will be reported but the monitors will NOT be moved'
+
+it 'a configured panel that is not attached is not offered for checking'
+# specs/configure.md 10.1.
+seed_two
+fake_displays "$FAKE_ASUS"
+check_with '7
+y
+y
+11'
+assert_no_match "$CK_OUT" 'Which monitor do you want to check?'
+assert_match "$CK_OUT" 'READ THIS FIRST -- this is your only monitor'
+assert_no_match "$(fake_sent)" "$LG_UUID"
+fake_displays "$FAKE_LG" "$FAKE_ASUS"
 
 # =============================================================================
 # the trigger check
@@ -448,7 +554,7 @@ assert_true "$([ "$(printf '%s\n' "$log" | grep -n bootout | cut -d: -f1 | head 
 it 'and says so LOUDLY when the watcher it paused could not be restarted'
 # This check stands the watcher down on purpose. A failed restore therefore
 # leaves the machine with nothing watching, caused by the check itself -- the
-# one outcome that must never be silent. It was `|| true`.
+# one outcome that must never be silent.
 seed_two
 : >"$TK_PLIST"
 rm -f "$TK_DAEMON_PLIST"
@@ -467,6 +573,19 @@ check_with '8
 assert_match "$CK_OUT" 'The running watcher will also fire, using the saved configuration.'
 assert_no_match "$(cat "$TK_FAKE_LAUNCHCTL")" 'bootout' 'the system domain needs a password; leave it'
 rm -f "$TK_DAEMON_PLIST"
+
+it 'stands down and restores a watcher started for this session only, too'
+# The "no" tier: its plist sits in the program directory, and standing it down
+# needs no password either.
+seed_two
+rm -f "$TK_PLIST" "$TK_DAEMON_PLIST"
+mkdir -p "$(dirname "$TK_SESSION_PLIST")"; : >"$TK_SESSION_PLIST"
+: >"$TK_FAKE_LAUNCHCTL"
+check_with '8
+11'
+assert_match "$CK_OUT" 'The running watcher is paused for this check.'
+assert_match "$(cat "$TK_FAKE_LAUNCHCTL")" "bootstrap gui/$(id -u) $TK_SESSION_PLIST"
+rm -f "$TK_SESSION_PLIST"
 
 # =============================================================================
 # backing out of a check is not a failure (specs 4.2)

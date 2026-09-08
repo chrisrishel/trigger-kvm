@@ -1,89 +1,18 @@
 # shellcheck shell=bash
 # shellcheck disable=SC2034  # a sourced library: its variables are read by its callers
 
-# discover, status, restart, pause, logs, watch -- everything about the watcher
-# and the install rather than about moving a monitor.
-#
-# WHEN IT STARTS IS A PROPERTY OF THE HOST, not of the switcher. Nothing in
-# lib/display.sh knows or asks when it was started, and if it ever needs to the
-# abstraction is wrong -- stop and rethink rather than adding the branch.
-
-# --- discover ----------------------------------------------------------------
-
-# What is attached, in the form the config wants.
-#
-# Devices come from `event-watch --list` rather than being enumerated again
-# here. That program owns the question "is that device here?", and a second
-# implementation would be free to disagree with the one that actually fires --
-# which is the worst possible place for a disagreement, since this list is what
-# someone picks their trigger from.
-cmd_discover() {
-  local _cur _rows _kind _key _state _name _role _tok _where _mark _n
-  printf '\n=== displays on this computer ===\n'
-  RAW=0 cmd_list_table
-
-  printf '\n=== devices that could be a trigger ===\n\n'
-  echo 'The trigger is whatever MOVES when you flip the switch. Pick the ones that'
-  echo 'travel; USB rows are what is attached right now, Bluetooth rows what is paired.'
-  printf '\n'
-
-  _cur=$(config_trigger_devices | tr '\n' ' ')
-  _rows=$("$TK_WATCHER" --list 2>/dev/null || true)
-  if [ -z "$_rows" ]; then
-    echo '  (none found)'
-  else
-    # specs/configure.md 7.1: the row says WHAT THE DEVICE IS, with the id it is
-    # matched on BESIDE it rather than being it. An id alone is not a choice
-    # anybody can make, and a name alone cannot be checked -- and 7's own warning
-    # to match the full pair cannot be acted on against a name.
-    printf '  %-26s %-16s %-22s %s\n' 'device' 'role' 'id' 'state'
-    printf '  %-26s %-16s %-22s %s\n' ------ ---- -- -----
-    printf '%s\n' "$_rows" | while IFS='|' read -r _kind _key _state _name _role _tok _where; do
-      _mark=''
-      case " $_cur " in *" $_key "*) _mark='  <- currently a trigger' ;; esac
-      # An id covering MORE THAN ONE device is said on the row (revision 10's
-      # closing note). Selecting between them is the `@` suffix, which the
-      # walkthrough writes; here it is enough that the reader can see there are
-      # two, because a list showing one row per device with no word for it looks
-      # like a repeat rather than a fact.
-      _n=$(printf '%s\n' "$_rows" | awk -F'|' -v k="$_key" '$2 == k' | wc -l | tr -d ' ')
-      [ "$_n" -gt 1 ] && _mark="$_mark  ($_n devices share this id)"
-      printf '  %s %s %-22s %s%s\n' \
-             "$(tk_pad "$_name" 26)" "$(tk_pad "${_role:--}" 16)" \
-             "$_key" "$_state" "$_mark"
-    done
-  fi
-
-  printf '\n'
-  echo 'Bluetooth entries are every PAIRED device. One that is not connected right now'
-  echo 'is still a fine trigger -- better, even: a trigger fires on ARRIVAL, and that is'
-  echo 'what connecting is. USB rows are only devices attached at this moment, because'
-  echo 'there is no way to ask about a USB device that is somewhere else.'
-  printf '\n'
-  echo 'TRAP: match the FULL vendor+product pair. A keyboard and mouse often share a'
-  echo 'vendor id with a webcam and are always present, so a vendor-only match fires'
-  echo 'constantly.'
-  printf 'config: %s\n' "$CONFIG"
-  exit 0
-}
+# The watcher and the install: watch, launchd, the autostart tiers, restart,
+# pause, logs, status. When the watcher starts is a property of the host and
+# lives here; nothing in the switcher knows or asks.
 
 # --- the watcher ---------------------------------------------------------------
 
 # Run the watcher in the foreground, configured from the config file. This is
-# what the LaunchAgent starts.
-#
-# `exec`, not a call: the shell is REPLACED by the watcher, so there is no
-# wrapper process in between. On Windows the watcher is a grandchild of the
-# scheduled task, which means stopping the task kills only the shim and leaves
-# the watcher holding the lock -- a trap that has caught people repeatedly.
-# There is deliberately no equivalent here to fall into.
+# what launchd starts. `exec`, so no shell sits between launchd and the lock.
 cmd_watch() {
   local _devices _bad _d _deb _set
-  # Refused by name, never defaulted or dropped (specs/detector.md 4). A watcher
-  # armed on a mis-parsed entry, or with a debounce that read as zero, runs and
-  # never does the right thing -- the worst failure shape available. Refusing
-  # under KeepAlive means refusing again every few seconds, loudly in the log,
-  # which is the point.
+  # Refused by name, never defaulted (specs/detector.md 4). Under KeepAlive a
+  # refusal repeats every few seconds in the log, which is the point.
   _bad=$(config_bad_trigger_devices)
   if [ -n "$_bad" ]; then
     tk_log "REFUSING to watch: trigger.device has an entry that is not usb:VVVV:PPPP or bt:AAAAAAAAAAAA: $(printf '%s' "$_bad" | tr '\n' ' ')"
@@ -107,7 +36,6 @@ cmd_watch() {
 
   set -- --exec "$TK_SELF" --arg pull --log "$TK_LOG"
   for _d in $_devices; do set -- "$@" --device "$_d"; done
-
   [ -n "$_deb" ] && set -- "$@" --debounce "$_deb"
   [ -n "$_set" ] && set -- "$@" --settle "$_set"
 
@@ -119,13 +47,9 @@ cmd_watch() {
 
 tk_domain() { printf 'gui/%s\n' "$(id -u)"; }
 
-# Nothing here may run as root. The boot tier's whole property is that root
-# INSTALLS the daemon and the daemon runs as the user (UserName in the plist);
-# run under sudo, `id -un` is root, so the daemon would be written to run as
-# root on a user-writable config -- a local privilege escalation -- and every
-# file the installer creates would be root-owned, so the user's next
-# `configure` could not write its own config. `sudo ./install.sh` is the first
-# thing a stranger tries, so it is refused, in words, before anything happens.
+# Nothing here runs as root. Under sudo, `id -un` is root, so the boot daemon
+# would run as root on a user-writable config and every file created would be
+# root-owned.
 tk_refuse_root() {
   if [ "$(id -u)" -eq 0 ]; then
     tk_log 'run this as yourself, not with sudo.'
@@ -137,23 +61,17 @@ tk_refuse_root() {
 
 tk_agent_loaded() { "$TK_LAUNCHCTL" print "$(tk_domain)/$TK_LABEL" >/dev/null 2>&1; }
 
+# Is a watcher running? From the lock, never by counting processes
+# (specs/status.md 2). The query exits 1 when nothing holds it.
+tk_watcher_running() { [ "$("$TK_WATCHER" --lock-status 2>/dev/null || true)" = running ]; }
+
 # Load a plist into a domain, replacing whatever is loaded there.
 #
-# THE ONE DOOR, and the reason it is one is that this failure must be CAUGHT
-# rather than thrown. The bootout runs first, so between the two calls there is
-# no watcher at all -- and every caller here runs under `set -euo pipefail`, so
-# an unchecked bootstrap aborted mid-window: the daemon installed but not
-# loaded, the agent booted out, nothing running, and `tk_installed_tier` still
-# reading the plist off disk so `status` went on reporting "at boot". The other
-# shape was worse -- `|| true` and then an unconditional "restarted".
-# specs/configure.md 4.4: where an interrupted run cannot leave a working setup,
-# it has to say what is left.
-#
-# Elevation is NOT a parameter: the system domain always needs it and a user
-# domain never does, so it follows from the domain rather than from a caller
-# remembering. The bootout stays best-effort by design -- it fails when nothing
-# is loaded, which is the ordinary first-install case. Only the bootstrap's
-# answer means anything, and its reason is left in TK_BOOTSTRAP_ERR to print.
+# THE ONE DOOR INTO launchd, and its failure is caught, never thrown: the
+# bootout runs first, so between the two calls nothing is watching, and every
+# caller runs under `set -e`. Elevation follows from the domain. The bootout is
+# best-effort (it fails when nothing is loaded); the bootstrap's answer is the
+# one that means something, and its reason is left in TK_BOOTSTRAP_ERR.
 TK_BOOTSTRAP_ERR=''
 tk_bootstrap() {
   local _domain _plist _rc
@@ -169,8 +87,25 @@ tk_bootstrap() {
   return "$_rc"
 }
 
+# Which tier is installed, read from what is on disk rather than from the
+# config: the config records what was asked for, these record what is there.
+tk_installed_tier() {
+  if   [ -f "$TK_DAEMON_PLIST" ];  then printf 'boot\n'
+  elif [ -f "$TK_PLIST" ];         then printf 'login\n'
+  elif [ -f "$TK_SESSION_PLIST" ]; then printf 'no\n'
+  else                                  printf 'none\n'; fi
+}
+
+# The user-domain plist of the installed tier, if any.
+tk_agent_plist() {
+  case $(tk_installed_tier) in
+    login) printf '%s\n' "$TK_PLIST" ;;
+    no)    printf '%s\n' "$TK_SESSION_PLIST" ;;
+  esac
+}
+
 cmd_restart() {
-  # The boot tier lives in the system domain, which needs a password to bounce.
+  local _plist
   if [ -f "$TK_DAEMON_PLIST" ]; then
     tk_log 'restarting the boot-time start needs your password once.'
     if ! tk_bootstrap system "$TK_DAEMON_PLIST"; then
@@ -183,11 +118,12 @@ cmd_restart() {
     tk_log 'restarted; the watcher has re-read the config.'
     exit 0
   fi
-  if [ ! -f "$TK_PLIST" ]; then
+  _plist=$(tk_agent_plist)
+  if [ -z "$_plist" ]; then
     tk_log "not installed: $TK_PLIST is missing. Run the installer from the source tree."
     exit 1
   fi
-  if ! tk_bootstrap "$(tk_domain)" "$TK_PLIST"; then
+  if ! tk_bootstrap "$(tk_domain)" "$_plist"; then
     tk_log "could not load the LaunchAgent: $TK_BOOTSTRAP_ERR"
     tk_log 'NOTHING IS WATCHING -- check: trigger-kvm logs'
     exit 1
@@ -197,28 +133,26 @@ cmd_restart() {
     tk_log 'restarted; the watcher has re-read the config.'
     exit 0
   fi
-  # launchd accepted the job and it did not come up: a different failure from a
-  # refused bootstrap, and worth telling apart.
   tk_log 'restarted, but no watcher came up -- check: trigger-kvm logs'
   exit 1
 }
 
-# Stand the watcher down so one can be run by hand.
-#
-# `bootout` rather than `kill`: KeepAlive would restart a killed watcher within
-# about a hundredth of a second, so killing it is not standing it down. That is
-# the same trap the Windows side documents about stopping a scheduled task, in
-# the platform's own terms.
+# Stand the watcher down so one can be run by hand. `bootout`, never kill:
+# KeepAlive restarts a killed watcher in a fifth of a second.
 cmd_pause() {
+  local _devices
   if [ -f "$TK_DAEMON_PLIST" ]; then
     tk_log 'standing down the boot-time start needs your password once.'
     sudo "$TK_LAUNCHCTL" bootout "system/$TK_LABEL" >/dev/null 2>&1 || true
   fi
   "$TK_LAUNCHCTL" bootout "$(tk_domain)/$TK_LABEL" >/dev/null 2>&1 || true
-  tk_log 'paused: the agent is unloaded and the watcher stopped.'
-  tk_log 'run one by hand now, e.g.:'
-  tk_log "    $TK_ROOT/event-watch --exec /bin/echo --arg TEST --device usb:046d:0843 --verbose"
-  tk_log 'then restore with:  trigger-kvm restart'
+  sleep 0.3
+  tk_watcher_running && { tk_log 'a watcher is STILL RUNNING; nothing was stood down. Check: trigger-kvm status'; exit 1; }
+  _devices=$(config_trigger_devices | sed 's/^/--device /' | tr '\n' ' ')
+  [ -n "$_devices" ] || _devices='--device usb:VVVV:PPPP '
+  tk_log 'paused: NOTHING IS WATCHING until you run:  trigger-kvm restart'
+  tk_log 'to run one by hand meanwhile:'
+  tk_log "    $TK_ROOT/event-watch --exec /bin/echo --arg TEST --verbose $_devices"
   exit 0
 }
 
@@ -230,18 +164,11 @@ cmd_logs() {
   exec tail -n 50 -f "$TK_LOG"
 }
 
-# --- status --------------------------------------------------------------------
+# --- the autostart tiers -------------------------------------------------------
 
-# Is the copy that is RUNNING older than the tree it was installed from?
-#
-# This exists because the mistake happened twice in one afternoon: a feature was
-# built, committed, and then reported missing -- because `trigger-kvm` resolves
-# to the installed copy, not to the source tree it was written in. A stale
-# install looks EXACTLY like a missing feature, and nothing said so.
-#
-# Warned about wherever the symptom would show up, not only in `status`, since
-# nobody runs `status` to find out why a menu row is wrong. Silent when the
-# source tree is gone, is not a git repository, or matches -- all normal.
+# Is the running copy older than the tree it was installed from? Said wherever
+# the symptom shows, because a stale install looks exactly like a missing
+# feature. Silent when the source tree is gone or matches.
 tk_warn_if_stale() {
   local _src _was _now _dirty
   [ -f "$TK_PREFIX/version.txt" ] || return 0
@@ -264,26 +191,12 @@ tk_warn_if_stale() {
   return 0
 }
 
-
-# Make the launchd side match install.autostart, and report which tier landed.
-#
-# ONE implementation, called by install.sh and by `configure`. configure used to
-# end with `exec trigger-kvm restart`, which only bounces the AGENT -- so
-# choosing the boot tier wrote `install.autostart = boot` to the config and then
-# silently did nothing, never even asking for the password. The config records
-# what was asked for; this is what makes the system match it.
-TK_TIER_APPLIED=''
-# The login tier's LaunchAgent. It runs `trigger-kvm watch`, which reads the
-# config and execs the watcher; NO configuration is baked in, so an edit takes
-# effect on the next `restart` and there is no apply step. KeepAlive is the
-# self-heal -- launchd does it in about a fifth of a second, measured.
-#
-# Written here, by tk_apply_tier, and nowhere else: the tier that owns launchd
-# owns both plists, so choosing boot can remove this one (see below) and
-# choosing login can write it back.
+# A user-domain agent plist at $1. It runs `trigger-kvm watch`, which reads the
+# config and execs the watcher, so nothing is baked in and an edit takes effect
+# on the next restart. KeepAlive is the self-heal.
 tk_write_agent_plist() {
-  mkdir -p "$(dirname "$TK_PLIST")"
-  cat > "$TK_PLIST" <<EOF
+  mkdir -p "$(dirname "$1")"
+  cat > "$1" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
@@ -299,68 +212,38 @@ tk_write_agent_plist() {
   <key>StandardErrorPath</key><string>$TK_LOG</string>
 </dict></plist>
 EOF
-  # A malformed plist fails SILENTLY at load, so it is verified before anything
-  # is asked to load it.
-  if ! plutil -lint "$TK_PLIST" >/dev/null; then
-    tk_log "the generated LaunchAgent is malformed; not loading it: $TK_PLIST"
-    rm -f "$TK_PLIST"
+  # A malformed plist fails silently at load.
+  if ! plutil -lint "$1" >/dev/null; then
+    tk_log "the generated LaunchAgent is malformed; not loading it: $1"
+    rm -f "$1"
     return 1
   fi
   return 0
 }
 
-# What is left to say after configure or install. Short: it runs, here is how
-# to see that, here are four commands. Printed from ONE place for both paths --
-# it used to live in the installer only, so a first install (which hands off
-# to configure) and every later configure ended without it.
-tk_say_done() {
-  local _cmd
-  case ":$PATH:" in
-    *":$TK_BINDIR:"*) _cmd=trigger-kvm ;;
-    *)                _cmd="$TK_BINDIR/trigger-kvm" ;;
-  esac
-  printf '\n'
-  case $TK_TIER_APPLIED in
-    no)
-      printf '  Done. trigger-kvm is installed, but will NOT come back after a restart --\n'
-      printf '  start it yourself with:  %s restart\n' "$_cmd" ;;
-    boot)
-      printf '  Done. trigger-kvm is running, and will start each time the computer\n'
-      printf '  starts -- before anyone logs in.\n' ;;
-    *)
-      printf '  Done. trigger-kvm is running, and will start automatically each time you\n'
-      printf '  log in.\n' ;;
-  esac
-  printf '\n'
-  printf '  Flip your switch to this computer -- the monitors should follow.\n'
-  printf '\n'
-  printf '    %s status      is it running?\n'                 "$_cmd"
-  printf '    %s pull        bring the displays here now\n'    "$_cmd"
-  printf '    %s logs        what has it been doing\n'         "$_cmd"
-  printf '    %s configure   change any of this\n'             "$_cmd"
-  printf '\n'
-}
-
+# Make launchd match install.autostart. One implementation for install.sh and
+# `configure`. Leaves the tier that landed in TK_TIER_APPLIED and whether a
+# watcher is loaded now in TK_TIER_LOADED, for tk_say_done to claim only what
+# was reached (specs/configure.md 12).
+TK_TIER_APPLIED=''
+TK_TIER_LOADED=0
 tk_apply_tier() {
-  local CONFIG TMP_DAEMON DOMAIN _why
+  local CONFIG TMP_DAEMON DOMAIN _why _plist
   tk_refuse_root || return 1
   DOMAIN="$(tk_domain)"
   CONFIG="${1:-$TK_SUPPORT/config}"
+  TK_TIER_LOADED=0
   [ -f "$CONFIG" ] || { TK_TIER_APPLIED=''; return 0; }
-  # Through the reader, never a private sed. A trailing comment or a capital
-  # letter on this line otherwise read as "no tier" -- which removed the boot
-  # daemon on the next upgrade while the config still said boot.
   config_load "$CONFIG"
   TK_TIER_APPLIED=$(tk_lower "$(config_get install.autostart)")
 
-  # Whichever tier is chosen, the OTHER one goes. Two live watchers would both
-  # fire on the same arrival.
+  # Whichever tier is chosen, the others go: two live watchers would both fire
+  # on the same arrival, and a launchd label is per domain.
   "$TK_LAUNCHCTL" bootout "$DOMAIN/$TK_LABEL" >/dev/null 2>&1 || true
 
   if [ "$TK_TIER_APPLIED" = "boot" ]; then
-    # UserName is what makes this the Windows tier rather than a root daemon:
-    # launchd drops privileges to that user before running it. Root installs it;
-    # root does not run it.
+    # UserName is what makes this run as the user: root installs it, root does
+    # not run it.
     TMP_DAEMON=$(mktemp -t trigger-kvm-daemon)
     cat > "$TMP_DAEMON" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -390,11 +273,9 @@ EOF
 
     tk_log 'starting before login needs your password once, to install it.'
     tk_log 'Nothing runs as an administrator afterwards.'
-    # The boot tier can fail to land two ways, and there is ONE answer to both:
-    # fall back to login and SAY SO. Silently downgrading a tier is how someone
-    # discovers months later that switching does nothing until they log in --
-    # and leaving a daemon plist that launchd refused is how `status` comes to
-    # report "at boot" with nothing running, since it reads the file's existence.
+    # Either failure falls back to login and says so; the fallback branch below
+    # then removes a daemon plist launchd refused, so `status` cannot report a
+    # tier that is not running.
     _why=''
     if ! sudo -p 'Password (once, to install the boot-time start): ' \
               install -o root -g wheel -m 644 "$TMP_DAEMON" "$TK_DAEMON_PLIST" 2>/dev/null; then
@@ -404,16 +285,10 @@ EOF
     fi
     rm -f "$TMP_DAEMON"
 
-    # Falling back is what CLEARS a daemon launchd refused: the branch below
-    # removes the daemon plist for any tier that is not boot, so `status` --
-    # which reads the file off disk, not launchd -- cannot go on promising
-    # coverage from boot with nothing running. Nothing extra to do here.
     if [ -z "$_why" ]; then
       tk_log "installed the boot-time start, running as $(id -un), unelevated"
-      # The boot tier owns launchd. A launchd label is per DOMAIN, so a
-      # LaunchAgent left in place comes back at the next login beside the
-      # daemon and respawns on the lock every ten seconds, forever.
-      rm -f "$TK_PLIST"
+      rm -f "$TK_PLIST" "$TK_SESSION_PLIST"
+      TK_TIER_LOADED=1
     else
       tk_log "$_why -- falling back to starting at login."
       tk_log 'Re-run this and choose "From boot" to try again.'
@@ -423,49 +298,80 @@ EOF
   fi
 
   if [ "$TK_TIER_APPLIED" != "boot" ]; then
-    # The boot tier owns the daemon; anything else must not leave one behind.
     if [ -f "$TK_DAEMON_PLIST" ]; then
       tk_log 'removing the previous boot-time start needs your password once.'
       sudo "$TK_LAUNCHCTL" bootout "system/$TK_LABEL" >/dev/null 2>&1 || true
       sudo rm -f "$TK_DAEMON_PLIST" || true
     fi
-    tk_write_agent_plist || return 1
+    # "No" keeps the plist out of ~/Library/LaunchAgents, so nothing returns at
+    # the next login; loading it now is what starts it for this session.
     if [ "$TK_TIER_APPLIED" = "no" ]; then
-      # The agent is installed but not loaded; `restart` loads it. It does not
-      # come back after a reboot until then, which is what "no" means.
-      tk_log 'autostart is off; the agent is installed but not loaded.'
-      tk_log 'start it with:  trigger-kvm restart'
-    elif tk_bootstrap "$DOMAIN" "$TK_PLIST"; then
-      tk_log 'loaded the LaunchAgent'
+      _plist=$TK_SESSION_PLIST; rm -f "$TK_PLIST"
     else
-      # Over SSH there is no gui domain to load into. The config is written and
-      # the agent installed; it starts at the next login. Not an error under
-      # set -e, which used to abort here with the config already written.
+      _plist=$TK_PLIST; rm -f "$TK_SESSION_PLIST"
+    fi
+    tk_write_agent_plist "$_plist" || return 1
+    if ! tk_bootstrap "$DOMAIN" "$_plist"; then
+      # Over SSH there is no gui domain to load into.
       tk_log "could not load the LaunchAgent now: $TK_BOOTSTRAP_ERR"
-      tk_log 'That is normal over SSH -- there is no login session to load into.'
-      tk_log 'It starts at your next login; to start it sooner:  trigger-kvm restart'
+      if [ "$TK_TIER_APPLIED" = "no" ]; then
+        tk_log 'Nothing is watching; to start it:  trigger-kvm restart'
+      else
+        tk_log 'That is normal over SSH -- there is no login session to load into.'
+        tk_log 'It starts at your next login; to start it sooner:  trigger-kvm restart'
+      fi
+    else
+      tk_log 'loaded the LaunchAgent'
+      TK_TIER_LOADED=1
     fi
   fi
-
-
   return 0
 }
 
-# Which tier is actually installed, read from the system rather than from the
-# config: the config records what was ASKED for, and these record what is there.
-tk_installed_tier() {
-  if [ -f "$TK_DAEMON_PLIST" ]; then printf 'boot\n'
-  elif [ -f "$TK_PLIST" ];      then printf 'login\n'
-  else                               printf 'none\n'; fi
+# The closing words, from one place for install.sh and `configure`. Claims only
+# the state tk_apply_tier reached.
+tk_say_done() {
+  local _cmd
+  case ":$PATH:" in
+    *":$TK_BINDIR:"*) _cmd=trigger-kvm ;;
+    *)                _cmd="$TK_BINDIR/trigger-kvm" ;;
+  esac
+  printf '\n'
+  case "$TK_TIER_APPLIED/$TK_TIER_LOADED" in
+    boot/*)
+      printf '  Done. trigger-kvm is running, and will start each time the computer\n'
+      printf '  starts -- before anyone logs in.\n' ;;
+    login/1)
+      printf '  Done. trigger-kvm is running, and will start automatically each time you\n'
+      printf '  log in.\n' ;;
+    login/*)
+      printf '  Done. trigger-kvm is installed and starts at your next login. To start\n'
+      printf '  it now:  %s restart\n' "$_cmd" ;;
+    no/1)
+      printf '  Done. trigger-kvm is running, for this session only. It will NOT come\n'
+      printf '  back after a restart or a new login -- start it then with:  %s restart\n' "$_cmd" ;;
+    *)
+      printf '  Done. trigger-kvm is installed but NOT running -- start it with:  %s restart\n' "$_cmd" ;;
+  esac
+  printf '\n'
+  printf '  Flip your switch to this computer -- the monitors should follow.\n'
+  printf '\n'
+  printf '    %s status      is it running?\n'                 "$_cmd"
+  printf '    %s pull        bring the displays here now\n'    "$_cmd"
+  printf '    %s logs        what has it been doing\n'         "$_cmd"
+  printf '    %s configure   change any of this\n'             "$_cmd"
+  printf '\n'
 }
 
+# --- status --------------------------------------------------------------------
+
+# specs/status.md. Never sends a packet or reads a VCP value.
 cmd_status() {
   local _note _labels _this _machines _c _v _l _row _first _when _rev _commit
   local _all _vn _pn _n _d _args _key _verdict
   tk_warn_if_stale
-  # Say when it runs and what that therefore COVERS -- never just a tier name.
-  # What someone wants to know is whether a locked or logged-out machine still
-  # follows the switch.
+  # What the tier COVERS, not just its name: whether a locked or logged-out
+  # computer still follows the switch is the question.
   case $(tk_installed_tier) in
     boot)
       printf 'autostart: at boot  (LaunchDaemon %s)\n' "$TK_LABEL"
@@ -484,28 +390,17 @@ cmd_status() {
         printf 'autostart: installed but NOT loaded -- start it with: trigger-kvm restart\n'
       fi
       ;;
+    no)
+      printf 'autostart: no  (started by hand, for this session only)\n'
+      printf '           NOT covered: after a restart or a new login. Start it then with:\n'
+      printf '           trigger-kvm restart\n'
+      ;;
     *)
       printf 'autostart: not installed\n'
       ;;
   esac
 
-  # specs/status.md 2: answered from the LOCK, never by counting processes.
-  # The lock is what makes a second watcher impossible, so it is the authority on
-  # both halves of the question -- and because it permits only one, this is a
-  # STATE and not a count.
-  #
-  # Counting worked on this platform and was still the wrong question. Measured
-  # 2026-09-06: `pgrep` DOES see a boot-tier watcher from a user session here,
-  # because the LaunchDaemon runs as the user, so the Windows blindness that
-  # reported `watchers : 0` beside a firing watcher does not reproduce. What it
-  # cannot see is a lock held by a process it has no other reason to match --
-  # and `-f 'event-watch --exec'` matching on a command line is exactly the
-  # brittleness that let a pre-rename watcher run unnoticed for a day.
-  #
-  # `|| true`: the query exits 1 when nothing holds the lock, and under
-  # `set -euo pipefail` that would make `status` stop dead on a machine with no
-  # watcher -- which is exactly the machine someone runs `status` on.
-  if [ "$("$TK_WATCHER" --lock-status 2>/dev/null || true)" = running ]; then
+  if tk_watcher_running; then
     printf 'watcher  : running\n'
   else
     printf 'watcher  : none  <- nothing is watching; start it with: trigger-kvm restart\n'
@@ -513,8 +408,7 @@ cmd_status() {
   printf 'log      : %s\n' "$TK_LOG"
   if [ -f "$CONFIG" ]; then _note=''; else _note='  <- MISSING; run: trigger-kvm configure'; fi
   printf 'config   : %s%s\n' "$CONFIG" "$_note"
-  # From the INSTALLED stamp, not from the constant compiled into whichever copy
-  # happens to be running -- the whole point is to show what is deployed.
+  # From the installed stamp, which is what is deployed.
   if [ -f "$TK_PREFIX/version.txt" ]; then
     _v=$(sed -n 's/^version[[:space:]]*=[[:space:]]*//p'       "$TK_PREFIX/version.txt" | tail -1)
     _when=$(sed -n 's/^installed[[:space:]]*=[[:space:]]*//p'  "$TK_PREFIX/version.txt" | tail -1)
@@ -546,16 +440,8 @@ cmd_status() {
   fi
   printf 'triggers : %s\n' "$(config_trigger_devices | tr '\n' ' ' | sed 's/ $//')"
 
-  # specs/detector.md 4.1: whenever `where` decides a match, SAY SO -- a
-  # remembered location that has gone stale is dangerous only while it is
-  # silent, because two indistinguishable devices swapped between sockets
-  # resolve to the wrong one and the reader's only defence is seeing it happen.
-  # And an ambiguous entry is reported here as well as logged, since it is
-  # disabled and would otherwise be a trigger that silently never fires.
-  #
-  # The verdicts come from the watcher, which owns the matching rules. Asking it
-  # beats a second implementation here that would be free to disagree with the
-  # one that actually fires.
+  # specs/status.md 4.1: the watcher's own verdict per entry. A port that
+  # decided a match is said; an ambiguous entry is a trigger that never fires.
   _args=()
   for _d in $(config_trigger_devices); do _args+=(--device "$_d"); done
   if [ "${#_args[@]}" -gt 0 ]; then
@@ -573,28 +459,15 @@ $("$TK_WATCHER" --report "${_args[@]}" 2>/dev/null || true)
 EOF
   fi
 
-  # specs/status.md 3: the input map, and the one claim this command cannot make.
-  #
-  # The map is an assertion about PHYSICAL CABLING. If a computer's cable is
-  # moved to a different input ON THE MONITOR, a panel whose EDID product id is
-  # stable across its inputs still resolves perfectly, `pull` sends the old
-  # value, and the panel goes black with a success in the log. Detection is
-  # BARRED rather than unimplemented -- reading the value back is hard rule 2 and
-  # answers the wrong question anyway -- so making the failure legible is the
-  # only move available, which is what makes this wording a behaviour and not a
-  # nicety. status.md 3.2: do not hedge it, do not offer to check it.
-  #
-  # This READS display.<label>.input.<value>; it keeps no second copy of the map.
+  # specs/status.md 3: the input map, and the claim nothing can make. The map
+  # asserts physical cabling; a cable moved on the monitor leaves `pull`
+  # switching that panel to a dead input with a success in the log.
   if [ -z "$_labels" ]; then
-    # 3.1: an empty map asserts nothing, so the warning would be noise.
     printf 'inputs   : none configured\n'
   else
     _first=y
     for _l in $_labels; do
-      # 3.1: ordered BY COMPUTER, never by input value. Sorting on the hex puts
-      # the same two computers in opposite orders on two panels, purely by which
-      # socket each happened to be plugged into -- so the block and the
-      # `computers` line above would disagree about the order for no reason.
+      # Ordered by computer, in the order they were listed (3.1).
       _row=''
       for _c in $(config_known_computers); do
         _v=$(config_input_for "$_l" "$_c")
@@ -614,27 +487,16 @@ EOF
         printf '           %-8s %s\n' "$_l" "$_row"
       fi
     done
-    # Each normative fragment stays whole inside ONE printf. The conformance
-    # check reads this source, not the output, so wrapping a fragment across two
-    # lines here would render correctly and fail to conform -- and the string it
-    # could not find is the one thing this block exists to say.
+    # Each normative fragment whole inside one printf: the conformance check
+    # reads this source.
     printf '           ^ asserted, never verified. If a cable moved to another input\n'
     printf '             on the monitor, pull silently switches that panel to a dead input\n'
     printf '             -- black, with a success in the log.  Fix: trigger-kvm configure\n'
   fi
 
-  # specs/status.md 5: a configured panel whose identity currently matches MORE
-  # THAN ONE attached panel.
-  #
-  # The switch has already been refused by the time anyone reads this -- resolution
-  # is by EDID vendor:product and refuses on more than one match -- so the panel
-  # simply stops following and the reason goes to the log, which is not where
-  # anyone looks, because the symptom is a monitor that used to work and now does
-  # not. Enumerating to answer this is allowed: 1 bars sending a packet and
-  # reading a VCP value, and asking what is attached is neither.
-  #
-  # NOT for a panel that is merely absent. Zero matches and two matches are
-  # different states with different remedies, and only the second is this.
+  # specs/status.md 5: a configured identity matching more than one attached
+  # panel. The switch has already refused; this is where the person looks.
+  # Not for a panel that is merely absent.
   _all=$(display_enumerate 2>/dev/null || true)
   for _l in $_labels; do
     _v=$(config_get "display.$_l.vendor"); _c=$(config_get "display.$_l.product")
@@ -642,12 +504,8 @@ EOF
     _pn=$(config_to_word "$_c") || continue
     _n=$(display_identity_count "$_all" "$(printf '%04X:%04X' "$_vn" "$_pn")")
     [ "$_n" -gt 1 ] || continue
-    # 5.2: no fix is offered, because there is none -- `configure` cannot resolve
-    # this, which is the opposite of the input map above. And neither panel is
-    # named as the one that will be used, because nothing chooses.
-    # 5.1: name the count where the platform has it -- "more than one" is the
-    # least the resolver knows and a number is better. Each fragment stays whole
-    # inside one printf, as in the input map above.
+    # 5.2: no fix is offered, because there is none, and neither panel is named
+    # as the one that will be used.
     printf '\n  WARNING: %s -- more than one attached monitor matches its id\n' "$_l"
     printf '  (0x%04X:0x%04X): %s of them do. It has stopped following, because\n' \
       "$_vn" "$_pn" "$_n"

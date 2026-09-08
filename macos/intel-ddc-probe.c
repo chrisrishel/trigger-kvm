@@ -23,7 +23,8 @@
 // settled on the SAFE channel before anyone considers aiming a packet at the LG's
 // service channel, because the risk there is not the value -- 0xD0/0xD1 are
 // documented and this desk sends them daily from two other platforms -- but a
-// brand-new transport framing a packet wrongly. See macos/HANDOFF.md.
+// brand-new transport framing a packet wrongly. The readings and the decision
+// not to build on them are docs/decisions/004.
 //
 //   make intel-ddc-probe
 //   ./intel-ddc-probe               enumerate only; no I2C traffic
