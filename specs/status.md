@@ -29,11 +29,9 @@ Whether a watcher is running is answered **from the single-instance lock**, neve
 by counting processes.
 
 An implementation whose watcher can run in a different session from the caller
-cannot see that process reliably — on Windows an unelevated caller reads
-`Win32_Process.CommandLine` as empty across the session boundary, so counting
-reported none while a watcher was running and firing
-(`../docs/measurements.md`). The lock is also what makes a second watcher
-impossible, so it is the authority on both halves of the question.
+cannot see that process reliably (`../docs/measurements.md`, "Asking whether a
+watcher is running"). The lock is also what makes a second watcher impossible,
+so it is the authority on both halves of the question.
 
 A lock that **exists but cannot be opened** by this caller is a **running**
 watcher, not an absent one. That is what a watcher in another session looks like
@@ -56,15 +54,11 @@ product id differs per input fails safe instead, by refusing to resolve.
 
 **Detection is barred, not merely unimplemented.** Reading the value back is
 forbidden (`../AGENTS.md` hard rule 2) and would answer the wrong question
-anyway; a success code proves nothing (hard rule 3). No protocol command means
-"switch to whoever is talking" — see `../ideas/knowing-which-input-you-are-on.md`
-for the research, including why even a perfect one would be refused on the same
-grounds auto-input is.
-
-So the only move available is making the failure **legible and cheap to
-recover**, and that is this section's entire purpose. The user must be able to
-learn, without reading the config file, what the tool believes and that the
-belief is unchecked.
+anyway; a success code proves nothing (hard rule 3); no protocol command means
+"switch to whoever is talking" (`../ideas/knowing-which-input-you-are-on.md`).
+So the only move available is making the failure legible and cheap to recover:
+the user must be able to learn, without reading the config file, what the tool
+believes and that the belief is unchecked.
 
 The map itself lives in exactly one place, `display.<label>.input.<value> =
 <computer>` (see [`config-format.md`](config-format.md)). `status` READS that
@@ -87,12 +81,11 @@ prints. Every configured panel appears, with each of its input values and the
 computer that value names, and the computer matching `computer.this` is marked
 as this one — the same marking the `computers` line already uses.
 
-**Within a panel, order by the computer, not by the input value.** Sorting on the
-hex puts the same two computers in opposite orders on two panels, purely by which
-socket each happened to be plugged into — the reason
-[`config-format.md`](config-format.md) ("Ordering") writes the file that way too.
-Ordered by computer, this block and the `computers` line agree, and the order a
-person listed their computers in is the one they will look for.
+**Within a panel, order by the computer, in the order the computers were
+listed** (the order the file holds them,
+[`config-format.md`](config-format.md) "Ordering"), never by the input value.
+This block and the `computers` line agree, and the order a person listed their
+computers in is the one they will look for.
 
 **When no display is configured**, the map has nothing to assert and the warning
 would be noise. Print the `inputs` label with the same "none configured" answer
@@ -121,9 +114,17 @@ This is the same fact `configure` names when the transport is chosen
 ([`configure.md`](configure.md) §6.3 and §8); `status` is where someone looks
 afterwards, when they have forgotten choosing it, or inherited the machine.
 
-**Nothing is normative here**, for the reason §6.3 gives: a platform with one
-transport has no panel this can be true of, and must not owe wording for a case
+The behaviour is required; no wording is prescribed, because a platform with
+one transport has no panel this can be true of and must not owe text for a case
 it cannot reach.
+
+### 4.1 Triggers
+
+`status` names each configured trigger entry and, for a qualified entry, what
+the watcher currently makes of it ([`detector.md`](detector.md) 4.1): matched
+by token, matched with `where` deciding it, absent, or ambiguous. That verdict
+comes from the watcher's own matching code, never from a second implementation
+of the rule. No wording is prescribed.
 
 ## 5. An identity that names more than one attached panel
 
