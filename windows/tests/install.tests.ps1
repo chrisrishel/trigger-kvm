@@ -12,7 +12,9 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $WinDir 'config.ps1')
 Import-Subject -Script 'lib\host.ps1'     -Functions @(
     'Get-WatcherCommand', 'Get-PathValueKind', 'Get-UserPath', 'Set-UserPath',
-    'Get-InputMapReport', 'Get-TransportReport', 'Get-TriggerReport')
+    'Get-InputMapReport', 'Get-TransportReport', 'Get-TriggerReport',
+    'Get-SuspendFailure', 'Suspend-Watcher', 'Resume-Watcher', 'Invoke-Pause', 'Invoke-Restart',
+    'Get-ShimLines', 'Install-Files')
 Import-Subject -Script 'lib\menu.ps1'     -Functions @('Join-Names')
 Import-Subject -Script 'lib\discover.ps1' -Variables @('GENERIC_NAMES') -Functions @(
     'Get-BestDeviceName', 'Get-DeviceRoles', 'Get-CandidateLabel', 'Get-TriggerCandidates')
@@ -598,5 +600,151 @@ Assert-Match $hostText "if \(\`$tier -ne 'manual'\) \{ \`$triggers \+= \`$heal \
 $hostSrc = Get-Content -Raw -LiteralPath (Join-Path $WinDir 'lib\host.ps1')
 Assert-Match $hostSrc 'if \(-not \$running\) \{[^}]*NO WATCHER is running' `
     'the closing words must not say it is running when nothing is'
+
+
+# ---- pause and restart answer to the LOCK, not to a return code --------------
+#
+# MEASURED 2026-09-08 on the boot tier, from an unelevated session 1 shell.
+# `pause` printed "paused: task disabled and watcher stopped" and exited 0
+# while, immediately afterwards: the task read enabled=True, the same two
+# session-0 processes were still there, and the lock was still held. `restart`
+# then printed "restarted; the watcher has re-read the config." -- about a
+# watcher whose own log says it armed three days earlier. The watcher it started
+# logged "another watcher is already running (Global scope); exiting".
+#
+# Every one of the three calls in Suspend-Watcher fails SILENTLY there:
+# Disable-ScheduledTask and Stop-ScheduledTask are denied on an admin-registered
+# S4U task, Stop-Watchers matches nothing because Win32_Process.CommandLine
+# reads empty across the session boundary, and Stop-Process is denied too. So
+# the only honest question is the lock's, asked afterwards.
+
+$global:TASK     = 'trigger-kvm-tests'
+$script:lockHeld = $true
+$script:mode     = 'needs-admin'
+function Test-WatcherRunning  { return $script:lockHeld }
+function Get-WatcherPauseMode { return $script:mode }
+function Stop-Watchers        { }
+function Disable-ScheduledTask { param($TaskName, $ErrorAction) }
+function Stop-ScheduledTask    { param($TaskName, $ErrorAction) }
+function Enable-ScheduledTask  { param($TaskName, $ErrorAction) }
+function Start-ScheduledTask   { param($TaskName, $ErrorAction) }
+function Write-Log { param([string]$m) Add-Printed -Object "install: $m" }
+
+# The lock stays held: nothing was stood down.
+Reset-Printed
+$script:lockHeld = $true
+$rc = Invoke-Pause
+Assert-Equal 1 $rc 'pause that did not pause is a failure, not a silent success'
+$said = Get-Printed
+Assert-Match   $said 'COULD NOT PAUSE'  'and it says so in the first line'
+Assert-NoMatch $said 'watcher stopped'  'it must not claim the thing it failed to do'
+Assert-Match   $said 'elevated PowerShell' 'and says what would work'
+
+# The same command on a tier it CAN stand down.
+Reset-Printed
+$script:lockHeld = $false
+$rc = Invoke-Pause
+Assert-Equal 0 $rc 'a pause that worked is still a success'
+Assert-Match (Get-Printed) 'no watcher is running' 'and says what it observed, not what it attempted'
+
+# restart: the lock is held throughout, so the watcher it "restarted" is the one
+# it never stopped -- still holding the configuration it started with.
+Reset-Printed
+$script:lockHeld = $true
+$rc = Invoke-Restart
+Assert-Equal 1 $rc 'a restart that restarted nothing is a failure'
+$said = Get-Printed
+Assert-Match   $said 'NOT restarted'      'named as such'
+Assert-Match   $said 'NOT taken effect'   'because the reason somebody typed it was a hand edit'
+Assert-NoMatch $said 'has re-read the config' 'and the false claim is gone'
+
+# A tier that is not the boot one explains itself differently: the answer is
+# not "find an administrator".
+$script:mode = 'can'
+Assert-Match   ((Get-SuspendFailure) -join ' ') 'trigger-kvm logs'
+Assert-NoMatch ((Get-SuspendFailure) -join ' ') 'administrator' `
+    'a login-tier failure must not send somebody hunting a password that would not help'
+$script:mode = 'needs-admin'
+Assert-Match ((Get-SuspendFailure) -join ' ') 'administrator' 'the boot tier does need one'
+
+# Nothing installed is not a failed pause, and not a successful one either.
+$script:mode = 'none'
+Reset-Printed
+Assert-Equal 1 (Invoke-Pause) 'with nothing installed there is nothing to stand down'
+Assert-Match (Get-Printed) 'nothing is installed' 'and it says which of the two it is'
+$script:mode = 'needs-admin'
+
+# ---- installing from the installed copy ---------------------------------------
+#
+# `trigger-kvm configure` runs the SHIM, which re-runs install from $DEST -- so
+# the source tree and the destination are the same directory, and every copy is
+# a file onto itself. Copy-Item refuses that outright ("Cannot overwrite the item
+# ... with itself"), and $ErrorActionPreference = 'Stop' turns the refusal into
+# an abort partway through, after the log has said what it is about to do.
+#
+# Install-Files is the whole of what a run does to the filesystem before the
+# task, so it can be exercised for real against a throwaway tree.
+
+$tree = Join-Path $env:TEMP ("tk-install-$PID")
+Remove-Item -LiteralPath $tree -Recurse -Force -ErrorAction SilentlyContinue
+
+$src = Join-Path $tree 'src'
+New-Item -ItemType Directory -Force -Path (Join-Path $src 'lib') | Out-Null
+foreach ($n in 'install.ps1', 'config.ps1', 'event-watch.ps1', 'trigger-kvm.ps1') {
+    Set-Content -LiteralPath (Join-Path $src $n) -Value "# $n" -Encoding ASCII
+}
+Set-Content -LiteralPath (Join-Path $src 'lib\host.ps1') -Value '# host' -Encoding ASCII
+Set-Content -LiteralPath (Join-Path $src 'SPEC-REVISION') -Value 'revision = 14' -Encoding ASCII
+
+$global:VERSION = '0.0.0-test'
+$global:DEST    = Join-Path $tree 'dest'
+$global:LIBDIR  = Join-Path $DEST 'lib'
+$global:BINDIR  = Join-Path $DEST 'bin'
+$global:LOG     = Join-Path $tree 'state\trigger-kvm.log'
+$global:WATCH   = Join-Path $DEST 'event-watch.ps1'
+$global:SWITCH  = Join-Path $DEST 'trigger-kvm.ps1'
+$global:CFGLIB  = Join-Path $DEST 'config.ps1'
+$global:MANAGE  = Join-Path $DEST 'install.ps1'
+$global:STAMP   = Join-Path $DEST 'version.txt'
+$global:SHIM    = Join-Path $BINDIR 'trigger-kvm.cmd'
+$global:EARLIER_LAYOUT = @((Join-Path $DEST 'usb-watch.ps1'))
+
+# A leftover from the earlier layout, to prove the cleanup still runs on the
+# path where nothing is copied.
+New-Item -ItemType Directory -Force -Path $DEST | Out-Null
+Set-Content -LiteralPath (Join-Path $DEST 'usb-watch.ps1') -Value '# stale' -Encoding ASCII
+
+$global:TK_HOME = $src
+$global:TK_SELF = Join-Path $src 'install.ps1'
+Install-Files
+
+foreach ($f in $CFGLIB, $WATCH, $SWITCH, $MANAGE, $SHIM, $STAMP, (Join-Path $LIBDIR 'host.ps1')) {
+    Assert-True (Test-Path -LiteralPath $f) ("an install from a source tree lands {0}" -f (Split-Path -Leaf $f))
+}
+Assert-Equal '# install.ps1' (Get-Content -Raw -LiteralPath $MANAGE).Trim() `
+    'and the installed manage script is the PROGRAM, not a file from lib\'
+Assert-True (-not (Test-Path -LiteralPath (Join-Path $DEST 'usb-watch.ps1'))) `
+    'the earlier layout is cleaned up'
+Assert-Match (Get-Content -Raw -LiteralPath $STAMP) 'spec      = 14' 'and the stamp records the revision'
+
+# NOW THE SECOND RUN, from what the first one produced. Nothing may throw, and
+# the files must still be there afterwards.
+$global:TK_HOME = $DEST
+$global:TK_SELF = $MANAGE
+Reset-Printed
+$threw = ''
+try { Install-Files } catch { $threw = $_.Exception.Message }
+Assert-Equal '' $threw 'installing from the installed copy must not throw on a file copied onto itself'
+
+Assert-Match (Get-Printed) 'the scripts there are the ones being installed' `
+    'and it says why nothing was copied, rather than claiming a copy'
+foreach ($f in $CFGLIB, $WATCH, $SWITCH, $MANAGE, (Join-Path $LIBDIR 'host.ps1')) {
+    Assert-True (Test-Path -LiteralPath $f) ("{0} survives the second run" -f (Split-Path -Leaf $f))
+}
+Assert-Equal '# install.ps1' (Get-Content -Raw -LiteralPath $MANAGE).Trim() `
+    'with its contents intact'
+Assert-True (Test-Path -LiteralPath $SHIM) 'and the shim is still rewritten, since it is generated, not copied'
+
+Remove-Item -LiteralPath $tree -Recurse -Force -ErrorAction SilentlyContinue
 
 exit 0

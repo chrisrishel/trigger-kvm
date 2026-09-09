@@ -27,6 +27,14 @@ Milestones are `ROADMAP.md`; what each platform owes the other is its
   run on such an account. Check the task principal, the files' `%LOCALAPPDATA%`
   and whose `PATH` gains `bin`. Trigger: a standard-user account is available.
 
+- **Run a first install on a fresh profile, from the installed shim.** Both
+  halves of the old handoff entry are fixed and covered -- the listing modes no
+  longer read the config, and `Write-ConfigFile` creates
+  `%LOCALAPPDATA%\trigger-kvm\` -- but the walkthrough has only ever been driven
+  by tests writing under an existing temp directory, and this desk's profile has
+  had that directory since before the rename. `configure` from the shim, then
+  `status`. Trigger: the same throwaway account as the item above.
+
 - **Measure a same-GPU, different-port re-plug on Windows.** The 2026-09-01
   cable move changed GPU and adapter together. Move only the GPU end of the
   LG's cable to another 4090 socket, terminal on the ASUS first; expect no

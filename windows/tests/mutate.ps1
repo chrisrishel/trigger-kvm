@@ -224,6 +224,25 @@ Invoke-Mutation 'install: a half-copied install throws instead of saying so' `
     "if (-not (Test-Path -LiteralPath `$libDir -PathType Container)) {" `
     "if (`$false) {"
 
+# --- and one where the copy has nowhere to go ---------------------------------
+
+Invoke-Mutation 'install: from the installed copy, every file is copied onto itself' `
+    'lib\host.ps1' 'install.tests.ps1' `
+    "    if ((Resolve-Path `$TK_HOME).Path -eq (Resolve-Path `$DEST).Path) {" `
+    "    if (`$false) {"
+Invoke-Mutation 'install: the manage script is whichever file defined the function' `
+    'lib\host.ps1' 'conventions.tests.ps1' `
+    "        Copy-Item `$TK_SELF `$MANAGE -Force" `
+    "        Copy-Item `$PSCommandPath `$MANAGE -Force"
+Invoke-Mutation 'install: the line to paste points at a library, not the program' `
+    'lib\host.ps1' 'elevation.tests.ps1' `
+    "        Write-Host (`"Run this from an elevated PowerShell:  & '{0}' {1}`" -f `$TK_SELF, (Format-ChildArguments `$childArgs))" `
+    "        Write-Host (`"Run this from an elevated PowerShell:  & '{0}' {1}`" -f `$PSCommandPath, (Format-ChildArguments `$childArgs))"
+Invoke-Mutation 'install: the elevated child is handed a library to run' `
+    'lib\host.ps1' 'conventions.tests.ps1' `
+    "    `$inner = `"& '{0}' {1} -Relaunched *> '{2}'`" -f `$TK_SELF, (Format-ChildArguments `$childArgs), `$transcript" `
+    "    `$inner = `"& '{0}' {1} -Relaunched *> '{2}'`" -f `$PSCommandPath, (Format-ChildArguments `$childArgs), `$transcript"
+
 # --- revision 14 ---------------------------------------------------------------
 
 Invoke-Mutation 'detector: a listing mode refuses without a config again' `
@@ -308,6 +327,22 @@ Invoke-Mutation 'status: an ambiguous entry reads as merely absent' `
     "                'ambiguous' { 'AMBIGUOUS -- more than one device answers to this and none is at the remembered spot, so it will NOT fire' }" `
     "                'ambiguous' { '' }"
 
+Invoke-Mutation 'pause: standing the watcher down is assumed rather than asked' `
+    'lib\host.ps1' 'install.tests.ps1' `
+    '    for ($i = 0; $i -lt 5; $i++) {
+        if (-not (Test-WatcherRunning)) { return $true }
+        Start-Sleep -Milliseconds 300
+    }
+    return $false' `
+    '    return $true'
+Invoke-Mutation 'restart: a lock it never released still reads as a restart' `
+    'lib\host.ps1' 'install.tests.ps1' `
+    '    if (-not $down) {' `
+    '    if ($false) {'
+Invoke-Mutation 'checks: the trigger check announces a pause it did not get' `
+    'lib\checks.ps1' 'trigger-check.tests.ps1' `
+    '            $paused = Suspend-Watcher' `
+    '            $paused = $true; Suspend-Watcher | Out-Null'
 Invoke-Mutation 'install: "no" grows a self-heal, so it comes back every minute' `
     'lib\host.ps1' 'install.tests.ps1' `
     "    if (`$tier -ne 'manual') { `$triggers += `$heal }" `
@@ -480,9 +515,8 @@ Invoke-Mutation 'trigger check: it runs with no devices chosen' `
     '    if (@($Devices).Count -eq 0) {' '    if ($false) {'
 Invoke-Mutation 'trigger check: the live watcher fires alongside the one-shot' `
     'lib\checks.ps1' 'trigger-check.tests.ps1' `
-    "        'can' {
-            Suspend-Watcher" `
-    "        'can' {"
+    '            $paused = Suspend-Watcher' `
+    '            $paused = $false'
 Invoke-Mutation 'trigger check: the watcher is left disabled afterwards' `
     'lib\checks.ps1' 'trigger-check.tests.ps1' `
     '        if ($paused) { Resume-Watcher }' ''
@@ -947,9 +981,10 @@ Invoke-Mutation 'tier: a declined prompt leaves the config claiming boot' `
     'lib\host.ps1' 'elevation.tests.ps1' `
     "    Write-Log 'falling back to starting at login.'" `
     "    Write-Log 'nothing was changed.'; return 's4u'"
-Invoke-Mutation 'tier: the fallback does not record what was installed' `
+Invoke-Mutation 'tier: a fallback nobody installed is written down anyway' `
     'lib\host.ps1' 'elevation.tests.ps1' `
-    "    Set-ConfigValue -Path `$CONFIG -Key 'install.autostart' -Value 'login'" ''
+    "    Write-Log 'to try again for the boot tier:  trigger-kvm configure'" `
+    "    Write-Log 'to try again for the boot tier:  trigger-kvm configure'; Set-ConfigValue -Path `$CONFIG -Key 'install.autostart' -Value 'login'"
 Invoke-Mutation 'tier: the From boot row is offered to an account that cannot elevate' `
     'lib\walkthrough.ps1' 'walkthrough.tests.ps1' `
     '    if (-not $canElevate -or $stranded.Count -gt 0) { $off += 0 }' `

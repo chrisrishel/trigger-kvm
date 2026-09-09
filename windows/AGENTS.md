@@ -133,7 +133,9 @@ is what the code calls. The suite has no console; measure in a real one, as
 **A SIMPLE PowerShell function SWALLOWS an undeclared named argument into `$args`
 without a word**; a `[CmdletBinding()]` function throws. So a caller left on an
 old parameter name goes on working and quietly loses what it carried -- twice
-now. `Test-DisplayInput`, `Set-PanelAnswer` and their test stubs carry
+now -- and `(Get-Something) -split ';'` without the parentheses hands `-split`
+over as a parameter, which is how `$onPath` shipped permanently false.
+`Test-DisplayInput`, `Set-PanelAnswer` and their test stubs carry
 `[CmdletBinding()]` because each decides something a human is asked or a config
 records; prefer it on any future parameter with that property.
 
@@ -143,27 +145,22 @@ passes. Do not make the importer take the last; forbid the duplicate --
 `tests/conventions.tests.ps1` walks the AST of every shipped script, `lib/`
 included.
 
-**`$PSScriptRoot` inside `lib/` is `lib/`.** Everything there reads `$TK_HOME`,
-resolved once in `install.ps1`, for where the sibling scripts are; `Get-Sibling`
-is the one place that falls back to the installed copy. `tests/lib.ps1` defines
-both, so an imported function does not have to be told.
-
-**`(Get-Something) -split ';'` needs the parentheses.** Without them `-split` is
-a PARAMETER of the function, swallowed into `$args`, and `-contains` never
-matches; that shipped, and made `$onPath` permanently false.
+**`$PSScriptRoot` and `$PSCommandPath` inside `lib/` name that LIB FILE**, in a
+function defined there, whichever program dot-sourced it. `install.ps1` resolves
+both once -- `$TK_HOME` for the sibling scripts, `$TK_SELF` for the program
+itself, which the elevated relaunch runs and a user is told to paste. A slip
+there is silent: the child runs a library with no `param()`, does nothing and
+exits 0. `tests/lib.ps1` defines both, so no test can catch one;
+`tests/conventions.tests.ps1` bans the automatic names under `lib/` instead.
+`Get-Sibling` is the one place that falls back to the installed copy.
 
 **The harness runs `Set-StrictMode -Version Latest`, because the scripts do.**
 Indexing into an empty match, an unset property, an undeclared variable: quiet by
 default, terminating under Latest. `@($x | Where-Object ...)[0]` shipped green
 and died on the first Monitors selection; use `| Select-Object -First 1`.
 
-Every script must parse clean before running against hardware:
-
-```powershell
-$e = $null
-[System.Management.Automation.Language.Parser]::ParseFile('.\trigger-kvm.ps1', [ref]$null, [ref]$e)
-$e
-```
+Every script must parse clean before running against hardware; `README.md` has
+the one-liner.
 
 **`trigger-kvm pause` before running one by hand, never `Stop-ScheduledTask`.**
 The watcher is a GRANDCHILD of the task (task -> `wscript.exe` ->

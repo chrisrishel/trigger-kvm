@@ -584,10 +584,17 @@ function Invoke-TriggerTest {
     $paused = $false
     switch (Get-WatcherPauseMode) {
         'can' {
-            Suspend-Watcher
-            $paused = $true
+            # ASKED OF THE LOCK, not assumed from the mode: 'can' is a reading of
+            # the task's principal, and the calls under it fail silently when it
+            # is wrong. Claiming a pause that did not happen would tell somebody
+            # the flip they are about to make is theirs alone.
+            $paused = Suspend-Watcher
             Write-Host ''
-            Write-Host '  The running watcher is paused for this check.'
+            if ($paused) {
+                Write-Host '  The running watcher is paused for this check.'
+            } else {
+                Write-Host '  The running watcher will also fire, using the saved configuration.'
+            }
         }
         'needs-admin' {
             Write-Host ''

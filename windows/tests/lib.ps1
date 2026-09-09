@@ -24,6 +24,11 @@ $script:WinDir = Split-Path -Parent $PSScriptRoot
 # imported function that looks for a sibling script needs it defined here too.
 $global:TK_HOME = $script:WinDir
 
+# And the program itself, for the same reason: $PSCommandPath in an imported
+# function would be THIS FILE, so a test of the relaunch line would assert
+# against tests\lib.ps1 and prove nothing about what a user is handed.
+$global:TK_SELF = Join-Path $script:WinDir 'install.ps1'
+
 function Import-Subject {
     <#
       .SYNOPSIS

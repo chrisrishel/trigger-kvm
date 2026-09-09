@@ -211,6 +211,40 @@ for ($i = 0; $i -lt $lines.Count; $i++) {
 Assert-Equal 0 $identity.Count ("only `$ME and `$APPDATA may read whose account this is:`n  " +
                                 ($identity -join "`n  "))
 
+# ---- and one door for "which file am I?" -------------------------------------
+#
+# $PSScriptRoot and $PSCommandPath are per FILE. Inside a function DEFINED in
+# lib\ they name that lib file, whichever program dot-sourced it -- measured, and
+# not what any of the five uses in lib\host.ps1 meant. Two of them build the
+# elevated relaunch, so the child would run a library with no param() block, do
+# nothing and exit 0, and the parent would report the install as done.
+#
+# install.ps1 resolves both once, as $TK_HOME and $TK_SELF, and lib\ reads those.
+# The test harness defines them too, which is why a test could not have caught
+# this: an imported function would have read tests\lib.ps1's own path.
+
+$perFile = @()
+foreach ($f in (Get-ChildItem -LiteralPath (Join-Path $WinDir 'lib') -Filter '*.ps1' -File)) {
+    $n = 0
+    foreach ($l in (Get-Content -LiteralPath $f.FullName)) {
+        $n++
+        if ($l -match '^\s*#') { continue }
+        if ($l -match '\$PS(ScriptRoot|CommandPath)') {
+            $perFile += ("lib\{0}:{1}: {2}" -f $f.Name, $n, $l.Trim())
+        }
+    }
+}
+Assert-Equal 0 $perFile.Count `
+    ("lib\ reads `$TK_HOME and `$TK_SELF; `$PSScriptRoot and `$PSCommandPath there name the lib file:`n  " +
+     ($perFile -join "`n  "))
+
+# The two names it points at have to be the ones install.ps1 actually resolves,
+# or the check above just moves the bug to an undeclared variable.
+foreach ($name in 'TK_HOME', 'TK_SELF') {
+    Assert-True ([bool](Select-String -LiteralPath $installer -Pattern ('^\${0}\s*=' -f $name))) `
+        ("install.ps1 must resolve `$$name at the top, since lib\ may not")
+}
+
 # ...and the task is registered as that user, never as whoever is running.
 $asWho = @()
 foreach ($l in (Select-String -LiteralPath $hostLib -Pattern 'New-ScheduledTaskPrincipal|New-ScheduledTaskTrigger\s+-AtLogOn')) {

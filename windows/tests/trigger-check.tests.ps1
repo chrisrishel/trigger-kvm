@@ -42,7 +42,10 @@ function Invoke-Sibling {
 $script:pauseMode = 'none'
 $script:watcher   = @()
 function Get-WatcherPauseMode { return $script:pauseMode }
-function Suspend-Watcher { $script:watcher += 'suspend' }
+# Returns whether the watcher is actually down, as the real one does -- a stub
+# that always said yes would let the caller claim a pause it never got.
+$script:suspendWorks = $true
+function Suspend-Watcher { $script:watcher += 'suspend'; return $script:suspendWorks }
 function Resume-Watcher  { $script:watcher += 'resume' }
 
 function Write-Host { param([Parameter(ValueFromPipeline=$true)]$Object, [switch]$NoNewline)
@@ -179,5 +182,29 @@ Assert-True (Test-Path -LiteralPath $fresh) 'a first Save creates the directory 
 Assert-Equal 'pc' ([string](Read-Config -Path $fresh)['computer.this']) 'and the file is readable'
 Remove-Item -LiteralPath (Split-Path -Parent (Split-Path -Parent $fresh)) `
             -Recurse -Force -ErrorAction SilentlyContinue
+
+
+# ---- the check does not claim a pause it did not get -------------------------
+#
+# specs/configure.md 11. 'can' is a reading of the task's principal, and the
+# calls under it fail silently when that reading is wrong -- measured on the
+# boot tier, where all three failed and `pause` still reported success. Told the
+# watcher is paused, somebody flips the switch believing the flip is theirs
+# alone; the installed watcher fires too, against the SAVED config, and the
+# monitors move somewhere the check did not ask for.
+
+$script:pauseMode = 'can'
+$script:suspendWorks = $false
+Reset-Printed; $script:watcher = @()
+Set-Answers @()
+$r = Invoke-TriggerTest -Devices @('usb:046d:0843') -Answers @() -This 'pc'
+$said = Get-Printed
+Assert-NoMatch $said 'The running watcher is paused' `
+    'a pause that did not happen must not be announced'
+Assert-Match   $said 'will also fire, using the saved configuration' `
+    'and the person is told what will actually happen before they flip'
+Assert-True (-not ($script:watcher -contains 'resume')) `
+    'and nothing is resumed that was never suspended'
+$script:suspendWorks = $true
 
 exit 0

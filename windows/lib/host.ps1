@@ -209,12 +209,12 @@ function Request-Elevation {
         Write-Host ''
         # Quoted, because this line is meant to be pasted and a profile path
         # with a space would not survive being retyped bare either.
-        Write-Host ("Run this from an elevated PowerShell:  & '{0}' {1}" -f $PSCommandPath, (Format-ChildArguments $childArgs))
+        Write-Host ("Run this from an elevated PowerShell:  & '{0}' {1}" -f $TK_SELF, (Format-ChildArguments $childArgs))
         return 1
     }
 
     $transcript = Join-Path ([IO.Path]::GetTempPath()) ("trigger-kvm-elevated-{0}.log" -f [Guid]::NewGuid().ToString('N').Substring(0,8))
-    $inner = "& '{0}' {1} -Relaunched *> '{2}'" -f $PSCommandPath, (Format-ChildArguments $childArgs), $transcript
+    $inner = "& '{0}' {1} -Relaunched *> '{2}'" -f $TK_SELF, (Format-ChildArguments $childArgs), $transcript
 
     Write-Log 'this needs administrator rights; approving the UAC prompt will continue.'
     try {
@@ -240,9 +240,14 @@ function Request-Elevation {
 # they do not come, say so and install the tier that needs none.
 #
 # specs/configure.md 8: where elevation cannot be obtained the boot tier FALLS
-# BACK TO LOGIN, SAYS SO, and the config records login rather than what was
-# asked for. Silently keeping `boot` is how someone finds out months later that
-# switching does nothing until they log in.
+# BACK TO LOGIN and SAYS SO. Silently keeping `boot` is how someone finds out
+# months later that switching does nothing until they log in.
+#
+# It does not RECORD the fallback. "Record the fallback only once it has taken
+# effect", and nothing has taken effect here -- this decides which tier to
+# attempt, and the install that applies it can still fail at registration. The
+# write belongs to whichever line proves the tier exists, which is the one after
+# Register-ScheduledTask returns, in Invoke-Install.
 #
 # Returns the tier to install. Exits when the elevated child did the whole
 # install itself, which is the successful case.
@@ -257,7 +262,6 @@ function Invoke-BootTierElevation {
     Write-Log 'falling back to starting at login.'
     Write-Log 'the switch will follow from your logon onward, but not at the login screen.'
     Write-Log 'to try again for the boot tier:  trigger-kvm configure'
-    Set-ConfigValue -Path $CONFIG -Key 'install.autostart' -Value 'login'
     return 'user'
 }
 
@@ -446,16 +450,47 @@ function Stop-Watchers {
     }
 }
 
-# STAND THE INSTALLED WATCHER DOWN, and bring it back. One definition, because
-# `pause`, `restart` and the trigger check all mean the same thing by it.
+# STAND THE INSTALLED WATCHER DOWN, and SAY WHETHER IT WORKED. One definition,
+# because `pause`, `restart` and the trigger check all mean the same thing by it.
 #
 # Stopping the task is NOT enough, twice over: the watcher is a grandchild and
 # survives it, and the 1-minute self-heal trigger would start it again within
 # the minute. The task has to be DISABLED, not merely stopped.
+#
+# THE LOCK IS THE AUTHORITY, never the three calls below. On the boot tier from
+# an unelevated caller ALL THREE fail silently, measured 2026-09-08: the task
+# stayed Enabled, Stop-Watchers matched nothing because
+# Win32_Process.CommandLine reads empty across the session boundary, and even
+# Stop-Process on the watcher was Access denied. `pause` said "task disabled and
+# watcher stopped" and exit 0 while the watcher it named went on running.
+#
+# The wait is bounded and only runs while the lock is still held: Stop-Process
+# returns before the process has finished exiting, and a lock check that raced
+# it would report failure on the login tier, where standing it down does work.
 function Suspend-Watcher {
     Disable-ScheduledTask -TaskName $TASK -ErrorAction SilentlyContinue | Out-Null
     Stop-ScheduledTask    -TaskName $TASK -ErrorAction SilentlyContinue
     Stop-Watchers
+
+    for ($i = 0; $i -lt 5; $i++) {
+        if (-not (Test-WatcherRunning)) { return $true }
+        Start-Sleep -Milliseconds 300
+    }
+    return $false
+}
+
+# Why standing it down failed, in the person's terms. Asked only after it HAS
+# failed, so the answer explains something observed rather than predicting it.
+function Get-SuspendFailure {
+    if ((Get-WatcherPauseMode) -eq 'needs-admin') {
+        return @(
+            'the boot tier registers its task as an administrator, so disabling it and'
+            'stopping the watcher both need one -- and neither failure is visible from'
+            'here, which is why this asks the lock instead of trusting a return code.'
+            'To stand it down: run the same command from an elevated PowerShell.'
+        )
+    }
+    return @('nothing here could stop it. Check:  trigger-kvm logs')
 }
 
 function Resume-Watcher {
@@ -857,20 +892,46 @@ function Invoke-Status {
 # bouncing it is the whole of "make my edit take effect" -- no re-registration,
 # because the task action carries no configuration.
 function Invoke-Restart {
-    Suspend-Watcher
+    $down = Suspend-Watcher
     Resume-Watcher
     Start-Sleep -Seconds 2
     # The lock, not a process count: a boot-tier watcher comes up in session 0,
     # where an unelevated caller cannot read CommandLine.
     $up = Test-WatcherRunning
-    if ($up) { Write-Log 'restarted; the watcher has re-read the config.' }
-    else { Write-Log 'restarted, but no watcher came up -- check: trigger-kvm logs' }
-    return $(if ($up) { 0 } else { 1 })
+
+    # A LOCK THAT WAS NEVER RELEASED CANNOT SAY A WATCHER RESTARTED. It is held
+    # by the one we failed to stop, and the one Resume started found it held and
+    # exited -- so "restarted" would name a process that has been running since
+    # before the command was typed, still holding the configuration it started
+    # with. Measured 2026-09-08: it claimed a hand edit had taken effect against
+    # a watcher armed three days earlier.
+    if (-not $down) {
+        Write-Log 'NOT restarted: the running watcher could not be stood down, so it is'
+        Write-Log 'still running the configuration it started with, and a hand edit has'
+        Write-Log 'NOT taken effect.'
+        Get-SuspendFailure | ForEach-Object { Write-Log $_ }
+        return 1
+    }
+    if ($up) { Write-Log 'restarted; the watcher has re-read the config.'; return 0 }
+    Write-Log 'restarted, but no watcher came up -- check: trigger-kvm logs'
+    return 1
 }
 
 function Invoke-Pause {
-    Suspend-Watcher
-    Write-Log 'paused: task disabled and watcher stopped'
+    if ((Get-WatcherPauseMode) -eq 'none') {
+        Write-Log 'nothing is installed here, so there is no watcher to stand down.'
+        return 1
+    }
+    if (-not (Suspend-Watcher)) {
+        # SAID, not implied. The whole point of `pause` is running one by hand,
+        # and a second watcher against the same devices is the case the lock
+        # exists to prevent -- so being told it paused when it did not sends
+        # somebody straight into it.
+        Write-Log 'COULD NOT PAUSE: a watcher is still running.'
+        Get-SuspendFailure | ForEach-Object { Write-Log $_ }
+        return 1
+    }
+    Write-Log 'paused: the task is disabled and no watcher is running'
     Write-Log 'run one by hand now, e.g.:'
     Write-Log '    .\event-watch.ps1 -Exec .\trigger-kvm.ps1 -Arg list -Verbose'
     Write-Log '(it reads the config, so -Device is only needed to try something else)'
@@ -1041,6 +1102,73 @@ function Get-ShimLines {
 
 # --- installing ---------------------------------------------------------------
 
+# Put the shipped files where the task will look for them, and stamp what was
+# put there. Everything it needs is a path constant from install.ps1.
+#
+# THE SOURCE CAN BE THE DESTINATION. `trigger-kvm configure` from the installed
+# shim re-runs install from $DEST, and then every source below IS its own
+# destination -- so this is not "copy, but skip the ones that match": it is one
+# fact about where this run started, asked once.
+function Install-Files {
+    New-Item -ItemType Directory -Force -Path $DEST              | Out-Null
+    New-Item -ItemType Directory -Force -Path $BINDIR            | Out-Null
+    New-Item -ItemType Directory -Force -Path $LIBDIR            | Out-Null
+    New-Item -ItemType Directory -Force -Path (Split-Path $LOG)  | Out-Null
+
+    # Copy-Item refuses a file onto itself -- "Cannot overwrite the item ... with
+    # itself", measured -- and $ErrorActionPreference = 'Stop' makes that an
+    # abort partway through an install that had already said it was installing.
+    if ((Resolve-Path $TK_HOME).Path -eq (Resolve-Path $DEST).Path) {
+        Write-Log "running from $DEST -- the scripts there are the ones being installed."
+    } else {
+        Copy-Item (Join-Path $TK_HOME 'config.ps1')       $CFGLIB -Force
+        Copy-Item (Join-Path $TK_HOME 'event-watch.ps1')  $WATCH  -Force
+        Copy-Item (Join-Path $TK_HOME 'trigger-kvm.ps1')  $SWITCH -Force
+        # One glob: a new lib file joins the install by existing.
+        Copy-Item (Join-Path (Join-Path $TK_HOME 'lib') '*.ps1') $LIBDIR -Force
+        # This program too, so status/logs/pause/uninstall keep working after the
+        # source tree is deleted. $TK_SELF, not $PSCommandPath: inside lib\ that
+        # would be lib\host.ps1.
+        Copy-Item $TK_SELF $MANAGE -Force
+        Write-Log "installed scripts to $DEST"
+    }
+
+    # What an earlier layout of this install left inside $DEST. The PATH half of
+    # the old shim is Set-InstalledPath's, at the end, because only a process
+    # running as the target user may touch that user's PATH.
+    foreach ($f in $EARLIER_LAYOUT) {
+        if (Test-Path -LiteralPath $f) { Remove-Item -LiteralPath $f -Force; Write-Log "removed $f" }
+    }
+
+    Get-ShimLines | Set-Content -LiteralPath $SHIM -Encoding ASCII
+
+    # Version stamp. Records the commit when the source is a git checkout, which
+    # is how you tell a released copy from one built off a dirty tree, and the
+    # spec revision, which is how you tell a bug from a version gap.
+    $commit = ''
+    try {
+        Push-Location $TK_HOME
+        $commit = (& git rev-parse --short HEAD 2>$null)
+        if ($LASTEXITCODE -ne 0) { $commit = '' }
+        if ($commit -and (& git status --porcelain 2>$null)) { $commit += '+dirty' }
+    } catch { } finally { Pop-Location -ErrorAction SilentlyContinue }
+
+    $specRev = ''
+    $revFile = Join-Path $TK_HOME 'SPEC-REVISION'
+    if (Test-Path -LiteralPath $revFile) {
+        $m = [regex]::Match((Get-Content -Raw -LiteralPath $revFile), '(?m)^revision\s*=\s*(\d+)')
+        if ($m.Success) { $specRev = $m.Groups[1].Value }
+    }
+
+    @(
+        "version   = $VERSION"
+        "installed = $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
+        "source    = $TK_HOME"
+        "commit    = $(if ($commit) { $commit } else { '(not a git checkout)' })"
+        "spec      = $(if ($specRev) { $specRev } else { 'unknown' })"
+    ) | Set-Content -LiteralPath $STAMP -Encoding ASCII
+}
+
 # Copy the files, register the task, start it. This is what installing IS;
 # there is no `install` verb on the CLI.
 #
@@ -1080,7 +1208,7 @@ function Invoke-Install {
             Write-Log "no configuration at $CONFIG, and this is not an interactive terminal."
             Write-Host ''
             Write-Host 'Run this from a normal PowerShell window to set it up:'
-            Write-Host ("    {0}" -f $PSCommandPath)
+            Write-Host ("    {0}" -f $TK_SELF)
             return 2
         }
     }
@@ -1118,59 +1246,7 @@ function Invoke-Install {
     $settle   = $(if ($cfg.Contains('trigger.settle'))   { $cfg['trigger.settle'] }   else { $DEFAULT_SETTLE })
     Write-Log "config says: watch $devices  (debounce ${debounce}s, settle ${settle}s)"
 
-    New-Item -ItemType Directory -Force -Path $DEST              | Out-Null
-    New-Item -ItemType Directory -Force -Path $BINDIR            | Out-Null
-    New-Item -ItemType Directory -Force -Path $LIBDIR            | Out-Null
-    New-Item -ItemType Directory -Force -Path (Split-Path $LOG)  | Out-Null
-
-    Copy-Item (Join-Path $TK_HOME 'config.ps1')       $CFGLIB -Force
-    Copy-Item (Join-Path $TK_HOME 'event-watch.ps1')  $WATCH  -Force
-    Copy-Item (Join-Path $TK_HOME 'trigger-kvm.ps1')  $SWITCH -Force
-    # One glob: a new lib file joins the install by existing.
-    Copy-Item (Join-Path (Join-Path $TK_HOME 'lib') '*.ps1') $LIBDIR -Force
-
-    # Install THIS script too, so status/logs/pause/uninstall keep working after
-    # the source tree is deleted. Skipped when already running from $DEST --
-    # copying a file onto itself throws.
-    if ((Resolve-Path $TK_HOME).Path -ne (Resolve-Path $DEST).Path) {
-        Copy-Item $PSCommandPath $MANAGE -Force
-    }
-    Write-Log "installed scripts to $DEST"
-
-    # What an earlier layout of this install left inside $DEST. The PATH half of
-    # the old shim is Set-InstalledPath's, at the end, because only a process
-    # running as the target user may touch that user's PATH.
-    foreach ($f in $EARLIER_LAYOUT) {
-        if (Test-Path -LiteralPath $f) { Remove-Item -LiteralPath $f -Force; Write-Log "removed $f" }
-    }
-
-    Get-ShimLines | Set-Content -LiteralPath $SHIM -Encoding ASCII
-
-    # Version stamp. Records the commit when the source is a git checkout, which
-    # is how you tell a released copy from one built off a dirty tree, and the
-    # spec revision, which is how you tell a bug from a version gap.
-    $commit = ''
-    try {
-        Push-Location $TK_HOME
-        $commit = (& git rev-parse --short HEAD 2>$null)
-        if ($LASTEXITCODE -ne 0) { $commit = '' }
-        if ($commit -and (& git status --porcelain 2>$null)) { $commit += '+dirty' }
-    } catch { } finally { Pop-Location -ErrorAction SilentlyContinue }
-
-    $specRev = ''
-    $revFile = Join-Path $TK_HOME 'SPEC-REVISION'
-    if (Test-Path -LiteralPath $revFile) {
-        $m = [regex]::Match((Get-Content -Raw -LiteralPath $revFile), '(?m)^revision\s*=\s*(\d+)')
-        if ($m.Success) { $specRev = $m.Groups[1].Value }
-    }
-
-    @(
-        "version   = $VERSION"
-        "installed = $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
-        "source    = $TK_HOME"
-        "commit    = $(if ($commit) { $commit } else { '(not a git checkout)' })"
-        "spec      = $(if ($specRev) { $specRev } else { 'unknown' })"
-    ) | Set-Content -LiteralPath $STAMP -Encoding ASCII
+    Install-Files
 
     # --- the task ------------------------------------------------------------
     #
@@ -1307,7 +1383,7 @@ function Invoke-Install {
         Write-Log ("could not register the task '{0}': {1}" -f $TASK, $_.Exception.Message)
         Write-Log 'the scripts are installed and the config is intact; what is missing is the autostart entry.'
         Write-Log 'nothing is watching until that is fixed. To try again:'
-        Write-Log ("    {0}" -f $PSCommandPath)
+        Write-Log ("    {0}" -f $TK_SELF)
         Write-Log 'or start one for this session only:  trigger-kvm restart'
         return 1
     }

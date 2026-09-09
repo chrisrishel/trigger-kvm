@@ -233,6 +233,16 @@ define stubs with the same names as real functions. A test that did not run
 reports `SKIP` and never counts as a pass -- two files need real hardware, and
 one case inside them needs a local console session rather than a remote one.
 
+Before running anything against the monitors, check that it parses. Windows
+PowerShell 5.1 reads a `.ps1` with no BOM as ANSI, so a non-ASCII character in a
+comment surfaces as a parse error at an unrelated line:
+
+```powershell
+$e = $null
+[System.Management.Automation.Language.Parser]::ParseFile('.\trigger-kvm.ps1', [ref]$null, [ref]$e)
+$e
+```
+
 `tests\conventions.tests.ps1` scans for the rules no single mutation can test:
 one door to I2C source `0x50`, one door to "whose install is this?", no function
 defined twice or shadowing a cmdlet, the word "machine" never shown to a user,

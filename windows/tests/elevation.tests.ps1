@@ -125,14 +125,19 @@ Assert-Match $said "'install'"                                          'and wha
 # The printed line is meant to be PASTED, so it has to be runnable as it stands.
 Assert-Match $said "(?m)^Run this from an elevated PowerShell:  & '" 'a bare path with a space in it would not be'
 
+# AND IT NAMES THE PROGRAM. $PSCommandPath inside a function defined in lib\ is
+# that lib file, so this line -- and the relaunch built the same way -- would
+# hand somebody a library with no param() block: it runs, does nothing, exits 0.
+# install.ps1 resolves $TK_SELF once, for both.
+Assert-Match $said "[\\/]install\.ps1' " 'and the path it names is install.ps1, not the file the function lives in'
+
 # ---- elevation that does not come falls back, and says so --------------------
 #
-# specs/configure.md 8. Declining the prompt used to exit 1 with
-# install.autostart still saying `boot`, the old watcher still running against
-# the OLD trigger devices, and a message claiming nothing had been changed --
-# when the config had been rewritten a moment earlier. Silently keeping `boot`
-# is how someone finds out months later that switching does nothing until they
-# log in.
+# specs/configure.md 8. Declining the prompt used to exit 1 with the old watcher
+# still running against the OLD trigger devices and a message claiming nothing
+# had been changed -- when the config had been rewritten a moment earlier.
+# Silently keeping `boot` is how someone finds out months later that switching
+# does nothing until they log in.
 
 $script:written = @()
 function Set-ConfigValue { param([string]$Path, [string]$Key, [string]$Value)
@@ -152,7 +157,20 @@ $tier = Invoke-BootTierElevation
 
 Assert-Equal 'user' $tier 'a refusal installs the tier that needs no elevation'
 Assert-Match (Get-Printed) 'falling back to starting at login' 'and says so, in those words'
-Assert-Equal 'install.autostart=login' ($script:written -join ',') `
-    'and the config records what was installed, not what was asked for'
+
+# THIS ASSERTION IS THE OPPOSITE OF WHAT IT WAS, changed deliberately.
+#
+# It required this function to write install.autostart = login, and
+# specs/configure.md 8 says the other thing: "Record the fallback only once it
+# has taken effect. A downgrade written before the install that applies it has
+# succeeded leaves the config disagreeing with what is registered." Nothing has
+# taken effect here -- this only decides which tier to attempt, and the install
+# can still fail at Register-ScheduledTask, which returns 1 with the old boot
+# task still registered and the config now saying login.
+#
+# Invoke-Install writes it after Register-ScheduledTask returns, which is the
+# first moment the claim is true. The old assertion pinned the bug.
+Assert-Equal '' ($script:written -join ',') `
+    'deciding to fall back records nothing; installing the fallback records it'
 
 exit 0

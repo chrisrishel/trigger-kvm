@@ -117,6 +117,13 @@ $APPDATA = $(if ($ForAppData) { $ForAppData } else { $env:LOCALAPPDATA })
 # inside lib\ is lib\, so this is the one answer every file reads.
 $TK_HOME = $PSScriptRoot
 
+# THIS PROGRAM, as a path to paste or to hand a child process. $PSCommandPath is
+# per FILE, not per program: inside a function defined in lib\ it is that lib
+# file (measured), which has no param() block -- so an elevated relaunch built
+# from it runs a library, does nothing and exits 0, and the parent reports the
+# install as done. tests\conventions.tests.ps1 keeps both names out of lib\.
+$TK_SELF = $PSCommandPath
+
 $TASK    = 'trigger-kvm'
 $DEST    = Join-Path $APPDATA 'Programs\trigger-kvm'
 $LIBDIR  = Join-Path $DEST 'lib'
