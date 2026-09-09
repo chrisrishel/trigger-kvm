@@ -667,6 +667,10 @@ Invoke-Mutation 'transport: dxva2 gains an I2C source parameter' `
     'trigger-kvm.ps1' 'conventions.tests.ps1' `
     '    public static int WriteStandardVcp(DxvaDisplay target, byte code, byte value) {' `
     '    public static int WriteStandardVcp(DxvaDisplay target, byte source, byte code, byte value) {'
+Invoke-Mutation 'bytes: a tab in a shipped script goes unnoticed' `
+    'lib\answers.ps1' 'conventions.tests.ps1' `
+    '    # file before anything has created %LOCALAPPDATA%\trigger-kvm\, and' `
+    "    # file before anything has created %LOCALAPPDATA%`trigger-kvm\, and"
 Invoke-Mutation 'transport: dxva2 writes to every panel behind one handle' `
     'trigger-kvm.ps1' 'conventions.tests.ps1' `
     '        if (n != 1) return -3;' ''

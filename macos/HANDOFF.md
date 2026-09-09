@@ -62,8 +62,8 @@ longer supports" said `AGENTS.md` names `never Local\` while "no `Local\` or
 `Global\` string exists". Both strings do exist, at `windows/event-watch.ps1`
 lines 194-195:
 
-    $MUTEX_GLOBAL = 'Global	rigger-kvm-usb-watch'
-    $MUTEX_LOCAL  = 'Local	rigger-kvm-usb-watch'
+    $MUTEX_GLOBAL = 'Global\trigger-kvm-usb-watch'
+    $MUTEX_LOCAL  = 'Local\trigger-kvm-usb-watch'
 
 The `AGENTS.md` sentence WAS wrong, for a different reason: `Local\` is not
 never used, it is the fallback where the account lacks SeCreateGlobalPrivilege,
@@ -71,4 +71,38 @@ and a watcher that finds the global name held by another account stands down
 rather than falling back. That is what it says now.
 
 Everything else in that entry checked out and has landed.
+
+## `tk_apply_tier` records the fallback one step before it takes effect
+
+Kind:     defect report
+Spec:     specs/configure.md 8, "Record the fallback only once it has taken effect"
+Why:      a boot install that falls back and then cannot write the agent plist
+          leaves the config saying `login` with nothing loaded and nothing
+          installed
+Owed:     `lib/manage.sh:296` rewrites `install.autostart` to `login` inside the
+          boot-tier failure branch, before the login tier is applied. The apply
+          is below it, at `:300`, and `tk_write_agent_plist "$_plist" || return
+          1` can fail -- so the write can happen for a tier that was never
+          written. Moving the `sed` to after that call, on the path that also
+          sets `TK_TIER_LOADED`, records the same thing one step later.
+Verified: read only, at commit c068149, and NARROW. The boot half has genuinely
+          failed by then, so `login` is not a lie about `boot` the way it was
+          here; and a `tk_bootstrap` failure is not an install failure (over SSH
+          there is no gui domain, the plist IS in `~/Library/LaunchAgents`, and
+          recording `login` there is right). The only gap I can see from here is
+          `tk_write_agent_plist` returning non-zero. You can run it and I
+          cannot; if that call cannot fail after the plist directory exists,
+          this is not a defect and the entry is wrong.
+
+The Windows side had the same clause wrong in a much louder way, which is why I
+went looking: `Invoke-BootTierElevation` wrote `login` at the moment the UAC
+prompt was DECLINED -- before any install had been attempted -- so a declined
+prompt put `login` in the config while a working S4U task stayed registered, and
+the next install read the config and demoted it. Fixed at c068149, together with
+the test and the mutation that had been pinning the behaviour.
+
+`macos/AGENTS.md` currently states the current behaviour as a rule ("both fall
+back to login, say why, and rewrite `install.autostart`... Enforced by
+`conventions.tests.sh`"), so if you agree with this, that sentence and that
+check move with the code.
 

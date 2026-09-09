@@ -525,7 +525,7 @@ function Write-ConfigFile {
     }
 
     # THE DIRECTORY MAY NOT EXIST YET. On a first run the walkthrough writes this
-    # file before anything has created %LOCALAPPDATA%	rigger-kvm\, and
+    # file before anything has created %LOCALAPPDATA%\trigger-kvm\, and
     # Set-Content does not create parents -- under $ErrorActionPreference =
     # 'Stop' that is a DirectoryNotFoundException at Save, after every question
     # has been answered and with nothing written. Measured 2026-09-08.

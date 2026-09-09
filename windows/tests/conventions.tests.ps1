@@ -887,6 +887,73 @@ Assert-True (@($stopAt | Where-Object { $_ -gt $uninstallFn.Start -and $_ -lt $u
 Assert-Match ($hostSrc -join "`n") 'the task is registered but NO WATCHER is running' `
     'a registered task with nothing watching must be stated, not implied'
 
+# ---- the shipped scripts are ASCII, with no BOM and no tabs ------------------
+#
+# ..\..\AGENTS.md: PowerShell 5.1 reads a .ps1 with no BOM as ANSI, so one
+# non-ASCII byte in a comment surfaces as a parse error at an unrelated line.
+# That rule had no check, and the bytes in a file are not always the bytes
+# somebody typed: a tool that mishandles a backslash escape turns
+# %LOCALAPPDATA%\trigger-kvm into %LOCALAPPDATA%<TAB>rigger-kvm, which parses
+# fine and says something else. Both have happened here.
+#
+# Tabs are in the same check rather than a separate one because the question is
+# the same: does this file contain a byte the author did not mean to type? The
+# tree indents with spaces, so a tab in a .ps1 is always the second thing.
+
+function Get-ByteComplaint {
+    param([string]$Path, [string]$Name)
+
+    $bytes = [IO.File]::ReadAllBytes($Path)
+    $out   = @()
+    if ($bytes.Count -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) {
+        $out += ("{0}: starts with a UTF-8 BOM" -f $Name)
+    }
+    $line = 1
+    for ($i = 0; $i -lt $bytes.Count; $i++) {
+        $b = $bytes[$i]
+        if ($b -eq 0x0A) { $line++; continue }
+        if ($b -eq 0x0D) { continue }
+        if ($b -eq 0x09) { $out += ("{0}:{1}: a literal tab" -f $Name, $line); continue }
+        if ($b -lt 0x20 -or $b -gt 0x7E) {
+            $out += ("{0}:{1}: byte 0x{2:X2} is not ASCII" -f $Name, $line, $b)
+        }
+    }
+    return @($out)
+}
+
+$byteComplaints = @()
+foreach ($f in (Get-ShippedScript)) {
+    $byteComplaints += @(Get-ByteComplaint -Path $f.FullName -Name $f.Name)
+}
+Assert-Equal 0 $byteComplaints.Count `
+    ("a shipped script holds bytes nobody typed:`n  " + ($byteComplaints -join "`n  "))
+
+# ...and the check can see each of the three.
+$byteDir = Join-Path $env:TEMP ("tk-bytes-$PID")
+Remove-Item -LiteralPath $byteDir -Recurse -Force -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force -Path $byteDir | Out-Null
+
+$plain = Join-Path $byteDir 'plain.ps1'
+[IO.File]::WriteAllBytes($plain, [Text.Encoding]::ASCII.GetBytes("# fine`r`n"))
+Assert-Equal 0 @(Get-ByteComplaint -Path $plain -Name 'plain.ps1').Count 'an ASCII file complains about nothing'
+
+[IO.File]::WriteAllBytes($plain, [byte[]](0xEF, 0xBB, 0xBF) + [Text.Encoding]::ASCII.GetBytes("# fine`r`n"))
+Assert-Match (@(Get-ByteComplaint -Path $plain -Name 'p.ps1') -join ' ') 'BOM' 'a BOM is found'
+
+[IO.File]::WriteAllBytes($plain, [Text.Encoding]::ASCII.GetBytes("# a`r`n# b`tc`r`n"))
+Assert-Match (@(Get-ByteComplaint -Path $plain -Name 'p.ps1') -join ' ') 'p\.ps1:2: a literal tab' `
+    'a tab is found, on its own line'
+
+# The em dash the rule was written for, as the three UTF-8 bytes 5.1 would read
+# as ANSI. Written as bytes because this file is itself ASCII-only.
+[IO.File]::WriteAllBytes($plain,
+    [Text.Encoding]::ASCII.GetBytes('# a dash: ') + [byte[]](0xE2, 0x80, 0x94) +
+    [Text.Encoding]::ASCII.GetBytes("`r`n"))
+Assert-Match (@(Get-ByteComplaint -Path $plain -Name 'p.ps1') -join ' ') 'byte 0xE2 is not ASCII' `
+    'and the em dash the rule was written for'
+
+Remove-Item -LiteralPath $byteDir -Recurse -Force -ErrorAction SilentlyContinue
+
 # ---- the instruction files fit the tools that load them ----------------------
 #
 # Codex loads the AGENTS.md chain from the git root down to its working
