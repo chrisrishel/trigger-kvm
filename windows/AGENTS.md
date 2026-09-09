@@ -1,17 +1,17 @@
 # Windows -- agent instructions
 
-Read `..\AGENTS.md` first; it holds the hard safety rules and everything both
-platforms share. This file is only what is true of the Windows implementation;
-the measurements behind it are in `..\docs\measurements.md`, the file map and
-how-tos in `README.md`.
+Read `..\AGENTS.md` first: the hard safety rules and everything both platforms
+share. This file is only what is true of the Windows implementation; the
+measurements behind it are in `..\docs\measurements.md`, the file map and how-tos
+in `README.md`.
 
 ## Hazards learned here
 
 **Hard rule 5's ONLY emitter is `NvDdc.WriteLgInput` in `trigger-kvm.ps1`.** The
 source byte is not a parameter of it, and it **throws** unless the target's EDID
-manufacturer is GSM (`0x1E6D`). Nothing else in this tree can reach that bus:
-`Dxva` cannot express a source byte at all, and `nvapi-probe.ps1` deliberately
-never resolves `NvAPI_I2CWrite`, so there is no instrument to gate either.
+manufacturer is GSM (`0x1E6D`). Nothing else here can reach that bus: `Dxva`
+cannot express a source byte at all, and `nvapi-probe.ps1` deliberately never
+resolves `NvAPI_I2CWrite`, so there is no instrument to gate.
 `tests/conventions.tests.ps1` names every embedded native block in the tree,
 scans them all, and self-tests the scan.
 
@@ -33,19 +33,19 @@ rejected"; `README.md` says how.
 
 **PnP presence means "attached" for USB and "PAIRED" for Bluetooth. Do not
 extend the watcher to Bluetooth by widening its match pattern.** A paired device
-keeps its node for YEARS while never connected, so no edge would ever fire --
-the worst failure shape available. Bluetooth is BUILT and matches on CONNECTED
+keeps its node while never connected, so no edge would ever fire -- the worst
+failure shape available. Bluetooth is BUILT and matches on CONNECTED
 through `bthprops.cpl` by P/Invoke (`BLUETOOTH_DEVICE_INFO.fConnected`, not
-`fRemembered`). Three other routes were ruled out and are dated in
-`..\docs\measurements.md`; do not re-try them. Two constraints easy to undo by
-accident: **enumerate Bluetooth ONCE per presence sweep**, not per watched
-device; and **a missing or disabled radio must not take the watcher down** -- it
-is an absence, and absences never fire.
+`fRemembered`). Three other routes were ruled out and dated in
+`..\docs\measurements.md`; do not re-try them. Two constraints easy to undo:
+**enumerate Bluetooth ONCE per presence sweep**, not per watched device; and **a
+missing or disabled radio must not take the watcher down** -- it is an absence,
+and absences never fire.
 
-**But the CANDIDATE LIST offers every PAIRED device, connected or not.** Firing
-is on connected; offering is on paired, because the device disconnected right
-now is exactly the one that will produce an arrival. Show the state, do not
-filter on it.
+**But the CANDIDATE LIST offers every PAIRED device, connected or not**: firing
+is on connected, offering on paired, because the device disconnected right now is
+exactly the one that will produce an arrival. Show the state, do not filter on
+it.
 
 **WMI device notifications DO reach session 0.** The watcher uses
 `Win32_DeviceChangeEvent`, a WMI extrinsic event from Winmgmt, **not**
@@ -54,25 +54,25 @@ onto window messages; that would break the boot tier silently while post-login
 kept working.
 
 **Sleep/wake does not fire a spurious switch, tested by hibernate (S4).** The
-watcher survives as a live process holding its `$present` map, and nothing fires;
-flipping the switch to this PC *while it hibernates* does fire on resume,
-correctly. `DEVPKEY_Device_LastArrivalDate` does **not** track bus power cycling,
-so do not reach for it to answer "did USB come back?" across a resume; it does
-track a flip's PnP arrival, which is how you correlate one against the log.
+watcher survives as a live process holding its `$present` map and nothing fires;
+a flip made *during* hibernation fires correctly on resume.
+`DEVPKEY_Device_LastArrivalDate` does **not** track bus power cycling, so do not
+reach for it to answer "did USB come back?" across a resume; it does track a
+flip's PnP arrival, which is how you correlate one against the log.
 
 **S3 standby HANGS this machine. Do not test it again; use hibernate.** Nothing
 here is implicated; `..\docs\measurements.md` has the evidence, and how to
 hibernate from the shell you will be in.
 
 **`user32` REPORTS THE WRONG MONITORS WHEREVER THERE IS NO LOCAL CONSOLE**, and
-`dxva2` goes through it. Two measured shapes in `../docs/measurements.md`: in
+`dxva2` goes through it. Two measured shapes in `..\docs\measurements.md`: in
 session 0 a PHANTOM monitor rather than none, so an identity check trusting it
 mis-resolves by PICKING a panel rather than erroring; over RDP the virtual
-display and none of the physical panels. The EDID gate turns both into a
-refusal. So a `dxva2` panel is LOCAL-SESSION ONLY: `configure` draws the boot row
-disabled for it and `status` says which panel it strands. NVAPI is unaffected,
-is the only identity source the boot tier may use, and is never correlated
-against the Windows display list. Decisions `001` and `003`.
+display and none of the physical panels. The EDID gate turns both into a refusal.
+So a `dxva2` panel is LOCAL-SESSION ONLY: `configure` draws the boot row disabled
+for it and `status` says which panel it strands. NVAPI is unaffected, is the only
+identity source the boot tier may use, and is never correlated against the
+Windows display list. Decisions `001` and `003`.
 
 **`$env:SESSIONNAME` is not a remote-session test**: it read `Console` inside an
 RDP session (measured). `GetSystemMetrics(SM_REMOTESESSION)` is.
@@ -91,40 +91,40 @@ with nothing changing and what it tracks is not established; `isConnected`
 and size-encoded struct versions; both come from a real source, and the ids in
 use are recorded with provenance in `..\docs\nvapi-bindings.md`.
 
-**Running the installer elevated poisons the task for later unelevated runs.**
-The definition under `System32\Tasks` is owned by whoever registered it, so one
-admin run -- or an s4u install, which needs one -- leaves an ordinary user with
-Read only, and every later unelevated install or `uninstall` then fails with
-`Access is denied`. Both paths detect it and explain; do not simplify those
-catch blocks away. `README.md` has the recovery.
+**Running the installer elevated poisons the task for later unelevated runs**:
+the definition under `System32\Tasks` belongs to whoever registered it. Both the
+install and uninstall paths catch the `Access is denied` that follows and explain
+it; do not simplify those catch blocks away. `README.md` has the recovery.
 
 **`-Verb RunAs` from a STANDARD account elevates a DIFFERENT USER, so the child
 is TOLD who the install is for** -- `$ME`/`$FORUSER`/`$APPDATA`, resolved once at
-the top of `install.ps1`, the only place the environment is read. Two
-consequences, both pinned by the suite: only a process running AS a user may edit
+the top of `install.ps1`, the only place the environment is read. Three
+consequences, all pinned by the suite. Only a process running AS a user may edit
 that user's PATH (`HKCU` in the child is the ADMIN's hive), so the PARENT does
-it; and the child's arguments are TEXT while a profile path has spaces, so flags
-stay bare and values quoted (`Format-ChildArguments`).
+it. Its arguments are TEXT and a profile path has spaces, so flags stay bare and
+values quoted (`Format-ChildArguments`). And its only voice is the transcript
+`Request-Elevation` prints, because `-Verb RunAs` takes no
+`-RedirectStandardOutput` and the window is hidden: `*>` around the call drops
+the terminating error and flattens the exit code (measured), so the catch goes
+INSIDE the redirection.
 
-**Tiers**: the task-registration logic lives in `lib/host.ps1` only, and the
-boot tier is an S4U task -- "run as this user without their password", which is
-what costs the one admin prompt. `event-watch.ps1` takes a `Global\` mutex so
-exclusion covers the computer rather than one session, and
-falls back to `Local\` ONLY where the account may not create a global name. A
-watcher that finds the global name held by ANOTHER ACCOUNT stands down instead
-of falling back -- falling back there is exactly the two-tiers-two-watchers case
-the global name exists to prevent.
+**Tiers**: the task-registration logic lives in `lib/host.ps1` only, and the boot
+tier is an S4U task -- "run as this user without their password", which is what
+costs the one admin prompt. `event-watch.ps1` takes a `Global\` mutex so
+exclusion covers the computer rather than one session, and falls back to
+`Local\` ONLY where the account may not create a global name. A watcher finding
+the global name held by ANOTHER ACCOUNT stands down instead of falling back --
+that is exactly the two-tiers-two-watchers case the global name prevents.
 
 ## PowerShell hazards
 
 **`[Console]::CursorLeft` CLAMPS at `BufferWidth - 1`, and writing into the last
 column WRAPS.** An exactly-full line therefore reads the same as one a column
-short, and erasing "to the end" from that reading costs a row `Write-MenuFrame`'s
-height count knows nothing about. `Clear-ToLineEnd` stops one column short, which
-is safe because `Get-MenuWidth` caps a menu at 110. **Do not conclude anything
-about wrapping from `[Console]::Write`** -- it differs from `Write-Host`, which
-is what the code calls. The suite has no console; measure in a real one, as
-`..\docs\measurements.md` records.
+short, and erasing "to the end" costs a row `Write-MenuFrame` knows nothing
+about. `Clear-ToLineEnd` stops one column short; `Get-MenuWidth` caps a menu at
+110. **Do not conclude anything about wrapping from `[Console]::Write`** -- it
+differs from `Write-Host`, which is what the code calls, and the suite has no
+console: measure in a real one.
 
 **A SIMPLE PowerShell function SWALLOWS an undeclared named argument into `$args`
 without a word**; a `[CmdletBinding()]` function throws. So a caller left on an
@@ -141,18 +141,19 @@ passes. Do not make the importer take the last; forbid the duplicate --
 `tests/conventions.tests.ps1` walks the AST of every shipped script, `lib/`
 included.
 
-**PowerShell owns names you would not guess, and both kinds have shipped here.**
-Per FILE: `$PSScriptRoot` and `$PSCommandPath` in a function defined in `lib/`
-name that lib file, whichever program dot-sourced it -- so `install.ps1` resolves
-`$TK_HOME` and `$TK_SELF` once and `lib/` reads those (`Get-Sibling` is the one
-place that falls back to the installed copy). Per STATEMENT: `$SWITCH` IS
-`$switch`, the running switch's enumerator, and the verb dispatch is a switch, so
-that constant read EMPTY for every verb until it was renamed; `$foreach` and
-`$_` are the same shape. Both kinds are silent, and `tests/lib.ps1` defines the
-substitutes, so no behavioural test catches either.
-`tests/conventions.tests.ps1` bans the first pair under `lib/`, and for the rest
-gives every script-scope name a value and reads it back inside a switch, a
-foreach and a pipeline -- needing no list of names to keep in step.
+**A NAME IS NOT YOURS JUST BECAUSE YOU WROTE IT.** Three shapes, all shipped
+here, all silent. Per FILE: `$PSScriptRoot` and `$PSCommandPath` in a function
+defined in `lib/` name that lib file, whichever program dot-sourced it, so
+`install.ps1` resolves `$TK_HOME` and `$TK_SELF` once and `lib/` reads those
+(`Get-Sibling` is the one place falling back to the installed copy). Per
+STATEMENT: `$SWITCH` IS `$switch`, the running switch's enumerator, and the verb
+dispatch is a switch, so that constant read EMPTY for every verb; `$foreach` and
+`$_` are the same. CASE-INSENSITIVE: `$LIBDIR` and `$libDir` were one variable,
+pointing the install's destination at the source tree. `tests/lib.ps1` defines
+the substitutes, so no behavioural test catches any of it;
+`tests/conventions.tests.ps1` bans the first pair under `lib/`, reads every
+script-scope name back from inside a switch, a foreach and a pipeline, and groups
+them per PROGRAM to catch two spellings of one.
 
 **The harness runs `Set-StrictMode -Version Latest`, because the scripts do.**
 Indexing into an empty match, an unset property, an undeclared variable: quiet by

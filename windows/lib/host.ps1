@@ -239,7 +239,20 @@ function Request-Elevation {
     }
 
     $transcript = Join-Path ([IO.Path]::GetTempPath()) ("trigger-kvm-elevated-{0}.log" -f [Guid]::NewGuid().ToString('N').Substring(0,8))
-    $inner = "& '{0}' {1} -Relaunched *> '{2}'" -f $TK_SELF, (Format-ChildArguments $childArgs), $transcript
+
+    # THE CATCH IS INSIDE THE REDIRECTION, and the child's own exit code comes
+    # back out. `& '<script>' <args> *> '<file>'` looks like it captures
+    # everything and does not: a terminating error propagates OUT of the
+    # redirected command and is reported after the redirection has ended, so the
+    # transcript holds only what was printed before the failure -- in a hidden
+    # elevated window, that error text is simply lost, and the caller then says
+    # "what it reported is above" about nothing. The same shape also flattens
+    # every outcome to 1: a child that exited 7 came back as 1 (measured).
+    #
+    # Braces are doubled for -f, which would otherwise read them as placeholders.
+    $inner = ("& {{ try {{ & '{0}' {1} -Relaunched; `$global:tkRc = `$LASTEXITCODE }} " +
+              "catch {{ `$_ | Out-String | Write-Output; `$global:tkRc = 1 }} }} *> '{2}'; " +
+              "exit `$global:tkRc") -f $TK_SELF, (Format-ChildArguments $childArgs), $transcript
 
     Write-Log 'this needs administrator rights; approving the UAC prompt will continue.'
     $rc = Start-ElevatedChild -Command $inner

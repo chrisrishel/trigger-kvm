@@ -143,7 +143,10 @@ Assert-Match $said "[\\/]install\.ps1' " 'and the path it names is install.ps1, 
 
 $global:TK_SELF = Join-Path $WinDir 'install.ps1'
 $global:NoElevate = $false
-function Start-ElevatedChild { param([string]$Command) return $script:childResult }
+function Start-ElevatedChild { param([string]$Command)
+    $script:innerSeen = $Command
+    return $script:childResult
+}
 
 Reset-Printed
 $script:childResult = $null          # no child ran: the prompt was declined
@@ -163,7 +166,63 @@ Assert-NoMatch (Get-Printed) 'declined or unavailable' `
 Reset-Printed
 $script:childResult = 0
 Assert-Equal 0 (Request-Elevation -Verb 'install') 'and a clean child comes back 0'
+
 Assert-Equal $true $ELEVATION_REACHED
+
+# ---- and the command it builds really does capture the child -----------------
+#
+# `& '<script>' <args> *> '<file>'` LOOKS like it captures everything. It does
+# not: a terminating error propagates out of the redirected command and is
+# reported after the redirection has ended, so the file holds only what was
+# printed before the failure. In a hidden elevated window that error text is
+# gone, and the parent then says "what it reported is above" about nothing --
+# which is exactly how a real install failure reached a person as five calm
+# lines and no reason. The same shape flattened every outcome to 1, so a child
+# that exited 7 came back as 1.
+#
+# The command Request-Elevation built is run here for real, unelevated: the
+# elevation is not what is under test, the redirection is.
+
+$txDir = Join-Path $env:TEMP ("tk-transcript-$PID")
+Remove-Item -LiteralPath $txDir -Recurse -Force -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force -Path $txDir | Out-Null
+
+function Invoke-BuiltCommand {
+    param([string]$Body)
+    $child = Join-Path $txDir 'child.ps1'
+    @('param([Parameter(Position=0)][string]$Command, [switch]$Relaunched,'
+      '      [string]$ForUser = '''', [string]$ForAppData = '''')'
+      '$ErrorActionPreference = ''Stop'''
+      'Write-Host ''child: one line before anything goes wrong''') + $Body |
+        Set-Content -LiteralPath $child -Encoding ASCII
+
+    $global:TK_SELF = $child
+    $script:childResult = 0
+    Request-Elevation -Verb 'install' | Out-Null
+
+    # The transcript path is the program's own choice; take it back out of the
+    # command rather than guessing it.
+    $tx = [regex]::Match($script:innerSeen, "\*>\s*'([^']+)'").Groups[1].Value
+    Remove-Item -LiteralPath $tx -Force -ErrorAction SilentlyContinue
+    $p = Start-Process powershell.exe -Wait -WindowStyle Hidden -PassThru `
+         -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', $script:innerSeen)
+    $said = $(if (Test-Path -LiteralPath $tx) { (Get-Content -LiteralPath $tx) -join "`n" } else { '' })
+    Remove-Item -LiteralPath $tx -Force -ErrorAction SilentlyContinue
+    return [pscustomobject]@{ Code = $p.ExitCode; Said = $said }
+}
+
+$thrown = Invoke-BuiltCommand -Body @('Copy-Item $PSCommandPath $PSCommandPath -Force')
+Assert-Match $thrown.Said 'one line before anything goes wrong' 'the transcript catches ordinary output'
+Assert-Match $thrown.Said 'with itself' `
+    'AND the failure, which is the half a hidden window would otherwise swallow'
+Assert-Equal 1 $thrown.Code 'a child that threw is a failure'
+
+$clean = Invoke-BuiltCommand -Body @('exit 7')
+Assert-Equal 7 $clean.Code 'and the child''s own exit code survives, rather than flattening to 1'
+Assert-Match $clean.Said 'one line before anything goes wrong' 'with its output kept'
+
+Remove-Item -LiteralPath $txDir -Recurse -Force -ErrorAction SilentlyContinue
+$global:TK_SELF = Join-Path $WinDir 'install.ps1'
 
 # ---- elevation that does not come falls back, and says so --------------------
 #

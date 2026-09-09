@@ -221,11 +221,21 @@ Invoke-Mutation 'path: the write downgrades REG_EXPAND_SZ to REG_SZ' `
 
 Invoke-Mutation 'install: a half-copied install throws instead of saying so' `
     'install.ps1' 'install.tests.ps1' `
-    "if (-not (Test-Path -LiteralPath `$libDir -PathType Container)) {" `
+    "if (-not (Test-Path -LiteralPath `$SRC_LIB -PathType Container)) {" `
     "if (`$false) {"
 
 # --- and one where the destination is a name PowerShell owns ------------------
 
+Invoke-Mutation 'install: the source lib\ is spelled the way the destination is' `
+    'install.ps1' 'conventions.tests.ps1' `
+    "`$SRC_LIB = Join-Path `$TK_HOME 'lib'" `
+    "`$libDir = Join-Path `$TK_HOME 'lib'"
+Invoke-Mutation 'install: the elevated child swallows its own failure again' `
+    'lib\host.ps1' 'elevation.tests.ps1' `
+    "    `$inner = (`"& {{ try {{ & '{0}' {1} -Relaunched; ```$global:tkRc = ```$LASTEXITCODE }} `" +
+              `"catch {{ ```$_ | Out-String | Write-Output; ```$global:tkRc = 1 }} }} *> '{2}'; `" +
+              `"exit ```$global:tkRc`") -f `$TK_SELF, (Format-ChildArguments `$childArgs), `$transcript" `
+    "    `$inner = `"& '{0}' {1} -Relaunched *> '{2}'`" -f `$TK_SELF, (Format-ChildArguments `$childArgs), `$transcript"
 Invoke-Mutation 'install: the switcher path is called $SWITCH again' `
     'install.ps1' 'conventions.tests.ps1' `
     "`$SWITCHER = Join-Path `$DEST 'trigger-kvm.ps1'" `
@@ -251,8 +261,8 @@ Invoke-Mutation 'install: the line to paste points at a library, not the program
     "        Write-Host (`"Run this from an elevated PowerShell:  & '{0}' {1}`" -f `$PSCommandPath, (Format-ChildArguments `$childArgs))"
 Invoke-Mutation 'install: the elevated child is handed a library to run' `
     'lib\host.ps1' 'conventions.tests.ps1' `
-    "    `$inner = `"& '{0}' {1} -Relaunched *> '{2}'`" -f `$TK_SELF, (Format-ChildArguments `$childArgs), `$transcript" `
-    "    `$inner = `"& '{0}' {1} -Relaunched *> '{2}'`" -f `$PSCommandPath, (Format-ChildArguments `$childArgs), `$transcript"
+    '-f $TK_SELF, (Format-ChildArguments $childArgs), $transcript' `
+    '-f $PSCommandPath, (Format-ChildArguments $childArgs), $transcript'
 
 # --- revision 14 ---------------------------------------------------------------
 

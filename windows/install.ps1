@@ -183,13 +183,18 @@ $DEFAULT_SETTLE   = '0.75'
 # is a stack trace about Get-ChildItem, which reads as a broken program rather
 # than as a half-copied one -- and a half-copied install is exactly when this
 # happens.
-$libDir = Join-Path $TK_HOME 'lib'
-if (-not (Test-Path -LiteralPath $libDir -PathType Container)) {
-    Write-Host "install: $libDir is missing, so this copy is incomplete."
+#
+# SRC_LIB, not libDir: variable names are case-insensitive, so `$libDir` and the
+# `$LIBDIR` above were ONE variable, and this line -- which runs before any verb
+# -- pointed the install's DESTINATION at the source tree. It copied lib\*.ps1
+# onto itself and died there, having already copied the three files above it.
+$SRC_LIB = Join-Path $TK_HOME 'lib'
+if (-not (Test-Path -LiteralPath $SRC_LIB -PathType Container)) {
+    Write-Host "install: $SRC_LIB is missing, so this copy is incomplete."
     Write-Host 'install: fetch the source and run its install.ps1 again.'
     exit 1
 }
-foreach ($f in (Get-ChildItem -LiteralPath $libDir -Filter '*.ps1' -File | Sort-Object Name)) {
+foreach ($f in (Get-ChildItem -LiteralPath $SRC_LIB -Filter '*.ps1' -File | Sort-Object Name)) {
     . $f.FullName
 }
 

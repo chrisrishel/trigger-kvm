@@ -231,7 +231,9 @@ function Get-TopLevelAssignment {
         $n = $a.Left.VariablePath.UserPath
         # env: and other providers are not variables this is about.
         if ($n -match ':') { continue }
-        if ($out -notcontains $n) { $out += $n }
+        # -cnotcontains: two spellings of one name are the point of the check
+        # below, so they must both survive being collected.
+        if ($out -cnotcontains $n) { $out += $n }
     }
     return @($out)
 }
@@ -294,13 +296,85 @@ function Get-ShadowedName {
 $bound = @()
 foreach ($f in (Get-ShippedScript)) {
     foreach ($n in (Get-TopLevelAssignment $f.FullName)) {
-        if ($bound -notcontains $n) { $bound += $n }
+        # -cnotcontains, for the same reason as in the walk: `-notcontains` is
+        # case-insensitive and would drop the second spelling of a collision,
+        # which is the one thing this list is here to show.
+        if ($bound -cnotcontains $n) { $bound += $n }
     }
 }
 # A count, not a name: naming one would fire before the check below on the very
 # rename this exists to catch, and report the sentinel instead of the reason.
 Assert-True ($bound.Count -ge 10) `
     ("the AST walk found only {0} script-scope names; it is not reading the files" -f $bound.Count)
+
+# ---- ...and no two of them differ only in case, within one program -----------
+#
+# VARIABLE NAMES ARE CASE-INSENSITIVE. `$LIBDIR` was the destination lib\ and
+# `$libDir` the source one, sixty lines apart in install.ps1 -- ONE variable,
+# and the second assignment ran at load time, before any verb. So every install
+# copied lib\*.ps1 from the source onto the source and died there with the first
+# three files already copied, and `uninstall` would have deleted the working
+# tree's lib\ rather than the installed one.
+#
+# PER PROGRAM, because a scope is a program: install.ps1 dot-sources config.ps1
+# and lib\*.ps1 into its own, the switcher and the watcher each dot-source
+# config.ps1 into theirs, and nvapi-probe.ps1 stands alone. Tree-wide this reads
+# three collisions that are not: `$WATCH` and `$STAMP` in the installer against
+# `$watch` and `$stamp` in files it never loads, and `$CONFIG` against the
+# switcher's and watcher's `-Config` parameter.
+$libFiles = @(Get-ChildItem -LiteralPath (Join-Path $WinDir 'lib') -Filter '*.ps1' -File |
+              ForEach-Object { $_.FullName })
+$programs = @(
+    @{ Name = 'install.ps1'
+       Files = @((Join-Path $WinDir 'install.ps1'), (Join-Path $WinDir 'config.ps1')) + $libFiles }
+    @{ Name = 'event-watch.ps1'
+       Files = @((Join-Path $WinDir 'event-watch.ps1'), (Join-Path $WinDir 'config.ps1')) }
+    @{ Name = 'trigger-kvm.ps1'
+       Files = @((Join-Path $WinDir 'trigger-kvm.ps1'), (Join-Path $WinDir 'config.ps1')) }
+    @{ Name = 'nvapi-probe.ps1'; Files = @((Join-Path $WinDir 'nvapi-probe.ps1')) }
+)
+
+# NAMED, not inferred: a new shipped script joins a scope or starts one, and
+# that is a decision somebody makes here rather than a file quietly going
+# unchecked.
+$grouped = @($programs | ForEach-Object { $_.Files } | Sort-Object -Unique)
+$shipped = @(Get-ShippedScript | ForEach-Object { $_.FullName } | Sort-Object -Unique)
+Assert-Equal ($shipped -join "`n") ($grouped -join "`n") `
+    'every shipped script belongs to exactly the scopes named here'
+
+$collisions = @()
+foreach ($prog in $programs) {
+    $byCase = @{}
+    foreach ($f in $prog.Files) {
+        foreach ($n in (Get-TopLevelAssignment $f)) {
+            $k = $n.ToLowerInvariant()
+            if (-not $byCase.ContainsKey($k)) { $byCase[$k] = @() }
+            if ($byCase[$k] -cnotcontains $n) { $byCase[$k] += $n }
+        }
+    }
+    foreach ($k in @($byCase.Keys)) {
+        if ($byCase[$k].Count -gt 1) {
+            $collisions += ("{0}: {1}" -f $prog.Name, ($byCase[$k] -join ' and '))
+        }
+    }
+}
+Assert-Equal 0 $collisions.Count `
+    ("these are ONE variable, spelled two ways: " + ($collisions -join '; '))
+
+# ...and the walk keeps both spellings, which is the whole trick: a collector
+# that de-duplicates case-insensitively silently drops the evidence.
+$caseDir = Join-Path $env:TEMP ("tk-case-$PID")
+Remove-Item -LiteralPath $caseDir -Recurse -Force -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force -Path $caseDir | Out-Null
+$caseProbe = Join-Path $caseDir 'probe.ps1'
+@('$LIBDIR = ''one''', '$libDir = ''two''', '$Other = ''three''') |
+    Set-Content -LiteralPath $caseProbe -Encoding ASCII
+$caseNames = @(Get-TopLevelAssignment $caseProbe)
+Assert-True ($caseNames -ccontains 'LIBDIR' -and $caseNames -ccontains 'libDir') `
+    'both spellings must survive the walk, or the check above can never fire'
+Assert-Equal 3 $caseNames.Count 'and an ordinary name is collected once, not dropped'
+Remove-Item -LiteralPath $caseDir -Recurse -Force -ErrorAction SilentlyContinue
+
 $shadowed = @(Get-ShadowedName -Name $bound)
 Assert-Equal 0 $shadowed.Count `
     ("a shipped script binds a name PowerShell owns, so it reads as something else inside a " +

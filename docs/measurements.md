@@ -929,6 +929,35 @@ empty `-Exec`. `$foreach` and `$_` have the same shape; `$ErrorActionPreference`
 and the other preference variables do not, because nothing shadows them
 mid-statement.
 
+**2026-09-08, Windows -- `& '<script>' <args> *> '<file>'` captures neither the
+failure nor the exit code.** A terminating error propagates OUT of the redirected
+command and is reported after the redirection has ended, so the file holds only
+what was printed before it. Measured against a script that prints one line and
+then throws: the file has the line and not the error, and the host exits 1. The
+same shape flattens success too -- a script ending `exit 7` also came back as 1.
+
+Wrapping the call so the catch is inside the redirection fixes both:
+`& { try { & '<script>' <args>; $global:tkRc = $LASTEXITCODE } catch { $_ |
+Out-String | Write-Output; $global:tkRc = 1 } } *> '<file>'; exit $global:tkRc`
+-- the thrower's error is now in the file, and the clean script comes back 7.
+
+This is load-bearing because `-Verb RunAs` cannot be combined with
+`-RedirectStandardOutput`, so the transcript is the only way to see what an
+elevated child said, and its window is hidden. Live: an install failed in the
+elevated child and the parent printed a transcript containing one line and the
+words "what it reported is above".
+
+**2026-09-08, Windows -- variable names are case-insensitive, so `$LIBDIR` and
+`$libDir` are one variable.** `install.ps1` bound the first to the installed
+`lib\` and the second, sixty lines later, to the SOURCE `lib\` -- at load time,
+before any verb. Every install then created the source directory instead of the
+destination one, copied `lib\*.ps1` from the source onto the source, and threw
+`Cannot overwrite the item ... with itself` with `config.ps1`, `event-watch.ps1`
+and `trigger-kvm.ps1` already copied and `install.ps1` not. Diagnosed from the
+mtimes inside the installed directory, which `Copy-Item` preserves from the
+source: the three copied files carried that day's source timestamps and the
+files after them in the function did not.
+
 **2026-09-02, Windows -- an unelevated caller reads `Win32_Process.CommandLine`
 as EMPTY across the session boundary, so counting processes cannot see a
 session-0 watcher.** From an interactive session-3 shell: **183 of 183 session-0
