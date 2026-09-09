@@ -206,7 +206,7 @@ Assert-Match $r.Text 'trigger-kvm configure' 'saying what to do about it'
 # a real WMI device-change event and a real plug -- and the whole point of the
 # rule is that it is invisible until the day it matters.
 $src = Get-Content -Raw -LiteralPath $Watcher
-Assert-Match $src '\$stillHere = @\(\$arrived \| Where-Object \{ \$present\[\$_\] \}\)' `
+Assert-Match $src '\$stillHere = @\(\$arrived \| Where-Object \{ Test-StatePresent \$present\[\$_\] \}\)' `
     'the settle re-check must filter the devices that ARRIVED, not the whole watch list'
 
 # ---- "is a watcher running" comes from the LOCK ------------------------------
@@ -313,4 +313,78 @@ if (-not $sec) {
 }
 
 Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
+
+# ---- the listing modes need no config, and refuse nothing --------------------
+#
+# specs/detector.md 4. They are what `configure` and `discover` are built on, so
+# they have to answer on a machine with NO CONFIG AT ALL. They used to sit below
+# the settings block, which refuses a missing trigger.device -- so a fresh
+# install's walkthrough listed no triggers, and Save then refused for want of
+# them (revision 14, item 5). Nothing else on a new machine could get past that.
+
+function Invoke-Listing {
+    param([string]$Mode)
+    $psi = New-Object Diagnostics.ProcessStartInfo
+    $psi.FileName  = 'powershell.exe'
+    $psi.Arguments = '-NoProfile -ExecutionPolicy Bypass -File "{0}" {1} -Config "{2}"' -f
+                     $Watcher, $Mode, (Join-Path $tmp 'no-such-config')
+    $psi.UseShellExecute        = $false
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError  = $true
+    $psi.CreateNoWindow         = $true
+    $p  = [Diagnostics.Process]::Start($psi)
+    $so = $p.StandardOutput.ReadToEndAsync()
+    $se = $p.StandardError.ReadToEndAsync()
+    if (-not $p.WaitForExit(60000)) {
+        try { $p.Kill() } catch { }
+        throw "$Mode did not answer -- a listing mode must never wait for anything"
+    }
+    return [pscustomobject]@{ Code = $p.ExitCode; Text = "$($so.Result)`n$($se.Result)" }
+}
+
+Remove-Item -LiteralPath (Join-Path $tmp 'no-such-config') -Force -ErrorAction SilentlyContinue
+foreach ($mode in '-ListUsb', '-ListBluetooth') {
+    $r = Invoke-Listing $mode
+    Assert-Equal 0 $r.Code ("$mode must answer with no config at all")
+    Assert-NoMatch $r.Text 'REFUSING to start' ("$mode must refuse nothing")
+    Assert-NoMatch $r.Text 'trigger.device'    ("$mode must not even mention what it does not need")
+}
+
+# ---- AMBIGUOUS is a state, distinct from absent ------------------------------
+#
+# specs/detector.md 4.1, and the defect it closes on this platform: read as
+# ABSENT, unplugging one of two twins makes the entry resolve, the map flips to
+# present, and the loop reads that as an ARRIVAL -- so the monitors move because
+# a device LEFT (revision 14, item 2).
+Import-Subject -Script 'event-watch.ps1' -Functions @('Test-StatePresent')
+
+Assert-True (Test-StatePresent 'present')            'a resolved device is present'
+Assert-True (Test-StatePresent 'where')              'and so is one the remembered spot decided'
+Assert-True (-not (Test-StatePresent 'absent'))      'absent is not'
+Assert-True (-not (Test-StatePresent 'ambiguous'))   'and neither is ambiguous -- it is a THIRD state'
+
+# The edge itself, pinned at the line that decides it: reaching it needs a real
+# WMI device-change event and a real plug, and the whole point of the rule is
+# that it is invisible until the day it matters.
+$src = Get-Content -Raw -LiteralPath $Watcher
+Assert-Match $src '\$arrived\s+= @\(\$watch \| Where-Object \{ \(Test-StatePresent \$now\[\$_\.Key\]\) -and \$present\[\$_\.Key\] -eq ''absent'' \}' `
+    'an arrival is ABSENT -> PRESENT: leaving ambiguity re-baselines and never fires'
+
+# ---- every entry ambiguous is a watcher that could never fire ----------------
+#
+# specs/detector.md 4.1: refusing is the kinder answer, and it is loud under a
+# supervisor. Pinned structurally for the same reason -- reproducing it needs
+# two physically identical devices at one desk.
+Assert-Match $src 'if \(\$ambiguous\.Count -eq \$watch\.Count\) \{' `
+    'an all-ambiguous watch list refuses to start'
+Assert-Match $src 'every configured trigger is ambiguous' 'and says so in those words'
+
+# ---- a lock that fails for any reason other than "held" refuses --------------
+#
+# specs/detector.md 1. "Held" is a redundant start and exits 0; anything else is
+# a watcher that would otherwise run UNLOCKED, or die as a stack trace inside a
+# console-less wscript host with the self-heal relaunching it every minute.
+Assert-Match $src 'cannot create the single-instance lock' 'a lock it cannot create is a refusal'
+Assert-Match $src 'cannot take the single-instance lock'   'and so is one it cannot take'
+
 exit 0

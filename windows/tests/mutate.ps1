@@ -224,6 +224,111 @@ Invoke-Mutation 'install: a half-copied install throws instead of saying so' `
     "if (-not (Test-Path -LiteralPath `$libDir -PathType Container)) {" `
     "if (`$false) {"
 
+# --- revision 14 ---------------------------------------------------------------
+
+Invoke-Mutation 'detector: a listing mode refuses without a config again' `
+    'event-watch.ps1' 'detector.tests.ps1' `
+    '        foreach ($row in [BtPresence]::Describe()) { Write-Output $row }' `
+    '        if (-not (Test-Path -LiteralPath $Config)) { exit 2 }
+        foreach ($row in [BtPresence]::Describe()) { Write-Output $row }'
+Invoke-Mutation 'detector: ambiguous reads as present, so it fires' `
+    'event-watch.ps1' 'detector.tests.ps1' `
+    "    return (`$State -eq 'present' -or `$State -eq 'where')" `
+    "    return (`$State -ne 'absent')"
+Invoke-Mutation 'detector: leaving ambiguity counts as an arrival' `
+    'event-watch.ps1' 'detector.tests.ps1' `
+    "        `$arrived  = @(`$watch | Where-Object { (Test-StatePresent `$now[`$_.Key]) -and `$present[`$_.Key] -eq 'absent' } | ForEach-Object { `$_.Key })" `
+    "        `$arrived  = @(`$watch | Where-Object { (Test-StatePresent `$now[`$_.Key]) -and -not (Test-StatePresent `$present[`$_.Key]) } | ForEach-Object { `$_.Key })"
+Invoke-Mutation 'detector: an all-ambiguous watch list arms anyway' `
+    'event-watch.ps1' 'detector.tests.ps1' `
+    'if ($ambiguous.Count -eq $watch.Count) {' `
+    'if ($false) {'
+Invoke-Mutation 'detector: a lock it cannot create is not a refusal' `
+    'event-watch.ps1' 'detector.tests.ps1' `
+    '        Deny-Startup ("cannot create the single-instance lock: {0}" -f $_.Exception.Message) `
+                     ''nothing is watching until that is fixed.''' `
+    '        $mutex = $null'
+Invoke-Mutation 'detector: a lock it cannot take is not a refusal either' `
+    'event-watch.ps1' 'detector.tests.ps1' `
+    '    Deny-Startup ("cannot take the single-instance lock: {0}" -f $_.Exception.Message) `
+                 ''nothing is watching until that is fixed.''' `
+    '    $acquired = $true'
+
+Invoke-Mutation 'config: \s stops meaning whitespace in the regex sense' `
+    'config.ps1' 'config.tests.ps1' `
+    "        if (`$line -match '^\s*([A-Za-z0-9_.\-]+)\s*=\s*(.*?)\s*(?:#.*)?`$') {" `
+    "        if (`$line -match '^[ \t]*([A-Za-z0-9_.\-]+)[ \t]*=[ \t]*(.*?)[ \t]*(?:#.*)?`$') {"
+Invoke-Mutation 'config: computers come back in hex order, not file order' `
+    'lib\walkthrough.ps1' 'walkthrough.tests.ps1' `
+    '    foreach ($k in @($Cfg.Keys)) {' `
+    '    foreach ($k in ($Cfg.Keys | Sort-Object)) {'
+
+Invoke-Mutation 'monitors: a panel that is not attached is dropped on Save' `
+    'lib\answers.ps1' 'walkthrough.tests.ps1' `
+    '        if ($seen.Contains($label)) { continue }' `
+    '        continue'
+Invoke-Mutation 'monitors: a panel that is not attached is offered to the check' `
+    'lib\answers.ps1' 'walkthrough.tests.ps1' `
+    '    return @(@($Panels) | Where-Object { $_.Attached })' `
+    '    return @(@($Panels))'
+
+Invoke-Mutation 'pass: the signature forgets the map, so an edit survives it' `
+    'lib\answers.ps1' 'walkthrough.tests.ps1' `
+    "        `$rows += ('{0}|{1}|{2}|{3}' -f `$p.Label, `$p.Method, `$p.Transport, (`$map -join ','))" `
+    "        `$rows += ('{0}' -f `$p.Label)"
+Invoke-Mutation 'pass: a one-panel pass authorises a full pull' `
+    'lib\walkthrough.ps1' 'walkthrough.tests.ps1' `
+    '    return ($Ran.Sig -eq (Get-PassSignature -Panels (Get-AttachedManaged -Panels $Answers)))' `
+    '    return $true'
+Invoke-Mutation 'pass: an edit no longer retires it' `
+    'lib\walkthrough.ps1' 'walkthrough.tests.ps1' `
+    '    if ((Get-PassSignature -Panels $scoped) -eq $Ran.Sig) { return $Ran }
+    return $null' `
+    '    return $Ran'
+
+Invoke-Mutation 'triggers: a remembered where is dropped while the device is away' `
+    'lib\answers.ps1' 'walkthrough.tests.ps1' `
+    "        if (`$saved.Contains(`$e.Identity)) { return ('{0}@{1}' -f `$d, `$saved[`$e.Identity]) }" `
+    '        return $d'
+Invoke-Mutation 'triggers: a shared token is written without the port that decides it' `
+    'lib\discover.ps1' 'install.tests.ps1' `
+    "                Entry = `$ident + `$(if (`$token -and `$shared -and `$d.Where) { ""@`$(`$d.Where)"" } else { '' })" `
+    '                Entry = $ident'
+Invoke-Mutation 'triggers: the shared-token case is not reached, so a twin is unnameable' `
+    'lib\discover.ps1' 'install.tests.ps1' `
+    '                if (-not $token -and $d.Where) {' `
+    '                if ($false) {'
+
+Invoke-Mutation 'status: the watcher''s verdict on a qualified entry is not shown' `
+    'lib\host.ps1' 'install.tests.ps1' `
+    '            if ($said) { $out += (''           ^ {0}'' -f $said) }' `
+    '            if ($false) { $out += $said }'
+Invoke-Mutation 'status: an ambiguous entry reads as merely absent' `
+    'lib\host.ps1' 'install.tests.ps1' `
+    "                'ambiguous' { 'AMBIGUOUS -- more than one device answers to this and none is at the remembered spot, so it will NOT fire' }" `
+    "                'ambiguous' { '' }"
+
+Invoke-Mutation 'install: "no" grows a self-heal, so it comes back every minute' `
+    'lib\host.ps1' 'install.tests.ps1' `
+    "    if (`$tier -ne 'manual') { `$triggers += `$heal }" `
+    '    $triggers += $heal'
+Invoke-Mutation 'install: the closing words claim it is running when nothing is' `
+    'lib\host.ps1' 'install.tests.ps1' `
+    '    if (-not $running) {' `
+    '    if ($false) {'
+
+Invoke-Mutation 'install: a first Save throws because the directory is not there' `
+    'lib\answers.ps1' 'trigger-check.tests.ps1' `
+    '    if ($dir -and -not (Test-Path -LiteralPath $dir -PathType Container)) {' `
+    '    if ($false) {'
+Invoke-Mutation 'checks: a panel moves without the round preamble' `
+    'lib\checks.ps1' 'monitor-check.tests.ps1' `
+    '    if (-not (Show-MovePreamble -Panels @($Answer) -Stays $stays -Target $cand.Name -This $This -Hold $Hold)) {
+        return $null
+    }
+' `
+    ''
+
 # --- the config reader and its converters -------------------------------------
 
 Invoke-Mutation 'config: the value is not cut at the first #' `
@@ -421,8 +526,8 @@ Invoke-Mutation 'detector: an entry is stripped of whitespace, not trimmed' `
     "        `$raw = ""`$entry"" -replace '\s',''"
 Invoke-Mutation 'detector: settle asks whether ANY watched device is present' `
     'event-watch.ps1' 'detector.tests.ps1' `
-    '        $stillHere = @($arrived | Where-Object { $present[$_] })' `
-    '        $stillHere = @($watch | Where-Object { $present[$_.Key] })'
+    '        $stillHere = @($arrived | Where-Object { Test-StatePresent $present[$_] })' `
+    '        $stillHere = @($watch | Where-Object { Test-StatePresent $present[$_.Key] })'
 Invoke-Mutation 'detector: an empty device list arms and watches nothing' `
     'event-watch.ps1' 'detector.tests.ps1' `
     "if (`$watch.Count -eq 0) {
@@ -605,10 +710,13 @@ Invoke-Mutation 'token: a device alone on its id is given one anyway' `
     'lib\discover.ps1' 'install.tests.ps1' `
     '        $alone = ($mine.Count -eq 1)' `
     '        $alone = $false'
-Invoke-Mutation 'token: hubs come back, because the chosen name is filtered' `
+Invoke-Mutation 'token: a name filter comes back and hides a device' `
     'lib\discover.ps1' 'install.tests.ps1' `
-    "            if (@(`$d.Names | Where-Object { `$_ -match 'Hub|Host Controller|Root Complex' })) { continue }" `
-    "            if (`$name -match 'Hub|Host Controller|Root Complex') { continue }"
+    "            `$name = Get-BestDeviceName -Names `$d.Names
+            if (-not `$name) { continue }" `
+    "            `$name = Get-BestDeviceName -Names `$d.Names
+            if (-not `$name) { continue }
+            if (`$name -match 'Hub|Host Controller|Root Complex') { continue }"
 Invoke-Mutation 'token: the remembered spot is consulted before the token resolves' `
     'event-watch.ps1' 'detector.tests.ps1' `
     "        return [PSCustomObject]@{ Present = `$true;  How = 'token';     Count = 1 }" `
@@ -753,7 +861,7 @@ Invoke-Mutation 'naming: the review menu goes back to listing ids' `
     '                    if     ($false) { $c.Name }'
 Invoke-Mutation 'naming: the review menu shows a malformed entry as an ordinary device' `
     'lib\walkthrough.ps1' 'walkthrough.tests.ps1' `
-    '                    elseif (-not (ConvertFrom-TriggerDevices $d)[0].Ok) { "$d (malformed)" }' `
+    '                    elseif (-not $e.Ok) { "$d (malformed)" }' `
     '                    elseif ($false) { "$d (malformed)" }'
 Invoke-Mutation 'naming: status reports the trigger keys with no names' `
     'lib\host.ps1' 'install.tests.ps1' `

@@ -241,4 +241,27 @@ Assert-Equal '' $b.Token
 Assert-Equal '' $b.Spot
 Assert-Equal '' $b.Vid
 
+
+# ---- `\s` is whitespace in the REGEX's sense --------------------------------
+#
+# specs/config-format.md, "The line format": it includes the vertical tab and
+# the form feed, not just space and tab. Two readers that disagree about that
+# disagree about what is configured, silently and across machines. .NET's `\s`
+# covers both; this asserts it rather than assuming it, because the macOS
+# reader had to be changed to match (revision 14, item 16).
+$ws = Join-Path $env:TEMP ("tk-whitespace-$PID.cfg")
+$vt = [char]0x0B
+$ff = [char]0x0C
+@(
+    "$vt computer.this = pc"
+    "display.lg.name$ff = LG"
+    "trigger.debounce =${vt}3.0"
+) | Set-Content -LiteralPath $ws -Encoding ASCII
+$c = Read-Config -Path $ws
+Remove-Item -LiteralPath $ws -Force -ErrorAction SilentlyContinue
+
+Assert-Equal 'pc'  ([string]$c['computer.this'])      'a vertical tab before the key is whitespace'
+Assert-Equal 'LG'  ([string]$c['display.lg.name'])    'a form feed after it is too'
+Assert-Equal '3.0' ([string]$c['trigger.debounce'])   'and one leading the value is trimmed like any other'
+
 exit 0

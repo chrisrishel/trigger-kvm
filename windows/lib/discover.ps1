@@ -138,7 +138,7 @@ function Get-TriggerCandidates {
         $id = '{0}|{1}' -f $f[0], $key
         if (-not $devices.Contains($id)) {
             $devices[$id] = [PSCustomObject]@{
-                Key = $key; Tokens = @(); Names = @(); Where = $f[4]
+                Container = $f[0]; Key = $key; Tokens = @(); Names = @(); Where = $f[4]
             }
         }
         if ($f[3] -and $devices[$id].Tokens -notcontains $f[3]) { $devices[$id].Tokens += $f[3] }
@@ -159,32 +159,60 @@ function Get-TriggerCandidates {
         $mine  = @($grp.Group)
         $alone = ($mine.Count -eq 1)
         foreach ($d in $mine) {
-            $token = ''
+            # THE WRITER RULE, in its three cases -- specs/detector.md 4.1. It
+            # chooses for UNIQUENESS, not for quality.
+            $token  = ''
+            $shared = $false
             if (-not $alone) {
-                # Held by exactly one device in this group. Where none is, the
-                # device cannot be named apart from its twin and the row says so
-                # rather than writing a token that matches both.
+                # 1. A token held by exactly ONE device here, written alone. The
+                #    spot is then never consulted when matching, so a device
+                #    moved to another socket still matches.
                 $token = @($d.Tokens | Where-Object {
                     $t = $_
                     (@($mine | Where-Object { $_.Tokens -contains $t }).Count -eq 1)
                 } | Select-Object -First 1)
                 if ($token -isnot [string]) { $token = [string]$token }
+
+                # 2. Every candidate token is shared, but the devices sit at
+                #    DIFFERENT PLACES: the shared token PLUS where. `where` is
+                #    never written without a token, so this is the only path
+                #    that produces one.
+                if (-not $token -and $d.Where) {
+                    $sameSpot = @($mine | Where-Object { $_.Container -ne $d.Container -and $_.Where -eq $d.Where })
+                    if ($sameSpot.Count -eq 0) {
+                        $token = @($d.Tokens | Select-Object -First 1)
+                        if ($token -isnot [string]) { $token = [string]$token }
+                        $shared = [bool]$token
+                    }
+                }
+
+                # 3. Nothing distinguishes them: the BARE ID, because a
+                #    placeholder would match nothing and never fire, which is
+                #    worse than matching all of them. The row says so.
             }
             $name = Get-BestDeviceName -Names $d.Names
             if (-not $name) { continue }
-            # Hubs and controllers are attached permanently and never move.
-            #
-            # Tested against EVERY name the device reports, not the chosen one:
-            # choosing the best name defeats a filter aimed at the worst, and an
-            # ASM hub controller calls itself `ASM107x` while its driver calls
-            # it `Generic USB Hub`.
-            if (@($d.Names | Where-Object { $_ -match 'Hub|Host Controller|Root Complex' })) { continue }
+            # NOTHING IS FILTERED BY NAME, hubs included -- specs/configure.md
+            # 7.1. A hub that never moves is a bad trigger and a visible one;
+            # hiding it made the list disagree with what `discover` had shown a
+            # moment earlier, and the only judgement a name can support is the
+            # person's. The one thing withheld is a node that is not a device at
+            # all, which is the failed-enumeration check above.
 
+            # THE ENTRY THIS ROW WOULD BE WRITTEN AS, and the IDENTITY it is
+            # matched by, which are two different things when a token is shared.
+            #
+            # Key is the identity: no spot, because a device that moved sockets
+            # is still the same entry, and that is what the "currently a
+            # trigger" marker and the config round trip compare.
+            #
+            # Entry adds the spot in case 2 above, where the token alone cannot
+            # say which device this row is. Without it two rows would be written
+            # identically and picking either would configure the other.
+            $ident = $d.Key + $(if ($token) { "@$token" } else { '' })
             $usb += [PSCustomObject]@{
-                # IDENTITY, without the remembered spot: a device that moved
-                # sockets is still the same entry, so the "currently a trigger"
-                # marker and the config round trip both keep working.
-                Key   = $d.Key + $(if ($token) { "@$token" } else { '' })
+                Key   = $ident
+                Entry = $ident + $(if ($token -and $shared -and $d.Where) { "@$($d.Where)" } else { '' })
                 Bus   = 'USB'
                 Name  = $name
                 Roles = @($roles[$d.Key] | Where-Object { $_ })
@@ -192,6 +220,9 @@ function Get-TriggerCandidates {
                 Spot  = $d.Where
                 Twinned = (-not $alone)
                 Ambiguous = ((-not $alone) -and (-not $token))
+                # Case 2: the token is shared and the SPOT is what makes this
+                # row a different answer from its twin's.
+                Shared = $shared
                 State = ''
                 # Rank answers only HOW LIKELY THIS IS TO TRAVEL. It never
                 # picks the row's name; see Get-BestDeviceName.
@@ -214,7 +245,8 @@ function Get-TriggerCandidates {
             $parts = "$row" -split '\|', 3
             if ($parts.Count -lt 3) { continue }
             $bt += [PSCustomObject]@{
-                Key = 'bt:' + $parts[0]; Bus = 'BT'; Name = $parts[2]; Class = 'Bluetooth'
+                Key = 'bt:' + $parts[0]; Entry = 'bt:' + $parts[0]
+                Bus = 'BT'; Name = $parts[2]; Class = 'Bluetooth'; Shared = $false
                 # Present and empty rather than absent: Set-StrictMode makes
                 # reading a property that is not there terminating, and every
                 # consumer of a candidate reads these. A Bluetooth address

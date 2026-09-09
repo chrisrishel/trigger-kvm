@@ -86,6 +86,7 @@ param(
     # explicitly is for testing a device by hand without editing anything.
     [Parameter(ParameterSetName = 'Watch')]
     [Parameter(ParameterSetName = 'TestTrigger')]
+    [Parameter(ParameterSetName = 'Report')]
     [string[]]$Device,
 
     # Print "address|connected|name" for every paired Bluetooth device and exit.
@@ -113,6 +114,18 @@ param(
     # alongside, and this must not disturb it.
     [Parameter(Mandatory = $true, ParameterSetName = 'TestTrigger')]
     [switch]$TestTrigger,
+
+    # HOW EACH CONFIGURED ENTRY RESOLVES RIGHT NOW, as `raw|state`, one state
+    # per entry from `present`, `where`, `absent` and `ambiguous`.
+    #
+    # specs/status.md 4.1: that verdict comes from the watcher's own matching
+    # code, never from a second implementation of the rule -- a second one would
+    # be free to disagree with the one that decides whether a monitor moves, and
+    # `status` is where somebody looks when it did not.
+    #
+    # Takes no lock and runs nothing, like the other question modes.
+    [Parameter(Mandatory = $true, ParameterSetName = 'Report')]
+    [switch]$Report,
 
     # How long to wait for that arrival. Long enough to walk to the switch and back.
     [Parameter(ParameterSetName = 'TestTrigger')]
@@ -467,51 +480,17 @@ if ('BtPresence' -as [type]) {
     [AppDomain]::CurrentDomain.SetData($btStampKey, $btStamp)
 }
 
-# --- settings: explicit parameters win, config fills the rest ----------------
+# --- the listing modes -------------------------------------------------------
 #
-# $PSBoundParameters rather than checking for empty values: -Debounce has a default,
-# so "not supplied" and "supplied as the default" are otherwise indistinguishable,
-# and a config value would silently lose to a default nobody chose.
-$cfg = Read-Config -Path $Config
-
-# WHAT THIS WATCHER WAS TOLD, CHECKED BEFORE IT ARMS -- specs/detector.md 4.
+# THEY NEED NO CONFIG AND REFUSE NOTHING -- specs/detector.md 4. They are what
+# `configure` and `discover` are built on, so they have to answer on a machine
+# with no config at all: below this point the settings block refuses a missing
+# trigger.device, which on a fresh install left the walkthrough with no triggers
+# to list and Save then refusing for want of them.
 #
-# A bad input is REFUSED, loudly, NAMING THE ENTRY. Never defaulted, never
-# silently ignored: a watcher that starts with the wrong device list, or with a
-# debounce of zero because `three` parsed as 0, runs and never does the right
-# thing, which is the worst failure shape available here.
-#
-# Refusing under a supervisor means being restarted and refusing again. That is
-# the point -- it is loud in the log. What it must not be is SILENT, and it was:
-# the timings were a bare [double] cast under Set-StrictMode/Stop, so one bad
-# hand edit killed this process before it armed, inside a console-less wscript
-# host, with the 1-minute self-heal relaunching it to die again every minute and
-# nothing anywhere saying why.
-function Deny-Startup {
-    param([string]$Message)
-    Write-Log "REFUSING to start: $Message"
-    Write-Log "fix it in $Config, then:  trigger-kvm restart"
-    exit 2
-}
-
-if (-not $PSBoundParameters.ContainsKey('Device')) {
-    if (-not $cfg.Contains('trigger.device')) {
-        Deny-Startup "no -Device given and no trigger.device in the config -- run: trigger-kvm configure"
-    }
-    $Device = @($cfg['trigger.device'])
-}
-if (-not $PSBoundParameters.ContainsKey('Debounce') -and $cfg.Contains('trigger.debounce')) {
-    if (-not (Test-Seconds $cfg['trigger.debounce'])) {
-        Deny-Startup ("trigger.debounce = '{0}' is not a number of seconds (digits, or digits.digits)" -f $cfg['trigger.debounce'])
-    }
-    $Debounce = [double]$cfg['trigger.debounce']
-}
-if (-not $PSBoundParameters.ContainsKey('Settle') -and $cfg.Contains('trigger.settle')) {
-    if (-not (Test-Seconds $cfg['trigger.settle'])) {
-        Deny-Startup ("trigger.settle = '{0}' is not a number of seconds (digits, or digits.digits)" -f $cfg['trigger.settle'])
-    }
-    $Settle = [double]$cfg['trigger.settle']
-}
+# Here rather than lower down for the other half of the same reason -- listing
+# takes no lock, registers no events, writes no log, and cannot disturb a
+# running watcher.
 
 # Answer the Bluetooth question and stop. Placed here, after the binding is loaded
 # but before anything else, so listing takes no lock, registers no events, writes no
@@ -602,6 +581,52 @@ if ($ListUsb) {
 }
 
 
+# --- settings: explicit parameters win, config fills the rest ----------------
+#
+# $PSBoundParameters rather than checking for empty values: -Debounce has a default,
+# so "not supplied" and "supplied as the default" are otherwise indistinguishable,
+# and a config value would silently lose to a default nobody chose.
+$cfg = Read-Config -Path $Config
+
+# WHAT THIS WATCHER WAS TOLD, CHECKED BEFORE IT ARMS -- specs/detector.md 4.
+#
+# A bad input is REFUSED, loudly, NAMING THE ENTRY. Never defaulted, never
+# silently ignored: a watcher that starts with the wrong device list, or with a
+# debounce of zero because `three` parsed as 0, runs and never does the right
+# thing, which is the worst failure shape available here.
+#
+# Refusing under a supervisor means being restarted and refusing again. That is
+# the point -- it is loud in the log. What it must not be is SILENT, and it was:
+# the timings were a bare [double] cast under Set-StrictMode/Stop, so one bad
+# hand edit killed this process before it armed, inside a console-less wscript
+# host, with the 1-minute self-heal relaunching it to die again every minute and
+# nothing anywhere saying why.
+function Deny-Startup {
+    param([string]$Message, [string]$Fix = '')
+    Write-Log "REFUSING to start: $Message"
+    Write-Log $(if ($Fix) { $Fix } else { "fix it in $Config, then:  trigger-kvm restart" })
+    exit 2
+}
+
+if (-not $PSBoundParameters.ContainsKey('Device')) {
+    if (-not $cfg.Contains('trigger.device')) {
+        Deny-Startup "no -Device given and no trigger.device in the config -- run: trigger-kvm configure"
+    }
+    $Device = @($cfg['trigger.device'])
+}
+if (-not $PSBoundParameters.ContainsKey('Debounce') -and $cfg.Contains('trigger.debounce')) {
+    if (-not (Test-Seconds $cfg['trigger.debounce'])) {
+        Deny-Startup ("trigger.debounce = '{0}' is not a number of seconds (digits, or digits.digits)" -f $cfg['trigger.debounce'])
+    }
+    $Debounce = [double]$cfg['trigger.debounce']
+}
+if (-not $PSBoundParameters.ContainsKey('Settle') -and $cfg.Contains('trigger.settle')) {
+    if (-not (Test-Seconds $cfg['trigger.settle'])) {
+        Deny-Startup ("trigger.settle = '{0}' is not a number of seconds (digits, or digits.digits)" -f $cfg['trigger.settle'])
+    }
+    $Settle = [double]$cfg['trigger.settle']
+}
+
 # --- parse -Device ----------------------------------------------------------
 
 # Accepted forms, one per comma-separated entry:
@@ -635,6 +660,9 @@ foreach ($e in (ConvertFrom-TriggerDevices $Device)) {
     if ($e.Kind -eq 'usb') {
         $watch += [PSCustomObject]@{
             Kind = 'usb'
+            # AS WRITTEN, so -Report can hand a verdict back against the line in
+            # the file rather than against a canonicalisation of it.
+            Raw  = $e.Raw
             # UPPER hex here, lower in $e.Key. This one is the watcher's own
             # label, printed beside the WQL it was built with; the candidate
             # keys install.ps1 matches against are the lower-case ones. Do not
@@ -658,6 +686,7 @@ foreach ($e in (ConvertFrom-TriggerDevices $Device)) {
     else {
         $watch += [PSCustomObject]@{
             Kind = 'bt'
+            Raw  = $e.Raw
             Key  = $e.Key
             Wql  = $null
             # A Bluetooth address already names one device, so there is nothing
@@ -679,7 +708,7 @@ if ($watch.Count -eq 0) {
 
 # Is this USB device attached right now?
 
-function Test-UsbPresent {
+function Get-UsbState {
     param([string]$Wql, [string]$Token = '', [string]$Spot = '', [string]$Key = '')
 
     # -Verbose:$false so our own -Verbose does not drown the log in CIM's
@@ -691,8 +720,8 @@ function Test-UsbPresent {
     # id is present if anything matching it is. Returning here also means a
     # config written before tokens existed costs exactly nothing -- measured, the
     # branch below adds ~1.4 ms per sweep and this one adds none.
-    if (-not $Token) { return ($hits.Count -gt 0) }
-    if (-not (Initialize-DevName)) { return $false }
+    if (-not $Token) { return $(if ($hits.Count -gt 0) { 'present' } else { 'absent' }) }
+    if (-not (Initialize-DevName)) { return 'absent' }
 
     # specs/detector.md 4.1. Group the matched nodes into PHYSICAL DEVICES and
     # ask which of them carries the token. A vendor:product pair can name more
@@ -729,7 +758,26 @@ function Test-UsbPresent {
         Write-Log ("{0}: DISABLED -- {1} devices share this id and carry '{2}', and none is at the remembered spot. Every other trigger still works. Re-run configure to pick." -f `
                    $Key, $verdict.Count, $Token)
     }
-    return $verdict.Present
+
+    # THE VERDICT, not a bool -- specs/detector.md 4.1. AMBIGUOUS is a state
+    # DISTINCT FROM ABSENT, and the difference is what stops a monitor moving
+    # because a device LEFT: read as absent, unplugging one of two twins makes
+    # the entry resolve, the map flips false -> true, and the loop reads that as
+    # an arrival.
+    switch ($verdict.How) {
+        'token'     { return 'present' }
+        'spot'      { return 'where' }
+        'ambiguous' { return 'ambiguous' }
+        default     { return 'absent' }
+    }
+}
+
+# The four verdicts, and the two that mean the device is here. `where` is
+# present and says the remembered spot is what decided it, which `status` shows
+# and the log says at the moment it happens.
+function Test-StatePresent {
+    param([string]$State)
+    return ($State -eq 'present' -or $State -eq 'where')
 }
 
 # THE MATCHING RULE, as a pure function over already-gathered devices --
@@ -777,7 +825,8 @@ function Resolve-DeviceMatch {
 # line repeated 32 times per plug would bury the log it is trying to explain.
 $script:AmbiguousSaid = @{}
 
-# One sweep across every watched device, whatever its transport.
+# One sweep across every watched device, whatever its transport. Returns a map
+# of key -> state, one of `present`, `where`, `absent` or `ambiguous`.
 #
 # The Bluetooth list is enumerated ONCE here rather than per device: the API walks
 # the whole paired set on every call, and a single USB plug produces ~32 change
@@ -803,12 +852,21 @@ function Get-PresenceMap {
         if ($w.Kind -eq 'bt') {
             # CONNECTED, not paired. A paired-but-disconnected device keeps its PnP
             # node for years, which is exactly why this cannot use the USB path.
-            $map[$w.Key] = ($null -ne $bt -and $bt.ContainsKey($w.Addr) -and $bt[$w.Addr])
+            $map[$w.Key] = $(if ($null -ne $bt -and $bt.ContainsKey($w.Addr) -and $bt[$w.Addr]) { 'present' } else { 'absent' })
         } else {
-            $map[$w.Key] = Test-UsbPresent -Wql $w.Wql -Token $w.Token -Spot $w.Spot -Key $w.Key
+            $map[$w.Key] = Get-UsbState -Wql $w.Wql -Token $w.Token -Spot $w.Spot -Key $w.Key
         }
     }
     return $map
+}
+
+# How each entry resolves now. Deliberately here, after the presence functions
+# and before anything that arms or locks: it is a question about the devices,
+# not a second watcher, so a real one may be running alongside it.
+if ($Report) {
+    $state = Get-PresenceMap
+    foreach ($w in $watch) { Write-Output ('{0}|{1}' -f $w.Raw, $state[$w.Key]) }
+    exit 0
 }
 
 # Watch for one arrival and report it. Deliberately after the presence functions and
@@ -818,7 +876,11 @@ if ($TestTrigger) {
     $state = Get-PresenceMap
     Write-Host ''
     foreach ($w in $watch) {
-        Write-Host ('  {0,-20} {1}' -f $w.Key, $(if ($state[$w.Key]) { 'here now' } else { 'not here' }))
+        Write-Host ('  {0,-20} {1}' -f $w.Key, $(switch ($state[$w.Key]) {
+            'present'   { 'here now' }
+            'where'     { 'here now (the remembered spot decided which)' }
+            'ambiguous' { 'cannot tell which device this is -- it will not fire' }
+            default     { 'not here' } }))
     }
     Write-Host ''
     Write-Host '  Flip your switch AWAY from this computer, then back again.'
@@ -831,12 +893,15 @@ if ($TestTrigger) {
         $now = Get-PresenceMap
         foreach ($w in $watch) {
             if ($now[$w.Key] -eq $state[$w.Key]) { continue }
-            if ($now[$w.Key]) {
-                # An arrival is the event the watcher fires on, so this is the answer.
+            # The same edge the watch loop fires on: ABSENT -> PRESENT and
+            # nothing else. Leaving ambiguity is not an arrival, so this must
+            # not report one either, or the check would say the trigger works
+            # when the watcher would not have fired.
+            if ((Test-StatePresent $now[$w.Key]) -and $state[$w.Key] -eq 'absent') {
                 Write-Host ('  {0} arrived -- this is what fires the switch.' -f $w.Key)
                 exit 0
             }
-            Write-Host ('  {0} left.' -f $w.Key)
+            if (Test-StatePresent $state[$w.Key]) { Write-Host ('  {0} left.' -f $w.Key) }
         }
         $state = $now
     }
@@ -910,7 +975,17 @@ try {
 } catch {
     # No SeCreateGlobalPrivilege. Per-session exclusion is still better than none.
     $scope = 'Local'
-    $mutex = New-Object System.Threading.Mutex($false, $MUTEX_LOCAL)
+    try {
+        $mutex = New-Object System.Threading.Mutex($false, $MUTEX_LOCAL)
+    } catch {
+        # NOT "held", so this is not a redundant start -- specs/detector.md 1: a
+        # watcher that cannot establish its lock REFUSES, and never runs
+        # unlocked. Said rather than thrown, because unhandled it died as a
+        # stack trace inside a console-less wscript host and the self-heal
+        # relaunched it to do the same thing every minute.
+        Deny-Startup ("cannot create the single-instance lock: {0}" -f $_.Exception.Message) `
+                     'nothing is watching until that is fixed.'
+    }
 }
 
 # An ABANDONED mutex is a normal condition here, not an error. A watcher that is
@@ -942,6 +1017,10 @@ try {
 } catch [System.Threading.AbandonedMutexException] {
     $acquired = $true
     Write-Log 'took over an abandoned lock (the previous watcher was killed, not stopped)'
+} catch {
+    # Anything else is not "held" either, and the same rule applies.
+    Deny-Startup ("cannot take the single-instance lock: {0}" -f $_.Exception.Message) `
+                 'nothing is watching until that is fixed.'
 }
 
 if (-not $acquired) {
@@ -975,8 +1054,18 @@ Register-CimIndicationEvent -ClassName Win32_DeviceChangeEvent -SourceIdentifier
 # Prime: whatever is already plugged in at startup is the baseline and must not
 # fire. This is the equivalent of macOS draining the first iterator callback.
 $present    = Get-PresenceMap
-$alreadyOn  = @($present.GetEnumerator() | Where-Object { $_.Value } | ForEach-Object { $_.Key })
+$alreadyOn  = @($present.GetEnumerator() | Where-Object { Test-StatePresent $_.Value } | ForEach-Object { $_.Key })
 $lastFire   = [DateTime]::MinValue
+
+# EVERY ENTRY AMBIGUOUS IS A WATCHER THAT WOULD RUN AND NEVER FIRE --
+# specs/detector.md 4.1. Refusing is the kinder answer, and it is loud under a
+# supervisor. An entry that is merely ABSENT is usable and does not count
+# against this: absent is what every trigger looks like while the switch is on
+# the other computer.
+$ambiguous = @($present.GetEnumerator() | Where-Object { $_.Value -eq 'ambiguous' } | ForEach-Object { $_.Key })
+if ($ambiguous.Count -eq $watch.Count) {
+    Deny-Startup ("every configured trigger is ambiguous ({0}) -- more than one device answers to each id and none is at its remembered spot, so nothing could ever fire. Re-run: trigger-kvm configure" -f ($ambiguous -join ', '))
+}
 
 Write-Log ("watching {0} device(s); exec={1} arg={2} debounce={3}s settle={4}s" -f `
            $watch.Count, $Exec, $Arg, $Debounce, $Settle)
@@ -994,10 +1083,14 @@ try {
         if (-not $ev) { continue }
         Remove-Event -EventIdentifier $ev.EventIdentifier -ErrorAction SilentlyContinue
 
-        $now     = Get-PresenceMap
-        $arrived = @($watch | Where-Object { $now[$_.Key] -and -not $present[$_.Key] } | ForEach-Object { $_.Key })
-        $departed = @($watch | Where-Object { $present[$_.Key] -and -not $now[$_.Key] } | ForEach-Object { $_.Key })
-        $present = $now
+        # AN ARRIVAL IS ABSENT -> PRESENT, and nothing else -- specs/detector.md
+        # 2 and 4.1. An entry that was AMBIGUOUS and is now resolved has not
+        # arrived: its devices were here all along and only "which" changed, so
+        # the baseline moves and nothing fires.
+        $now      = Get-PresenceMap
+        $arrived  = @($watch | Where-Object { (Test-StatePresent $now[$_.Key]) -and $present[$_.Key] -eq 'absent' } | ForEach-Object { $_.Key })
+        $departed = @($watch | Where-Object { (Test-StatePresent $present[$_.Key]) -and -not (Test-StatePresent $now[$_.Key]) } | ForEach-Object { $_.Key })
+        $present  = $now
 
         # Log the rejection rather than dropping it silently. Without this line a
         # quiet log cannot distinguish "no event was delivered" from "an event was
@@ -1022,7 +1115,7 @@ try {
 
         # Settle re-check: is any device that just arrived STILL here?
         $present = Get-PresenceMap
-        $stillHere = @($arrived | Where-Object { $present[$_] })
+        $stillHere = @($arrived | Where-Object { Test-StatePresent $present[$_] })
         if (-not $stillHere) {
             Write-Log 'device vanished during settle window; ignoring (glitch, not a switch)'
             continue

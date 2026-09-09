@@ -18,11 +18,15 @@ function Get-DefaultComputerName {
     return 'pc'
 }
 
-# Every computer the config already names, in the order it first appears.
+# Every computer the config already names, in FILE ORDER -- specs/config-format.md,
+# "Ordering". Sorting the keys orders by the input HEX, which puts the same two
+# computers in opposite orders on two panels purely by which socket each was
+# plugged into; the order somebody listed their computers in is the one they
+# will look for, in `status` and on a re-run.
 function Get-KnownComputers {
     param([System.Collections.IDictionary]$Cfg)
     $out = @()
-    foreach ($k in ($Cfg.Keys | Sort-Object)) {
+    foreach ($k in @($Cfg.Keys)) {
         if ($k -match '^display\.[^.]+\.input\.') {
             $n = "$($Cfg[$k])".Trim().ToLower()
             if ($n -and -not ($out -contains $n)) { $out += $n }
@@ -497,11 +501,23 @@ function Read-Monitors {
                          elseif ($a) { '{0}: {1}' -f $a.Label, (@($a.Map.Keys) -join '/') }
                          else { 'not managed' })
         }
+
+        # THEN EVERY CONFIGURED PANEL THAT IS NOT ATTACHED TODAY --
+        # specs/configure.md 6. Shown as such, kept on Save, and not checked:
+        # not being enumerated is not an answer, and only unmanaging forgets.
+        $absent = @($out | Where-Object { -not $_.Attached })
+        foreach ($a in $absent) {
+            $items  += $a.Name
+            $detail += ('{0}: {1}, not attached' -f $a.Label, (@($a.Map.Keys) -join '/'))
+        }
+
         $items += ''; $detail += ''
         $done = $items.Count
         $items += 'Done'; $detail += ''
 
-        # The first panel nobody has answered for, else the way out.
+        # The first ATTACHED panel nobody has answered for, else the way out. An
+        # absent one is never landed on: there is nothing to check and nothing
+        # the person can confirm.
         $land = $done
         for ($i = 0; $i -lt $Found.Count; $i++) { if ($detail[$i] -eq 'not managed') { $land = $i; break } }
 
@@ -514,7 +530,18 @@ function Read-Monitors {
         $pick = Select-One -Items $items -Detail $detail -Default $land -Escapable
         if ($pick -eq $done -or $pick -lt 0) { return @($out) }
 
-        $f = $Found[$pick]
+        # An absent panel is picked from the second block, and is described by
+        # its own record rather than by an enumeration that does not have it.
+        if ($pick -ge $Found.Count) {
+            $a = $absent[$pick - $Found.Count]
+            $f = [PSCustomObject]@{
+                EdidVendor = $a.EdidVendor; EdidProduct = $a.EdidProduct
+                Mfg = $a.Mfg; Connector = 'not attached'; Name = $a.Name
+                Transports = @($a.Transport); Panels = 1
+            }
+        } else {
+            $f = $Found[$pick]
+        }
         # Refuse BEFORE any question is asked. Answers are looked up by the id,
         # so one record would serve both panels and the second answer would
         # overwrite the first: the person configures two monitors and has
@@ -531,16 +558,22 @@ function Read-Monitors {
         $key   = '{0:X4}:{1:X4}' -f $f.EdidVendor, $f.EdidProduct
         $prior = @($out | Where-Object { $_.Key -eq $key }) | Select-Object -First 1
         if (-not $prior) { $prior = Get-PriorDisplay -Existing $Existing -Key $key -Computers $Computers }
+        $wasAttached = -not ($prior -and ($prior.PSObject.Properties.Name -contains 'Attached') -and -not $prior.Attached)
 
         # Every OTHER managed panel's short name, so this one cannot take a name
         # already in use. This panel's own is excluded: keeping it is no clash.
         $others = @($out | Where-Object { $_.Key -ne $key } | ForEach-Object { $_.Label })
-        $a = Get-DisplayAnswers -Found $f -Existing $prior -Computers $Computers -This $This `
-                                -Labels $others
+        $answer = Get-DisplayAnswers -Found $f -Existing $prior -Computers $Computers -This $This `
+                                     -Labels $others
         # $BACK means CHANGE NOTHING, so the panel keeps whatever row it had.
-        if ($a -is [string]) { continue }
+        if ($answer -is [string]) { continue }
         $out = @($out | Where-Object { $_.Key -ne $key })
-        if ($a) { $out += $a }
+        if ($answer) {
+            # A panel that was not attached when the list was drawn is still not
+            # attached now; answering for it must not promote it into the check.
+            $answer.Attached = $wasAttached
+            $out += $answer
+        }
     }
 }
 
@@ -555,8 +588,13 @@ function Read-Triggers {
     Write-Host 'USB rows are attached right now; Bluetooth rows are everything paired.'
     Write-Host ''
 
+    # CHECKED BY IDENTITY, not by the whole entry: a saved entry whose device
+    # has moved to another socket is still this row, and it stays selected
+    # (specs/configure.md 7).
+    $now = @(@($Current) | ForEach-Object { (ConvertFrom-TriggerDevices $_)[0] } |
+             ForEach-Object { if ($_.Ok) { $_.Identity } else { $_.Raw } })
     $checked = @()
-    for ($i = 0; $i -lt $Cands.Count; $i++) { if ($Current -contains $Cands[$i].Key) { $checked += $i } }
+    for ($i = 0; $i -lt $Cands.Count; $i++) { if ($now -contains $Cands[$i].Key) { $checked += $i } }
 
     $help = '  Keyboards and mice often share a vendor id with something that never' + "`n" +
             '  moves. The full vendor+product is matched, so pick the exact rows.'
@@ -572,7 +610,9 @@ function Read-Triggers {
                     $(if ($_.State) { '   ' + $_.State } else { '' }) })
 
     if ($null -eq $picked) { return @($Current) }
-    return @($picked | ForEach-Object { $Cands[$_].Key })
+    # THE ENTRY, not the identity: where a token is shared, the remembered spot
+    # is the only thing that says which of two rows was picked.
+    return @($picked | ForEach-Object { $Cands[$_].Entry })
 }
 
 # Whether to put bin\ on the user PATH -- specs/configure.md 9. Returns $true or
@@ -652,6 +692,32 @@ function Read-Tier {
     return $(switch ($pick) { 1 { 'user' } 2 { 'manual' } default { 's4u' } })
 }
 
+# A PASS BELONGS TO THE VALUES THAT PASSED -- specs/configure.md 10.8. Retired
+# the moment those values change, whatever changed them: a map edit, a method or
+# transport change, an unmanage, or a rename or removal that moved a computer
+# through a map (5.2).
+#
+# ONE place decides, rather than a `$ranDisplays = $null` at each site that
+# might have edited something -- which is how a pass survived an edit nobody
+# remembered to list.
+function Update-PassValidity {
+    param($Ran, $Answers)
+    if (-not $Ran -or -not $Ran.Ok) { return $Ran }
+    $scoped = @(@($Answers) | Where-Object { $Ran.Scope -contains $_.Label })
+    if ((Get-PassSignature -Panels $scoped) -eq $Ran.Sig) { return $Ran }
+    return $null
+}
+
+# May the trigger check pull for real? Only with a current pass covering EVERY
+# managed, attached panel (specs/configure.md 10.8 and 11). A pass covering one
+# panel has a different signature from one covering them all, so it cannot
+# authorise a full pull.
+function Test-PullAllowed {
+    param($Ran, $Answers)
+    if (-not $Ran -or -not $Ran.Ok) { return $false }
+    return ($Ran.Sig -eq (Get-PassSignature -Panels (Get-AttachedManaged -Panels $Answers)))
+}
+
 # --- the menu -----------------------------------------------------------------
 
 # The walkthrough. Current settings pre-fill every default, so a re-run is a
@@ -727,8 +793,11 @@ function Invoke-Configure {
         # what gets shown and what Write-ConfigFile puts back. Rewriting it into
         # something that parses would edit somebody's file behind them and still
         # not start the watcher.
+        # `.Key` rather than `.Identity`: the entry INCLUDING any remembered
+        # spot, so a saved `where` survives a re-save while its device is away
+        # (specs/configure.md 7).
         $devices = @(ConvertFrom-TriggerDevices $seed['trigger.device'] |
-                     ForEach-Object { if ($_.Ok) { $_.Identity } else { $_.Raw } })
+                     ForEach-Object { if ($_.Ok) { $_.Key } else { $_.Raw } })
     }
     $cands = @(Get-TriggerCandidates)
 
@@ -751,6 +820,9 @@ function Invoke-Configure {
     # straight back here. Three groups separated by blank rows the cursor skips:
     # what you set, what you can check, and what ends the walkthrough.
     while ($true) {
+        # Asked here, once, so no section has to remember to retire a pass.
+        $ranDisplays = Update-PassValidity -Ran $ranDisplays -Answers $answers
+
         # One punctuation rule down the value column (specs/configure.md 3.1):
         #   ", " separates items   ": " separates a label from its value
         #   "/"  joins things sharing one label
@@ -768,9 +840,10 @@ function Invoke-Configure {
             $(if ($devices.Count -eq 0) { 'not set' } else {
                 (@($devices | ForEach-Object {
                     $d = $_
-                    $c = @($cands | Where-Object { $_.Key -eq $d }) | Select-Object -First 1
+                    $e = (ConvertFrom-TriggerDevices $d)[0]
+                    $c = @($cands | Where-Object { $e.Ok -and $_.Key -eq $e.Identity }) | Select-Object -First 1
                     if     ($c) { $c.Name }
-                    elseif (-not (ConvertFrom-TriggerDevices $d)[0].Ok) { "$d (malformed)" }
+                    elseif (-not $e.Ok) { "$d (malformed)" }
                     else   { $d }
                 }) -join ', ') })
             $(switch ($newTier) { 's4u' { 'from boot' } 'manual' { 'no' }
@@ -859,21 +932,13 @@ function Invoke-Configure {
                 # The maps have already followed the edit -- Read-Computers
                 # carried each rename and removal into them as it happened.
                 # Adding a computer leaves them alone, and the Monitors row then
-                # shows which panels do not know about it yet.
-                #
-                # specs/configure.md 5.2: a rename or a removal invalidates a
-                # monitor-input pass, because the values that passed are no
-                # longer the values configured.
-                if ($m.Edited) { $ranDisplays = $null }
+                # shows which panels do not know about it yet. Whether that
+                # retired a pass is Update-PassValidity's question, at the top
+                # of this loop.
             }
             'Monitors' {
-                $before  = ($answers | ForEach-Object { '{0}={1}' -f $_.Label, (@($_.Map.Values) -join ',') }) -join '|'
                 $answers = @(Read-Monitors -Found $found -Answers $answers -Computers $computers `
                                            -This $this -Existing $seed)
-                $after   = ($answers | ForEach-Object { '{0}={1}' -f $_.Label, (@($_.Map.Values) -join ',') }) -join '|'
-                # A pass belongs to the values that passed. Looking at the list
-                # and changing nothing is not an edit (specs/configure.md 6).
-                if ($before -ne $after) { $ranDisplays = $null }
 
                 # specs/configure.md 8: giving a panel a transport that cannot
                 # switch before login makes an already-chosen boot tier
@@ -898,8 +963,12 @@ function Invoke-Configure {
                 # Only pull for real once the monitor values have been confirmed
                 # by someone looking at them: before that, a pull would aim
                 # unverified values at panels.
-                $ranTriggers = Invoke-TriggerTest -Devices $devices -Answers $answers -This $this `
-                                                  -Pull:([bool]($ranDisplays -and $ranDisplays.Ok))
+                # AS THEY WILL BE SAVED, `where` included -- specs/configure.md
+                # 11. Handed the bare identities, the one-shot would watch for
+                # something the saved config does not describe.
+                $ranTriggers = Invoke-TriggerTest -This $this -Answers $answers `
+                    -Devices @(Get-TriggerEntries -Devices $devices -Candidates $cands -Existing $existing) `
+                    -Pull:(Test-PullAllowed -Ran $ranDisplays -Answers $answers)
             }
             { $_ -like 'Test the monitor input*' } {
                 $ranDisplays = Invoke-DisplayTest -Answers $answers -This $this

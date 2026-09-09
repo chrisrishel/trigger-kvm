@@ -11,11 +11,13 @@ Import-Subject -Script 'lib\menu.ps1'        -Functions @(
     'Read-Default','Read-YesNo','Get-MenuWidth','Write-MenuFrame','Clear-ToLineEnd',
     'Split-Detail','Get-ItemWidth','Get-MenuRow','Select-One','Select-Many','Join-Names')
 Import-Subject -Script 'lib\answers.ps1'     -Variables @('DIALECTS','MCCS_INPUTS','RENAMED_KEYS') -Functions @(
-    'Set-PanelAnswer','Get-InputName','Get-InputTable','Format-Byte','Get-DisplayMap',
+    'New-PanelAnswer','Set-PanelAnswer','Get-InputName','Get-InputTable','Format-Byte',
+    'Get-DisplayMap','Get-AttachedManaged','Get-PassSignature','Get-TriggerEntries',
     'Get-CarriedKeys','Write-ConfigFile')
 Import-Subject -Script 'lib\walkthrough.ps1' -Functions @('Read-InputValue')
 Import-Subject -Script 'lib\checks.ps1'      -Functions @(
-    'Show-MovePreamble','Move-PanelsAndBack','Invoke-BlindWalk','Test-OneValue',
+    'Show-MovePreamble','Move-PanelsAndBack','Get-SwingCandidate','Invoke-PanelSwing',
+    'Invoke-BlindWalk','Test-OneValue',
     'Invoke-DisplayTest','Invoke-TestRound','Invoke-TestRoundBody','Test-OneComputer',
     'Test-DisplayInput')
 # Write-ConfigFile sanitises through ConvertTo-ConfigValue, which lives beside
@@ -49,10 +51,11 @@ function Get-Said { return (Get-Printed) }
 function Reset-Said { Reset-Printed }
 
 function New-Panel {
-    param([string]$Label, $Map)
+    param([string]$Label, $Map, [bool]$Attached = $true)
     [PSCustomObject]@{
         Label = $Label; Name = $Label.ToUpper(); Method = 'standard'; Transport = 'nvapi'
-        Vendor = '0x0001'; Product = '0x0001'; EdidVendor = 1; Mfg = 'XXX'; Key = "k-$Label"
+        Vendor = '0x0001'; Product = '0x0001'; EdidVendor = 1; EdidProduct = 1
+        Mfg = 'XXX'; Key = "k-$Label"; Attached = $Attached
         Map = $Map
     }
 }
@@ -116,7 +119,9 @@ Set-Answers @(
     '',             #   enter when ready
     'n',            # mac round 1: not all of them
     '2',            #   which ones did not -> ASUS
+    '',             #   ASUS alone goes through the round preamble too (10.2)
     '4',            #   its mac input, re-picked
+    '',             #   and so does the retry
     'y',            #   retry of ASUS alone
     '','y',         # mac round 2
     '','y'          # linux round
@@ -151,14 +156,16 @@ function New-LgPanel {
     param([string]$Method = 'standard')
     [PSCustomObject]@{
         Label = 'lg'; Name = 'LG ULTRAGEAR+'; Method = $Method; Transport = 'nvapi'
-        Vendor = '0x1E6D'; Product = '0x9E9D'; EdidVendor = 0x1E6D; Mfg = 'GSM'
+        Vendor = '0x1E6D'; Product = '0x9E9D'; EdidVendor = 0x1E6D; EdidProduct = 0x9E9D
+        Mfg = 'GSM'; Attached = $true
         Key = '1E6D:9E9D'; Map = [ordered]@{ pc = '0x11'; mac = '0x12' }
     }
 }
 
 # On standard, and this vendor documents an alternative.
 Reset-Said; Reset-Sent; Set-Outcomes @(3, 0)
-Set-Answers @('','n', '1', '1', '2')     # ready / nothing happened / yes, try LG / two inputs
+Set-Answers @('','n', '', '1', '1', '2', '')   # ready / nothing happened / ready again /
+                                               # yes, try LG / two inputs / ready for the retry
 $panel = New-LgPanel
 $r = Invoke-DisplayTest -Answers @($panel) -This 'pc'
 $said = Get-Said
@@ -174,7 +181,7 @@ Assert-Equal 'lg-alt' $panel.Method 'accepting it switches the method'
 # ALREADY on the manufacturer method, and it answers nothing. Standard is what is
 # left to try, and this is the direction that did not exist.
 Reset-Said; Reset-Sent; Set-Outcomes @(3, 0)
-Set-Answers @('','n', '1', '1', '2')
+Set-Answers @('','n', '', '1', '1', '2', '')
 $panel = New-LgPanel -Method 'lg-alt'
 $r = Invoke-DisplayTest -Answers @($panel) -This 'pc'
 $said = Get-Said
@@ -188,7 +195,7 @@ Assert-Equal 'standard' $panel.Method 'accepting it switches back'
 
 # Declining leaves the panel alone and the rest of the setup standing.
 Reset-Said; Reset-Sent; Set-Outcomes @(3)
-Set-Answers @('','n', '2')               # no, leave this monitor out
+Set-Answers @('','n', '', '2')           # ready / nothing / ready again / leave it out
 $panel = New-LgPanel -Method 'lg-alt'
 $r = Invoke-DisplayTest -Answers @($panel) -This 'pc'
 Assert-True (-not $r.Ok) 'a declined escalation is a failed check'
@@ -196,7 +203,7 @@ Assert-Equal 'lg-alt' $panel.Method 'and changes nothing'
 
 # On standard with no documented alternative: the dead end, which is still correct.
 Reset-Said; Reset-Sent; Set-Outcomes @(3)
-Set-Answers @('','n')
+Set-Answers @('','n', '')
 $r = Invoke-DisplayTest -Answers (New-Solo) -This 'pc'
 Assert-Match (Get-Said) 'did not answer the standard channel, and no manufacturer values'
 Assert-True (-not $r.Ok)
@@ -213,9 +220,11 @@ Assert-True (-not $r.Ok)
 Reset-Said; Reset-Sent; Set-Outcomes @(2, 0)
 Set-Answers @(
     '','n',         # ready / it did not come back
+    '',             # the diagnostic swing has its own preamble (10.2)
     'y',            # do you know which input it is? yes
     '4',            #   HDMI 2 (0x12) -- mac's, so this must be refused...
-    '3'             #   ...and HDMI 1 (0x11) picked instead
+    '3',            #   ...and HDMI 1 (0x11) picked instead
+    ''              # and the retry is a swing too
 )
 $panel = New-Panel 'lg' ([ordered]@{ pc = '0x0F'; mac = '0x12' })
 $r = Invoke-DisplayTest -Answers @($panel) -This 'pc'

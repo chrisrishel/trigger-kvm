@@ -561,11 +561,34 @@ function Get-InputMapReport {
 # uses. A caller pre-normalising it is what let `status` disagree with the
 # watcher about the same line of the same file.
 #
+# WHAT THE WATCHER MAKES OF EACH QUALIFIED ENTRY -- specs/status.md 4.1. Asked
+# of event-watch.ps1 through -Report, never re-derived here: a second
+# implementation of detector.md 4.1 would be free to disagree with the one that
+# decides whether a monitor moves, and this screen is where somebody looks when
+# it did not.
+#
+# Returns a map of the entry AS WRITTEN to its verdict, so a caller matches on
+# the string in the file rather than on a canonicalisation of it. Empty when
+# there is nothing to ask about or no watcher script to ask.
+function Get-TriggerVerdicts {
+    param([string[]]$Entries)
+
+    $out = @{}
+    if (-not $Entries) { return $out }
+    $ew = Get-Sibling 'event-watch.ps1'
+    if (-not (Test-Path -LiteralPath $ew -PathType Leaf)) { return $out }
+    foreach ($line in (Invoke-Sibling -Script $ew -Arguments @('-Report', '-Device', ($Entries -join ',')) 2>$null)) {
+        $f = "$line" -split '\|', 2
+        if ($f.Count -eq 2) { $out[$f[0]] = $f[1] }
+    }
+    return $out
+}
+
 # [CmdletBinding()] so a caller left on an old parameter name THROWS rather than
 # reporting "none configured" for a perfectly good config.
 function Get-TriggerReport {
     [CmdletBinding()]
-    param([string[]]$Entries, $Candidates)
+    param([string[]]$Entries, $Candidates, [hashtable]$Verdicts = @{})
 
     $devs = @(ConvertFrom-TriggerDevices $Entries)
     if ($devs.Count -eq 0) { return @('triggers : none configured  <- nothing will ever fire') }
@@ -573,9 +596,10 @@ function Get-TriggerReport {
     $by = @{}
     foreach ($c in @($Candidates)) { if ($c) { $by[$c.Key] = $c } }
 
-    $out     = @()
-    $missing = 0
-    $bad     = 0
+    $out       = @()
+    $missing   = 0
+    $bad       = 0
+    $ambiguous = 0
     for ($i = 0; $i -lt $devs.Count; $i++) {
         $label = $(if ($i -eq 0) { 'triggers :' } else { '          ' })
         $d = $devs[$i]
@@ -592,6 +616,21 @@ function Get-TriggerReport {
         # AS WRITTEN, never canonicalised: this is the string to go looking for
         # in the config file.
         $out += ('{0} {1,-20} {2}' -f $label, $d.Raw, $name)
+
+        # An entry that says WHICH device gets the watcher's verdict on it
+        # (specs/status.md 4.1). An unqualified one does not: `present` and
+        # `absent` are already what the row above says, and repeating them would
+        # be noise on every ordinary desk.
+        if ($d.Ok -and $d.Token -and $Verdicts.Contains($d.Raw)) {
+            $said = switch ($Verdicts[$d.Raw]) {
+                'where'     { "the device at '$($d.Spot)' is the one this matches -- re-run configure if you have moved them" }
+                'ambiguous' { 'AMBIGUOUS -- more than one device answers to this and none is at the remembered spot, so it will NOT fire' }
+                'present'   { "matched by '$($d.Token)'" }
+                default     { '' }
+            }
+            if ($said) { $out += ('           ^ {0}' -f $said) }
+            if ($Verdicts[$d.Raw] -eq 'ambiguous') { $ambiguous++ }
+        }
     }
     # NAMED, not pointed at with a `^`: the absent-device note below owns that
     # arrow, and when both fire two arrows point up at different rows.
@@ -602,6 +641,12 @@ function Get-TriggerReport {
     if ($missing -gt 0) {
         $out += '           ^ normal when the switch is on the other computer: that is'
         $out += '             what these devices arriving here is going to mean.'
+    }
+    # Not the same fact as "absent", and not the same remedy: unplug one, or
+    # re-run configure so a different device is named.
+    if ($ambiguous -gt 0) {
+        $out += '           an AMBIGUOUS entry is disabled, not absent. Every other trigger'
+        $out += '           still works.  Fix:  trigger-kvm configure'
     }
     return $out
 }
@@ -801,7 +846,8 @@ function Invoke-Status {
     # running" and "it will fire" looked like the same claim. The RAW value goes
     # in; named through the same door `discover` uses.
     $entries = @(if ($c.Contains('trigger.device')) { $c['trigger.device'] })
-    Get-TriggerReport -Entries $entries -Candidates (Get-TriggerCandidates) |
+    Get-TriggerReport -Entries $entries -Candidates (Get-TriggerCandidates) `
+                      -Verdicts (Get-TriggerVerdicts -Entries $entries) |
         ForEach-Object { Write-Host $_ }
 
     return $(if ($t) { 0 } else { 1 })
@@ -1286,9 +1332,11 @@ function Invoke-Install {
     # day: a surviving watcher held the lock and the new one exited on it. A
     # registered task with nothing watching is the failure shape that looks most
     # like success, so it gets its own sentence.
+    $running = $true
     if ($tier -ne 'manual') {
         Start-Sleep -Seconds 2
-        if (Test-WatcherRunning) {
+        $running = Test-WatcherRunning
+        if ($running) {
             Write-Log 'a watcher is running.'
         } else {
             Write-Log 'WARNING: the task is registered but NO WATCHER is running.'
@@ -1302,10 +1350,24 @@ function Invoke-Install {
     if ($FORUSER -eq $ME) { Set-InstalledPath }
 
     # What is left to say is short: it is running, when it will run again, how
-    # to see that, and the four things you can do to it (specs/configure.md 12).
+    # to see that, and the four things you can do to it.
+    #
+    # AND IT CLAIMS ONLY WHAT WAS REACHED -- specs/configure.md 12. "trigger-kvm
+    # is running" is a claim about the watcher, and a tier that registered but
+    # did not come up has not made it true; saying it anyway sends somebody away
+    # believing their desk is set up.
     $onPath = @((Get-UserPath) -split ';') -contains $BINDIR
     $cmd    = if ($onPath) { 'trigger-kvm' } else { $SHIM }
     Write-Host ''
+    if (-not $running) {
+        Write-Host '  Installed, and set up to start on its own -- but NO WATCHER is running'
+        Write-Host '  yet, so nothing will switch until one does.'
+        Write-Host ''
+        Write-Host ("    {0} logs        why it did not start" -f $cmd)
+        Write-Host ("    {0} restart     try again" -f $cmd)
+        Write-Host ''
+        return 1
+    }
     if ($tier -eq 'manual') {
         Write-Host '  Done. trigger-kvm is running, but will NOT come back after a restart --'
         Write-Host '  start it yourself with:  trigger-kvm restart'

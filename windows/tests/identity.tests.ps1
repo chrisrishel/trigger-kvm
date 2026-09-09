@@ -192,7 +192,8 @@ $script:asked = 0
 $script:picks = @(0, 2)
 $prior = @([PSCustomObject]@{ Key = '06B3:42E0'; Label = 'asus'
                               Map = [ordered]@{ 'pc' = '0x11' }; Method = 'standard'
-                              Transport = 'nvapi'; Name = 'PG42UQ' })
+                              Transport = 'nvapi'; Name = 'PG42UQ'; Attached = $true
+                              EdidVendor = 0x06B3; EdidProduct = 0x42E0; Mfg = 'AUS' })
 Reset-Printed
 $still = @(Read-Monitors -Found $twins -Answers $prior -Computers @('pc','mac') -This 'pc')
 Assert-Equal 1      $still.Count    'an answer that predates the second panel survives the refusal'

@@ -11,7 +11,7 @@ Set-StrictMode -Version Latest          # as install.ps1 runs
 
 Import-Subject -Script 'lib\menu.ps1'    -Functions @('Read-Default','Read-YesNo')
 Import-Subject -Script 'lib\answers.ps1' -Variables @('RENAMED_KEYS') -Functions @(
-    'Get-CarriedKeys','Write-ConfigFile')
+    'Get-TriggerEntries','Get-CarriedKeys','Write-ConfigFile')
 Import-Subject -Script 'lib\checks.ps1'  -Functions @('Invoke-TriggerTest')
 # Write-ConfigFile sanitises through ConvertTo-ConfigValue, which lives beside
 # the reader in config.ps1 -- specs/config-format.md, "A writer must not write
@@ -156,4 +156,28 @@ Assert-Equal '' ($script:watcher -join ',')
 Assert-NoMatch (Get-Printed) 'running watcher' 'a fresh install has no watcher to talk about'
 
 Remove-Item -LiteralPath $global:CONFIG -Force -ErrorAction SilentlyContinue
+
+# ---- the first run on a fresh machine can write its config -------------------
+#
+# %LOCALAPPDATA%\trigger-kvm\ does not exist until something creates it, and the
+# walkthrough writes the config at Save -- before the install path that would
+# have made the directory. Set-Content does not create parents, so under
+# $ErrorActionPreference = 'Stop' that is a DirectoryNotFoundException with
+# every question answered and nothing written. Measured 2026-09-08; the
+# reference PC has had the directory since before the rename, so it had never
+# been seen live.
+
+$fresh = Join-Path $env:TEMP ("tk-fresh-$PID\trigger-kvm\config")
+Remove-Item -LiteralPath (Split-Path -Parent (Split-Path -Parent $fresh)) `
+            -Recurse -Force -ErrorAction SilentlyContinue
+Assert-True (-not (Test-Path -LiteralPath (Split-Path -Parent $fresh))) `
+    'the fixture must start with no directory, or this proves nothing'
+
+Write-ConfigFile -Path $fresh -Displays @() -Devices @('usb:046d:0843') `
+                 -Tier 'user' -This 'pc' -Existing @{}
+Assert-True (Test-Path -LiteralPath $fresh) 'a first Save creates the directory it writes into'
+Assert-Equal 'pc' ([string](Read-Config -Path $fresh)['computer.this']) 'and the file is readable'
+Remove-Item -LiteralPath (Split-Path -Parent (Split-Path -Parent $fresh)) `
+            -Recurse -Force -ErrorAction SilentlyContinue
+
 exit 0

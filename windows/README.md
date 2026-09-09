@@ -105,7 +105,14 @@ platform:
   follow the switch until somebody has logged in. Choosing it also disables the
   "from boot" row, and `status` names the panel it strands.
 - A monitor check sends the panels in scope away and back and asks once; one
-  panel always stays on this computer.
+  panel always stays on this computer. Every path that moves a panel goes
+  through that same warning -- a retry, and the transport-only check made when
+  no other computer is configured, included.
+- A pass belongs to the panels it checked and to their method, transport and
+  map. Any edit to those puts the row back to `untested`, and the trigger check
+  pulls for real only while every managed, attached panel holds a current pass.
+- A configured monitor that is not attached today is shown as such, kept on
+  Save, and not checked. Only unmanaging forgets it.
 - The trigger check stands the installed watcher down first. On the boot tier
   that would need a password, so instead it says the running watcher will also
   fire, before you flip.
@@ -160,18 +167,32 @@ list offers every PAIRED device. An arrival is debounced (`trigger.debounce`,
 default 3 s) and settled (`trigger.settle`, default 0.75 s): it fires only if
 the device that arrived is still there. Devices present at startup never fire.
 
+A watched entry is in one of FOUR states, not two: `present`, `where` (present,
+and the remembered port is what said which device this is), `absent`, and
+`ambiguous` -- more than one device answers to the id and none is at the
+remembered port. **An arrival is `absent` -> `present` and nothing else**, so
+unplugging one of two identical devices resolves the entry without firing
+anything, and a watcher whose every entry is ambiguous refuses to start rather
+than running and never firing.
+
 ```powershell
 event-watch.ps1 -Exec PATH [-Arg pull] -Device usb:VVVV:PPPP[@token[@where]]|bt:AAAAAAAAAAAA
                 [-Debounce S] [-Settle S] [-LogFile PATH] [-MaxLogBytes N] [-Config PATH] [-Verbose]
 event-watch.ps1 -ListUsb          what could be a trigger: container|vid|pid|token|where|name
 event-watch.ps1 -ListBluetooth    every paired device: address|connected|name
+event-watch.ps1 -Report           how each entry resolves now: entry|present|where|absent|ambiguous
 event-watch.ps1 -IsRunning        is a watcher running, from the lock. Exit 0 means yes
 event-watch.ps1 -TestTrigger -Device ... [-Timeout S]   report ONE arrival and exit, running nothing
 ```
 
+The listing and reporting modes need no config and refuse nothing: they have to
+answer on a machine with no config at all, because they are what `configure` is
+built on.
+
 Single instance is a named mutex: `Global\`, so it covers the whole computer and
 not one session, falling back to `Local\` only where the account may not create
-a global name. A watcher that finds the global name held by another account
+a global name. A lock that cannot be established for any reason other than
+"held" is a refusal, never a watcher that runs unlocked. A watcher that finds the global name held by another account
 stands down rather than falling back, or the two tiers would each get a watcher.
 A force-killed watcher leaves the mutex ABANDONED, which is a normal condition
 here and not an error -- see [`AGENTS.md`](AGENTS.md). The log rotates at

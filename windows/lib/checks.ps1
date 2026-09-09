@@ -82,12 +82,33 @@ function Show-MovePreamble {
 # nothing here needs to know which monitor the window is on, and a wrong guess
 # costs a few seconds of black rather than a stranded session.
 function Move-PanelsAndBack {
-    param($Panels, [string]$Target, [string]$This, [string]$Config, [int]$Hold)
+    param($Panels, [hashtable]$Away, [string]$This, [string]$Config, [int]$Hold)
 
-    foreach ($a in $Panels) { Send-Input -Label $a.Label -Value $a.Map[$Target] -Config $Config }
+    foreach ($a in $Panels) { Send-Input -Label $a.Label -Value $Away[$a.Label] -Config $Config }
     Start-Sleep -Seconds $Hold
     foreach ($a in $Panels) { Send-Input -Label $a.Label -Value $a.Map[$This] -Config $Config }
     Start-Sleep -Seconds 2
+}
+
+# Where one panel goes for a check: the target computer's input, or -- with no
+# other computer configured -- the first value on its channel that is not this
+# computer's, because then the only claim left to test is that the transport
+# reaches it. Returns $null when the panel has nowhere to go.
+function Get-SwingCandidate {
+    param($Answer, [string]$Target, [string]$This)
+
+    if ($Target) {
+        if (-not $Answer.Map.Contains($Target)) { return $null }
+        return [PSCustomObject]@{ Value = $Answer.Map[$Target]; Name = $Target; IsComputer = $true }
+    }
+    $here  = $Answer.Map[$This]
+    $table = Get-InputTable -Method $Answer.Method -Map $Answer.Map
+    foreach ($n in $table.Keys) {
+        if ($table[$n] -ine $here) {
+            return [PSCustomObject]@{ Value = $table[$n]; Name = $n; IsComputer = $false }
+        }
+    }
+    return $null
 }
 
 # --- checking the monitor inputs ----------------------------------------------
@@ -106,13 +127,25 @@ function Move-PanelsAndBack {
 function Invoke-DisplayTest {
     param($Answers, [string]$This)
 
-    # Every managed panel, kept whole even when only one is being checked.
-    $All = @($Answers)
+    # A CONFIGURED PANEL THAT IS NOT ATTACHED IS NOT OFFERED and cannot be
+    # checked (specs/configure.md 6 and 10.1): nobody can watch a monitor that
+    # is not there change. It keeps its keys and stays out of the scope.
+    $All = @(Get-AttachedManaged -Panels $Answers)
+    if ($All.Count -eq 0) {
+        Write-Host ''
+        Write-Host '  No managed monitor is attached right now, so there is nothing to check.'
+        return [PSCustomObject]@{ Ok = $false; Backed = $true; Text = 'not checked'; Sig = ''; Scope = @() }
+    }
+
     $tmp = Join-Path ([IO.Path]::GetTempPath()) ('trigger-kvm-test-{0}.cfg' -f $PID)
     $bad = @()
     try {
+        # The WHOLE answer set goes to the throwaway config, absent panels
+        # included: the switcher is asked to move one label at a time, and a
+        # config missing the others would not be the config being tested.
         Write-ConfigFile -Path $tmp -Displays $Answers -Devices @() -Tier 'user' -This $This -Existing @{}
 
+        $Answers = $All
         $others = @()
         foreach ($a in $Answers) {
             foreach ($m in $a.Map.Keys) { if ($m -ne $This -and -not ($others -contains $m)) { $others += $m } }
@@ -120,13 +153,12 @@ function Invoke-DisplayTest {
 
         # Which monitor to check -- their intent, not the tool's convenience.
         # Backing out here is `not checked`, never a pass (specs/configure.md 10.1).
-        $Answers = @($Answers)
         if ($Answers.Count -gt 1) {
             Write-Host ''
             Write-Host '  Which monitor do you want to check?'
             $rows = @(@('All of them') + @($Answers | ForEach-Object { $_.Name }))
             $pick = Select-One -Items $rows -Default 0 -Escapable
-            if ($pick -lt 0) { return [PSCustomObject]@{ Ok = $false; Backed = $true; Text = 'not checked' } }
+            if ($pick -lt 0) { return [PSCustomObject]@{ Ok = $false; Backed = $true; Text = 'not checked'; Sig = ''; Scope = @() } }
             if ($pick -gt 0) { $Answers = @($Answers[$pick - 1]) }
         }
 
@@ -156,7 +188,7 @@ function Invoke-DisplayTest {
 
             foreach ($r in $rounds) {
                 $moving = @($r | ForEach-Object { $_.Label })
-                $stays  = @($All | Where-Object { -not ($moving -contains $_.Label) })
+                $stays  = @(Get-AttachedManaged -Panels $All | Where-Object { -not ($moving -contains $_.Label) })
                 foreach ($f in (Invoke-TestRound -Panels $r -Stays $stays -Target $m -All $All `
                                                  -This $This -Config $tmp)) {
                     if (-not ($bad -contains $f)) { $bad += $f }
@@ -168,9 +200,22 @@ function Invoke-DisplayTest {
     }
 
     # Declining is not a failure and must not read as a pass either.
-    if ($bad -contains '(skipped)') { return [PSCustomObject]@{ Ok = $false; Backed = $true; Text = 'not checked' } }
-    if ($bad.Count -gt 0) { return [PSCustomObject]@{ Ok = $false; Backed = $false; Text = ('trouble with ' + ($bad -join ', ')) } }
-    return [PSCustomObject]@{ Ok = $true; Backed = $false; Text = 'all responded' }
+    $scope = @($Answers | ForEach-Object { $_.Label })
+    if ($bad -contains '(skipped)') {
+        return [PSCustomObject]@{ Ok = $false; Backed = $true; Text = 'not checked'; Sig = ''; Scope = @() }
+    }
+    if ($bad.Count -gt 0) {
+        return [PSCustomObject]@{ Ok = $false; Backed = $false; Text = ('trouble with ' + ($bad -join ', ')); Sig = ''; Scope = $scope }
+    }
+    # A PASS IS BOUND TO WHAT IT CHECKED -- specs/configure.md 10.8. The scope
+    # and the signature travel with it, so any later edit to a panel's method,
+    # transport or map retires it, and a one-panel pass cannot stand for the
+    # others.
+    return [PSCustomObject]@{
+        Ok = $true; Backed = $false; Text = 'all responded'
+        Scope = $scope
+        Sig   = (Get-PassSignature -Panels $Answers)
+    }
 }
 
 # One round: send a group of panels to one computer together, bring them back,
@@ -186,12 +231,36 @@ function Invoke-TestRound {
                                  -Config $Config -Hold $Hold)
 }
 
+# ONE PANEL, ONE SWING: the preamble, the move, and the questions -- the shape
+# every path that moves a panel takes (specs/configure.md 10.2). Returns the
+# outcome, or $null when the person declined at the preamble, which reads as
+# `not checked` rather than as a failure.
+function Invoke-PanelSwing {
+    param($Answer, $All, [string]$Target, [string]$This, [string]$Config, [int]$Hold = 8)
+
+    $cand = Get-SwingCandidate -Answer $Answer -Target $Target -This $This
+    if (-not $cand) { return $null }
+
+    # What stays is measured against every managed, ATTACHED panel, not just
+    # this one: a panel nobody asked to check is still somewhere to put a window.
+    $stays = @(Get-AttachedManaged -Panels $All | Where-Object { $_.Label -ne $Answer.Label })
+    if (-not (Show-MovePreamble -Panels @($Answer) -Stays $stays -Target $cand.Name -This $This -Hold $Hold)) {
+        return $null
+    }
+    Move-PanelsAndBack -Panels @($Answer) -Away @{ $Answer.Label = $cand.Value } `
+                       -This $This -Config $Config -Hold $Hold
+    return (Test-DisplayInput -Name $Answer.Name -CandidateName $cand.Name -ThisName $This `
+                              -IsComputer:$cand.IsComputer)
+}
+
 # The half after the explaining: swing, then find out what happened. One
 # question, and narrowing only on failure (specs/configure.md 10.3).
 function Invoke-TestRoundBody {
     param($Panels, [string]$Target, $All, [string]$This, [string]$Config, [int]$Hold)
 
-    Move-PanelsAndBack -Panels $Panels -Target $Target -This $This -Config $Config -Hold $Hold
+    $away = @{}
+    foreach ($a in $Panels) { $away[$a.Label] = $a.Map[$Target] }
+    Move-PanelsAndBack -Panels $Panels -Away $away -This $This -Config $Config -Hold $Hold
 
     $names = @($Panels | ForEach-Object { $_.Name })
     Write-Host ''
@@ -216,8 +285,9 @@ function Invoke-TestRoundBody {
     return $bad
 }
 
-# Switch one display to a candidate input, hold, bring it BACK automatically,
-# and only then ask -- specs/configure.md 10.4.
+# THE FOUR OUTCOMES, asked after a swing has already happened --
+# specs/configure.md 10.4. The moving is Invoke-PanelSwing's, so that every
+# path that moves a panel goes through one preamble and one swing (10.2).
 #
 # Returns 0 correct, 1 changed to the WRONG thing, 2 changed and did not come
 # back, 3 nothing happened. Four outcomes, because with a computer named the
@@ -237,20 +307,6 @@ function Test-DisplayInput {
     param([string]$Label, [string]$Name, [string]$Candidate, [string]$CandidateName,
           [string]$Current, [string]$ThisName, [switch]$IsComputer,
           [int]$Hold = 8, [string]$Config = $CONFIG)
-
-    Write-Host ''
-    Write-Host ("  Switching $Name to $CandidateName for ${Hold}s, then back automatically.")
-    if ($IsComputer) {
-        Write-Host ("  Watch that monitor -- you should see $CandidateName on it.")
-        Write-Host '  If that computer is asleep or off it will say No Signal, which still'
-        Write-Host '  proves the switch worked.'
-    } else {
-        Write-Host '  Watch that monitor. It only has to CHANGE -- if nothing is plugged into'
-        Write-Host '  that input it will say No Signal, and that still proves the switch worked.'
-    }
-    Send-Input -Label $Label -Value $Candidate -Config $Config
-    Start-Sleep -Seconds $Hold
-    if ($Current) { Send-Input -Label $Label -Value $Current -Config $Config; Start-Sleep -Seconds 2 }
 
     # Asked as it happened, in the order it happened: did it go, and did it come
     # back. One question with four answers made the reader hold every failure in
@@ -299,22 +355,14 @@ function Test-OneComputer {
     # and the switcher reads the method from the file.
     Write-ConfigFile -Path $Config -Displays $All -Devices @() -Tier 'user' -This $This -Existing @{}
 
-    $here = $Answer.Map[$This]
-    if ($Target) {
-        $outcome = Test-DisplayInput -Label $Answer.Label -Name $Answer.Name -IsComputer `
-                                     -Candidate $Answer.Map[$Target] -CandidateName $Target `
-                                     -Current $here -ThisName $This -Config $Config
-    } else {
-        # Nothing else is on this panel, so there is no claim to check beyond
-        # "the transport reaches it". Any other input value will do.
-        $table = Get-InputTable -Method $Answer.Method -Map $Answer.Map
-        $n = @($table.Keys | Where-Object { $table[$_] -ine $here } | Select-Object -First 1)
-        if (-not $n) { return $true }
-        $outcome = Test-DisplayInput -Label $Answer.Label -Name $Answer.Name `
-                                     -Candidate $table[$n[0]] -CandidateName $n[0] `
-                                     -Current $here -ThisName $This -Config $Config
-    }
-
+    # THE SWING, preamble included, whether this is the first attempt, a retry
+    # after a repair, or the transport-only check made when no other computer is
+    # configured (specs/configure.md 10.2 and 10.7).
+    $outcome = Invoke-PanelSwing -Answer $Answer -All $All -Target $Target -This $This `
+                                 -Config $Config
+    # Nowhere to send it, or the person declined at the warning. Neither is a
+    # failure of the panel.
+    if ($null -eq $outcome) { return $true }
     if ($outcome -eq 0) { return $true }
     if ($Attempt -ge 2) { return $false }   # bounded: one retry per fix
 

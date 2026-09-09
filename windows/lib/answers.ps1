@@ -63,16 +63,23 @@ $RENAMED_KEYS = @{
 function New-PanelAnswer {
     param([string]$Label, [string]$Name, [string]$Method = 'standard', [string]$Transport = '',
           [int]$EdidVendor, [int]$EdidProduct, [string]$Mfg = '',
-          [System.Collections.IDictionary]$Map = $null)
+          [System.Collections.IDictionary]$Map = $null,
+          # A CONFIGURED PANEL THAT IS NOT ATTACHED TODAY is still an answer --
+          # specs/configure.md 6. It is shown as such, keeps every key on Save,
+          # and cannot be checked; not being enumerated is not an answer, and
+          # only unmanaging forgets it.
+          [bool]$Attached = $true)
 
     return [PSCustomObject]@{
         Label      = $Label
         Name       = $Name
         Method     = $Method
         Transport  = $Transport
+        Attached   = $Attached
         Vendor     = ('0x{0:X4}' -f $EdidVendor)
         Product    = ('0x{0:X4}' -f $EdidProduct)
         EdidVendor = $EdidVendor
+        EdidProduct = $EdidProduct
         Mfg        = $Mfg
         Key        = ('{0:X4}:{1:X4}' -f $EdidVendor, $EdidProduct)
         Map        = $(if ($Map) { $Map } else { [ordered]@{} })
@@ -279,22 +286,72 @@ function Get-PriorDisplay {
 }
 
 # Rebuild the panel records straight from the config, asking nothing. What the
-# Monitors menu opens with.
+# Monitors menu opens with: the attached panels in the order they are attached,
+# then every configured panel that is NOT attached today (specs/configure.md 6).
 function Get-ConfiguredAnswers {
     param($Found, [System.Collections.IDictionary]$Existing, [string[]]$Computers = @())
 
-    $out = @()
+    $out  = @()
+    $seen = @{}
     foreach ($f in $Found) {
         $key   = '{0:X4}:{1:X4}' -f $f.EdidVendor, $f.EdidProduct
         $prior = Get-PriorDisplay -Existing $Existing -Key $key -Computers $Computers
         if (-not $prior) { continue }
+        $seen[$prior.Label] = $true
         $out += New-PanelAnswer -Label $prior.Label `
             -Name $(if ($Existing.Contains("display.$($prior.Label).name")) { $Existing["display.$($prior.Label).name"] } else { $prior.Label }) `
             -Method $(if ($prior.Method) { $prior.Method } else { 'standard' }) `
             -Transport $(if ($prior.Transport) { $prior.Transport } else { 'nvapi' }) `
             -EdidVendor $f.EdidVendor -EdidProduct $f.EdidProduct -Mfg $f.Mfg -Map $prior.Map
     }
+
+    # Every other panel the config names. Dropping these on Save is a silent
+    # loss of real work: a monitor unplugged for the afternoon, or on a desk
+    # somebody is rebuilding, is not somebody answering "stop managing it".
+    foreach ($k in @($Existing.Keys)) {
+        if ($k -notmatch '^display\.([^.]+)\.vendor$') { continue }
+        $label = $Matches[1]
+        if ($seen.Contains($label)) { continue }
+        $ven = ConvertTo-Word $Existing["display.$label.vendor"]
+        $pro = ConvertTo-Word $Existing["display.$label.product"]
+        # An id that does not parse names no panel at all, attached or not.
+        if ($null -eq $ven -or $null -eq $pro) { continue }
+        $seen[$label] = $true
+        $out += New-PanelAnswer -Label $label `
+            -Name $(if ($Existing.Contains("display.$label.name")) { $Existing["display.$label.name"] } else { $label }) `
+            -Method $(if ($Existing.Contains("display.$label.method")) { $Existing["display.$label.method"] } else { 'standard' }) `
+            -Transport $(if ($Existing.Contains("display.$label.transport")) { "$($Existing["display.$label.transport"])".Trim().ToLower() } else { 'nvapi' }) `
+            -EdidVendor $ven -EdidProduct $pro `
+            -Map (Get-DisplayMap -Existing $Existing -Label $label -Computers $Computers) `
+            -Attached $false
+    }
     return $out
+}
+
+# The managed panels a check may move: attached, because a panel that is not
+# there cannot be watched changing (specs/configure.md 10.1).
+function Get-AttachedManaged {
+    param($Panels)
+    return @(@($Panels) | Where-Object { $_.Attached })
+}
+
+# WHAT A PASS COVERS -- specs/configure.md 10.8. A monitor-input pass is bound
+# to the panels in SCOPE and to each one's method, transport and map, so any
+# edit to those retires it and the row goes back to `untested`.
+#
+# A string, because the only question ever asked of it is "is this still the
+# thing that passed?". Sorted by label so scope order cannot make two equal
+# scopes look different.
+function Get-PassSignature {
+    param($Panels)
+
+    $rows = @()
+    foreach ($p in (@($Panels) | Sort-Object Label)) {
+        $map = @()
+        foreach ($m in $p.Map.Keys) { $map += ('{0}={1}' -f $m, $p.Map[$m]) }
+        $rows += ('{0}|{1}|{2}|{3}' -f $p.Label, $p.Method, $p.Transport, ($map -join ','))
+    }
+    return ($rows -join ';')
 }
 
 # --- writing it back ----------------------------------------------------------
@@ -324,6 +381,44 @@ function Get-CarriedKeys {
         $out += ('{0} = {1}' -f $k, $Existing[$k])
     }
     return @($out | Sort-Object)
+}
+
+# THE TRIGGER ENTRIES AS THEY WILL BE WRITTEN: the identity, plus the remembered
+# spot where the entry has a token to hang it on.
+#
+# The spot comes from the device if it is here, and FROM THE FILE IF IT IS NOT
+# (specs/configure.md 7): a `where` is not dropped because the device is away
+# today, or a re-run while the switch is on the other computer would quietly
+# widen a qualified entry back to its bare id.
+#
+# One answer, so the config writer and the one-shot the trigger check runs
+# cannot disagree about what is configured (specs/configure.md 11).
+function Get-TriggerEntries {
+    param([string[]]$Devices, $Candidates = @(), [System.Collections.IDictionary]$Existing = @{})
+
+    $saved = @{}
+    if ($Existing.Contains('trigger.device')) {
+        foreach ($e in (ConvertFrom-TriggerDevices $Existing['trigger.device'])) {
+            if ($e.Ok -and $e.Spot) { $saved[$e.Identity] = $e.Spot }
+        }
+    }
+
+    return @(@($Devices) | ForEach-Object {
+        $d = $_
+        $e = (ConvertFrom-TriggerDevices $d)[0]
+        # A malformed entry is written back EXACTLY as it was: rewriting it into
+        # something that parses would edit somebody's file behind them and still
+        # not start the watcher.
+        if (-not $e.Ok) { return $d }
+        # It already carries its spot -- it came from a candidate row that knew
+        # which device it was, or from the file unchanged.
+        if ($e.Spot) { return $d }
+        # Only a tokened entry can gain one: detector.md 4.1 confines `where` to
+        # breaking a tie, and there is nothing to break a tie between otherwise.
+        if (-not $e.Token) { return $d }
+        if ($saved.Contains($e.Identity)) { return ('{0}@{1}' -f $d, $saved[$e.Identity]) }
+        return $d
+    })
 }
 
 # Rewrite the config from the answers -- specs/config-format.md.
@@ -412,14 +507,10 @@ function Write-ConfigFile {
         '# device: usb:VVVV:PPPP (bare VVVV:PPPP means usb) or bt:AAAAAAAAAAAA.'
         '#         Bluetooth fires on CONNECTED, and every PAIRED device is offered.'
         ''
-        # The remembered spot is appended HERE rather than carried in the key,
-        # because it is not part of a device's identity: an entry whose device
-        # moved sockets is still the same entry (specs/detector.md 4.1).
-        ("trigger.device   = {0}" -f (@($Devices | ForEach-Object {
-            $d = $_
-            $c = @($Candidates | Where-Object { $_.Key -eq $d }) | Select-Object -First 1
-            if ($c -and $d -like '*@*' -and $c.Spot) { '{0}@{1}' -f $d, $c.Spot } else { $d }
-        }) -join ', '))
+        # The remembered spot is appended by Get-TriggerEntries rather than
+        # carried in the key, because it is not part of a device's identity: an
+        # entry whose device moved sockets is still the same entry.
+        ("trigger.device   = {0}" -f ((Get-TriggerEntries -Devices $Devices -Candidates $Candidates -Existing $Existing) -join ', '))
         ("trigger.debounce = {0}" -f $(if ($Existing.Contains('trigger.debounce')) { $Existing['trigger.debounce'] } else { $DEFAULT_DEBOUNCE }))
         ("trigger.settle   = {0}" -f $(if ($Existing.Contains('trigger.settle'))   { $Existing['trigger.settle'] }   else { $DEFAULT_SETTLE }))
         ''
@@ -433,5 +524,14 @@ function Write-ConfigFile {
         ) + $carried + @('')
     }
 
+    # THE DIRECTORY MAY NOT EXIST YET. On a first run the walkthrough writes this
+    # file before anything has created %LOCALAPPDATA%	rigger-kvm\, and
+    # Set-Content does not create parents -- under $ErrorActionPreference =
+    # 'Stop' that is a DirectoryNotFoundException at Save, after every question
+    # has been answered and with nothing written. Measured 2026-09-08.
+    $dir = Split-Path -Parent $Path
+    if ($dir -and -not (Test-Path -LiteralPath $dir -PathType Container)) {
+        New-Item -ItemType Directory -Force -Path $dir | Out-Null
+    }
     $lines | Set-Content -LiteralPath $Path -Encoding ASCII
 }

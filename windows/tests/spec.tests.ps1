@@ -15,12 +15,15 @@ $WinDir = Split-Path -Parent $PSScriptRoot
 $Specs  = Join-Path (Split-Path -Parent $WinDir) 'specs'
 $Check  = Join-Path $PSScriptRoot 'check-conformance.ps1'
 
-# Everything the user can see comes out of these three.
-$Sources = @(
-    (Join-Path $WinDir 'install.ps1')
-    (Join-Path $WinDir 'trigger-kvm.ps1')
-    (Join-Path $WinDir 'event-watch.ps1')
-)
+# EVERYTHING THE USER CAN SEE, derived rather than listed. It was three files;
+# splitting install.ps1 moved every line of the walkthrough into lib\, and a
+# hand-written list would have gone on checking three files that no longer held
+# any of it -- reporting conformance about wording it could not see. The
+# self-test below is what caught that, which is the whole reason it is there.
+$Sources = @(@(Get-ChildItem -LiteralPath $WinDir -Filter '*.ps1' -File) +
+             @(Get-ChildItem -LiteralPath (Join-Path $WinDir 'lib') -Filter '*.ps1' -File) |
+             ForEach-Object { $_.FullName })
+Assert-True ($Sources.Count -ge 5) 'the conformance check must have found sources to read'
 
 # A child process, not a dot-source: the checker exits with its verdict, and an
 # exit in this runspace would end the test file at the first spec.

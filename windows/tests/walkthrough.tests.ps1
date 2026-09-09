@@ -21,14 +21,15 @@ Import-Subject -Script 'lib\menu.ps1'        -Variables @('NAME_RULE','BACK') -F
 Import-Subject -Script 'lib\answers.ps1'     -Variables @('DIALECTS','MCCS_INPUTS','RENAMED_KEYS') -Functions @(
     'New-PanelAnswer','Set-PanelAnswer','Edit-PanelMaps','Get-LoginOnlyPanels',
     'Format-Byte','Get-InputTable','Get-InputName','Get-DisplayMap','Get-PriorDisplay',
-    'Get-ConfiguredAnswers','Get-CarriedKeys','Write-ConfigFile')
+    'Get-ConfiguredAnswers','Get-AttachedManaged','Get-PassSignature','Get-TriggerEntries',
+    'Get-CarriedKeys','Write-ConfigFile')
 Import-Subject -Script 'lib\walkthrough.ps1' -Functions @(
     'Get-DefaultComputerName','Get-KnownComputers','Read-Computers','Read-ComputerRemovals',
     'Read-InputValue','Read-Method','Read-Transport',
     'Get-DisplayAnswers','Read-Monitors','Read-Triggers','Read-Tier','Read-PathChoice',
-    'Invoke-Configure')
+    'Update-PassValidity','Test-PullAllowed','Invoke-Configure')
 Import-Subject -Script 'lib\checks.ps1'      -Functions @(
-    'Show-MovePreamble','Move-PanelsAndBack',
+    'Show-MovePreamble','Move-PanelsAndBack','Get-SwingCandidate','Invoke-PanelSwing',
     'Invoke-DisplayTest','Invoke-TestRound','Invoke-TestRoundBody','Test-OneComputer',
     'Test-DisplayInput','Test-OneValue','Invoke-BlindWalk')
 Import-Subject -Script 'lib\discover.ps1'    -Functions @('ConvertFrom-DisplayRow','Get-CandidateLabel')
@@ -50,13 +51,16 @@ function Add-ToUserPath { param([string]$Dir) }
 # walkthrough does with each answer is the thing worth pinning.
 $script:canElevate = $true
 function Test-CanElevate { return $script:canElevate }
+# Key is the IDENTITY a saved entry is matched by; Entry is what the row would
+# be written as. They differ only where a token is shared and the remembered
+# spot is what says which of two rows this is (specs/detector.md 4.1).
 function Get-TriggerCandidates {
     @(
-        [PSCustomObject]@{ Key='usb:046d:0843';  Bus='USB'; Spot=''; Twinned=$false; Ambiguous=$false; Name='Webcam';    Class='Image';     Roles=@(); State=''; Rank=1 }
-        [PSCustomObject]@{ Key='bt:0011223344ff';Bus='BT'; Spot=''; Twinned=$false; Ambiguous=$false;  Name='AirPods';   Class='Bluetooth'; Roles=@(); State='paired, not connected'; Rank=1 }
-        [PSCustomObject]@{ Key='usb:1235:820a';  Bus='USB'; Spot=''; Twinned=$false; Ambiguous=$false; Name='Clarett';   Class='Audio';     Roles=@(); State=''; Rank=1 }
+        [PSCustomObject]@{ Key='usb:046d:0843';  Entry='usb:046d:0843';  Bus='USB'; Spot=''; Twinned=$false; Ambiguous=$false; Shared=$false; Name='Webcam';    Class='Image';     Roles=@(); State=''; Rank=1 }
+        [PSCustomObject]@{ Key='bt:0011223344ff';Entry='bt:0011223344ff';Bus='BT'; Spot=''; Twinned=$false; Ambiguous=$false;  Shared=$false; Name='AirPods';   Class='Bluetooth'; Roles=@(); State='paired, not connected'; Rank=1 }
+        [PSCustomObject]@{ Key='usb:1235:820a';  Entry='usb:1235:820a';  Bus='USB'; Spot=''; Twinned=$false; Ambiguous=$false; Shared=$false; Name='Clarett';   Class='Audio';     Roles=@(); State=''; Rank=1 }
         # The one with roles, so the label and the ordering are both exercised.
-        [PSCustomObject]@{ Key='usb:046d:c547';  Bus='USB'; Spot=''; Twinned=$false; Ambiguous=$false; Name='G915 X LIGHTSPEED TKL'
+        [PSCustomObject]@{ Key='usb:046d:c547';  Entry='usb:046d:c547';  Bus='USB'; Spot=''; Twinned=$false; Ambiguous=$false; Shared=$false; Name='G915 X LIGHTSPEED TKL'
                            Class='HIDClass'; Roles=@('mouse','keyboard'); State=''; Rank=0 }
     )
 }
@@ -621,9 +625,11 @@ Set-Answers @(
     '7','1',
     '','y',         #   round 1: asus fine
     '','n',         #   round 2: the LG did nothing
+    '',             #   the LG alone goes through the preamble too (10.2)
     '1',            #   try the LG channel? yes (a menu now, not a y/n)
     '1',            #   pc  is on DisplayPort (0xD0)
     '2',            #   mac is on USB-C (0xD1)
+    '',             #   and so does the retry
     '5','1',
     '10'
 )
@@ -638,8 +644,10 @@ Set-Outcomes @(2, 0)        # the ASUS changes but never comes back
 Set-Answers @(
     '7','1',
     '','n',         #   round 1: the ASUS did not come back
+    '',             #   the ASUS alone goes through the preamble too (10.2)
     'n',            #   do you know which input it is? no
     'y',            #   walk the standard values (the stub answers each)
+    '',             #   and the retry is a swing of its own
     '','y',         #   round 2: the LG is fine
     '5','1',
     '10'
@@ -807,6 +815,23 @@ Assert-Equal 'pc'  $c['display.asus.input.0x11'] 'a decimal input key is read, a
 Assert-Equal 'mac' $c['display.asus.input.0x0f']
 Assert-Equal 'PG42UQ' $c['display.asus.name'] `
     'and a decimal EDID id still matches the panel, so it is not silently unmanaged'
+
+# ...and it matches the ATTACHED panel, not merely survives as a configured one
+# that is not here. Compared as hex TEXT the id matches nothing: the panel shows
+# as `not managed` and a phantom "not attached" row appears beside it -- an
+# outcome the Save assertions above cannot tell from the right one, because both
+# keep every key. Found by a mutation that survived once absent panels started
+# being carried.
+$decimalSeed = @{}
+foreach ($l in @('display.asus.vendor = 1715', 'display.asus.product = 17120',
+                 'display.asus.name = PG42UQ', 'display.asus.method = standard',
+                 'display.asus.input.17 = pc')) {
+    if ($l -match '^\s*([A-Za-z0-9_.\-]+)\s*=\s*(.*?)\s*$') { $decimalSeed[$Matches[1]] = $Matches[2] }
+}
+$dec = @(Get-ConfiguredAnswers -Computers @('pc') -Existing $decimalSeed `
+             -Found @(ConvertFrom-DisplayRow '06B3|42E0|AUS|HDMI|0|PG42UQ|nvapi|1'))
+Assert-Equal 1 $dec.Count   'a decimal id names ONE panel, not one unmanaged and one absent'
+Assert-True  $dec[0].Attached 'and it is matched to the panel that is actually here'
 
 # ---- From boot is drawn for everyone, and disabled where it cannot work ------
 #
@@ -1117,7 +1142,7 @@ Assert-NoMatch $asked 'Choice \[2\]' 'and does not blame the monitors for a chec
 # of it; the LG round then passes, which is what leaves exactly one failure.
 Set-Config $CONFIGURED
 Set-Outcomes @(3)
-Set-Answers @('7', '1', '', 'n', '', 'y', '11')
+Set-Answers @('7', '1', '', 'n', '', '', 'y', '11')
 Invoke-Configure
 Assert-Match ((Get-Asked) -join '|') 'Choice \[2\]' 'a failure does land on Monitors'
 
@@ -1409,4 +1434,143 @@ Assert-Equal 'pc'   $w['display.odd.input.0x11'] `
     'and the keys after it still parse -- a newline here would have taken them with it'
 
 Remove-Item -LiteralPath $script:CONFIG -Force -ErrorAction SilentlyContinue
+
+# ---- a configured panel that is not attached today ---------------------------
+#
+# specs/configure.md 6. It is SHOWN as such, KEPT on Save, and NOT CHECKED: not
+# being enumerated is not an answer, and only unmanaging forgets it. Both
+# platforms built their answers from attached panels only and dropped the rest
+# (revision 14, item 6) -- a monitor unplugged for the afternoon was somebody's
+# configuration, silently gone.
+
+$absentCfg = @(
+    'computer.this = pc'
+    'display.lg.vendor  = 0x1E6D'
+    'display.lg.product = 0x9E9D'
+    'display.lg.name    = LG ULTRAGEAR+'
+    'display.lg.method  = standard'
+    'display.lg.input.0x11 = pc'
+    'display.lg.input.0x12 = mac'
+    'display.dell.vendor  = 0x10AC'
+    'display.dell.product = 0x1234'
+    'display.dell.name    = Dell U2723QE'
+    'display.dell.method  = standard'
+    'display.dell.transport = nvapi'
+    'display.dell.input.0x0F = pc'
+    'display.dell.input.0x10 = mac'
+)
+$absentSeed = @{}
+foreach ($l in $absentCfg) {
+    if ($l -match '^\s*([A-Za-z0-9_.\-]+)\s*=\s*(.*?)\s*$') { $absentSeed[$Matches[1]] = $Matches[2] }
+}
+# Only the LG is attached.
+$attachedRows = @(ConvertFrom-DisplayRow '1E6D|9E9D|GSM|DisplayPort|0|LG ULTRAGEAR+|nvapi|1')
+
+$answers = @(Get-ConfiguredAnswers -Found $attachedRows -Existing $absentSeed -Computers @('pc','mac'))
+Assert-Equal 2 $answers.Count 'a configured panel that is not attached is still an answer'
+
+$dell = @($answers | Where-Object { $_.Label -eq 'dell' })[0]
+Assert-True (-not $dell.Attached) 'and it knows it is not attached'
+Assert-Equal '0x0F' $dell.Map['pc'] 'with its map intact'
+Assert-Equal 1 @(Get-AttachedManaged -Panels $answers).Count `
+    'but only the attached one can be checked -- nobody can watch a monitor that is not there'
+
+# It survives Save with every key, because nothing here is an answer to forget.
+$out = Join-Path $env:TEMP ("tk-absent-$PID.cfg")
+Write-ConfigFile -Path $out -Displays $answers -Devices @() -Tier 'user' -This 'pc' -Existing $absentSeed
+$back = Read-Config -Path $out
+Remove-Item -LiteralPath $out -Force -ErrorAction SilentlyContinue
+Assert-Equal '0x10AC' ([string]$back['display.dell.vendor'])   'the absent panel keeps its identity'
+Assert-Equal 'pc'     ([string]$back['display.dell.input.0x0f']) 'and its whole map'
+Assert-Equal 'Dell U2723QE' ([string]$back['display.dell.name']) 'and its name'
+
+# ---- a pass is bound to what it checked --------------------------------------
+#
+# specs/configure.md 10.8. Both platforms cleared the RESULT TEXT on a map edit
+# and not the pass flag, so a stale pass authorised a real pull; and both let a
+# ONE-PANEL pass stand for the others (revision 14, item 11).
+
+$two = @(
+    (New-PanelAnswer -Label 'lg'   -Name 'LG'   -EdidVendor 1 -EdidProduct 1 -Map ([ordered]@{ pc='0x11'; mac='0x12' }))
+    (New-PanelAnswer -Label 'asus' -Name 'ASUS' -EdidVendor 2 -EdidProduct 2 -Map ([ordered]@{ pc='0x11'; mac='0x12' }))
+)
+$sigAll = Get-PassSignature -Panels $two
+Assert-True ($sigAll -ne (Get-PassSignature -Panels @($two[0]))) `
+    'a one-panel signature is not the two-panel one, so it cannot stand for both'
+
+$pass = [PSCustomObject]@{ Ok = $true; Backed = $false; Text = 'all responded'
+                           Scope = @('lg','asus'); Sig = $sigAll }
+Assert-True (Test-PullAllowed -Ran $pass -Answers $two) 'a pass over every attached panel authorises a pull'
+Assert-True ($null -ne (Update-PassValidity -Ran $pass -Answers $two)) 'and it survives while nothing changes'
+
+# ANY edit to a method, a transport or a map retires it -- and the edit is made
+# through the one setter, so no site has to remember to say so.
+foreach ($edit in @(
+    { Set-PanelAnswer -Panel $two[0] -On 'mac' -Value '0x0F' | Out-Null }
+    { Set-PanelAnswer -Panel $two[0] -Method 'lg-alt'        | Out-Null }
+    { Set-PanelAnswer -Panel $two[0] -Transport 'dxva2'      | Out-Null }
+)) {
+    $fresh = @(
+        (New-PanelAnswer -Label 'lg'   -Name 'LG'   -EdidVendor 1 -EdidProduct 1 -Map ([ordered]@{ pc='0x11'; mac='0x12' }))
+        (New-PanelAnswer -Label 'asus' -Name 'ASUS' -EdidVendor 2 -EdidProduct 2 -Map ([ordered]@{ pc='0x11'; mac='0x12' }))
+    )
+    $held = [PSCustomObject]@{ Ok = $true; Backed = $false; Text = 'all responded'
+                               Scope = @('lg','asus'); Sig = (Get-PassSignature -Panels $fresh) }
+    $two = $fresh
+    & $edit
+    Assert-True ($null -eq (Update-PassValidity -Ran $held -Answers $fresh)) `
+        'an edit to a checked panel retires the pass, whatever the edit was'
+}
+
+# A ONE-PANEL pass does not authorise a full pull.
+$two = @(
+    (New-PanelAnswer -Label 'lg'   -Name 'LG'   -EdidVendor 1 -EdidProduct 1 -Map ([ordered]@{ pc='0x11'; mac='0x12' }))
+    (New-PanelAnswer -Label 'asus' -Name 'ASUS' -EdidVendor 2 -EdidProduct 2 -Map ([ordered]@{ pc='0x11'; mac='0x12' }))
+)
+$one = [PSCustomObject]@{ Ok = $true; Backed = $false; Text = 'all responded'
+                          Scope = @('lg'); Sig = (Get-PassSignature -Panels @($two[0])) }
+Assert-True ($null -ne (Update-PassValidity -Ran $one -Answers $two)) 'a one-panel pass is still a pass'
+Assert-True (-not (Test-PullAllowed -Ran $one -Answers $two)) `
+    'but it must not authorise pulling panels nobody checked'
+
+# ---- a saved `where` survives a re-save while its device is away -------------
+#
+# specs/configure.md 7. A re-run while the switch is on the other computer would
+# otherwise quietly widen a qualified entry back to its bare id, and the trigger
+# would start firing for a device the person did not choose.
+$savedSeed = @{ 'trigger.device' = 'usb:046d:c547@usb-receiver@port-0003-hub-0005' }
+$kept = @(Get-TriggerEntries -Devices @('usb:046d:c547@usb-receiver') -Candidates @() -Existing $savedSeed)
+Assert-Equal 'usb:046d:c547@usb-receiver@port-0003-hub-0005' $kept[0] `
+    'the remembered spot comes back from the file when the device is not here to report one'
+
+# An entry that already carries its spot is written back exactly as it is.
+$asis = @(Get-TriggerEntries -Devices @('usb:046d:c547@usb-receiver@port-0009-hub-0001') `
+                             -Candidates @() -Existing $savedSeed)
+Assert-Equal 'usb:046d:c547@usb-receiver@port-0009-hub-0001' $asis[0] `
+    'and one that already says where it is keeps saying it'
+
+# A malformed entry is written back verbatim: rewriting it would edit somebody's
+# file behind them and still not start the watcher.
+$bad = @(Get-TriggerEntries -Devices @('usb:046d:c547@Bad Case') -Candidates @() -Existing @{})
+Assert-Equal 'usb:046d:c547@Bad Case' $bad[0] 'a malformed entry is never rewritten'
+
+# ---- computers come back in FILE ORDER ---------------------------------------
+#
+# specs/config-format.md, "Ordering". Sorting the keys orders by the input HEX,
+# which puts the same two computers in opposite orders on two panels purely by
+# which socket each was plugged into (revision 14, item 15).
+# The fixture has to DISCRIMINATE: file order and key order must give different
+# answers, or sorting passes and proves nothing. `display.asus...` sorts before
+# `display.lg...`, so listing the LG's `pc` first makes file order `pc, mac` and
+# sorted order `mac, pc`.
+$ordered = [ordered]@{}
+$ordered['display.lg.input.0xd0']   = 'pc'
+$ordered['display.asus.input.0x0f'] = 'mac'
+$ordered['display.lg.input.0xd1']   = 'mac'
+$ordered['display.asus.input.0x11'] = 'pc'
+Assert-Equal 'pc mac' ((Get-KnownComputers -Cfg $ordered) -join ' ') `
+    'the order somebody listed their computers in is the order they come back'
+Assert-True ((@($ordered.Keys | Sort-Object)[0]) -like 'display.asus*') `
+    'and sorting really would answer differently, or this fixture proves nothing'
+
 exit 0

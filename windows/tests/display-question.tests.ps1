@@ -1,4 +1,5 @@
-# The question asked after a panel has been switched away and back.
+# The question asked after a panel has been switched away and back, and the swing
+# that puts it back before the asking.
 #
 # Everything else stubs Test-DisplayInput, so this is the only place the real one is
 # exercised. It is worth exercising: it is the single point where a human's answer
@@ -11,7 +12,7 @@ Import-Subject -Script 'lib\answers.ps1' -Variables @('MCCS_INPUTS','DIALECTS')
 Import-Subject -Script 'lib\menu.ps1'    -Functions @(
     'Read-Default','Read-YesNo','Get-MenuWidth','Write-MenuFrame','Clear-ToLineEnd',
     'Split-Detail','Get-ItemWidth','Get-MenuRow','Select-One')
-Import-Subject -Script 'lib\checks.ps1'  -Functions @('Test-DisplayInput')
+Import-Subject -Script 'lib\checks.ps1'  -Functions @('Test-DisplayInput','Move-PanelsAndBack')
 
 # Test-DisplayInput defaults -Config to $CONFIG, which install.ps1 sets at load.
 $global:CONFIG = Join-Path $env:TEMP 'trigger-kvm-question.cfg'
@@ -26,8 +27,7 @@ function Ask {
     param([string[]]$Answers)
     Reset-Said; Reset-Sent
     Set-Answers $Answers
-    return (Test-DisplayInput -Label 'lg' -Name 'LG ULTRAGEAR+' -Candidate '0xD1' `
-                              -CandidateName 'mac' -Current '0xD0' -ThisName 'pc' -IsComputer)
+    return (Test-DisplayInput -Name 'LG ULTRAGEAR+' -CandidateName 'mac' -ThisName 'pc' -IsComputer)
 }
 
 # ---- it asks what was watched, in the order it happened ----------------------
@@ -67,20 +67,34 @@ Assert-Equal 4 (@(0,1,2,3) | Sort-Object -Unique).Count
 # ---- testing a bare input has no "wrong computer" to ask about ---------------
 
 Reset-Said; Set-Answers @('3')
-$o = Test-DisplayInput -Label 'lg' -Name 'LG ULTRAGEAR+' -Candidate '0x12' `
-                       -CandidateName 'HDMI 2' -Current '0x11' -ThisName 'pc'
+$o = Test-DisplayInput -Name 'LG ULTRAGEAR+' -CandidateName 'HDMI 2' -ThisName 'pc'
 Assert-Equal 3 $o 'any change proves the transport, so a "no" can only mean nothing happened'
 Assert-NoMatch (Get-Said) 'change at all' 'and there is nothing left to ask'
 
 Reset-Said; Set-Answers @('2')
-$o = Test-DisplayInput -Label 'lg' -Name 'LG ULTRAGEAR+' -Candidate '0x12' `
-                       -CandidateName 'HDMI 2' -Current '0x11' -ThisName 'pc'
+$o = Test-DisplayInput -Name 'LG ULTRAGEAR+' -CandidateName 'HDMI 2' -ThisName 'pc'
 Assert-Equal 2 $o 'and the middle answer still means "did not come back"'
 
-# ---- it switches away and back, in that order --------------------------------
+# ---- the swing switches away and back, in that order -------------------------
+#
+# THE RETURN IS WHAT MAKES THE CHECK SAFE to run against the display someone is
+# reading: the question always arrives on a panel that has already come back.
+# The moving is Move-PanelsAndBack's, so that every path that moves a panel goes
+# through one swing and one preamble (specs/configure.md 10.2) -- and this is
+# where that property is asserted.
 
-$null = Ask @('1')
+Reset-Sent
+$panel = [PSCustomObject]@{ Label = 'lg'; Name = 'LG ULTRAGEAR+'
+                            Map = [ordered]@{ pc = '0xD0'; mac = '0xD1' } }
+Move-PanelsAndBack -Panels @($panel) -Away @{ lg = '0xD1' } -This 'pc' `
+                   -Config $global:CONFIG -Hold 8
 Assert-Equal 'lg=0xD1 lg=0xD0' ((Get-Sent) -join ' ') `
-    'the panel is always returned before anyone is asked anything'
+    'the panel is sent away and always returned, in that order'
+
+Reset-Sent
+Move-PanelsAndBack -Panels @($panel) -Away @{ lg = '0x12' } -This 'pc' `
+                   -Config $global:CONFIG -Hold 8
+Assert-Equal 'lg=0x12 lg=0xD0' ((Get-Sent) -join ' ') `
+    'and the destination is the caller''s, so a transport-only check can use any value'
 
 exit 0

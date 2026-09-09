@@ -63,7 +63,33 @@ function Get-NormativeFragment {
     }
 }
 
-$sources = (Get-Content -Raw -LiteralPath $Source) -join "`n"
+# COMMENTS ARE NOT SOURCE. A config-file header, or a note quoting the spec's
+# own words, would otherwise stand in for the wording the person actually sees
+# -- and a rename of a menu label would stay green because a comment beside it
+# still carried the old string. macOS caught exactly that with a mutation.
+#
+# Both shapes: a line whose first non-space character is `#`, and a <# ... #>
+# block, which is where comment-based help lives.
+function Remove-Comment {
+    param([string]$Text)
+    $out = [regex]::Replace($Text, '(?s)<#.*?#>', '')
+    return (($out -split "`r?`n" | Where-Object { $_ -notmatch '^\s*#' }) -join "`n")
+}
+
+# A spec that cannot be read is not a spec that pins nothing: reporting "all 0
+# fragments present" for a path typo is the check saying yes to a question it
+# never asked.
+if (-not (Test-Path -LiteralPath $Spec -PathType Leaf)) {
+    Write-Host "  UNREADABLE: $Spec"
+    exit 1
+}
+
+$sources = (Remove-Comment (((Get-Content -Raw -LiteralPath $Source) -join "`n")))
+# NO floor on the count: a spec with no normative fence, or one whose every
+# fragment falls under the length floor, pins no wording and passes trivially.
+# detector.md is the standing example -- the detector talks to a log, not to a
+# person. What must not pass is a spec that could not be READ, which is the
+# guard above.
 $frags   = @(Get-NormativeFragment -Line (Get-Content -LiteralPath $Spec))
 
 $missing = @($frags | Where-Object { -not $sources.Contains($_) })

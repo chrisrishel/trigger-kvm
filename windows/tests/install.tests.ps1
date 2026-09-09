@@ -436,6 +436,11 @@ function Invoke-Sibling {
         'c7|174C|2074||port-0010-hub-0001|Generic USB Hub'
         'c5|0000|0000|unknown-usb-device|port-0009-hub-0001|Unknown USB Device'
         'c6|1235|820A|clarett-2pre|port-0004-hub-0006|Clarett+ 2Pre'
+        # TWO devices whose ONLY token is shared, at DIFFERENT ports. Neither
+        # can be named apart by a token, so the writer falls to the shared token
+        # PLUS where -- specs/detector.md 4.1, case 2.
+        'c8|1A2B|3C4D|shared-dock|port-0020-hub-0001|Zed Dock'
+        'c9|1A2B|3C4D|shared-dock|port-0021-hub-0001|Zed Dock'
     )
 }
 # Roles still come from the HID children, which the USB listing never sees.
@@ -478,10 +483,17 @@ Assert-True ($byKey.Contains('usb:0b05:879e')) 'a device alone on its id keeps t
 Assert-Equal 'ROG STRIX LC' $byKey['usb:0b05:879e'].Name `
     'named from its own report, since every node calls it generic'
 
-Assert-True (-not ($byKey.Keys -like 'usb:8087:0aaa*')) 'a hub never travels, so it is not offered'
-Assert-True (-not ($byKey.Keys -like 'usb:174c:2074*')) `
-    'and one that calls itself ASM107x while its driver calls it a hub is still a hub'
-Assert-True (-not ($byKey.Keys -like 'usb:0000:0000*')) 'and a failed enumeration is not addressable'
+# NOTHING IS FILTERED BY NAME, hubs included -- specs/configure.md 7.1. The list
+# shows what is true and lets the person decide; a hub that never moves is a bad
+# trigger and a visible one, and hiding it made this list disagree with what
+# `discover` had shown a moment earlier. This assertion is the inverse of the
+# one it replaces, and the change is deliberate (revision 14, item 7).
+Assert-True ([bool]($byKey.Keys -like 'usb:8087:0aaa*')) 'a hub is offered like anything else'
+Assert-True ([bool]($byKey.Keys -like 'usb:174c:2074*')) `
+    'and so is one that calls itself ASM107x while its driver calls it a hub'
+
+# The ONE thing withheld is a node that is not a device at all.
+Assert-True (-not ($byKey.Keys -like 'usb:0000:0000*')) 'a failed enumeration is not addressable'
 
 # ORDER IS "HOW LIKELY IS THIS TO TRAVEL", the question Rank was always reaching
 # for: it used to score how specific a node's CLASS was, so the keyboard and the
@@ -491,5 +503,100 @@ Assert-True ($got[0].Key -like 'usb:046d:c547*') `
 Assert-True ([array]::IndexOf(@($got.Key), 'usb:1235:820a') -lt
              [array]::IndexOf(@($got.Key), 'usb:0b05:879e')) `
     'an audio interface outranks a cooler that merely speaks HID'
+
+
+# ---- the writer rule, in its three cases -------------------------------------
+#
+# specs/detector.md 4.1. A writer chooses for UNIQUENESS, not for quality, among
+# the devices sharing the id at the time of writing.
+#
+# The KEY is the identity a saved entry is matched by, with no spot in it, so a
+# device that moved sockets is still the same entry. The ENTRY is what the row
+# would be written as, and the two differ only in case 2.
+
+$shared = @($got | Where-Object { $_.Key -like 'usb:1a2b:3c4d*' })
+Assert-Equal 2 $shared.Count 'two devices on one id are two rows, whatever can be said about them'
+
+# CASE 2: every candidate token is shared, and the devices sit at different
+# places, so the shared token PLUS where. `where` is never written without a
+# token, and it is what says which row was picked.
+foreach ($s in $shared) {
+    Assert-Equal 'usb:1a2b:3c4d@shared-dock' $s.Key 'the identity is the shared token, with no spot'
+    Assert-True  $s.Shared    'and the row knows the token alone cannot decide'
+    Assert-True  (-not $s.Ambiguous) 'so it is NOT a row that cannot be told from its twin'
+}
+Assert-Equal 'usb:1a2b:3c4d@shared-dock@port-0020-hub-0001' `
+    (@($shared | Where-Object { $_.Spot -eq 'port-0020-hub-0001' })[0].Entry) `
+    'the entry carries the port, or picking either row would configure the other'
+Assert-Equal 2 (@($shared | ForEach-Object { $_.Entry }) | Sort-Object -Unique).Count `
+    'and the two rows are written as two DIFFERENT entries'
+
+# CASE 1 is still preferred over it: a token held by exactly one device is
+# written alone, so the device still matches after somebody moves it.
+Assert-Equal 'usb:046d:c547@g915-x-lightspeed-tkl' `
+    (@($got | Where-Object { $_.Key -like '*g915*' })[0].Entry) `
+    'a unique token is written without a spot'
+
+# ---- status says what the WATCHER makes of a qualified entry -----------------
+#
+# specs/status.md 4.1. The verdict comes from the watcher's own matching code,
+# never from a second implementation of the rule here: a second one would be
+# free to disagree with the one that decides whether a monitor moves, and this
+# screen is where somebody looks when it did not.
+
+$cands = @(
+    [PSCustomObject]@{ Key = 'usb:046d:c547@g915-x-lightspeed-tkl'; Name = 'G915'; Roles = @(); Ambiguous = $false }
+)
+$verdicts = @{
+    'usb:046d:c547@g915-x-lightspeed-tkl'                     = 'present'
+    'usb:046d:c547@usb-receiver@port-0003-hub-0005'           = 'where'
+    'usb:046d:c547@usb-receiver'                              = 'ambiguous'
+}
+$rep = (Get-TriggerReport -Entries @('usb:046d:c547@g915-x-lightspeed-tkl') `
+                          -Candidates $cands -Verdicts $verdicts) -join "`n"
+Assert-Match $rep "matched by 'g915-x-lightspeed-tkl'" 'a matched entry says what matched it'
+
+$rep = (Get-TriggerReport -Entries @('usb:046d:c547@usb-receiver@port-0003-hub-0005') `
+                          -Candidates @() -Verdicts $verdicts) -join "`n"
+Assert-Match $rep "the device at 'port-0003-hub-0005' is the one this matches" `
+    'a remembered location that decided a match is SAID, or it is dangerous only while it is silent'
+Assert-Match $rep 'if you have moved them' 'and it says what to do if it has gone stale'
+
+$rep = (Get-TriggerReport -Entries @('usb:046d:c547@usb-receiver') `
+                          -Candidates @() -Verdicts $verdicts) -join "`n"
+Assert-Match $rep 'AMBIGUOUS'    'an ambiguous entry is named as such'
+Assert-Match $rep 'will NOT fire' 'and the consequence is stated'
+Assert-Match $rep 'is disabled, not absent' `
+    'because absent and ambiguous are different states with different remedies'
+
+# An UNQUALIFIED entry gets no verdict line: present and absent are already what
+# the row says, and repeating them would be noise on every ordinary desk.
+$rep = (Get-TriggerReport -Entries @('usb:046d:0843') -Candidates @() `
+                          -Verdicts @{ 'usb:046d:0843' = 'absent' }) -join "`n"
+Assert-NoMatch $rep 'matched by' 'an entry with no token has nothing to disambiguate'
+
+# ---- "no" means this session only, and nothing that brings it back -----------
+#
+# specs/configure.md 8. A task with no triggers is legal and can still be
+# started on demand, which is what `restart` does -- so "no" means "nothing
+# starts it but you". The SELF-HEAL trigger must not be attached to it, or "no"
+# would quietly mean "yes, every minute".
+#
+# Structural, because reaching it means registering a scheduled task, which is
+# machine-wide and outlives anything a suite can sandbox.
+$hostText = Get-Content -Raw -LiteralPath (Join-Path $WinDir 'lib\host.ps1')
+Assert-Match $hostText "if \(\`$tier -eq 'manual'\) \{[\s\S]*?\`$triggers = @\(\)" `
+    'the tier that says it will not come back registers with no triggers'
+Assert-Match $hostText "if \(\`$tier -ne 'manual'\) \{ \`$triggers \+= \`$heal \}" `
+    'and the self-heal trigger is not attached to it'
+
+# ---- the closing words claim only what was reached ---------------------------
+#
+# specs/configure.md 12. "trigger-kvm is running" is a claim about the WATCHER,
+# and a tier that registered but did not come up has not made it true. Pinned
+# structurally: reaching it means registering a scheduled task.
+$hostSrc = Get-Content -Raw -LiteralPath (Join-Path $WinDir 'lib\host.ps1')
+Assert-Match $hostSrc 'if \(-not \$running\) \{[^}]*NO WATCHER is running' `
+    'the closing words must not say it is running when nothing is'
 
 exit 0
