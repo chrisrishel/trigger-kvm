@@ -188,6 +188,129 @@ Assert-Equal 0 $literal.Count `
      ($literal -join "`
   "))
 
+# ---- install.ps1's constants keep their values inside the dispatch -----------
+#
+# $SWITCH held the path to the switcher, and $switch is PowerShell's own: it
+# holds the enumerator of whichever switch statement is running, in the scope
+# that runs it. install.ps1's verb dispatch IS a switch statement, so for the
+# whole of every verb -- and inside every function it calls -- the constant read
+# as the EMPTY STRING, silently.
+#
+# What that did: `Copy-Item <source> ''` resolves the destination against the
+# current directory, so an install run from the source tree tried to copy
+# trigger-kvm.ps1 onto itself and died mid-install; uninstall could not remove a
+# file whose path was blank; and a task registered on that path would have
+# carried an empty -Exec, giving a watcher that could never switch anything.
+#
+# ASKED BY RUNNING IT, not against a list of names to keep in step. The probe
+# gives every name install.ps1 binds at script scope a known value and reads them
+# all back from inside the three contexts that bind an automatic variable -- a
+# switch, a foreach, and a pipeline. A name PowerShell owns comes back different.
+# In a child process, because this session has variables of its own.
+
+function Get-TopLevelAssignment {
+    <#
+      .SYNOPSIS
+      Every plain variable a script assigns at its top level, in order.
+    #>
+    param([string]$Path)
+
+    $errors = $null
+    $ast = [System.Management.Automation.Language.Parser]::ParseFile($Path, [ref]$null, [ref]$errors)
+    if ($errors) { throw ("{0} does not parse: {1}" -f $Path, $errors[0].Message) }
+
+    $out = @()
+    foreach ($a in $ast.FindAll({ $args[0] -is [System.Management.Automation.Language.AssignmentStatementAst] }, $true)) {
+        if ($a.Left -isnot [System.Management.Automation.Language.VariableExpressionAst]) { continue }
+        $nested = $false
+        for ($p = $a.Parent; $p; $p = $p.Parent) {
+            if ($p -is [System.Management.Automation.Language.FunctionDefinitionAst] -or
+                $p -is [System.Management.Automation.Language.ScriptBlockExpressionAst]) { $nested = $true; break }
+        }
+        if ($nested) { continue }
+        $n = $a.Left.VariablePath.UserPath
+        # env: and other providers are not variables this is about.
+        if ($n -match ':') { continue }
+        if ($out -notcontains $n) { $out += $n }
+    }
+    return @($out)
+}
+
+function Get-ShadowedName {
+    <#
+      .SYNOPSIS
+      Of the given names, the ones PowerShell takes over inside a switch, a
+      foreach or a pipeline. Empty means every name is the script's own.
+    #>
+    param([string[]]$Name)
+
+    $probeDir = Join-Path $env:TEMP ("tk-reserved-$PID")
+    New-Item -ItemType Directory -Force -Path $probeDir | Out-Null
+    $probe = Join-Path $probeDir 'probe.ps1'
+
+    $body = @('Set-StrictMode -Version Latest', '$tkBad = @()', '$tkNames = @()')
+    # A name that ALREADY EXISTS in a clean session is a preference variable or
+    # an automatic one PowerShell binds up front -- $ErrorActionPreference is
+    # typed and would not even take a test value. Those are not what this looks
+    # for: nothing shadows them mid-statement. $switch is not among them,
+    # because it exists only while a switch statement runs, which is the whole
+    # reason it can be assigned and then quietly taken away.
+    foreach ($n in $Name) {
+        $body += ('if (-not (Get-Variable -Name ''{0}'' -ErrorAction SilentlyContinue)) {{' -f $n)
+        $body += ('    ${0} = ''tk-{0}''; $tkNames += ''{0}''' -f $n)
+        $body += '}'
+    }
+    # One check, run in each of the three contexts.
+    # AS TEXT, and forced to a scalar. What a shadowing statement leaves in the
+    # name is an ENUMERATOR, and `$enumerator -ne 'x'` filters rather than
+    # compares: it answers the empty collection, which is falsy, so a comparison
+    # written the obvious way reports that everything is fine.
+    $check = @('  foreach ($tkN in $tkNames) {'
+               '    $tkV = "" + (Get-Variable -Name $tkN -ValueOnly -ErrorAction SilentlyContinue)'
+               '    if ($tkV -ne "tk-$tkN") {'
+               '      if ($tkBad -notcontains $tkN) { $tkBad += $tkN }'
+               '    }'
+               '  }')
+    $body += 'switch (1) { default {'
+    $body += $check
+    $body += '} }'
+    $body += 'foreach ($tkI in 1..1) {'
+    $body += $check
+    $body += '}'
+    $body += '1 | ForEach-Object {'
+    $body += $check
+    $body += '}'
+    $body += '$tkBad -join ","'
+
+    $body | Set-Content -LiteralPath $probe -Encoding ASCII
+    $said = (& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $probe 2>&1 | ForEach-Object { "$_" }) -join ''
+    Remove-Item -LiteralPath $probeDir -Recurse -Force -ErrorAction SilentlyContinue
+    return @($said -split ',' | Where-Object { $_ })
+}
+
+# Every shipped script, not just install.ps1: lib\ files bind their tables at
+# top level and are dot-sourced into the same scope, so a name taken there is
+# taken for the whole program.
+$bound = @()
+foreach ($f in (Get-ShippedScript)) {
+    foreach ($n in (Get-TopLevelAssignment $f.FullName)) {
+        if ($bound -notcontains $n) { $bound += $n }
+    }
+}
+# A count, not a name: naming one would fire before the check below on the very
+# rename this exists to catch, and report the sentinel instead of the reason.
+Assert-True ($bound.Count -ge 10) `
+    ("the AST walk found only {0} script-scope names; it is not reading the files" -f $bound.Count)
+$shadowed = @(Get-ShadowedName -Name $bound)
+Assert-Equal 0 $shadowed.Count `
+    ("a shipped script binds a name PowerShell owns, so it reads as something else inside a " +
+     "switch, foreach or pipeline: " + ($shadowed -join ', '))
+
+# ...and the probe can see one. $switch is the name that bit us.
+$canSee = @(Get-ShadowedName -Name @('SWITCH', 'DEST'))
+Assert-Equal 'SWITCH' ($canSee -join ',') `
+    'the probe must find $SWITCH and must not cry wolf over an ordinary name'
+
 # ---- one door for "whose install is this?" -----------------------------------
 #
 # On a standard account the elevated child is a DIFFERENT user, so every path and

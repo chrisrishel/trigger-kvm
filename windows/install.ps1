@@ -129,7 +129,11 @@ $DEST    = Join-Path $APPDATA 'Programs\trigger-kvm'
 $LIBDIR  = Join-Path $DEST 'lib'
 $LOG     = Join-Path $APPDATA 'trigger-kvm\trigger-kvm.log'
 $WATCH   = Join-Path $DEST 'event-watch.ps1'
-$SWITCH  = Join-Path $DEST 'trigger-kvm.ps1'
+# SWITCHER, not SWITCH: $switch is PowerShell's own, holding the enumerator of
+# whichever switch statement is running -- and the verb dispatch at the bottom of
+# this file IS one, so inside it, and inside everything it calls, the constant
+# read as EMPTY. tests\conventions.tests.ps1 keeps every name here off that list.
+$SWITCHER = Join-Path $DEST 'trigger-kvm.ps1'
 $CFGLIB  = Join-Path $DEST 'config.ps1'
 $VBS     = Join-Path $DEST 'launcher.vbs'
 $MANAGE  = Join-Path $DEST 'install.ps1'      # this script, installed alongside

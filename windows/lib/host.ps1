@@ -192,8 +192,33 @@ function Get-ChildArguments {
 # The child writes to a temp file and the parent prints it, because -Verb RunAs
 # cannot be combined with -RedirectStandardOutput: without this the output lands
 # in a window that closes before it can be read.
+# Run one elevated child and wait. $null means NO CHILD RAN -- the prompt was
+# declined, or the account had no credentials to give -- and that is the only
+# thing that means "elevation could not be obtained". Anything else is an exit
+# code from a child that did run, and belongs to the install it attempted, not
+# to the prompt.
+#
+# Its own function because that distinction is the whole point and a `try` around
+# a `Start-Process` cannot be stubbed; here a test can answer either way.
+function Start-ElevatedChild {
+    param([string]$Command)
+    try {
+        $p = Start-Process powershell.exe -Verb RunAs -Wait -WindowStyle Hidden -PassThru `
+             -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', $Command)
+    } catch {
+        return $null
+    }
+    return $p.ExitCode
+}
+
 function Request-Elevation {
     param([string]$Verb)
+
+    # DID A CHILD ACTUALLY RUN? The exit code alone cannot say: 1 is both "the
+    # prompt was declined" and "the elevated install ran and failed". Callers
+    # need the difference, because only the first is the fallback specs/
+    # configure.md 8 describes.
+    $script:ELEVATION_REACHED = $false
 
     $childArgs = Get-ChildArguments -Verb $Verb -Bound $INVOKED_WITH
 
@@ -217,10 +242,8 @@ function Request-Elevation {
     $inner = "& '{0}' {1} -Relaunched *> '{2}'" -f $TK_SELF, (Format-ChildArguments $childArgs), $transcript
 
     Write-Log 'this needs administrator rights; approving the UAC prompt will continue.'
-    try {
-        $p = Start-Process powershell.exe -Verb RunAs -Wait -WindowStyle Hidden -PassThru `
-             -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', $inner)
-    } catch {
+    $rc = Start-ElevatedChild -Command $inner
+    if ($null -eq $rc) {
         # The user declined the prompt, or no admin credentials were available.
         # What happens NEXT is the caller's to say -- an uninstall stops here, an
         # install falls back to the login tier -- so this line does not claim
@@ -229,11 +252,12 @@ function Request-Elevation {
         return 1
     }
 
+    $script:ELEVATION_REACHED = $true
     if (Test-Path -LiteralPath $transcript) {
         Get-Content -LiteralPath $transcript | ForEach-Object { Write-Host $_ }
         Remove-Item -LiteralPath $transcript -Force -ErrorAction SilentlyContinue
     }
-    return $p.ExitCode
+    return $rc
 }
 
 # The boot tier needs administrator rights ONCE, to register the task. Ask; if
@@ -258,6 +282,17 @@ function Invoke-BootTierElevation {
         # account its HKCU is the ADMIN's hive. See Set-InstalledPath.
         Set-InstalledPath
         exit 0
+    }
+    # THE PROMPT WAS APPROVED AND THE INSTALL FAILED ANYWAY. That is not the
+    # fallback: elevation was obtained. Carrying on would install a DIFFERENT
+    # tier, unelevated, on top of whatever the elevated run left -- a second
+    # install nobody asked for, whose own failure the person then reads as the
+    # first one. The child has already said what went wrong, just above.
+    if ($ELEVATION_REACHED) {
+        Write-Log 'the elevated install did not finish; what it reported is above.'
+        Write-Log 'the login tier was NOT installed instead -- nothing else was changed.'
+        Write-Log 'fix what it reported and run this again.'
+        exit $rc
     }
     Write-Log 'falling back to starting at login.'
     Write-Log 'the switch will follow from your logon onward, but not at the login screen.'
@@ -976,7 +1011,7 @@ function Invoke-Uninstall {
     Stop-Watchers
     if ($FORUSER -eq $ME) { Clear-InstalledPath }
 
-    foreach ($f in @($WATCH, $SWITCH, $VBS, $SHIM, $STAMP, $CFGLIB) + $EARLIER_LAYOUT) {
+    foreach ($f in @($WATCH, $SWITCHER, $VBS, $SHIM, $STAMP, $CFGLIB) + $EARLIER_LAYOUT) {
         if (Test-Path -LiteralPath $f) { Remove-Item -LiteralPath $f -Force; Write-Log "removed $f" }
     }
     if (Test-Path -LiteralPath $LIBDIR) {
@@ -1123,7 +1158,7 @@ function Install-Files {
     } else {
         Copy-Item (Join-Path $TK_HOME 'config.ps1')       $CFGLIB -Force
         Copy-Item (Join-Path $TK_HOME 'event-watch.ps1')  $WATCH  -Force
-        Copy-Item (Join-Path $TK_HOME 'trigger-kvm.ps1')  $SWITCH -Force
+        Copy-Item (Join-Path $TK_HOME 'trigger-kvm.ps1')  $SWITCHER -Force
         # One glob: a new lib file joins the install by existing.
         Copy-Item (Join-Path (Join-Path $TK_HOME 'lib') '*.ps1') $LIBDIR -Force
         # This program too, so status/logs/pause/uninstall keep working after the
@@ -1259,7 +1294,7 @@ function Invoke-Install {
     # bWaitOnReturn = True keeps the wscript process alive for as long as the
     # watcher runs, so Task Scheduler still reports the task as Running and its
     # restart settings still apply.
-    $psCmd  = Get-WatcherCommand -Watcher $WATCH -Switcher $SWITCH -LogFile $LOG -ConfigFile $CONFIG
+    $psCmd  = Get-WatcherCommand -Watcher $WATCH -Switcher $SWITCHER -LogFile $LOG -ConfigFile $CONFIG
     $vbsCmd = $psCmd -replace '"', '""'
     @(
         "' Generated by install.ps1 -- do not edit; re-run install.ps1 instead."

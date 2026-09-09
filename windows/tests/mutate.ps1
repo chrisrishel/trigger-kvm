@@ -224,6 +224,17 @@ Invoke-Mutation 'install: a half-copied install throws instead of saying so' `
     "if (-not (Test-Path -LiteralPath `$libDir -PathType Container)) {" `
     "if (`$false) {"
 
+# --- and one where the destination is a name PowerShell owns ------------------
+
+Invoke-Mutation 'install: the switcher path is called $SWITCH again' `
+    'install.ps1' 'conventions.tests.ps1' `
+    "`$SWITCHER = Join-Path `$DEST 'trigger-kvm.ps1'" `
+    "`$SWITCH = Join-Path `$DEST 'trigger-kvm.ps1'"
+Invoke-Mutation 'install: the copy reads the running switch statement, not the path' `
+    'lib\host.ps1' 'install.tests.ps1' `
+    "        Copy-Item (Join-Path `$TK_HOME 'trigger-kvm.ps1')  `$SWITCHER -Force" `
+    "        Copy-Item (Join-Path `$TK_HOME 'trigger-kvm.ps1')  `$SWITCH -Force"
+
 # --- and one where the copy has nowhere to go ---------------------------------
 
 Invoke-Mutation 'install: from the installed copy, every file is copied onto itself' `
@@ -981,6 +992,19 @@ Invoke-Mutation 'gate: the vendor check leaves the gate' `
 
 # --- the boot tier ------------------------------------------------------------
 
+Invoke-Mutation 'tier: any non-zero code reads as a declined prompt again' `
+    'lib\host.ps1' 'elevation.tests.ps1' `
+    '    if ($null -eq $rc) {' `
+    '    if ($rc -ne 0) {'
+Invoke-Mutation 'tier: an approved prompt whose install failed falls back anyway' `
+    'lib\host.ps1' 'elevation.tests.ps1' `
+    '    if ($ELEVATION_REACHED) {' `
+    '    if ($false) {'
+Invoke-Mutation 'tier: nothing records whether a child actually ran' `
+    'lib\host.ps1' 'elevation.tests.ps1' `
+    '    $script:ELEVATION_REACHED = $true
+    if (Test-Path -LiteralPath $transcript) {' `
+    '    if (Test-Path -LiteralPath $transcript) {'
 Invoke-Mutation 'tier: a declined prompt leaves the config claiming boot' `
     'lib\host.ps1' 'elevation.tests.ps1' `
     "    Write-Log 'falling back to starting at login.'" `

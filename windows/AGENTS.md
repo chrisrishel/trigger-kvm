@@ -16,21 +16,20 @@ never resolves `NvAPI_I2CWrite`, so there is no instrument to gate either.
 scans them all, and self-tests the scan.
 
 **A force-killed watcher leaves the mutex ABANDONED, and that is a normal
-condition here, not an error.** The installer force-kills the watcher on every
-install; Task Manager and a crash do the same. .NET signals it by throwing
+condition here, not an error.** The installer force-kills it on every install;
+so do Task Manager and a crash. .NET signals it by throwing
 `AbandonedMutexException` from `WaitOne` **after** handing the lock over;
 `event-watch.ps1` catches it and continues, because the alternative is an install
 that reports success and leaves nothing watching; `ReleaseMutex()` clears the
-abandonment. Do not "simplify" the catch away: uncaught it also
-strands the lock when the watcher is run BY HAND, since an aborted script does
-not end an interactive shell.
+abandonment. Do not "simplify" the catch away: uncaught it also strands the lock
+when the watcher is run BY HAND, since an aborted script does not end a shell.
 
 **One physical USB plug produces DOZENS of `Win32_DeviceChangeEvent` indications,
-each costing a `Win32_PnPEntity` sweep.** The debounce is therefore load-bearing
-for ordinary operation, and the no-edge branch is the common case by a wide
-margin -- which is why its line is `Write-Verbose`, not `Write-Log`. `-Verbose`
-on a hand-run watcher is what distinguishes "nothing delivered" from "delivered
-and correctly rejected"; `README.md` says how.
+each costing a `Win32_PnPEntity` sweep.** The debounce is load-bearing for
+ordinary operation and the no-edge branch is the common case by a wide margin,
+which is why its line is `Write-Verbose`, not `Write-Log`. `-Verbose` on a
+hand-run watcher distinguishes "nothing delivered" from "delivered and correctly
+rejected"; `README.md` says how.
 
 **PnP presence means "attached" for USB and "PAIRED" for Bluetooth. Do not
 extend the watcher to Bluetooth by widening its match pattern.** A paired device
@@ -44,9 +43,9 @@ device; and **a missing or disabled radio must not take the watcher down** -- it
 is an absence, and absences never fire.
 
 **But the CANDIDATE LIST offers every PAIRED device, connected or not.** Firing
-is on connected; *offering* is on paired, because the device that is
-disconnected right now is exactly the one that will produce an arrival. Show the
-state; do not filter on it.
+is on connected; offering is on paired, because the device disconnected right
+now is exactly the one that will produce an arrival. Show the state, do not
+filter on it.
 
 **WMI device notifications DO reach session 0.** The watcher uses
 `Win32_DeviceChangeEvent`, a WMI extrinsic event from Winmgmt, **not**
@@ -62,33 +61,31 @@ so do not reach for it to answer "did USB come back?" across a resume; it does
 track a flip's PnP arrival, which is how you correlate one against the log.
 
 **S3 standby HANGS this machine. Do not test it again; use hibernate.** Nothing
-in this repo is implicated; the evidence is dated in `..\docs\measurements.md`,
-with how to hibernate from the shell you will be in.
+here is implicated; `..\docs\measurements.md` has the evidence, and how to
+hibernate from the shell you will be in.
 
 **`user32` REPORTS THE WRONG MONITORS WHEREVER THERE IS NO LOCAL CONSOLE**, and
-`dxva2` goes through `user32`. Two measured shapes, both in
-`../docs/measurements.md`: in session 0 it reports ONE PHANTOM monitor rather
-than none, so an identity check trusting it MIS-RESOLVES -- it fails by picking
-a panel, not by erroring; over Remote Desktop it
-reports the RDP virtual display and none of the physical panels, so `dxva2`
-identifies nothing and refuses. The EDID gate is what turns both into a refusal.
-So a `dxva2` panel is LOCAL-SESSION ONLY: `configure` draws the boot row
-disabled for it and `status` says which panel it strands. NVAPI is unaffected by
-either, is the only identity source the boot tier may use, and is never
-correlated against the Windows display list. Decisions `001` and `003`.
+`dxva2` goes through it. Two measured shapes in `../docs/measurements.md`: in
+session 0 a PHANTOM monitor rather than none, so an identity check trusting it
+mis-resolves by PICKING a panel rather than erroring; over RDP the virtual
+display and none of the physical panels. The EDID gate turns both into a
+refusal. So a `dxva2` panel is LOCAL-SESSION ONLY: `configure` draws the boot row
+disabled for it and `status` says which panel it strands. NVAPI is unaffected,
+is the only identity source the boot tier may use, and is never correlated
+against the Windows display list. Decisions `001` and `003`.
 
-**`$env:SESSIONNAME` is not a remote-session test.** It read `Console` inside an
+**`$env:SESSIONNAME` is not a remote-session test**: it read `Console` inside an
 RDP session (measured). `GetSystemMetrics(SM_REMOTESESSION)` is.
 
 **`Get-PnpDeviceProperty` costs ~200 ms PER CALL**, against 0.14 ms for
-`cfgmgr32!CM_Get_DevNode_PropertyW`, and the registry copy is
-unreadable unelevated. Device properties go through `event-watch.ps1`'s
-`$DevNameSource` binding. A per-node loop on the cmdlet is not a slower version
-of that, it is an unusable one; do not move back to it.
+`cfgmgr32!CM_Get_DevNode_PropertyW`; the registry copy is unreadable unelevated.
+Device properties go through `event-watch.ps1`'s `$DevNameSource` binding. A
+per-node loop on the cmdlet is not a slower version of that, it is an unusable
+one; do not move back to it.
 
-**Do not gate anything on `NV_GPU_DISPLAYIDS.isActive` (flags bit 2).** It read
-`False` then `True` in one session with nothing changing; what it tracks is not
-established. `isConnected` (bit 6) was stable in every run and context. Use it.
+**Do not gate anything on `NV_GPU_DISPLAYIDS.isActive` (flags bit 2).** It varies
+with nothing changing and what it tracks is not established; `isConnected`
+(bit 6) was stable in every run and context. Use that.
 
 **Never hand-write NVAPI bindings from memory.** Dispatch uses magic function ids
 and size-encoded struct versions; both come from a real source, and the ids in
@@ -98,9 +95,8 @@ use are recorded with provenance in `..\docs\nvapi-bindings.md`.
 The definition under `System32\Tasks` is owned by whoever registered it, so one
 admin run -- or an s4u install, which needs one -- leaves an ordinary user with
 Read only, and every later unelevated install or `uninstall` then fails with
-`Access is denied` after the scripts are copied. Both paths detect it and
-explain; do not simplify those catch blocks away. Recovery: `uninstall` elevated
-once, then install normally.
+`Access is denied`. Both paths detect it and explain; do not simplify those
+catch blocks away. `README.md` has the recovery.
 
 **`-Verb RunAs` from a STANDARD account elevates a DIFFERENT USER, so the child
 is TOLD who the install is for** -- `$ME`/`$FORUSER`/`$APPDATA`, resolved once at
@@ -145,14 +141,18 @@ passes. Do not make the importer take the last; forbid the duplicate --
 `tests/conventions.tests.ps1` walks the AST of every shipped script, `lib/`
 included.
 
-**`$PSScriptRoot` and `$PSCommandPath` inside `lib/` name that LIB FILE**, in a
-function defined there, whichever program dot-sourced it. `install.ps1` resolves
-both once -- `$TK_HOME` for the sibling scripts, `$TK_SELF` for the program
-itself, which the elevated relaunch runs and a user is told to paste. A slip
-there is silent: the child runs a library with no `param()`, does nothing and
-exits 0. `tests/lib.ps1` defines both, so no test can catch one;
-`tests/conventions.tests.ps1` bans the automatic names under `lib/` instead.
-`Get-Sibling` is the one place that falls back to the installed copy.
+**PowerShell owns names you would not guess, and both kinds have shipped here.**
+Per FILE: `$PSScriptRoot` and `$PSCommandPath` in a function defined in `lib/`
+name that lib file, whichever program dot-sourced it -- so `install.ps1` resolves
+`$TK_HOME` and `$TK_SELF` once and `lib/` reads those (`Get-Sibling` is the one
+place that falls back to the installed copy). Per STATEMENT: `$SWITCH` IS
+`$switch`, the running switch's enumerator, and the verb dispatch is a switch, so
+that constant read EMPTY for every verb until it was renamed; `$foreach` and
+`$_` are the same shape. Both kinds are silent, and `tests/lib.ps1` defines the
+substitutes, so no behavioural test catches either.
+`tests/conventions.tests.ps1` bans the first pair under `lib/`, and for the rest
+gives every script-scope name a value and reads it back inside a switch, a
+foreach and a pipeline -- needing no list of names to keep in step.
 
 **The harness runs `Set-StrictMode -Version Latest`, because the scripts do.**
 Indexing into an empty match, an unset property, an undeclared variable: quiet by

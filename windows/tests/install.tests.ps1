@@ -701,8 +701,8 @@ $global:DEST    = Join-Path $tree 'dest'
 $global:LIBDIR  = Join-Path $DEST 'lib'
 $global:BINDIR  = Join-Path $DEST 'bin'
 $global:LOG     = Join-Path $tree 'state\trigger-kvm.log'
-$global:WATCH   = Join-Path $DEST 'event-watch.ps1'
-$global:SWITCH  = Join-Path $DEST 'trigger-kvm.ps1'
+$global:WATCH    = Join-Path $DEST 'event-watch.ps1'
+$global:SWITCHER = Join-Path $DEST 'trigger-kvm.ps1'
 $global:CFGLIB  = Join-Path $DEST 'config.ps1'
 $global:MANAGE  = Join-Path $DEST 'install.ps1'
 $global:STAMP   = Join-Path $DEST 'version.txt'
@@ -716,9 +716,22 @@ Set-Content -LiteralPath (Join-Path $DEST 'usb-watch.ps1') -Value '# stale' -Enc
 
 $global:TK_HOME = $src
 $global:TK_SELF = Join-Path $src 'install.ps1'
-Install-Files
 
-foreach ($f in $CFGLIB, $WATCH, $SWITCH, $MANAGE, $SHIM, $STAMP, (Join-Path $LIBDIR 'host.ps1')) {
+# FROM INSIDE A SWITCH STATEMENT, because install.ps1's verb dispatch is one and
+# every constant read in here is read through it. $SWITCH was PowerShell's own
+# name for the running switch's enumerator, so the switcher's path arrived as
+# the empty string and `Copy-Item <source> ''` copied it onto itself, from the
+# source tree, in the middle of an install that had said it was installing.
+# Called directly, as it was before, this test could not see that.
+#
+# The location moves too, so that a regression's stray copy lands in the
+# throwaway tree rather than in tests\.
+Push-Location $tree
+try {
+    switch ('install') { default { Install-Files } }
+} finally { Pop-Location }
+
+foreach ($f in $CFGLIB, $WATCH, $SWITCHER, $MANAGE, $SHIM, $STAMP, (Join-Path $LIBDIR 'host.ps1')) {
     Assert-True (Test-Path -LiteralPath $f) ("an install from a source tree lands {0}" -f (Split-Path -Leaf $f))
 }
 Assert-Equal '# install.ps1' (Get-Content -Raw -LiteralPath $MANAGE).Trim() `
@@ -733,12 +746,15 @@ $global:TK_HOME = $DEST
 $global:TK_SELF = $MANAGE
 Reset-Printed
 $threw = ''
-try { Install-Files } catch { $threw = $_.Exception.Message }
+Push-Location $tree
+try {
+    switch ('install') { default { Install-Files } }
+} catch { $threw = $_.Exception.Message } finally { Pop-Location }
 Assert-Equal '' $threw 'installing from the installed copy must not throw on a file copied onto itself'
 
 Assert-Match (Get-Printed) 'the scripts there are the ones being installed' `
     'and it says why nothing was copied, rather than claiming a copy'
-foreach ($f in $CFGLIB, $WATCH, $SWITCH, $MANAGE, (Join-Path $LIBDIR 'host.ps1')) {
+foreach ($f in $CFGLIB, $WATCH, $SWITCHER, $MANAGE, (Join-Path $LIBDIR 'host.ps1')) {
     Assert-True (Test-Path -LiteralPath $f) ("{0} survives the second run" -f (Split-Path -Leaf $f))
 }
 Assert-Equal '# install.ps1' (Get-Content -Raw -LiteralPath $MANAGE).Trim() `

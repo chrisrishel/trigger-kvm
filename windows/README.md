@@ -79,8 +79,17 @@ observe, so the trigger only ever runs `pull`.
 The tiers share one task name, so installing either replaces the other. If "from
 boot" cannot be registered -- a declined UAC prompt, or an account with no
 administrator rights -- it falls back to login, says so, and the config records
-login. `status` says which tier is installed and what it covers, and `restart`
+login. If you approve the prompt and the elevated install then fails, it stops
+and says so instead: elevation was obtained, so that is not the fallback, and
+installing a different tier on top would be a second install you did not ask
+for. `status` says which tier is installed and what it covers, and `restart`
 reports whether a watcher actually came up.
+
+**One admin run poisons the task for later unelevated ones.** The definition
+under `System32\Tasks` belongs to whoever registered it, so after an
+administrator install -- including the boot tier's -- an ordinary `install` or
+`uninstall` fails with `Access is denied`. Both say so. To recover, run
+`uninstall` from an elevated PowerShell once, then install normally.
 
 The two automatic tiers also carry a one-minute repeating trigger, which is what
 brings a killed watcher back. Task Scheduler's own RestartCount does not: it

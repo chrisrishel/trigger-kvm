@@ -114,6 +114,10 @@ $global:INVOKED_WITH = @{ Command = 'install' }
 
 Reset-Printed
 function Write-Host { param($Object, [switch]$NoNewline) Add-Printed -Object $Object -NoNewline:$NoNewline }
+# lib.ps1's Write-Log swallows its argument unless TK_TEST_VERBOSE is set, and
+# what every case below is about is what the person is TOLD. Defined here, above
+# the first case that needs it, because a file may define a name only once.
+function Write-Log { param([string]$m) Add-Printed -Object "install: $m" }
 $rc = Request-Elevation -Verb 'install'
 $said = Get-Printed
 
@@ -131,6 +135,36 @@ Assert-Match $said "(?m)^Run this from an elevated PowerShell:  & '" 'a bare pat
 # install.ps1 resolves $TK_SELF once, for both.
 Assert-Match $said "[\\/]install\.ps1' " 'and the path it names is install.ps1, not the file the function lives in'
 
+# ---- a declined prompt and a failed child are different answers --------------
+#
+# Both come back non-zero, so the exit code alone cannot tell them apart, and
+# reading one as the other is what installed a tier nobody asked for. The real
+# Request-Elevation is exercised here, with only the child stubbed.
+
+$global:TK_SELF = Join-Path $WinDir 'install.ps1'
+$global:NoElevate = $false
+function Start-ElevatedChild { param([string]$Command) return $script:childResult }
+
+Reset-Printed
+$script:childResult = $null          # no child ran: the prompt was declined
+$rc = Request-Elevation -Verb 'install'
+Assert-Equal 1 $rc 'a declined prompt is a failure'
+Assert-Equal $false $ELEVATION_REACHED 'and nothing elevated ran'
+Assert-Match (Get-Printed) 'declined or unavailable' 'which is what it says'
+
+Reset-Printed
+$script:childResult = 3              # a child ran and failed on its own terms
+$rc = Request-Elevation -Verb 'install'
+Assert-Equal 3 $rc 'the child''s exit code is passed through, not flattened to 1'
+Assert-Equal $true $ELEVATION_REACHED 'and elevation is recorded as obtained'
+Assert-NoMatch (Get-Printed) 'declined or unavailable' `
+    'a child that ran and failed must not be reported as a refused prompt'
+
+Reset-Printed
+$script:childResult = 0
+Assert-Equal 0 (Request-Elevation -Verb 'install') 'and a clean child comes back 0'
+Assert-Equal $true $ELEVATION_REACHED
+
 # ---- elevation that does not come falls back, and says so --------------------
 #
 # specs/configure.md 8. Declining the prompt used to exit 1 with the old watcher
@@ -144,15 +178,17 @@ function Set-ConfigValue { param([string]$Path, [string]$Key, [string]$Value)
     $script:written += ('{0}={1}' -f $Key, $Value)
 }
 function Set-InstalledPath { throw 'the PATH is the parent''s, and only after the child came back clean' }
-function Request-Elevation { param([string]$Verb) return $script:elevationResult }
-# lib.ps1's Write-Log swallows its argument unless TK_TEST_VERBOSE is set, and
-# what this case is about is what the person is TOLD.
-function Write-Log { param([string]$m) Add-Printed -Object "install: $m" }
+# The real one sets this: a non-zero code alone cannot say whether a child ran.
+function Request-Elevation { param([string]$Verb)
+    $script:ELEVATION_REACHED = $script:elevationReached
+    return $script:elevationResult
+}
 
 $global:CONFIG = 'C:\fake\config'
 
 Reset-Printed
-$script:elevationResult = 1
+$script:elevationResult  = 1
+$script:elevationReached = $false
 $tier = Invoke-BootTierElevation
 
 Assert-Equal 'user' $tier 'a refusal installs the tier that needs no elevation'
@@ -172,5 +208,47 @@ Assert-Match (Get-Printed) 'falling back to starting at login' 'and says so, in 
 # first moment the claim is true. The old assertion pinned the bug.
 Assert-Equal '' ($script:written -join ',') `
     'deciding to fall back records nothing; installing the fallback records it'
+
+# ---- but a prompt that WAS approved is not the fallback ----------------------
+#
+# Observed: the prompt was approved, the elevated install ran and died partway,
+# and the parent read the non-zero code as "elevation did not come", said
+# "falling back to starting at login", and then ran a SECOND install --
+# unelevated, of a tier nobody asked for, on top of whatever the first one had
+# left. It failed the same way, so the person read one failure twice and the one
+# message between them was untrue.
+#
+# In a child process, because the honest answer here is to stop, and stopping is
+# an exit code -- which is also what the caller of install.ps1 sees.
+
+$elevDir = Join-Path $env:TEMP ("tk-elev-$PID")
+Remove-Item -LiteralPath $elevDir -Recurse -Force -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force -Path $elevDir | Out-Null
+$elevProbe = Join-Path $elevDir 'probe.ps1'
+@(
+    '$ErrorActionPreference = ''Stop'''
+    ('. (Join-Path ''{0}'' ''lib.ps1'')' -f $PSScriptRoot)
+    'Import-Subject -Script ''lib\host.ps1'' -Functions @(''Invoke-BootTierElevation'')'
+    'function Write-Log { param([string]$m) Write-Host "install: $m" }'
+    'function Set-InstalledPath { }'
+    'function Set-ConfigValue { param($Path, $Key, $Value) Write-Host "WROTE $Key=$Value" }'
+    '# The prompt was approved; the elevated install came back non-zero.'
+    'function Request-Elevation { param([string]$Verb) $script:ELEVATION_REACHED = $true; return 3 }'
+    '$tier = Invoke-BootTierElevation'
+    'Write-Host "REACHED THE FALLBACK, tier=$tier"'
+) | Set-Content -LiteralPath $elevProbe -Encoding ASCII
+
+$elevSaid = @(& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $elevProbe 2>&1 |
+              ForEach-Object { "$_" }) -join "`n"
+$elevCode = $LASTEXITCODE
+Remove-Item -LiteralPath $elevDir -Recurse -Force -ErrorAction SilentlyContinue
+
+Assert-Equal 3 $elevCode 'the elevated install''s own exit code is what the caller gets'
+Assert-NoMatch $elevSaid 'REACHED THE FALLBACK' 'and no second, unelevated install of another tier follows'
+Assert-NoMatch $elevSaid 'falling back to starting at login' `
+    'an approved prompt is not the fallback, whatever the install then did'
+Assert-NoMatch $elevSaid 'WROTE ' 'and nothing is recorded for a tier that was not installed'
+Assert-Match $elevSaid 'did not finish' 'it says the elevated install failed'
+Assert-Match $elevSaid 'NOT installed instead' 'and that no other tier was put in its place'
 
 exit 0

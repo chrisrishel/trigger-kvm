@@ -907,6 +907,28 @@ resumed at offset 0 with zero NUL bytes in the file.
 
 ## PowerShell console and language
 
+**2026-09-08, Windows -- a `switch` statement takes over `$SWITCH`, in the scope
+that runs it and in every function called from it.** `$switch` is an automatic
+variable holding the running switch's enumerator; PowerShell variable names are
+case-insensitive, so a script-scope `$SWITCH = 'C:\dest\trigger-kvm.ps1'` reads
+back as the empty string from inside `switch (1) { default { ... } }` and from
+inside a function that switch calls, then returns to its own value when the
+statement ends. `Get-Variable -Name SWITCH -ValueOnly` there answers an
+`SZArrayEnumerator`, and `$enumerator -ne 'x'` FILTERS rather than compares:
+it returns the empty collection, which is falsy, so a check written the obvious
+way reports that nothing is wrong. Compare as text.
+
+Live consequence, found by running the installer: `install.ps1`'s verb dispatch
+is `$code = switch ($Command) { ... }`, and `$SWITCH` was the installed
+switcher's path. `Copy-Item <source> ''` resolves the destination against the
+current directory, so an install run from the source tree threw `Cannot
+overwrite the item C:\...\windows\trigger-kvm.ps1 with itself` partway through,
+after the log had said it was installing. `uninstall` could not remove a file
+whose path was blank, and a task registered on that path would have carried an
+empty `-Exec`. `$foreach` and `$_` have the same shape; `$ErrorActionPreference`
+and the other preference variables do not, because nothing shadows them
+mid-statement.
+
 **2026-09-02, Windows -- an unelevated caller reads `Win32_Process.CommandLine`
 as EMPTY across the session boundary, so counting processes cannot see a
 session-0 watcher.** From an interactive session-3 shell: **183 of 183 session-0
