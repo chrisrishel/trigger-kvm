@@ -537,7 +537,15 @@ public static class NvDdc {
     }
 
     // Used by -WhatIf to show the exact bytes without sending them.
-    public static string PacketForLgInput(byte value) {
+    //
+    // IT TAKES THE TARGET AND PASSES THE SAME GATE WriteLgInput DOES. A dry run
+    // exists to show what a real run would do, and this one printed a source
+    // 0x50 packet for a non-GSM panel -- a packet the transport would have
+    // refused. Confirming a plan that cannot happen is worse than no dry run,
+    // because ..\AGENTS.md hard rule 3 makes looking at the output the only
+    // verification this hardware permits.
+    public static string PacketForLgInput(NvDisplay target, byte value) {
+        RefuseNonGsm(target);
         return BitConverter.ToString(BuildSetVcp(LG_I2C_SOURCE, LG_VCP_INPUT, value)).Replace("-", " ");
     }
 
@@ -554,6 +562,13 @@ public static class NvDdc {
     // here rather than at the call site is deliberate: constraint 10 then holds by
     // construction instead of by discipline.
     public static int WriteLgInput(NvDisplay target, byte value) {
+        RefuseNonGsm(target);
+        return Send(target, BuildSetVcp(LG_I2C_SOURCE, LG_VCP_INPUT, value));
+    }
+
+    // THE GATE, in one place, so the writer and the dry run cannot disagree
+    // about which panels may be shown a source 0x50 packet.
+    private static void RefuseNonGsm(NvDisplay target) {
         if (target == null)
             throw new ArgumentNullException("target");
         if (target.EdidVendor != EDID_VENDOR_GSM)
@@ -561,8 +576,6 @@ public static class NvDdc {
                 "REFUSING to send LG service-channel source 0x{0:X2} to a {1} (0x{2:X4}) panel at {3}. " +
                 "Only GSM (0x{4:X4}) may receive it.",
                 LG_I2C_SOURCE, DecodeMfg(target.EdidVendor), target.EdidVendor, target, EDID_VENDOR_GSM));
-
-        return Send(target, BuildSetVcp(LG_I2C_SOURCE, LG_VCP_INPUT, value));
     }
 
     // Send a standard DDC/CI SetVCP to ONE output, on the normal host source 0x51.
@@ -761,6 +774,13 @@ public static class Dxva {
     public static int WriteStandardVcp(DxvaDisplay target, byte code, byte value) {
         uint n = 0;
         if (!GetNumberOfPhysicalMonitorsFromHMONITOR(target.Handle, ref n) || n == 0) return -1;
+        // EXACTLY ONE, or refuse. In "Duplicate these displays" one HMONITOR
+        // carries several physical panels, and identity was read from the first
+        // of them -- so a write aimed at one panel reached every panel behind
+        // the handle. Both switchers address exactly one display
+        // (specs/config-format.md), and a handle that names more than one
+        // cannot be aimed.
+        if (n != 1) return -3;
         var arr = new PHYSICAL_MONITOR[n];
         if (!GetPhysicalMonitorsFromHMONITOR(target.Handle, n, arr)) return -2;
         try {
@@ -768,7 +788,10 @@ public static class Dxva {
             foreach (var pm in arr) {
                 if (SetVCPFeature(pm.hPhysicalMonitor, code, (uint)value)) ok++;
             }
-            return ok;
+            // ZERO ACCEPTED IS NOT SUCCESS. `ok` was returned raw and the caller
+            // mapped anything non-positive to itself, so 0 -- every write
+            // refused -- came back as 0, which is the success code.
+            return ok > 0 ? 0 : -4;
         } finally {
             DestroyPhysicalMonitors(n, arr);
         }
@@ -962,8 +985,17 @@ function Switch-Display {
         'nvapi' {
             switch ($Display.Method) {
                 'lg-alt' {
-                    $what = '{0} -> src 0x50, VCP 0xF4 = 0x{1:X2} on outputId 0x{2:X8} [{3}]' -f `
-                            $Display.Name, $Value, $target.OutputId, [NvDdc]::PacketForLgInput($Value)
+                    # The packet builder passes the vendor gate, so this throws
+                    # for a non-GSM panel BEFORE anything is printed -- a dry
+                    # run shows what a real run would do, or it is worse than
+                    # no dry run at all.
+                    try {
+                        $what = '{0} -> src 0x50, VCP 0xF4 = 0x{1:X2} on outputId 0x{2:X8} [{3}]' -f `
+                                $Display.Name, $Value, $target.OutputId, [NvDdc]::PacketForLgInput($target, $Value)
+                    } catch {
+                        Write-Log ("REFUSING {0}: {1}" -f $Display.Label, $_.Exception.InnerException.Message)
+                        return $false
+                    }
                     return Invoke-Switch -Target $target -What $what -Write {
                         [NvDdc]::WriteLgInput($target, $Value)
                     }
@@ -992,11 +1024,12 @@ function Switch-Display {
             $what = '{0} -> dxva2 SetVCPFeature, VCP 0x60 = 0x{1:X2} on {2}' -f `
                     $Display.Name, $Value, $target.Device
             return Invoke-Switch -Target $target -What $what -Write {
-                # Returns the number of physical monitors that accepted, or a
-                # negative on failing to get a handle. Invoke-Switch counts 0 as
-                # success, so map anything non-positive to a non-zero failure.
-                $n = [Dxva]::WriteStandardVcp($target, [byte]0x60, $Value)
-                if ($n -gt 0) { 0 } else { $n }
+                # 0 is success and every other value is a failure, which is what
+                # Invoke-Switch expects. The mapping used to live here and got it
+                # backwards -- `if ($n -gt 0) { 0 } else { $n }` returned $n,
+                # which is 0 when NOTHING accepted the write, so a panel that
+                # took none of them was logged as switched.
+                [Dxva]::WriteStandardVcp($target, [byte]0x60, $Value)
             }
         }
         default {

@@ -633,6 +633,18 @@ Invoke-Mutation 'transport: dxva2 gains an I2C source parameter' `
     'trigger-kvm.ps1' 'conventions.tests.ps1' `
     '    public static int WriteStandardVcp(DxvaDisplay target, byte code, byte value) {' `
     '    public static int WriteStandardVcp(DxvaDisplay target, byte source, byte code, byte value) {'
+Invoke-Mutation 'transport: dxva2 writes to every panel behind one handle' `
+    'trigger-kvm.ps1' 'conventions.tests.ps1' `
+    '        if (n != 1) return -3;' ''
+Invoke-Mutation 'transport: dxva2 counts zero accepted writes as a switch' `
+    'trigger-kvm.ps1' 'conventions.tests.ps1' `
+    '            return ok > 0 ? 0 : -4;' `
+    '            return ok;'
+Invoke-Mutation 'transport: the caller maps the failure back to success' `
+    'trigger-kvm.ps1' 'conventions.tests.ps1' `
+    '                [Dxva]::WriteStandardVcp($target, [byte]0x60, $Value)' `
+    '                $n = [Dxva]::WriteStandardVcp($target, [byte]0x60, $Value)
+                if ($n -gt 0) { 0 } else { $n }'
 Invoke-Mutation 'transport: a second embedded-source block goes unscanned' `
     'trigger-kvm.ps1' 'conventions.tests.ps1' `
     '$TransportSource = @''' `

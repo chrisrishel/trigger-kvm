@@ -353,14 +353,28 @@ function Get-SourceGateComplaint {
     $lines = Get-TransportLine $Path
     $out   = @()
 
-    # The gate, and the packet builder -Whatif prints. Two doors, both inside the
-    # one class, and both named here so a THIRD is a complaint rather than a
-    # silently widened allowance.
+    # The two doors -- the writer and the packet builder -WhatIf prints -- and
+    # the gate they both pass through. All three named here, so a FOURTH is a
+    # complaint rather than a silently widened allowance.
     $gate    = @(Get-CsMethodLine -Lines $lines -Name 'WriteLgInput')
     $builder = @(Get-CsMethodLine -Lines $lines -Name 'PacketForLgInput')
-    if ($gate.Count    -eq 0) { $out += 'WriteLgInput is gone -- there is no gate to check' }
+    $refuse  = @(Get-CsMethodLine -Lines $lines -Name 'RefuseNonGsm')
+    if ($gate.Count    -eq 0) { $out += 'WriteLgInput is gone -- there is no writer to check' }
     if ($builder.Count -eq 0) { $out += 'PacketForLgInput is gone' }
-    $allowed = @($gate) + @($builder)
+    if ($refuse.Count  -eq 0) { $out += 'RefuseNonGsm is gone -- there is no gate to check' }
+    $allowed = @($gate) + @($builder) + @($refuse)
+
+    # AND BOTH DOORS MUST GO THROUGH IT. Sharing the gate is only worth anything
+    # while both callers still call it: extracting it is exactly the edit that
+    # could leave one of them ungated, and -WhatIf printing a packet the writer
+    # would refuse is the defect this replaced.
+    foreach ($pair in @(@{ N = 'WriteLgInput'; L = $gate }, @{ N = 'PacketForLgInput'; L = $builder })) {
+        if ($pair.L.Count -eq 0) { continue }
+        $body = ($lines[$pair.L] -join "`n")
+        if ($body -notmatch 'RefuseNonGsm\s*\(') {
+            $out += ("{0} does not pass the vendor gate" -f $pair.N)
+        }
+    }
 
     for ($i = 0; $i -lt $lines.Count; $i++) {
         $l = $lines[$i]
@@ -396,7 +410,7 @@ Assert-Equal 0 $gateComplaints.Count ("source 0x50 has more than one door:`n  " 
 
 # And the gate still refuses a target that is not GSM, which is the other half:
 # one door is no use if it is unlocked.
-$gateBody = (Get-TransportLine $Switcher)[(Get-CsMethodLine -Lines (Get-TransportLine $Switcher) -Name 'WriteLgInput')] -join "`n"
+$gateBody = (Get-TransportLine $Switcher)[(Get-CsMethodLine -Lines (Get-TransportLine $Switcher) -Name 'RefuseNonGsm')] -join "`n"
 # The COMPARISON, not merely the name: the name also appears in the refusal
 # message, so `if (false)` left the constant present and the gate open. Found by
 # a mutation that survived.
@@ -427,12 +441,156 @@ Assert-NoMatch $joined '0x50' 'the dxva2 transport must not name the LG service 
 Assert-NoMatch $joined 'LG_I2C_SOURCE' 'nor reach for the constant that spells it'
 Assert-NoMatch $joined 'I2CWrite' 'nor call raw I2C, which is the only thing that could carry a source byte'
 
+# ---- and it addresses exactly one panel, and reports honestly ----------------
+#
+# Two defects in one method, neither reachable from a suite with no monitors, so
+# they are held here on the source instead.
+#
+# ONE HMONITOR CAN CARRY SEVERAL PHYSICAL PANELS -- that is what "Duplicate these
+# displays" means -- and identity was read off the first of them, so a write
+# aimed at one panel reached every panel behind the handle. Both switchers
+# address exactly one display (specs/config-format.md); a handle naming more
+# than one cannot be aimed, so it is refused.
+#
+# AND ZERO ACCEPTED IS NOT SUCCESS. The accepted count was returned raw and the
+# PowerShell caller mapped anything non-positive to itself -- so 0, meaning every
+# write refused, arrived as 0, which is the success code. The mapping now lives
+# in the method, which is the only place that knows what it counted.
+
+$writeStd = @(Get-CsMethodLine -Lines $dxvaBody -Name 'WriteStandardVcp')
+Assert-True ($writeStd.Count -gt 0) 'the dxva2 write must be found before it can be checked'
+$stdBody = ($dxvaBody[$writeStd] -join "`n")
+
+Assert-Match $stdBody 'GetNumberOfPhysicalMonitorsFromHMONITOR' `
+    'it must ask how many panels are behind the handle'
+Assert-Match $stdBody '(?m)if\s*\(\s*n\s*!=\s*1\s*\)\s*return\s+-\d' `
+    'and refuse anything but exactly one, rather than writing to all of them'
+Assert-Match $stdBody 'return\s+ok\s*>\s*0\s*\?\s*0\s*:\s*-\d' `
+    'and a write nothing accepted must come back as a failure, not as 0'
+
+# The caller must not put a mapping back on top of that one.
+$dxvaCall = (Get-Content -Raw -LiteralPath $Switcher)
+Assert-NoMatch $dxvaCall 'Dxva\]::WriteStandardVcp\([^\n]*\n[^\n]*-gt 0' `
+    'the success mapping belongs to the method that counted, not to its caller'
+
 foreach ($l in @($dxvaBody | Where-Object { $_ -match '^\s*public\s+static\b.*\(' })) {
     $p = [regex]::Match($l, '\((.*)\)')
     if ($p.Success -and $p.Groups[1].Value -match '(?i)\b(source|i2c\w*addr\w*|devaddress)\b') {
         Assert-True $false ("a dxva2 method takes a source or I2C address: {0}" -f $l.Trim())
     }
 }
+
+# ---- and no OTHER file in the tree can reach that bus ------------------------
+#
+# ..\..\AGENTS.md hard rule 5: each platform's AGENTS.md names EVERY emitter it
+# has, and each suite asserts -- self-testedly -- that there are no others.
+#
+# The scan above reads ONE here-string in ONE file, and that was the whole of
+# the proof. It is not enough: event-watch.ps1 carries two Add-Type blocks,
+# lib\host.ps1 one, and nvapi-probe.ps1 a whole NVAPI binding, and none of them
+# was ever read. An emitter the scan cannot see is precisely the failure the
+# rule exists to prevent.
+
+# Comments stripped in BOTH languages -- PowerShell's `#` and <# #>, and the
+# `//` and /* */ of the C# these files embed. Otherwise the scan finds the rule
+# being DISCUSSED and calls it an emitter: nvapi-probe.ps1's whole point is that
+# it does NOT resolve NvAPI_I2CWrite, and it says so four times.
+function Get-CodeOnly {
+    param([string]$Path)
+    $t = Get-Content -Raw -LiteralPath $Path
+    $t = [regex]::Replace($t, '(?s)<#.*?#>', '')
+    $t = [regex]::Replace($t, '(?s)/\*.*?\*/', '')
+    $out = foreach ($l in ($t -split "`r?`n")) {
+        if ($l -match '^\s*#') { continue }
+        $l -replace '//.*$', ''
+    }
+    return ($out -join "`n")
+}
+
+# Every embedded native-source block in the tree, as file -> text. These are the
+# only places PowerShell can gain the ability to touch hardware at all.
+function Get-EmbeddedSource {
+    param([string]$Path)
+    return @([regex]::Matches((Get-CodeOnly $Path), "(?ms)@'\r?\n(.*?)\r?\n'@") |
+             ForEach-Object { $_.Groups[1].Value })
+}
+
+# Named relative to windows\, so `lib\host.ps1` reads as itself rather than as
+# a bare `host.ps1` that could be either.
+$blocks = @()
+foreach ($f in (Get-ShippedScript)) {
+    $rel = $f.FullName.Substring($WinDir.Length + 1)
+    foreach ($b in (Get-EmbeddedSource $f.FullName)) {
+        $blocks += [pscustomobject]@{ File = $rel; Text = $b }
+    }
+}
+
+# NAMED, not counted loosely: a new embedded block is a decision somebody has to
+# make deliberately, and this is where they are told so.
+$expected = 'event-watch.ps1', 'event-watch.ps1', 'lib\host.ps1', 'nvapi-probe.ps1', 'trigger-kvm.ps1'
+Assert-Equal ($expected -join ', ') ((@($blocks | ForEach-Object { $_.File }) | Sort-Object) -join ', ') `
+    ('the embedded native source in this tree is not what this scan was written against. ' +
+     'A new block is a new way to reach hardware: name it here, and in windows\AGENTS.md.')
+
+# NOTHING BUT THE SWITCHER MAY NAME THE BUS. trigger-kvm.ps1's block is scanned
+# in full above; every other one must not mention I2C at all.
+$reach = @()
+foreach ($b in ($blocks | Where-Object { $_.File -ne 'trigger-kvm.ps1' })) {
+    foreach ($needle in '0x50', 'LG_I2C_SOURCE', 'I2C') {
+        if ($b.Text -match [regex]::Escape($needle)) {
+            $reach += ("{0}: embedded source names {1}" -f $b.File, $needle)
+        }
+    }
+}
+Assert-Equal 0 $reach.Count ("only the switcher's transport may reach the I2C bus:`n  " + ($reach -join "`n  "))
+
+# ...and the DISPATCH that can actually put bytes on it is resolved in exactly
+# one file. nvapi-probe.ps1 deliberately never resolves it, which is what makes
+# it an instrument rather than a second emitter (windows\AGENTS.md).
+$resolvers = @()
+foreach ($f in (Get-ShippedScript)) {
+    if ((Get-CodeOnly $f.FullName) -match 'NvAPI_I2CWrite') { $resolvers += $f.Name }
+}
+Assert-Equal 'trigger-kvm.ps1' ($resolvers -join ', ') `
+    'NvAPI_I2CWrite is resolved in exactly one file, and nvapi-probe.ps1 must not be it'
+
+# ---- the widened scan can actually see one ----------------------------------
+#
+# A scan that cannot fail is decoration, and this one is easy to write so that
+# it never fires. Against throwaway copies, never by breaking the real files.
+$scanTmp = Join-Path $env:TEMP 'trigger-kvm-emitter-scan'
+Remove-Item -LiteralPath $scanTmp -Recurse -Force -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force -Path $scanTmp | Out-Null
+
+$probe = Join-Path $scanTmp 'probe.ps1'
+# Built line by line: a here-string demonstrating a here-string cannot close.
+@(
+    '$Src = @' + "'"
+    'public static class X {'
+    '    public static int Write(byte v) { return I2CWrite(0x50, v); }'
+    '}'
+    "'" + '@'
+) | Set-Content -LiteralPath $probe -Encoding ASCII
+
+$got = @(Get-EmbeddedSource $probe)
+Assert-Equal 1 $got.Count 'the scan must find an embedded block at all'
+Assert-Match $got[0] '0x50'    'and read what is in it'
+Assert-Match $got[0] 'I2CWrite'
+
+# The same text in a COMMENT is not an emitter, in either language.
+@(
+    '# I2CWrite(0x50) is what this file must never do.'
+    '$Src = @' + "'"
+    '// I2CWrite(0x50) is deliberately not resolved here.'
+    'public static class X { }'
+    "'" + '@'
+) | Set-Content -LiteralPath $probe -Encoding ASCII
+$got = @(Get-EmbeddedSource $probe)
+Assert-Equal 1 $got.Count 'a block whose body is all comment is still a block'
+Assert-NoMatch $got[0] '0x50' 'but talking about the rule is not breaking it'
+Assert-NoMatch ((Get-CodeOnly $probe)) 'I2CWrite' 'in either language'
+
+Remove-Item -LiteralPath $scanTmp -Recurse -Force -ErrorAction SilentlyContinue
 
 # ---- one verb surface, in one place ------------------------------------------
 #

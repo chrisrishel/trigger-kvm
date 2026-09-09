@@ -306,7 +306,9 @@ activity was three minutes earlier. The System log holds zero `Kernel-Power 42`
 and zero `Power-Troubleshooter 1` events back to 2026-01-25, so no sleep cycle
 has ever completed on this machine. `powercfg /a` offers only S3 and Hibernate and
 reports Hybrid Sleep unavailable because "the hypervisor does not support this
-standby state", with VBS running under HVCI strict mode.
+standby state", with VBS running under HVCI strict mode. Use hibernate to
+re-test anything here -- and from a bash-flavoured shell that is `shutdown -h`,
+not `/h`, which MSYS rewrites into a path.
 
 **2026-08-30 -- the ASUS defected during sleep.** It lost the Mac's signal and its
 auto-input feature moved it to the other live input; nothing pulled it back

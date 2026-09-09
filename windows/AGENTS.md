@@ -12,24 +12,25 @@ source byte is not a parameter of it, and it **throws** unless the target's EDID
 manufacturer is GSM (`0x1E6D`). Nothing else in this tree can reach that bus:
 `Dxva` cannot express a source byte at all, and `nvapi-probe.ps1` deliberately
 never resolves `NvAPI_I2CWrite`, so there is no instrument to gate either.
-`tests/conventions.tests.ps1` scans the embedded C# and self-tests the scan.
+`tests/conventions.tests.ps1` names every embedded native block in the tree,
+scans them all, and self-tests the scan.
 
 **A force-killed watcher leaves the mutex ABANDONED, and that is a normal
 condition here, not an error.** The installer force-kills the watcher on every
 install; Task Manager and a crash do the same. .NET signals it by throwing
 `AbandonedMutexException` from `WaitOne` **after** handing the lock over;
 `event-watch.ps1` catches it and continues, because the alternative is an install
-that reports success and leaves nothing watching, and `ReleaseMutex()` then
-consumes the abandonment. Do not "simplify" the catch away: uncaught it also
+that reports success and leaves nothing watching; `ReleaseMutex()` clears the
+abandonment. Do not "simplify" the catch away: uncaught it also
 strands the lock when the watcher is run BY HAND, since an aborted script does
 not end an interactive shell.
 
 **One physical USB plug produces DOZENS of `Win32_DeviceChangeEvent` indications,
-each costing a `Win32_PnPEntity` query.** The debounce is therefore load-bearing
+each costing a `Win32_PnPEntity` sweep.** The debounce is therefore load-bearing
 for ordinary operation, and the no-edge branch is the common case by a wide
-margin -- which is why its line is `Write-Verbose`, not `Write-Log`. A quiet log
-cannot distinguish "no event delivered" from "delivered and correctly rejected";
-`-Verbose` on a hand-run watcher can, and `README.md` says how.
+margin -- which is why its line is `Write-Verbose`, not `Write-Log`. `-Verbose`
+on a hand-run watcher is what distinguishes "nothing delivered" from "delivered
+and correctly rejected"; `README.md` says how.
 
 **PnP presence means "attached" for USB and "PAIRED" for Bluetooth. Do not
 extend the watcher to Bluetooth by widening its match pattern.** A paired device
@@ -38,9 +39,9 @@ the worst failure shape available. Bluetooth is BUILT and matches on CONNECTED
 through `bthprops.cpl` by P/Invoke (`BLUETOOTH_DEVICE_INFO.fConnected`, not
 `fRemembered`). Three other routes were ruled out and are dated in
 `..\docs\measurements.md`; do not re-try them. Two constraints easy to undo by
-accident: **enumerate Bluetooth ONCE per presence sweep**, not per watched device
-(~32 sweeps per plug); and **a missing or disabled radio must not take the
-watcher down** -- it is an absence, and absences never fire.
+accident: **enumerate Bluetooth ONCE per presence sweep**, not per watched
+device; and **a missing or disabled radio must not take the watcher down** -- it
+is an absence, and absences never fire.
 
 **But the CANDIDATE LIST offers every PAIRED device, connected or not.** Firing
 is on connected; *offering* is on paired, because the device that is
@@ -61,15 +62,14 @@ so do not reach for it to answer "did USB come back?" across a resume; it does
 track a flip's PnP arrival, which is how you correlate one against the log.
 
 **S3 standby HANGS this machine. Do not test it again; use hibernate.** Nothing
-in this repo is implicated; the evidence is dated in `..\docs\measurements.md`.
-From a bash-flavoured shell hibernate is `shutdown -h`, not `/h`, which MSYS
-rewrites into a path.
+in this repo is implicated; the evidence is dated in `..\docs\measurements.md`,
+with how to hibernate from the shell you will be in.
 
 **`user32` REPORTS THE WRONG MONITORS WHEREVER THERE IS NO LOCAL CONSOLE**, and
 `dxva2` goes through `user32`. Two measured shapes, both in
 `../docs/measurements.md`: in session 0 it reports ONE PHANTOM monitor rather
 than none, so an identity check trusting it MIS-RESOLVES -- it fails by picking
-a panel, not by erroring (`haimgel/display-switch` #17); over Remote Desktop it
+a panel, not by erroring; over Remote Desktop it
 reports the RDP virtual display and none of the physical panels, so `dxva2`
 identifies nothing and refuses. The EDID gate is what turns both into a refusal.
 So a `dxva2` panel is LOCAL-SESSION ONLY: `configure` draws the boot row
@@ -78,23 +78,21 @@ either, is the only identity source the boot tier may use, and is never
 correlated against the Windows display list. Decisions `001` and `003`.
 
 **`$env:SESSIONNAME` is not a remote-session test.** It read `Console` inside an
-`rdp-tcp#28` session (measured). `GetSystemMetrics(SM_REMOTESESSION)` is.
+RDP session (measured). `GetSystemMetrics(SM_REMOTESESSION)` is.
 
-**`Get-PnpDeviceProperty` costs ~200 ms PER CALL** -- 70 s for 42 nodes, against
-0.14 ms for `cfgmgr32!CM_Get_DevNode_PropertyW`, and the registry copy is
+**`Get-PnpDeviceProperty` costs ~200 ms PER CALL**, against 0.14 ms for
+`cfgmgr32!CM_Get_DevNode_PropertyW`, and the registry copy is
 unreadable unelevated. Device properties go through `event-watch.ps1`'s
 `$DevNameSource` binding. A per-node loop on the cmdlet is not a slower version
 of that, it is an unusable one; do not move back to it.
 
 **Do not gate anything on `NV_GPU_DISPLAYIDS.isActive` (flags bit 2).** It read
-`False` then `True` for both panels in one session with nothing changing between;
-what it tracks is not established. `isConnected` (bit 6) was stable across every
-run and context. Use that.
+`False` then `True` in one session with nothing changing; what it tracks is not
+established. `isConnected` (bit 6) was stable in every run and context. Use it.
 
 **Never hand-write NVAPI bindings from memory.** Dispatch uses magic function ids
 and size-encoded struct versions; both come from a real source, and the ids in
-use are recorded with provenance in `..\docs
-vapi-bindings.md`.
+use are recorded with provenance in `..\docs\nvapi-bindings.md`.
 
 **Running the installer elevated poisons the task for later unelevated runs.**
 The definition under `System32\Tasks` is owned by whoever registered it, so one
@@ -112,10 +110,10 @@ that user's PATH (`HKCU` in the child is the ADMIN's hive), so the PARENT does
 it; and the child's arguments are TEXT while a profile path has spaces, so flags
 stay bare and values quoted (`Format-ChildArguments`).
 
-**Tiers**: the task-registration logic lives in `lib/host.ps1` only. A headless
-install defaults to login-start; "from boot" registers an S4U task at the cost of
-admin *to register* (it still runs unelevated). `event-watch.ps1` takes a
-`Global\` mutex so exclusion covers the computer rather than one session, and
+**Tiers**: the task-registration logic lives in `lib/host.ps1` only, and the
+boot tier is an S4U task -- "run as this user without their password", which is
+what costs the one admin prompt. `event-watch.ps1` takes a `Global\` mutex so
+exclusion covers the computer rather than one session, and
 falls back to `Local\` ONLY where the account may not create a global name. A
 watcher that finds the global name held by ANOTHER ACCOUNT stands down instead
 of falling back -- falling back there is exactly the two-tiers-two-watchers case
