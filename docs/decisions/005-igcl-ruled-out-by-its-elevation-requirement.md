@@ -31,7 +31,8 @@ driver enforces it.
 ## Consequences
 
 - `dxva2` is the Windows generalisation story, not a fallback.
-- A panel on an Intel GPU is login-tier only, permanently.
+- A panel on an Intel GPU needs a local console session, permanently: it is
+  reachable only over `dxva2` (decision 003).
 - AMD's ADL (`ADL_Display_WriteAndReadI2C`) documents no privilege requirement,
   which is weaker evidence than Intel's explicit one; it stays open in
   `ROADMAP.md`.

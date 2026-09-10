@@ -62,6 +62,7 @@ contracts in [`specs/`](specs/README.md).
   makes that legible and nothing can make it detectable.
 - **The LG needs raw I2C whatever the GPU**, so no vendor-neutral tier covers
   this desk.
-- **A `dxva2` panel is login-tier only.**
+- **A `dxva2` panel needs a local console session**, so not the boot tier and
+  not over Remote Desktop either (decision 003).
 - **A USB switch mode that hands the peripherals to both computers is
   unsupported**: both watchers would fire.

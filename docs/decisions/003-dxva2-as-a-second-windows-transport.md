@@ -50,9 +50,10 @@ and never a fallback**, **confined to a local console session**.
 ## Consequences
 
 - Standard-DDC panels are reachable on any GPU. What Windows requires is NVIDIA
-  *for a panel whose input needs raw I2C*, or for switching before login.
-- A `dxva2` panel cannot follow a switch before login. Stated, not worked
-  around.
+  *for a panel whose input needs raw I2C*, or wherever there is no local console
+  session.
+- A `dxva2` panel cannot follow a switch from session 0, nor from a Remote
+  Desktop session. Stated, not worked around.
 - The `lg-alt` + `dxva2` pair is refused by name; the stack cannot express the
   source byte, so this transport cannot widen the `0x50` surface.
 - This does not help this desk: the LG needs `0x50`.

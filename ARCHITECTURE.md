@@ -140,11 +140,13 @@ Windows has two transports, which makes a 2x2 with one impossible cell:
 The impossible pair is refused with the reason named, never downgraded to the
 standard command. **A transport is chosen per panel at configure time and is
 never a fallback**: the packet that moved the panel on the day somebody watched
-it must be the packet sent afterwards. `dxva2` goes through `user32`, which in
-session 0 reports one phantom monitor rather than none, so a `dxva2` panel is
-login-tier only, and `configure` and `status` say so. macOS has one transport,
-`ioavservice`, and refuses any other name. Decisions 001, 003 and 005 hold the
-reasoning; readings are in `docs/measurements.md`.
+it must be the packet sent afterwards. `dxva2` goes through `user32`, which sees
+the monitors of the session it runs in, so a `dxva2` panel needs a LOCAL CONSOLE
+session: session 0 reports one phantom monitor rather than none, and a Remote
+Desktop session reports the RDP virtual display and none of the real panels. A
+login tier is necessary and not sufficient, and `configure` and `status` say so.
+macOS has one transport, `ioavservice`, and refuses any other name. Decisions
+001, 003 and 005 hold the reasoning; readings are in `docs/measurements.md`.
 
 ## Identity and the gate
 
@@ -201,7 +203,9 @@ logoff, both measured on Windows with nobody signed in. Locking is covered by
 either tier. On a Mac with FileVault, nothing runs before the pre-boot unlock,
 which is also the first login, so the boot tier's gain there is the logged-out
 case. A `dxva2` panel cannot follow the switch before login, because session 0
-has no desktop; on hardware with no NVIDIA card that is the whole story.
+has no desktop -- nor from a Remote Desktop session, which has a desktop with
+none of the real monitors in it; on hardware with no NVIDIA card that is the
+whole story.
 
 Enumerating and writing from session 0 were proved separately; one does not
 imply the other.

@@ -214,7 +214,7 @@ INI file you write.
 | Direction | switches on connect, and optionally the other way on disconnect | pull only: the computer that receives the devices takes the monitors |
 | Before login | no | yes, on both platforms, without anything running elevated |
 | Triggers | USB | USB, and a Bluetooth device connecting |
-| Platforms | macOS, Windows (any GPU), Linux | macOS (Apple Silicon), Windows (any GPU for standard panels; NVIDIA for a manufacturer channel or for switching before login) |
+| Platforms | macOS, Windows (any GPU), Linux | macOS (Apple Silicon), Windows (any GPU for standard panels; NVIDIA for a manufacturer channel, or wherever there is no local console session -- before login, or over Remote Desktop) |
 
 If you want Linux, display-switch is the better fit.
 
