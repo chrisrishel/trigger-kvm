@@ -89,12 +89,19 @@ assert_equal "$(find "$SPECS" -maxdepth 1 -name '*.md' | wc -l | tr -d ' ')" \
 it 'every source a user-visible string can live in is read by the checker'
 missed=''
 while IFS= read -r f; do
-  case " ${SOURCES[*]} " in (*" $f "*) ;; (*) missed="$missed $f" ;; esac
+  found=''
+  # Element by element, not against "${SOURCES[*]}": joining on a space is the
+  # one thing the array above exists to avoid.
+  for s in "${SOURCES[@]}"; do
+    if [ "$s" = "$f" ]; then found=1; fi
+  done
+  [ -n "$found" ] || missed="$missed
+  $f"
 done <<EOS
 $(find "$MAC_DIR" -type f \( -name '*.sh' -o -name '*.c' -o -name trigger-kvm \) \
        -not -path "$MAC_DIR/tests/*")
 EOS
-assert_equal '' "$missed" 'these files hold wording the conformance check cannot see:'
+assert_equal '' "$missed" "these files hold wording the conformance check cannot see:$missed"
 
 # =============================================================================
 # The shared reader fixture (specs/config-format.md, "The shared fixture")
