@@ -233,6 +233,9 @@ tk_apply_tier() {
   DOMAIN="$(tk_domain)"
   CONFIG="${1:-$TK_SUPPORT/config}"
   TK_TIER_LOADED=0
+  # Why the boot tier fell back, empty when it did not. Read again below, after
+  # the login tier has been written, which is where the config records it.
+  _why=''
   [ -f "$CONFIG" ] || { TK_TIER_APPLIED=''; return 0; }
   config_load "$CONFIG"
   TK_TIER_APPLIED=$(tk_lower "$(config_get install.autostart)")
@@ -276,7 +279,6 @@ EOF
     # Either failure falls back to login and says so; the fallback branch below
     # then removes a daemon plist launchd refused, so `status` cannot report a
     # tier that is not running.
-    _why=''
     if ! sudo -p 'Password (once, to install the boot-time start): ' \
               install -o root -g wheel -m 644 "$TMP_DAEMON" "$TK_DAEMON_PLIST" 2>/dev/null; then
       _why='no password given'
@@ -293,7 +295,6 @@ EOF
       tk_log "$_why -- falling back to starting at login."
       tk_log 'Re-run this and choose "From boot" to try again.'
       TK_TIER_APPLIED=login
-      sed -i '' 's/^\([[:space:]]*install\.autostart[[:space:]]*=[[:space:]]*\).*/\1login/' "$CONFIG"
     fi
   fi
 
@@ -311,6 +312,14 @@ EOF
       _plist=$TK_PLIST; rm -f "$TK_SESSION_PLIST"
     fi
     tk_write_agent_plist "$_plist" || return 1
+    # The downgrade is recorded HERE, once the plist that applies it exists
+    # (specs/configure.md 8). Written where the boot half failed, it survived a
+    # plist that could not be written -- leaving the config claiming a login
+    # tier with neither tier installed. Loading it is a separate question: over
+    # SSH there is no gui domain, and login is still what happens next time.
+    if [ -n "$_why" ]; then
+      sed -i '' 's/^\([[:space:]]*install\.autostart[[:space:]]*=[[:space:]]*\).*/\1login/' "$CONFIG"
+    fi
     if ! tk_bootstrap "$DOMAIN" "$_plist"; then
       # Over SSH there is no gui domain to load into.
       tk_log "could not load the LaunchAgent now: $TK_BOOTSTRAP_ERR"

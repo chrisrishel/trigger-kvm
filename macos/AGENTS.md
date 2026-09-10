@@ -55,8 +55,9 @@ login and "no" write theirs and delete the other's. "No" lives at
 **`tk_bootstrap` in `lib/manage.sh` is the only function that may load a job into
 launchd, and its failure is caught, never thrown.** The bootout runs first, so
 between the two calls nothing is watching. The boot tier can fail two ways (no
-password, launchd refused) and both fall back to login, say why, and rewrite
-`install.autostart`. Enforced by `conventions.tests.sh`.
+password, launchd refused) and both fall back to login and say why. The config
+records the downgrade only once the login plist is written, never where the boot
+half failed (`specs/configure.md` 8). Enforced by `conventions.tests.sh`.
 
 **The boot tier is a LaunchDaemon with `UserName` set: root installs it, the user
 runs it, unelevated.** Display identity, `m1ddc` and a full `pull` all work with

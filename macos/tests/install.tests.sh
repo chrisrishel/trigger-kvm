@@ -184,6 +184,25 @@ it 'and never reports the boot tier as installed'
 assert_no_match "$INST_OUT" 'installed the boot-time start'
 assert_no_match "$INST_OUT" 'before anyone logs in'
 
+it 'a fallback whose login tier cannot be written leaves the config alone'
+# specs/configure.md 8: record the fallback only once it has taken effect. The
+# rewrite used to sit in the boot-failure branch, one step early, so this run
+# left `login` in the config with the daemon removed and no agent written --
+# `status` then promised a tier that did not exist, and the next configure read
+# `login` and demoted the boot choice the user had made.
+write_config_with_tier 'install.autostart = boot'
+rm -f "$TK_DAEMON_PLIST"
+: >"$TK_FAKE_LAUNCHCTL"
+# The agent plist cannot be written: its parent is a regular file.
+printf 'not a directory\n' >"$FAKE_DIR/blocker"
+TK_PLIST="$FAKE_DIR/blocker/fake-LaunchAgents.plist" TK_FAKE_LAUNCHCTL_FAIL=bootstrap \
+  PATH="$FAKE_DIR/bin:$PATH" run_install
+assert_match "$INST_OUT" 'the generated LaunchAgent is malformed; not loading it'
+assert_match "$(cat "$SUPPORT/config")" 'install.autostart = boot' \
+  'nothing was installed, so the config may not record a downgrade'
+assert_true "$([ ! -f "$FAKE_DIR/blocker/fake-LaunchAgents.plist" ] && echo 0 || echo 1)" \
+  'no agent plist was written'
+
 it 'a refused LaunchAgent load is reported with the reason, and is not fatal'
 # Over SSH there is no gui domain to load into, which is normal and must not
 # fail the install -- but it may not be silent either.

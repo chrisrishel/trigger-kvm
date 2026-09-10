@@ -360,6 +360,8 @@ mutate 'checks: backing out of the scope question counts as a failed check' lib/
 
 mutate 'tier: choosing boot leaves the LaunchAgent behind' lib/manage.sh walkthrough.tests.sh \
   's|^      rm -f "\$TK_PLIST" "\$TK_SESSION_PLIST"$|      :|'
+mutate 'tier: the fallback is recorded before the login tier is written' lib/manage.sh install.tests.sh \
+  's|^      TK_TIER_APPLIED=login$|      TK_TIER_APPLIED=login; sed -i "" "s/^\\([[:space:]]*install\\.autostart[[:space:]]*=[[:space:]]*\\).*/\\1login/" "$CONFIG"|'
 mutate 'tier: autostart read with a comment-blind, case-sensitive sed' lib/manage.sh install.tests.sh \
   's@^  TK_TIER_APPLIED=\$(tk_lower "\$(config_get install.autostart)")$@  TK_TIER_APPLIED=$(sed -n "s/^[[:space:]]*install\\.autostart[[:space:]]*=[[:space:]]*//p" "$CONFIG" | tail -1)@'
 mutate 'walkthrough: configure ends without saying what to do next' trigger-kvm walkthrough.tests.sh \
