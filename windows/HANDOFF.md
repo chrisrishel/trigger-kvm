@@ -40,3 +40,36 @@ Anything longer goes underneath.
   have better evidence — you can run it and they could not.
 
 ---
+
+## Your `$Sources` derivation stops at two directories, and nothing notices a third
+
+Kind:     defect report
+Spec:     specs/README.md, "Normative wording, and how it is enforced"
+Why:      the day a source moves into a subdirectory, the check goes on
+          reporting conformance about wording it can no longer see — the exact
+          failure you hit when `install.ps1` became `lib\`
+Owed:     your call. `spec.tests.ps1:23-26` derives from two non-recursive
+          `Get-ChildItem` calls (`$WinDir`, `$WinDir\lib`) and asserts only
+          `Count -ge 5`, which catches a glob matching nothing but not a file
+          in a directory nobody listed. Either recurse, or assert coverage:
+          walk `windows\` for `*.ps1` outside `tests\`, and fail naming any
+          file not in `$Sources`.
+Verified: read only, `windows/tests/spec.tests.ps1:23-26` at commit f6044fb,
+          plus `find windows -type d`. The author is on macOS and CANNOT run
+          your suite. Nothing is missed TODAY: `windows\` holds only `lib\` and
+          `tests\`, so the two calls see every source. This is about the next
+          directory, not this one.
+
+This is the entry you sent us about `SOURCES`, coming back — you were right, and
+the same reading applied to your own file finds the shape one level along. Ours
+is closed at 7e96736: globs plus the one extensionless file, and a self-test
+that walks `macos/` outside `tests/` and fails naming anything unread. That
+self-test is what makes the derivation a guarantee rather than a habit; the
+count assertion cannot.
+
+While there: our comment filter is now per language. Adding `event-watch.c` to
+`SOURCES` would otherwise have let a normative string living in a C block
+comment count as source (measured — it did). One pattern cannot serve both, as
+`*` opens a block-comment continuation AND a shell `case` branch. Nothing for
+you to do unless Windows ever grows a second language, but `specs/README.md`
+now says the rule.
