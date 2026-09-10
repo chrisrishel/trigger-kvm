@@ -18,12 +18,24 @@ CHECK="$SPECS/check-conformance.sh"
 
 fake_setup
 
-# An array, so the paths stay separate arguments without relying on word
-# splitting: one of them could one day contain a space.
+# EVERYTHING THE USER CAN SEE, derived rather than listed, and an array so the
+# paths stay separate arguments: one of them could one day contain a space.
+#
+# The C belongs here. `wt_check_triggers` prints the framing and then hands the
+# terminal to `event-watch --test-trigger`, which prints its own wording, so the
+# detector is part of the user surface and detector.md is in the loop below --
+# a normative string added there would otherwise be reported missing from the
+# one file the check does not read. Windows has no such gap only because its
+# detector is a .ps1 and its list globs *.ps1.
+#
+# `trigger-kvm` is named because it is the one file here with no extension for a
+# glob to find. Everything else joins by existing, and the coverage self-test
+# below is what says so.
 SOURCES=(
   "$MAC_DIR"/lib/*.sh
+  "$MAC_DIR"/*.sh
+  "$MAC_DIR"/*.c
   "$MAC_DIR/trigger-kvm"
-  "$MAC_DIR/install.sh"
 )
 
 it 'the checker exists and is executable'
@@ -68,6 +80,21 @@ it 'every spec file is covered, so none can be added unchecked'
 assert_equal "$(find "$SPECS" -maxdepth 1 -name '*.md' | wc -l | tr -d ' ')" \
              "$(( CHECKED + 2 ))" \
              'specs/*.md is not fully accounted for by the conformance loop'
+
+# The same self-test one level down, on the SOURCES. The globs are not
+# recursive and the file with no extension is named by hand, so a source in a
+# new subdirectory would be read by nobody -- and the check would go on
+# reporting conformance about wording it could not see. Windows hit exactly that
+# when install.ps1 was split into lib\.
+it 'every source a user-visible string can live in is read by the checker'
+missed=''
+while IFS= read -r f; do
+  case " ${SOURCES[*]} " in (*" $f "*) ;; (*) missed="$missed $f" ;; esac
+done <<EOS
+$(find "$MAC_DIR" -type f \( -name '*.sh' -o -name '*.c' -o -name trigger-kvm \) \
+       -not -path "$MAC_DIR/tests/*")
+EOS
+assert_equal '' "$missed" 'these files hold wording the conformance check cannot see:'
 
 # =============================================================================
 # The shared reader fixture (specs/config-format.md, "The shared fixture")
@@ -125,6 +152,20 @@ printf '%s\n' '# --- somewhere only a comment says ---' >"$FAKE_DIR/commented.sh
 printf '# x\n\n```normative\n--- somewhere only a comment says ---\n```\n' >"$FAKE_DIR/comment-spec.md"
 set +e; out=$("$CHECK" "$FAKE_DIR/comment-spec.md" "$FAKE_DIR/commented.sh" 2>&1); rc=$?; set -e
 assert_equal 1 "$rc" "$out"
+
+it 'and the same is true of a C comment, now that the C is read'
+# `#` alone would have made every line of event-watch.c's prose count as source.
+printf '/*\n * --- somewhere only a comment says ---\n */\n// --- somewhere only a comment says ---\nint main(void){return 0;}\n' >"$FAKE_DIR/commented.c"
+set +e; out=$("$CHECK" "$FAKE_DIR/comment-spec.md" "$FAKE_DIR/commented.c" 2>&1); rc=$?; set -e
+assert_equal 1 "$rc" "$out"
+
+it 'but a shell case branch is code, not a comment, though it opens with *'
+# The C rule strips a leading `*` (a block-comment continuation). Applied to
+# shell it would delete every `*)` branch, and the wording inside one with it.
+# shellcheck disable=SC2016  # $1 belongs to the fixture, not to this script
+printf 'f() { case $1 in\n  *) printf "%%s" "--- somewhere only a comment says ---" ;;\nesac\n}\n' >"$FAKE_DIR/branch.sh"
+set +e; out=$("$CHECK" "$FAKE_DIR/comment-spec.md" "$FAKE_DIR/branch.sh" 2>&1); rc=$?; set -e
+assert_equal 0 "$rc" "$out"
 
 it 'the checker actually fails when a normative string is absent'
 # A conformance check that cannot fail is decoration. Prove it bites, against a

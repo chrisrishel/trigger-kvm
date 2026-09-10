@@ -609,8 +609,14 @@ mutate 'harness: a bare exit 2 reads as a skip' tests/run.sh conventions.tests.s
   's@^  \[ "\$rc" = 2 \] && ! printf .%s.n. "\$out" | grep -q .^SKIPPED:. && rc=3$@  :@'
 mutate 'spec: the conformance verdict ignores the checker exit status' tests/spec.tests.sh spec.tests.sh \
   's@^  \[ "\$_rc" = 0 \] || _fail "\$_out"$@  case $_out in *"are missing"*) _fail "$_out" ;; esac@'
-mutate 'spec: a fragment in a comment counts as present' ../specs/check-conformance.sh spec.tests.sh \
-  "s%SOURCES=\$(cat \"\$@\" | grep -v '^\[\[:space:\]\]\*#')%SOURCES=\$(cat \"\$@\")%"
+mutate 'spec: a fragment in a shell comment counts as present' ../specs/check-conformance.sh spec.tests.sh \
+  's@(\*)   grep -v .*@(*)   cat "$_f" ;;@'
+mutate 'spec: a fragment in a C comment counts as present' ../specs/check-conformance.sh spec.tests.sh \
+  's@(\*\.c) grep -v .*@(*.c) cat "$_f" ;;@'
+mutate "spec: the C comment rule is applied to shell, eating its case branches" ../specs/check-conformance.sh spec.tests.sh \
+  's@(\*)   grep -v .*@(*)   grep -v "^[[:space:]]*[*#]" "$_f" ;;@'
+mutate 'spec: the checker stops reading the C, so the detector holds no wording' tests/spec.tests.sh spec.tests.sh \
+  's@^  "\$MAC_DIR"/\*\.c$@  "$MAC_DIR"/lib/*.sh@'
 mutate 'spec: an unreadable spec reports all 0 fragments present' ../specs/check-conformance.sh spec.tests.sh \
   's@^if \[ ! -r "\$SPEC" \]; then$@if false; then@'
 

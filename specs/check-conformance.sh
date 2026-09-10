@@ -27,7 +27,19 @@ if [ ! -r "$SPEC" ]; then
 fi
 
 # Code lines only: a fragment that survives only in a comment is not present.
-SOURCES=$(cat "$@" | grep -v '^[[:space:]]*#')
+# The marker is per language rather than one pattern, because `*` opens a C
+# block-comment continuation line AND a shell `case` branch.
+#
+# The patterns carry a leading `(`: bash 3.2 -- which is /bin/bash on macOS --
+# counts parentheses inside $( ) and cannot parse a bare `*.c)` there.
+SOURCES=$(
+  for _f in "$@"; do
+    case $_f in
+      (*.c) grep -v '^[[:space:]]*\(/\*\|\*\|//\)' "$_f" ;;
+      (*)   grep -v '^[[:space:]]*#' "$_f" ;;
+    esac
+  done
+)
 
 # Every line inside a ```normative fence, split on {placeholders}. A whole line
 # is pinned at any length (6, so a stray word is not); a piece produced by

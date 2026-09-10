@@ -130,6 +130,12 @@ one. The marker format is the contract; each platform implements its own
 checker. Each suite derives the list of spec files from `specs/*.md` (or holds
 one and remembers to add to it), excluding this file and `CHANGELOG.md`.
 
+**Both lists are derived: the specs, and the sources read for them.** A source
+list written by hand goes on reporting conformance about wording it can no
+longer see, which is what happened when `install.ps1` was split into `lib\`.
+Each suite self-tests its coverage, and the comment rule is per language --
+a shell `case` branch and a C block-comment continuation both open with `*`.
+
 **What the check does and does not prove.** It proves a string is present in
 the sources. It is blind to a behavioural change with no new wording, to a
 removed or renamed string, to a comment that happens to contain the wording, and
