@@ -95,7 +95,7 @@ $global:FORUSER = 'HOME\First Last'
 $global:APPDATA = 'C:\Users\First Last\AppData\Local'
 
 $bound = @{ Command = 'configure'; Fresh = [switch]$true; NoElevate = [switch]$false
-            AddToPath = [switch]$true; Relaunched = [switch]$true
+            AddToPath = [switch]$true; Relaunched = [switch]$true; RemoveTaskOnly = [switch]$true
             ForUser = 'somebody-else'; ForAppData = 'C:\wrong' }
 $args1 = @(Get-ChildArguments -Verb 'install' -Bound $bound)
 
@@ -113,6 +113,7 @@ Assert-True (-not ($args1 -contains '-AddToPath')) `
 # -Relaunched is the caller's to add, on the command line it builds; forwarding
 # it here would make the child think it had already tried.
 Assert-True (-not ($args1 -contains '-Relaunched')) 'and -Relaunched is not forwarded'
+Assert-True (-not ($args1 -contains '-RemoveTaskOnly')) 'removal-only is chosen explicitly for one elevation, never inherited'
 
 # The identity is recomputed from the parent's answers, never passed through.
 $i = [array]::IndexOf($args1, '-ForUser')
@@ -197,6 +198,10 @@ $script:childResult = 0
 Assert-Equal 0 (Request-Elevation -Verb 'install') 'and a clean child comes back 0'
 
 Assert-Equal $true $ELEVATION_REACHED
+
+Assert-Equal 0 (Request-Elevation -Verb 'install' -TaskRemovalOnly)
+Assert-Match $script:innerSeen '(?<![\w\x27])-RemoveTaskOnly(?:\s|$)' 'the elevated child receives the removal-only operation'
+Assert-True ($declared -contains 'RemoveTaskOnly') 'the real installer declares the internal removal operation'
 
 # ---- and the command it builds really does capture the child -----------------
 #

@@ -170,7 +170,7 @@ function Get-ChildArguments {
 
     $out = @($Verb)
     foreach ($name in @($Bound.Keys)) {
-        if ($name -in @('Command', 'AddToPath', 'Relaunched', 'ForUser', 'ForAppData')) { continue }
+        if ($name -in @('Command', 'AddToPath', 'Relaunched', 'RemoveTaskOnly', 'ForUser', 'ForAppData')) { continue }
         $v = $Bound[$name]
         if ($v -is [System.Management.Automation.SwitchParameter]) {
             if ($v.IsPresent) { $out += "-$name" }
@@ -212,7 +212,7 @@ function Start-ElevatedChild {
 }
 
 function Request-Elevation {
-    param([string]$Verb)
+    param([string]$Verb, [switch]$TaskRemovalOnly)
 
     # DID A CHILD ACTUALLY RUN? The exit code alone cannot say: 1 is both "the
     # prompt was declined" and "the elevated install ran and failed". Callers
@@ -221,6 +221,7 @@ function Request-Elevation {
     $script:ELEVATION_REACHED = $false
 
     $childArgs = Get-ChildArguments -Verb $Verb -Bound $INVOKED_WITH
+    if ($TaskRemovalOnly) { $childArgs += '-RemoveTaskOnly' }
 
     if ($Relaunched) {
         # We already asked and came back still unelevated. Something is refusing
@@ -235,6 +236,7 @@ function Request-Elevation {
         # Quoted, because this line is meant to be pasted and a profile path
         # with a space would not survive being retyped bare either.
         Write-Host ("Run this from an elevated PowerShell:  & '{0}' {1}" -f $TK_SELF.Replace("'", "''"), (Format-ChildArguments $childArgs))
+        if ($TaskRemovalOnly) { Write-Log 'then rerun the installer from your normal, unelevated shell to register the replacement.' }
         return 1
     }
 
@@ -1178,8 +1180,10 @@ function Get-ShimLines {
     'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%TK_DIR%trigger-kvm.ps1" %*'
     'exit /b %ERRORLEVEL%'
     ':manage'
-    'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%TK_DIR%install.ps1" %*'
-    'exit /b %ERRORLEVEL%'
+    # Leave this batch context before invoking PowerShell: uninstall removes
+    # the shim. The remaining command runs with the already-expanded paths
+    # and returns its own code without reading the deleted file or exiting cmd.
+    '(goto) 2>nul & powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%TK_DIR%install.ps1" %*'
     ':noinstall'
     'rem Installing is what produced this command, so re-running it here would only'
     'rem copy the installed files onto themselves. Upgrading and repairing both mean'
@@ -1277,6 +1281,27 @@ function Install-Files {
         "commit    = $(if ($commit) { $commit } else { '(not a git checkout)' })"
         "spec      = $(if ($specRev) { $specRev } else { 'unknown' })"
     ) | Set-Content -LiteralPath $STAMP -Encoding UTF8
+}
+
+# The elevated half of replacing a protected task with a user tier. No files,
+# configuration or PATH are changed here, and no replacement is registered:
+# that belongs to the original unelevated parent, including across UAC users.
+function Remove-ProtectedTask {
+    if (-not $IsElevated) {
+        Write-Log 'removing the protected task requires an elevated process.'
+        return 1
+    }
+    try {
+        if (Get-ScheduledTask -TaskName $TASK -ErrorAction SilentlyContinue) {
+            Stop-ScheduledTask -TaskName $TASK -ErrorAction SilentlyContinue
+            Stop-Watchers
+            Unregister-ScheduledTask -TaskName $TASK -Confirm:$false -ErrorAction Stop
+        }
+        return 0
+    } catch {
+        Write-Log ("could not remove the protected task '{0}': {1}" -f $TASK, $_.Exception.Message)
+        return 1
+    }
 }
 
 # Copy the files, register the task, start it. This is what installing IS;
@@ -1378,9 +1403,8 @@ function Invoke-Install {
     # Everything below -- the self-heal trigger, the settings, the action -- is
     # shared, because the tier is not supposed to change what the watcher does.
     #
-    # $FORUSER, never this process's own name: the ownership-denial path
-    # relaunches elevated even for the login tier, and on a standard account
-    # that is somebody else.
+    # $FORUSER, never this process's own name: boot registration can run as a
+    # different administrator supplied at the standard user's UAC prompt.
     if ($tier -eq 'manual') {
         # No triggers at all. A task with none is legal and can still be started
         # on demand, which is what `trigger-kvm restart` does -- so "no" means
@@ -1453,20 +1477,24 @@ function Invoke-Install {
             # and it is the same trap on the way out as on the way in.
             if (-not $IsElevated) {
                 Write-Log "the existing '$TASK' task was registered by an elevated process."
-                # No tier is passed: the child re-derives it from the config
-                # with Get-EffectiveTier, exactly as the other relaunch does.
-                $rc = Request-Elevation -Verb 'install'
-                if ($rc -eq 0) {
-                    Set-InstalledPath
-                    Write-Log 'done (elevated).'
-                } else {
-                    Write-Log 'the task was left exactly as it was, so what was running still is.'
+                # Elevate only the operation this token could not perform.
+                # The original parent registers the user-tier replacement so
+                # later changes do not inherit an administrator-owned task.
+                $rc = Request-Elevation -Verb 'install' -TaskRemovalOnly
+                if ($rc -ne 0) {
+                    Write-Log 'protected task removal did not finish; no replacement was registered.'
+                    Write-Log 'check: trigger-kvm status, then rerun the installer.'
+                    return $rc
                 }
-                return $rc
+                if (Get-ScheduledTask -TaskName $TASK -ErrorAction SilentlyContinue) {
+                    Write-Log 'the protected task is still present; no replacement was registered.'
+                    return 1
+                }
+            } else {
+                Write-Log "cannot replace the existing '$TASK' task even elevated: $($_.Exception.Message)"
+                Write-Log 'no replacement was registered; check: trigger-kvm status'
+                return 1
             }
-            Write-Log "cannot replace the existing '$TASK' task even elevated: $($_.Exception.Message)"
-            Write-Log 'the task was left as it was; nothing is broken, but nothing changed either.'
-            return 1
         }
     }
 

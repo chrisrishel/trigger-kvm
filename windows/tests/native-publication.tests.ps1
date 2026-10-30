@@ -97,6 +97,46 @@ try {
     Assert-Equal 'status' $shimResult[0]
     Assert-Equal (Join-Path $root 'install.ps1') $shimResult[1]
 
+    # Uninstall deletes the installed CMD shim while cmd.exe is executing it.
+    # Exercise that boundary with a harmless child deleting only these fixtures,
+    # and preserve both success and failure exit codes from PowerShell.
+    foreach ($uninstallCode in @(0,7)) {
+        Get-ShimLines | Set-Content -LiteralPath $shim -Encoding ASCII
+        @('param($Command)',
+          'if ($Command -ne ''uninstall'') { exit 9 }',
+          'Remove-Item -LiteralPath (Join-Path $PSScriptRoot ''bin\trigger-kvm.cmd'') -Force',
+          'Remove-Item -LiteralPath $PSCommandPath -Force',
+          ('exit {0}' -f $uninstallCode)) |
+            Set-Content -LiteralPath (Join-Path $root 'install.ps1') -Encoding ASCII
+        $savedPreference = $ErrorActionPreference
+        try {
+            $ErrorActionPreference = 'Continue'
+            $uninstallOutput = @(& $shim uninstall 2>&1 | ForEach-Object { "$_" })
+            $actualCode = $LASTEXITCODE
+        } finally { $ErrorActionPreference = $savedPreference }
+        Assert-True (-not (Test-Path $shim)) 'the fixture uninstaller removed its own CMD shim'
+        Assert-Equal $uninstallCode $actualCode ('self-deleting CMD shim preserves the uninstaller exit code; '+($uninstallOutput -join ' '))
+    }
+
+    # A caller using CALL must regain control; closing its command interpreter
+    # would hide this error by discarding the caller's remaining work.
+    $caller = Join-Path $root 'caller.cmd'
+    $continued = Join-Path $root 'caller-continued'
+    foreach ($uninstallCode in @(0,7)) {
+        Get-ShimLines | Set-Content -LiteralPath $shim -Encoding ASCII
+        @('param($Command)',
+          'Remove-Item -LiteralPath (Join-Path $PSScriptRoot ''bin\trigger-kvm.cmd'') -Force',
+          ('exit {0}' -f $uninstallCode)) |
+            Set-Content -LiteralPath (Join-Path $root 'install.ps1') -Encoding ASCII
+        @('@echo off','call "%~dp0bin\trigger-kvm.cmd" uninstall',
+          'set "result=%errorlevel%"','> "%~dp0caller-continued" echo continued',
+          'exit /b %result%') | Set-Content -LiteralPath $caller -Encoding ASCII
+        Remove-Item -LiteralPath $continued -ErrorAction SilentlyContinue
+        & $caller | Out-Null
+        Assert-Equal $uninstallCode $LASTEXITCODE 'uninstall returns its exit code to a calling batch file'
+        Assert-True (Test-Path $continued) 'the calling batch file continues after uninstall'
+    }
+
     # Exact path / GetOwner behavior against a native process. This is a
     # harmless fixture named event-watch.ps1, never the installed watcher.
     $global:DEST = Join-Path $root 'install'

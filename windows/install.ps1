@@ -84,6 +84,10 @@ param(
     # from looping UAC prompts forever. Not for humans.
     [switch]$Relaunched,
 
+    # Internal elevation step: remove a protected task, then let the normal
+    # parent register its login/no-autostart replacement under user control.
+    [switch]$RemoveTaskOnly,
+
     # WHO THIS INSTALL IS FOR. Set only on the elevated relaunch, and not for
     # humans either. See Get-ChildArguments in lib\host.ps1 for why the child
     # cannot answer this for itself.
@@ -208,6 +212,14 @@ if ($FORUSER -ne $ME -and -not $IsElevated) {
 }
 
 # --- the verb -----------------------------------------------------------------
+
+if ($RemoveTaskOnly) {
+    if ($Command -ne 'install') {
+        Write-Log '-RemoveTaskOnly is only an installation elevation step.'
+        exit 1
+    }
+    exit (Remove-ProtectedTask)
+}
 
 if ($Command -notin (Get-Verbs -Where 'manage')) {
     Write-Host ("trigger-kvm: no such verb ""{0}""." -f $Command)

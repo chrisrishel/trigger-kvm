@@ -1020,6 +1020,60 @@ elevated installer, so the next replacement required elevation too. This is
 the documented protected-task limitation, separate from the watcher's Limited
 run level. No task ACL or owner was changed to bypass it.
 
+**Real stopped-state cancellation at `4c0f13b`.** In elevated consoles in the
+disposable administrator profile, the installed CMD shim ran `configure` and
+the trigger check. The task was in the no-autostart tier, with no logon or
+self-heal triggers. From enabled/stopped, the observer recorded enablement
+changing true to false to true; the final watcher-lock check was stopped.
+From disabled/stopped, the task stayed disabled and the final lock check was
+stopped. Both configurations remained byte-identical, and neither helper
+performed recovery or started a watcher. The owner confirmed pressing Ctrl+C
+during both 90-second waits and answering Y to terminate the batch job.
+Each case required three Ctrl+C presses before that prompt. State restoration
+passed; single-press cancellation responsiveness is not established by these
+observations. The earlier enabled/running case remains evidence on `2835cb0`.
+
+**Installed uninstall and fresh fallback at `4c0f13b`.** The helper renamed
+the disposable source directory, invoked the installed shim's uninstall and
+restored the source name. Task and program were removed, config and log bytes
+were retained, and PATH's entries matched the pre-install entries. The string
+lost one trailing semicolon; no original PATH entry was removed. Uninstall
+nevertheless returned 1, so this was not a clean success result.
+After preserving the retained data directory, the owner completed setup with
+no program, task or config present, chose boot and declined UAC. Exit 0, saved
+login tier, intended Interactive/Limited task and one watcher were recorded.
+This verifies fresh product-state fallback in the existing disposable profile;
+it does not claim a second fresh operating-system profile.
+
+**Windows installation fixes validated in fixtures.** A native test using the
+actual generated CMD shim reproduced uninstall's false failure before the
+production change: a harmless PowerShell child deleted that shim and exited 0,
+but CMD returned 1 with `The batch file cannot be found`. The manage dispatch
+now leaves its batch context before invoking PowerShell, with paths and
+arguments already expanded. Native tests cover self-deletion with exit codes
+0 and 7, and a calling batch file that must continue and receive either code.
+
+The repeated UAC prompt on user-tier changes was also pinned by a regression
+against `Invoke-Install`, with all task/files/PATH operations mocked. It failed
+because the protected-task retry elevated the whole install. That retry now
+elevates only removal of the old task; the normal parent verifies its absence
+and registers the login/manual replacement. Tests cover both user tiers,
+subsequent changes without another elevation, declined/failed removal, a child
+claiming success while leaving the task present, and the removal helper's
+strictly limited operations. These are Windows installation corrections;
+the shared specification remains revision 15 and product version 0.2.0.
+The corrected paths still require an installed, coordinated repeat before
+their native release gates can be closed.
+
+The full native Windows PowerShell 5.1 suite passed all 19 files without skips;
+`windows/tests/mutate.ps1 publication` caught all 35 mutations. The separate
+`install: the watcher under the task survives` mutation was also caught.
+The initial full run exposed a structural-test false positive: it selected the
+last `Get-ScheduledTask` condition, which was now a read-only removal check.
+The test now identifies the block containing task unregistration from the AST,
+with a self-test for the later read-only query. Its required `Stop-Watchers`
+assertion is unchanged, and the original cleanup-removal mutation still fails.
+
 CI at `4c0f13b` passed both platforms on the second attempt. The first Windows
 attempt failed before the unchanged native-cleanup fixture's child produced a
 report; the cause was not established. All 13 native invocation forms and the
@@ -1051,6 +1105,9 @@ enumerated no physical panel during the account-switching matrix; that case
 is not a pass. Once the owner returned to the original local console,
 `windows/tests/run.ps1 resolve -Verbose` passed without skips, including that
 dxva2 dry run. Neither invocation sent physical monitor writes.
+CI for `21987c3` passed on both platforms: hosted Windows passed 17 files,
+explicitly skipping the NVIDIA-dependent file and two driver cases; macOS
+passed 13 files. Its Actions log was retrieved and scanned privately.
 
 **2026-10-30, Windows -- reviewed candidate `2835cb0` installed and its Save/
 Cancel workflow checked.** Environment: Windows 11 Education build 22631,

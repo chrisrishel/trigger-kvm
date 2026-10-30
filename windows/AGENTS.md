@@ -91,10 +91,10 @@ with nothing changing and what it tracks is not established; `isConnected`
 and size-encoded struct versions; both come from a real source, and the ids in
 use are recorded with provenance in `..\docs\nvapi-bindings.md`.
 
-**Running the installer elevated poisons the task for later unelevated runs**:
-the definition under `System32\Tasks` belongs to whoever registered it. Both the
-install and uninstall paths catch the `Access is denied` that follows and explain
-it; do not simplify those catch blocks away. `README.md` has the recovery.
+**Elevated registration protects the task definition.** For login/manual,
+elevate only old-task removal; the normal parent registers the replacement.
+Boot registration and protected-task uninstall still need elevation. Never
+elevate the whole user-tier retry: later changes would need admin rights too.
 
 **`-Verb RunAs` from a STANDARD account elevates a DIFFERENT USER, so the child
 is TOLD who the install is for** -- `$ME`/`$FORUSER`/`$APPDATA`, resolved once at

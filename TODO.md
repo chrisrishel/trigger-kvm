@@ -23,7 +23,7 @@ and the command checklist in `windows/RELEASE-CHECKS.md`.
   Verified with `make test` (13 files plus shellcheck) and
   `bash tests/mutate.sh publication` (11 mutations caught).
 - [x] Windows: publication-review defects resolved with native PowerShell 5.1
-  regressions, 18 passing test files and 31 caught publication mutations.
+  regressions, 19 passing test files and 35 caught publication mutations.
   Includes incomplete-check gating, exact-path/owner cleanup with conservative
   execution-boundary recognition, prior watcher state, apostrophes/Unicode,
   fractional settle, restricted DLL loading,
@@ -48,8 +48,8 @@ and the command checklist in `windows/RELEASE-CHECKS.md`.
   bytes, and the original config was restored. On that installed candidate,
   real Ctrl+C restored enabled/running before scheduler self-heal, and both
   panels' NVAPI away-and-back switching was visually confirmed separately.
-  Fresh fallback, standard-user UAC, Ctrl+C from the two stopped states and
-  source-unavailable uninstall remain outstanding. The profile session must restore
+  Standard-user UAC and installed repeats of the task-permission and
+  source-unavailable-uninstall fixes remain outstanding. The profile session must restore
   the owner's boot/enabled/running state afterwards.
   A fresh administrator-capable login installation passed with spaces,
   apostrophe and Unicode in both profile/source paths. It exposed a boot-row
@@ -57,8 +57,8 @@ and the command checklist in `windows/RELEASE-CHECKS.md`.
   membership. Corrected `4c0f13b` passed installed boot selection unelevated,
   declined-UAC login fallback with existing config, approved-UAC boot
   registration, and profile Save/Cancel. Native regression/mutation coverage
-  accompanies the fix; fresh fallback, standard-user elevation and the
-  remaining session/uninstall cases are still open.
+  accompanies the fix; standard-user elevation and corrected installation
+  paths still need their coordinated repeat.
   A real reboot on `4c0f13b` started exactly one intended S4U/Limited watcher
   in session 0 without the test user signing in. This is native startup
   evidence; no physical switching was performed by that check.
@@ -66,6 +66,16 @@ and the command checklist in `windows/RELEASE-CHECKS.md`.
   with one new intended watcher in the new interactive session.
   Login-to-no-autostart started a watcher immediately and left it stopped after
   a real sign-out/sign-in, with the task enabled and no triggers.
+  Real Ctrl+C on `4c0f13b` also preserved enabled/stopped and disabled/stopped
+  in elevated no-autostart consoles with no helper recovery or self-heal.
+  Each required three presses before CMD's termination prompt; this establishes
+  cleanup, not single-press responsiveness.
+  Fresh product-state declined-UAC fallback passed after retaining the test
+  profile's data separately. Uninstall retained config/log bytes and removed
+  task/program/PATH but reported exit 1; the self-deleting CMD shim is corrected
+  with native regressions. User-tier replacement now elevates only removal of
+  a protected task and registers the replacement in the normal parent. Both
+  corrections require an installed repeat; no assertion was weakened.
 - [ ] Privacy: shared measurement notes now use consistent labels for device
   identifiers; unnecessary current Windows device examples are synthetic.
   The 2026-10-30 audit at `2835cb0` covered 112 tracked files, 226 commits/1,192
@@ -99,13 +109,12 @@ and the command checklist in `windows/RELEASE-CHECKS.md`.
   run on such an account. Check the task principal, the files' `%LOCALAPPDATA%`
   and whose `PATH` gains `bin`. Trigger: a standard-user account is available.
 
-- **Run a first install on a fresh profile, from the installed shim.** Both
-  halves of the old handoff entry are fixed and covered -- the listing modes no
-  longer read the config, and `Write-ConfigFile` creates
-  `%LOCALAPPDATA%\trigger-kvm\` -- but the walkthrough has only ever been driven
-  by tests writing under an existing temp directory, and this desk's profile has
-  had that directory since before the rename. `configure` from the shim, then
-  `status`. Trigger: the same throwaway account as the item above.
+- **Complete the fresh standard-user installed workflow.** The fresh
+  administrator-capable profile passed initial setup, installed-shim
+  `configure`, Save/Cancel and `status` on 2026-10-30. Repeat those checks in
+  the separate standard-user profile, including creation of its new
+  `%LOCALAPPDATA%\trigger-kvm\` directory and intended-user ownership.
+  Trigger: the approved standard-user session in the release matrix.
 
 - **Measure a same-GPU, different-port re-plug on Windows.** The 2026-09-01
   cable move changed GPU and adapter together. Move only the GPU end of the

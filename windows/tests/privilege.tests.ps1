@@ -1,0 +1,144 @@
+# The actual installer flow, with every task/files/PATH operation fenced to
+# fixtures. A protected-task retry must not delegate user-tier registration.
+$ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'lib.ps1')
+. (Join-Path $WinDir 'config.ps1')
+Import-Subject 'lib\host.ps1' -Functions @('Invoke-Install')
+$root = Join-Path $env:TEMP "tk-privilege-$PID"
+New-Item -ItemType Directory -Path $root | Out-Null
+$global:CONFIG = Join-Path $root 'config'
+@('trigger.device = USB\VID_1234&PID_5678\FIXTURE','trigger.debounce = 2','trigger.settle = 0.25') |
+    Set-Content -LiteralPath $CONFIG -Encoding ASCII
+$global:TASK = 'trigger-kvm-fixture'
+$global:FORUSER = 'FIXTURE\User'
+$global:ME = $FORUSER
+$global:IsElevated = $false
+$global:RENAMED_KEYS = @{}
+$global:WATCH = Join-Path $root 'event-watch.ps1'
+$global:SWITCHER = Join-Path $root 'trigger-kvm.ps1'
+$global:LOG = Join-Path $root 'fixture.log'
+$global:VBS = Join-Path $root 'launcher.vbs'
+$global:BINDIR = Join-Path $root 'bin'
+$global:SHIM = Join-Path $BINDIR 'trigger-kvm.cmd'
+
+$script:tier = 'user'
+$script:taskExists = $true
+$script:protectedTask = $true
+$script:childCode = 0
+$script:childRemoves = $true
+$script:removeFails = $false
+$script:registrations = @()
+$script:elevations = @()
+$script:events = @()
+function Get-EffectiveTier { $script:tier }
+function Install-Files { $script:events += 'files' }
+function Get-WatcherCommand { param($Watcher,$Switcher,$LogFile,$ConfigFile) 'fixture-command' }
+function Write-WatcherLauncher { param($Path,$Command) $script:events += 'launcher' }
+function New-ScheduledTaskAction { param($Execute,$Argument) 'fixture-action' }
+function New-ScheduledTaskPrincipal { param($UserId,$LogonType,$RunLevel)
+    [pscustomobject]@{UserId=$UserId;LogonType=$LogonType;RunLevel=$RunLevel}
+}
+function New-ScheduledTaskTrigger {
+    param([switch]$AtStartup,[switch]$AtLogOn,[switch]$Once,$User,$At,$RepetitionInterval)
+    [pscustomobject]@{Repetition=[pscustomobject]@{StopAtDurationEnd=$true}}
+}
+function New-ScheduledTaskSettingsSet {
+    param([switch]$AllowStartIfOnBatteries,[switch]$DontStopIfGoingOnBatteries,
+          $MultipleInstances,$ExecutionTimeLimit,$RestartCount,$RestartInterval)
+    [pscustomobject]@{DisallowStartIfOnBatteries=$true;StopIfGoingOnBatteries=$true}
+}
+function Get-ScheduledTask { param($TaskName,$ErrorAction)
+    if ($script:taskExists) { [pscustomobject]@{TaskName=$TASK} }
+}
+function Stop-ScheduledTask { param($TaskName,$ErrorAction) $script:events += 'stop-task' }
+function Stop-Watchers { $script:events += 'stop-watchers' }
+function Unregister-ScheduledTask { param($TaskName,[switch]$Confirm,$ErrorAction)
+    $script:events += 'remove-task'
+    if ($script:removeFails) { throw 'fixture task removal failed' }
+    if ($script:protectedTask -and -not $IsElevated) { throw 'Access is denied' }
+    $script:taskExists = $false
+}
+function Request-Elevation {
+    [CmdletBinding()] param([string]$Verb,[switch]$TaskRemovalOnly)
+    $script:elevations += [pscustomobject]@{Verb=$Verb;TaskRemovalOnly=[bool]$TaskRemovalOnly}
+    if ($script:childCode -eq 0 -and $script:childRemoves) {
+        $script:taskExists = $false
+        $script:protectedTask = $false
+    }
+    return $script:childCode
+}
+function Register-ScheduledTask { param($TaskName,$Action,$Principal,$Settings,$Trigger,$Description)
+    $script:registrations += [pscustomobject]@{Elevated=$IsElevated;Principal=$Principal;Triggers=@($Trigger | Where-Object {$null -ne $_}).Count}
+    $script:events += 'register-task'
+    $script:taskExists = $true
+    $script:protectedTask = $IsElevated
+}
+function Enable-ScheduledTask { param($TaskName,$ErrorAction) $script:events += 'enable-task' }
+function Start-ScheduledTask { param($TaskName) $script:events += 'start-task' }
+function Test-WatcherRunning { $true }
+function Set-ConfigValue { param($Path,$Key,$Value) $script:events += "config:$Value" }
+function Set-InstalledPath { $script:events += 'path' }
+
+try {
+    foreach ($tier in @('user','manual')) {
+        $script:tier = $tier
+        $script:taskExists = $true
+        $script:protectedTask = $true
+        $script:registrations = @()
+        $script:elevations = @()
+        $script:events = @()
+        Assert-Equal 0 (Invoke-Install) 'protected task can be replaced with a user tier'
+        Assert-Equal 1 $script:elevations.Count 'only one removal prompt is needed'
+        Assert-True $script:elevations[0].TaskRemovalOnly 'elevation removes only the protected task'
+        Assert-Equal 1 $script:registrations.Count 'the parent registers the replacement task'
+        Assert-Equal $false $script:registrations[0].Elevated 'replacement is registered unelevated'
+        Assert-Equal $FORUSER $script:registrations[0].Principal.UserId 'replacement belongs to the intended user'
+        Assert-Equal 'Interactive' $script:registrations[0].Principal.LogonType
+        Assert-Equal 'Limited' $script:registrations[0].Principal.RunLevel
+        Assert-Equal $(if ($tier -eq 'manual') {0} else {2}) $script:registrations[0].Triggers
+        Assert-Equal 1 @($script:events | Where-Object {$_ -eq 'path'}).Count 'only the normal parent edits PATH'
+        Assert-Equal 0 (Invoke-Install) 'a later user-tier change still works'
+        Assert-Equal 1 $script:elevations.Count 'the later user-tier change does not elevate again'
+        Assert-Equal 2 $script:registrations.Count
+    }
+    foreach ($childCode in @(1,3)) {
+        $script:childCode = $childCode
+        $script:taskExists = $true
+        $script:protectedTask = $true
+        $script:registrations = @()
+        $script:events = @()
+        Assert-Equal $childCode (Invoke-Install) 'declined or failed removal is not reported as success'
+        Assert-Equal 0 $script:registrations.Count 'no replacement is registered after failed removal'
+        Assert-Equal 0 @($script:events | Where-Object {$_ -like 'config:*' -or $_ -eq 'path'}).Count
+    }
+    $script:childCode = 0
+    $script:childRemoves = $false
+    $script:taskExists = $true
+    $script:protectedTask = $true
+    $script:registrations = @()
+    Assert-Equal 1 (Invoke-Install) 'a successful child code is insufficient while the old task remains'
+    Assert-Equal 0 $script:registrations.Count 'never register over an unremoved protected task'
+
+    Import-Subject 'lib\host.ps1' -Functions @('Remove-ProtectedTask')
+    $script:events = @()
+    Assert-Equal 1 (Remove-ProtectedTask) 'the removal helper refuses an unelevated caller'
+    Assert-Equal 0 $script:events.Count 'refusal changes no task, files, configuration or PATH'
+    $global:IsElevated = $true
+    $script:taskExists = $true
+    Assert-Equal 0 (Remove-ProtectedTask) 'the elevated helper removes the old task'
+    Assert-Equal 'stop-task,stop-watchers,remove-task' ($script:events -join ',') `
+        'the helper performs only task/watch cleanup, never files, registration, config or PATH'
+    Assert-Equal $false $script:taskExists
+    $script:events = @()
+    Assert-Equal 0 (Remove-ProtectedTask) 'an already absent task needs no work'
+    Assert-Equal 0 $script:events.Count
+    $script:taskExists = $true
+    $script:removeFails = $true
+    Assert-Equal 1 (Remove-ProtectedTask) 'an elevated removal failure is not success'
+    Assert-Equal 0 $script:registrations.Count 'the helper never registers a replacement'
+} finally {
+    $resolved = (Get-Item -LiteralPath $root).FullName
+    if ((Split-Path -Parent $resolved) -ne (Get-Item -LiteralPath $env:TEMP).FullName -or
+        (Split-Path -Leaf $resolved) -ne "tk-privilege-$PID") { throw 'Fixture cleanup escaped its temporary root' }
+    Remove-Item -LiteralPath $resolved -Recurse -Force
+}

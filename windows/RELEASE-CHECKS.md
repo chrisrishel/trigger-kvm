@@ -40,8 +40,7 @@ one watcher returned before the next scheduled self-heal, without helper
 recovery. NVAPI away-and-back writes on each panel were visually confirmed,
 one panel at a time with the other kept on Windows. Post-reboot read-only
 NVAPI IDs matched the baseline on driver 616.64. Fresh profiles, account
-elevation, remaining autostart/logon checks, source-unavailable uninstall
-and interactive cancellation from the two stopped states remain open.
+elevation and corrected source-unavailable uninstall remain open.
 
 The first fresh administrator-capable profile installed the `2835cb0` archive
 successfully in the login tier, with profile and source paths containing spaces,
@@ -52,9 +51,10 @@ the eligibility query omitted deny-only administrator membership. Corrected
 was selectable unelevated; declining UAC retained a working login tier; approving
 UAC installed S4U/Limited for the intended user with one watcher. Save/Cancel
 and unknown-key preservation passed in this profile too. The first profile run
-did not reach a UAC prompt; the later fallback had existing config. Fresh
-fallback, standard-user credentials and
-uninstall remain distinct unverified cases. A real reboot on `4c0f13b` started
+did not reach a UAC prompt; that fallback had existing config. A subsequent
+fresh product-state install, after preserving the retained data, passed actual
+UAC decline and login fallback. Standard-user credentials and corrected
+uninstall remain unverified. A real reboot on `4c0f13b` started
 one intended S4U/Limited watcher in session 0 before any test-profile sign-in;
 the owner confirmed signing into only the original account. The read-only
 collector checked boot/process timestamps and task ownership. This verifies
@@ -67,10 +67,20 @@ sign-in left it stopped with an enabled, trigger-free task. The transition
 requested UAC because the elevated boot-to-login replacement left a protected
 task definition. Read-only task-security inspection confirmed this; it does
 not mean the watcher runs elevated.
+The current source corrects this by elevating only old-task removal and
+registering the replacement in the normal parent. It also corrects uninstall's
+CMD return path: the installed `4c0f13b` check removed task/program/PATH and
+retained config/log bytes, but CMD returned 1 after its shim was deleted.
+Both corrections have regression/mutation coverage and require an installed
+repeat. Verify task-definition ownership after boot-to-login, then change
+login to no autostart without another UAC prompt; require uninstall exit 0.
 
-For the remaining cancellation cases, run the installed trigger check and
-interrupt it with Ctrl+C; compare prior and resulting task enablement and watcher
-lock state before the next self-heal. Keep the owner's original tier/state.
+Installed `4c0f13b` passed real Ctrl+C from enabled/stopped and disabled/stopped
+in elevated disposable-profile consoles, preserving task enablement, stopped
+watcher state and config bytes without helper recovery. The no-autostart task
+had no self-heal trigger. The owner needed three Ctrl+C presses in each case
+before CMD asked to terminate the batch job; single-press responsiveness was
+not established. Keep the owner's original tier/state.
 Use approved disposable profiles for the separate account, reboot and uninstall
 matrix. The owner watcher is deliberately paused during that session; restore
 its boot/enabled/running state when finished. Repeat physical checks if changes

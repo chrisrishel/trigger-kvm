@@ -1152,6 +1152,22 @@ Invoke-Mutation 'publication: fresh computer Escape marks setup answered' `
 Invoke-Mutation 'publication: native report is visible before publication' `
     'tests\native-cleanup.tests.ps1' 'native-cleanup.tests.ps1' `
     '$pending = "$Path.pending"' '$pending = $Path'
+Invoke-Mutation 'publication: uninstall shim reads its return after deleting itself' `
+    'lib\host.ps1' 'native-publication.tests.ps1' `
+    '''(goto) 2>nul & powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%TK_DIR%install.ps1" %*''' `
+    @'
+'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%TK_DIR%install.ps1" %*'
+    'exit /b %ERRORLEVEL%'
+'@
+Invoke-Mutation 'publication: user tier replacement elevates the whole install' `
+    'lib\host.ps1' 'privilege.tests.ps1' `
+    "Request-Elevation -Verb 'install' -TaskRemovalOnly" "Request-Elevation -Verb 'install'"
+Invoke-Mutation 'publication: removal-only flag is lost before elevation' `
+    'lib\host.ps1' 'elevation.tests.ps1' `
+    "if (`$TaskRemovalOnly) { `$childArgs += '-RemoveTaskOnly' }" ''
+Invoke-Mutation 'publication: task removal helper also copies files' `
+    'lib\host.ps1' 'privilege.tests.ps1' `
+    'function Remove-ProtectedTask {' "function Remove-ProtectedTask {`n    Install-Files"
 Invoke-Mutation 'publication: cleanup ignores process ownership' `
     'lib\host.ps1' 'publication.tests.ps1' `
     "if (`$owner.ReturnValue -ne 0 -or ('{0}\{1}' -f `$owner.Domain, `$owner.User) -ne `$FORUSER) { continue }" ''

@@ -198,6 +198,13 @@ register, and nothing elevated on the switch path.**
 | Windows | Scheduled Task, S4U principal, session 0, unelevated; admin once to register | Scheduled Task, interactive |
 | macOS | LaunchDaemon with `UserName` set: runs as the user, unelevated, with no session; `sudo` once to install | LaunchAgent |
 
+Windows boot registration runs in an elevated child with the intended user's
+identity and paths passed by the parent. Replacing a protected task with login
+or no autostart splits the work: the elevated child removes the old task only,
+then the original unelevated parent registers the replacement. Its definition
+is therefore controllable by that user. The removal child does not install
+files, register a task, update configuration or edit PATH (`windows/lib/host.ps1`).
+
 The boot tier covers the login screen after a reboot and the time after a
 logoff, both measured on Windows with nobody signed in. Locking is covered by
 either tier. On a Mac with FileVault, nothing runs before the pre-boot unlock,

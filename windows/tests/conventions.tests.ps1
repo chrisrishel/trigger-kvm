@@ -1064,10 +1064,38 @@ $installStart = ($startAt | Measure-Object -Maximum).Maximum
 # Anchored to the task-replacement block, not merely to "somewhere earlier":
 # Invoke-Uninstall has a Stop-Watchers of its own, and a laxer check passed with
 # the install path's call deleted. That mutation is in mutate.ps1.
-$replaceAt = @($installFn.Start..($installFn.End - 1) |
-               Where-Object { $hostSrc[$_] -match '^\s*if \(Get-ScheduledTask -TaskName \$TASK' })
-Assert-True ($replaceAt.Count -ge 1) 'the install check must have found the task-replacement block'
-$installReplace = ($replaceAt | Measure-Object -Maximum).Maximum
+function Get-TaskReplacementStart {
+    param([string]$Source)
+    $errors = $null
+    $tree = [Management.Automation.Language.Parser]::ParseInput($Source, [ref]$null, [ref]$errors)
+    if ($errors) { throw 'Task-replacement source must parse' }
+    $fn = $tree.Find({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Invoke-Install'}, $true)
+    if (-not $fn) { throw 'Invoke-Install is missing' }
+    $blocks = @($fn.Body.FindAll({param($n) $n -is [Management.Automation.Language.IfStatementAst]}, $true))
+    $found = @(foreach ($block in $blocks) {
+        foreach ($clause in $block.Clauses) {
+            $queriesTask = $clause.Item1.Find({param($n) $n -is [Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Get-ScheduledTask'}, $true)
+            $removesTask = $clause.Item2.Find({param($n) $n -is [Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Unregister-ScheduledTask'}, $true)
+            if ($queriesTask -and $removesTask) { $block.Extent.StartLineNumber - 1 }
+        }
+    })
+    if ($found.Count -ne 1) { throw "Expected one task-replacement block; found $($found.Count)" }
+    return $found[0]
+}
+# A later read-only success check is not a second replacement block. Select
+# the operation by its AST, rather than by the last task query's spelling.
+$replacementFixture = @'
+function Invoke-Install {
+    if (Get-ScheduledTask -TaskName $TASK) {
+        Stop-Watchers
+        Unregister-ScheduledTask -TaskName $TASK
+    }
+    if (Get-ScheduledTask -TaskName $TASK) { return 1 }
+    Start-ScheduledTask -TaskName $TASK
+}
+'@
+Assert-Equal 1 (Get-TaskReplacementStart $replacementFixture) 'a read-only post-removal query does not move the cleanup boundary'
+$installReplace = Get-TaskReplacementStart ($hostSrc -join "`n")
 
 Assert-True (@($stopAt | Where-Object { $_ -gt $installReplace -and $_ -lt $installStart }).Count -gt 0) `
     ("the install path replaces the task on line " + ($installReplace + 1) + " and starts a watcher on line " +

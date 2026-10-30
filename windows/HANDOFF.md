@@ -41,11 +41,16 @@ Still required before release:
   but its boot row rejected the unelevated administrator. Corrected `4c0f13b`
   passed selection from ordinary PowerShell, declined-UAC login fallback with
   existing config, and approved-UAC S4U/Limited installation for the intended
-  user. Fresh fallback and separate standard-user elevation remain unverified.
+  user. Fresh product-state declined-UAC fallback also passed after preserving
+  this profile's retained data. Separate standard-user elevation is unverified.
 - Real profile/checkout paths containing spaces, apostrophes and non-ASCII text
   through standard-user elevation and uninstall. Administrator-capable login,
   upgrade and approved/declined UAC covered those characters in both paths.
-- Uninstall from the installed shim after the source checkout is unavailable.
+- Repeat installed boot-to-login/no-autostart transitions with the corrected
+  removal-only elevation path, then uninstall with the source unavailable.
+  The `4c0f13b` uninstall removed task/program/PATH and retained config/log
+  bytes but returned 1 when CMD lost its deleted shim; the generated-shim fix
+  has native fixture coverage and awaits an installed repeat.
   On `4c0f13b`, a real reboot started exactly one
   intended S4U/Limited watcher in session 0 without the test user signing in.
   This is native startup evidence, not physical switching evidence.
@@ -53,10 +58,6 @@ Still required before release:
   sign-out/sign-in produced one new watcher in the new interactive session.
   Login-to-no-autostart started one watcher immediately; after another real
   sign-out/sign-in the enabled task had no triggers and no watcher was running.
-- Interactive Ctrl+C from enabled/stopped and disabled/stopped task states.
-  Enabled/running cancellation passed on installed `2835cb0`, before the next
-  scheduler self-heal and without helper recovery. Native timeout restoration
-  covers all three states; error paths remain fixture tests.
 - Native suites on both platforms at the coordinated release commit, privacy
   review of all refs/GitHub surfaces, and the driver's/port's deferred checks in
   TODO.md when their triggers occur. The post-reboot read-only identity check on
@@ -73,6 +74,12 @@ the other display kept on Windows. These local-console writes do not establish
 fresh-boot/session-0 behavior. The owner watcher is deliberately paused for the
 coordinated profile matrix; restore the original boot/enabled/running state when
 that session ends.
+Installed `4c0f13b` also restored enabled/stopped and disabled/stopped after
+real Ctrl+C in elevated test-profile consoles, with config bytes unchanged and
+no helper recovery. Each required three presses before CMD's termination
+prompt; no single-press responsiveness claim is made. These no-autostart tasks
+had no self-heal trigger. Native timeout checks cover all three states; error
+paths remain fixture coverage.
 Privacy review covered reachable history and accessible GitHub surfaces;
 historical identifier/author-email publication decisions remain outstanding.
 

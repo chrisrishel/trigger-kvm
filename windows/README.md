@@ -57,9 +57,9 @@ terminal after adding PATH, or use the installed shim immediately:
 With no config yet it runs the walkthrough first. Choosing "from boot" asks for
 administrator rights to register the task; nothing runs elevated on the switch
 path afterwards. An administrator-capable account can select that tier from an
-ordinary, unelevated PowerShell window; approve UAC when prompted. Later changes
-to a task registered with elevation can prompt again, as explained below under
-autostart tiers.
+ordinary, unelevated PowerShell window; approve UAC when prompted. Removing a
+task registered with elevation also needs approval, including when changing
+from boot to login or no autostart.
 
 The install is self-contained: the installer copies itself next to the program,
 so uninstalling works after the source tree is gone. To upgrade or repair, run
@@ -159,12 +159,13 @@ reports whether a watcher actually came up.
 **A task registered with administrator rights needs those rights to replace
 or remove it.** This includes the boot tier. The installer and uninstaller
 explain the permission restriction and request UAC. Replacing boot with login
-also registers the replacement from the elevated process, so a later change
-from login to no autostart can prompt again. The watcher's `Limited` run level
-does not grant permission to edit the task definition. To return to ordinary
-user control, uninstall with elevation, then reinstall the retained config
-from an unelevated shell with login or no autostart selected. Config and logs
-are retained by uninstall; the running watcher never requires elevation.
+or no autostart elevates only removal of the protected task. Your original
+unelevated process then registers the replacement, so later login/no-autostart
+changes do not require administrator rights. The watcher's `Limited` run level
+is separate from permission to edit the task definition. Start the installer
+unelevated even when changing away from boot; let it request the required step.
+Config and logs are retained by uninstall; the running watcher never requires
+elevation.
 
 The two automatic tiers also carry a one-minute repeating trigger, which is what
 brings a killed watcher back. Task Scheduler's own RestartCount does not: it
