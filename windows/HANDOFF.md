@@ -31,10 +31,13 @@ Kind:     defect report
 Spec:     CONTRIBUTING.md, Versioning and releases; TODO.md, Publication readiness
 Why:      automated regressions and one existing-profile upgrade do not establish all installation/support claims
 Owed:     run the remaining checks in RELEASE-CHECKS.md with the owner present
-Verified: Windows PowerShell 5.1 suite and publication mutations; native Unicode/apostrophe child, WSH and CMD fixtures; real boot-tier upgrade, installed status/Cancel, native task restoration after timeout; shipped ASUS dxva2 switching both ways visually confirmed on 2026-10-29
+Verified: Windows PowerShell 5.1 suite and publication mutations; native Unicode/apostrophe child, WSH and CMD fixtures; cleanup execution boundaries across 13 native invocation forms and generated launcher/watcher fixtures (2026-10-30); real boot-tier upgrade, installed status/Cancel, native task restoration after timeout; shipped ASUS dxva2 switching both ways visually confirmed on 2026-10-29
 
 Still required before release:
 
+- Upgrade the live installed copy to the cleanup follow-up candidate in a
+  coordinated session; it remains on the earlier remediation runtime. Follow
+  RELEASE-CHECKS.md's backup/pause/upgrade and installed Save/Ctrl+C steps.
 - Fresh administrator-capable and separate standard-user profiles; approve and
   decline UAC, verifying the intended user's files, task principal and PATH.
 - Real profile/checkout paths containing spaces, apostrophes and non-ASCII text.

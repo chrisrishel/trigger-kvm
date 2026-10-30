@@ -17,9 +17,34 @@ Run mutations alone: they temporarily edit source and restore it. The suite
 uses process-specific fixture paths. It exercises actual Windows Script Host,
 child-process quoting/exit codes, process ownership, DLL loading and hidden
 console buffers. Task Scheduler transitions in the behavioral suite are mocks;
-the native process-cleanup test stops a bounded, harmless fixture, not a watcher.
+the native cleanup tests use bounded, harmless children. The command-boundary
+test restricts CIM enumeration to its recorded fixture PIDs and checks 13 real
+PowerShell 5.1 invocation forms plus the generated WSH/watcher launch chain.
+It confirms script identity and arguments before asserting cleanup decisions.
 Transport tests enumerate real displays and use `-WhatIf`; none prove that a
 physical panel changed input.
+
+## Candidate status and next coordinated session
+
+The 2026-10-30 cleanup follow-up is covered by native process fixtures; it has
+not been installed over the live boot-tier copy. The earlier upgrade, installed
+status/Cancel and timeout-restoration checks were observed on 2026-10-29.
+The ASUS dxva2 away-and-back check was visually confirmed that day; this
+follow-up performed no display writes. Fresh profiles, account elevation,
+autostart transitions and final NVAPI physical checks remain open.
+
+For the next agreed installation session, follow the backup/pause/upgrade steps
+below using the pushed candidate. After backing up the configuration, add the
+synthetic unknown key `release.fixture = keep` to the saved config. Run
+`trigger-kvm configure` through the installed shim, Save without changing
+monitor inputs, verify the key survives, and restore the original config.
+Run the trigger check and interrupt it with Ctrl+C; compare prior and resulting
+task enablement and watcher lock state. Keep the owner's original tier/state.
+Use approved disposable profiles for the separate account, reboot and uninstall
+matrix. Coordinate physical switching as its own one-panel-at-a-time session.
+
+These are outstanding release gates alongside the privacy review in `TODO.md`;
+automated cleanup validation does not clear them.
 
 ## Coordinate before changing an installation
 

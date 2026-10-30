@@ -1152,6 +1152,10 @@ Invoke-Mutation 'publication: cleanup ignores process ownership' `
 Invoke-Mutation 'publication: cleanup ignores watcher path' `
     'lib\host.ps1' 'publication.tests.ps1' `
     "if (`$scriptPath -notin @(`$WATCH, (Join-Path `$DEST 'usb-watch.ps1'))) { continue }" ''
+Invoke-Mutation 'publication: cleanup scans beyond the execution boundary' `
+    'lib\host.ps1' 'publication.tests.ps1' `
+    '$prefix = ''(?:-NoProfile\s+)?(?:-ExecutionPolicy\s+Bypass\s+)?(?:-WindowStyle\s+Hidden\s+)?''' `
+    '$prefix = ''.*?'''
 Invoke-Mutation 'publication: restore starts a previously stopped watcher' `
     'lib\host.ps1' 'publication.tests.ps1' `
     '$start = $Prior.Running -and -not (Test-WatcherRunning)' '$start = -not (Test-WatcherRunning)'

@@ -935,6 +935,41 @@ resumed at offset 0 with zero NUL bytes in the file.
 
 ## PowerShell console and language
 
+**2026-10-30, Windows -- cleanup must recognize the execution boundary, not
+search for a later `-File`.** At `4a4ba59`, the actual `Stop-Watchers` function
+under Windows PowerShell 5.1.22621.7582 selected an unrelated synthetic process
+for each of `/Command`, `-co` and an implicit script command. CIM, ownership and
+termination were mocked for this pre-fix reproduction; no real process was
+stopped. Adding regression cases before changing production code also exposed
+false selections for other command spellings and malformed token boundaries.
+
+[Microsoft's Windows PowerShell command-line reference](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_powershell_exe?view=powershell-5.1)
+defines the remainder after `-Command` as command text and after `-File` as the
+script and its arguments. Native bounded children confirmed that `inspect.ps1`
+received the synthetic watcher path as its own `-File` argument for `-Command`,
+`/Command`, `-c`, `/c`, `-co`, `/co`, `-comm`, an implicit command and an explicit
+`-File inspect.ps1` invocation. Four encoded-command forms (`-EncodedCommand`,
+`/EncodedCommand`, `-ec`, `-enc`) executed the same payload. These are native
+host-parsing observations, separate from mocked command-line selection tests;
+the latter also include uncertain/invalid forms that cleanup must refuse.
+
+Cleanup recognizes only the installer's optional, ordered host flags followed
+by `-File` and a complete script-path token. It retains exact installation-path
+and owner checks. The native regression fences CIM enumeration to fixture PIDs,
+uses real ownership/termination APIs, and leaves all 13 unrelated children alive.
+The generated WSH launcher and harmless watcher child both stop, with paths
+containing spaces, an apostrophe and Unicode. Each child sleeps at most 20
+seconds and has no watcher lock, event source or monitor code.
+
+Validation: `powershell.exe -NoProfile -ExecutionPolicy Bypass -File
+windows/tests/run.ps1` passes all 18 files without skips, including parsing and
+conventions. `windows/tests/mutate.ps1 publication`, invoked with the same host
+flags, catches all 29 mutations. Replacing the narrow host-prefix grammar with
+an arbitrary scan fails the command-boundary assertion; path and owner removal
+mutations also fail. The live installed watcher, task and displays were not
+changed. Installation/account/autostart checks and final physical NVAPI switching
+remain in `windows/RELEASE-CHECKS.md`; privacy review remains open in `TODO.md`.
+
 **2026-10-30, Windows -- CI temp paths exposed DOS-alias assumptions in two
 new fixtures.** The first remediation push (`41218f5`) passed macOS CI but
 failed Windows' native-publication and conformance-source fixtures. Reproduced

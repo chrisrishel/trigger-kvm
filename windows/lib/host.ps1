@@ -488,20 +488,20 @@ function Stop-Watchers {
     $procs = Get-CimInstance Win32_Process -Property ProcessId,Name,CommandLine -Verbose:$false
     foreach ($p in $procs) {
         if (-not $p.CommandLine -or $p.Name -notin @('powershell.exe','wscript.exe')) { continue }
-        $words = @([regex]::Matches($p.CommandLine, '"[^"]*"|[^\s"]+') | ForEach-Object { $_.Value.Trim('"') })
         $scriptPath = ''
         if ($p.Name -eq 'powershell.exe') {
-            # -File is the execution boundary. -Command text and arguments to a
-            # different script must never be mistaken for the executed script.
-            for ($i = 1; $i -lt $words.Count; $i++) {
-                if ($words[$i] -in @('-Command','-EncodedCommand','-c','-e','-ec')) { break }
-                if ($words[$i] -eq '-File') {
-                    if ($i + 1 -lt $words.Count) { $scriptPath = $words[$i + 1] }
-                    break
-                }
-            }
+            # Recognize only our -File launch grammar (Get-WatcherCommand),
+            # with optional generated flags in their generated order. Unknown
+            # options, command modes and implicit scripts are not ours to stop.
+            # Anchor whole tokens: do not turn quoted fragments into a path.
+            $prefix = '(?:-NoProfile\s+)?(?:-ExecutionPolicy\s+Bypass\s+)?(?:-WindowStyle\s+Hidden\s+)?'
+            $invocation = '^\s*(?:"[^"]+"|[^\s"]+)\s+' + $prefix +
+                '-File\s+(?:"(?<quoted>[^"]+)"|(?<bare>[^\s"]+))(?=\s|$)'
+            if ($p.CommandLine -notmatch $invocation) { continue }
+            $scriptPath = if ($Matches['quoted']) { $Matches['quoted'] } else { $Matches['bare'] }
             if ($scriptPath -notin @($WATCH, (Join-Path $DEST 'usb-watch.ps1'))) { continue }
         } else {
+            $words = @([regex]::Matches($p.CommandLine, '"[^"]*"|[^\s"]+') | ForEach-Object { $_.Value.Trim('"') })
             $scriptPath = @($words | Select-Object -Skip 1 | Where-Object { $_ -notlike '//*' }) | Select-Object -First 1
             if ($scriptPath -ne $VBS) { continue }
         }

@@ -23,9 +23,10 @@ and the command checklist in `windows/RELEASE-CHECKS.md`.
   Verified with `make test` (13 files plus shellcheck) and
   `bash tests/mutate.sh publication` (11 mutations caught).
 - [x] Windows: publication-review defects resolved with native PowerShell 5.1
-  regressions, 17 passing test files and 28 caught publication mutations.
-  Includes incomplete-check gating, exact-path/owner cleanup, prior watcher
-  state, apostrophes/Unicode, fractional settle, restricted DLL loading,
+  regressions, 18 passing test files and 29 caught publication mutations.
+  Includes incomplete-check gating, exact-path/owner cleanup with conservative
+  execution-boundary recognition, prior watcher state, apostrophes/Unicode,
+  fractional settle, restricted DLL loading,
   Escape rollback, recursive conformance coverage and isolated test paths.
 - [x] Shared contracts: revision 15 settles menu overflow and labels `status`
   as the current saved configuration. Both platforms implement revision 15;
@@ -43,6 +44,8 @@ and the command checklist in `windows/RELEASE-CHECKS.md`.
   restoration and ASUS `dxva2` switching both ways were observed on 2026-10-29.
   Fresh profiles, standard-user UAC, decline/fallback, tier transitions,
   installed Save, interactive cancellation and uninstall remain outstanding.
+  The 2026-10-30 cleanup follow-up has native fixture coverage; upgrading the
+  live copy to that candidate remains a coordinated installation check.
 - [ ] Privacy: shared measurement notes now use consistent labels for device
   identifiers; unnecessary current Windows device examples are synthetic.
   A limited history scan found prior identifier content in six file paths

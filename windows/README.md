@@ -123,6 +123,13 @@ Run `trigger-kvm status` afterwards and inspect the version stamp and lock state
 The product version, specification revision and source commit are separate;
 reconfiguring an installed copy preserves its build stamp.
 
+Process cleanup requires the exact installed script path and intended owner.
+For PowerShell it recognizes `-File`, optionally preceded by `-NoProfile`,
+`-ExecutionPolicy Bypass` and `-WindowStyle Hidden` in that order, as generated
+by the installer. Command-mode wrappers, implicit commands and unrecognized
+launch syntax are left alone. A watcher started through a custom wrapper may
+therefore need to be stopped from the console that started it before upgrading.
+
 `trigger-kvm uninstall` works from the installed shim even after the source is
 gone. Config and logs remain in `%LOCALAPPDATA%\trigger-kvm\`; retain them for a
 reinstall or remove them yourself after reviewing their contents. A boot-tier
@@ -321,7 +328,9 @@ reports `SKIPPED` and never counts as a pass. Transport cases require real
 graphics hardware; the dxva2 case requires a local console session, and the
 native NVAPI module-path case is skipped without an NVIDIA driver.
 Native publication checks exercise harmless WSH/process/DLL fixtures and hidden
-console buffers. No real task is registered or altered by the suite. The
+console buffers. `native-cleanup.tests.ps1` checks real PowerShell 5.1 command
+forms and generated launcher cleanup, restricting CIM enumeration to its own
+bounded fixture PIDs. No real task is registered or altered by the suite. The
 coordinated installation and physical checks are in
 [`RELEASE-CHECKS.md`](RELEASE-CHECKS.md).
 

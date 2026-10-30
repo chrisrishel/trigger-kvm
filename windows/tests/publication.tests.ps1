@@ -169,6 +169,45 @@ Test-Case 'cleanup is limited by script position, full path and owner' {
     $script:stopped = @(); Stop-Watchers
     Assert-Equal '1,2' ($script:stopped -join ',')
 }
+# A later -File can be command/script data. Even valid PowerShell host options
+# outside our generated launch grammar are deliberately not cleanup identities.
+foreach ($prefix in @('-Command','/Command','-c','/c','-co','/co','-comm',
+        '-EncodedCommand','/EncodedCommand','-ec','-enc','',
+        '-NoProfile -ExecutionPolicy Bypass -co')) {
+    Test-Case "cleanup refuses command or implicit script: [$prefix]" {
+        $script:processes = @([pscustomobject]@{ProcessId=11;Name='powershell.exe';Owner='owner';
+            CommandLine=('powershell.exe {0} C:\OtherTool\inspect.ps1 -File "{1}"' -f $prefix,$WATCH)})
+        $script:stopped = @(); Stop-Watchers
+        Assert-Equal '' ($script:stopped -join ',') 'a command argument is not the executed script'
+    }
+}
+foreach ($line in @(
+    ('powershell.exe -File C:\OtherTool\inspect.ps1 -File "{0}"' -f $WATCH),
+    ('powershell.exe -Command powershell.exe -File "{0}"' -f $WATCH),
+    ('powershell.exe -ConfigurationName endpoint -File "{0}"' -f $WATCH),
+    ('powershell.exe -NoExit -File "{0}"' -f $WATCH),
+    ('powershell.exe -File "{0}"suffix' -f $WATCH),
+    ('powershell.exe -File "{0}' -f $WATCH),
+    ('powershell.exe -File {0}' -f $WATCH),
+    ('powershell.exe -NoProfile"" -File "{0}"' -f $WATCH),
+    'powershell.exe -File')) {
+    Test-Case "cleanup refuses unrelated or uncertain invocation: $line" {
+        $script:processes = @([pscustomobject]@{ProcessId=12;Name='powershell.exe';Owner='owner';CommandLine=$line})
+        $script:stopped = @(); Stop-Watchers
+        Assert-Equal '' ($script:stopped -join ',') 'uncertain invocation must be left alone'
+    }
+}
+Test-Case 'cleanup accepts generated flags, quoted executable and legacy installed watcher' {
+    $script:processes = @(
+        [pscustomobject]@{ProcessId=21;Name='powershell.exe';Owner='owner';CommandLine=(
+            '"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "{0}" -Arg pull' -f $WATCH)},
+        [pscustomobject]@{ProcessId=22;Name='powershell.exe';Owner='owner';CommandLine=(
+            'powershell.exe -noprofile -executionpolicy bypass -file "{0}"' -f (Join-Path $DEST 'usb-watch.ps1'))},
+        [pscustomobject]@{ProcessId=23;Name='wscript.exe';Owner='owner';CommandLine=('wscript.exe //nologo "{0}"' -f $VBS)}
+    )
+    $script:stopped = @(); Stop-Watchers
+    Assert-Equal '21,22,23' ($script:stopped -join ',')
+}
 $script:taskEnabled = $true
 $script:running = $true
 $script:actions = @()
