@@ -16,9 +16,11 @@
 # questions".
 #
 # It is the ALLOWLIST hard rule 1 (AGENTS.md) refers to. The dialect tables in
-# both implementations -- DIALECT_* in macos/lib/walkthrough.sh and $DIALECTS in
-# windows/install.ps1 -- carry these values, and a change here changes both in
-# the same commit. Both test suites assert the exact packets below.
+# both implementations -- DIALECT_* in macos/lib/answers.sh and $DIALECTS in
+# windows/lib/answers.ps1 -- carry these values. A change here lands with the
+# current platform's table; the other platform's table update goes into its
+# HANDOFF.md for its owner to implement (AGENTS.md). Both test suites assert
+# the exact packets below.
 #
 # Hard rule 2 applies to everything here: never verify a switch by reading a VCP
 # value back. Reads lie on both of these panels (docs/measurements.md, "DDC

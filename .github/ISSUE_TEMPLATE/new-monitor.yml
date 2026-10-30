@@ -28,7 +28,8 @@ body:
   - type: textarea
     id: list
     attributes:
-      label: Full output of `trigger-kvm list`
+      label: Redacted output of `trigger-kvm list`
+      description: Remove serials, Bluetooth addresses, usernames, personal paths and device names, and USB/PnP instance identifiers. Use consistent replacement labels.
       render: text
     validations:
       required: true
@@ -38,7 +39,7 @@ body:
       label: Platform
       options:
         - macOS (Apple Silicon)
-        - Windows (NVIDIA)
+        - Windows
         - Both
     validations:
       required: true

@@ -13,13 +13,14 @@ body:
       label: Platform
       options:
         - macOS (Apple Silicon)
-        - Windows (NVIDIA)
+        - Windows
     validations:
       required: true
   - type: textarea
     id: status
     attributes:
-      label: Output of `trigger-kvm status`
+      label: Redacted output of `trigger-kvm status`
+      description: Remove serials, Bluetooth addresses, usernames, personal paths and device names, and USB/PnP instance identifiers. Use consistent replacement labels.
       render: text
     validations:
       required: true
@@ -27,6 +28,7 @@ body:
     id: logs
     attributes:
       label: Relevant lines of `trigger-kvm logs`
+      description: Remove serials, Bluetooth addresses, usernames, personal paths and device names, and USB/PnP instance identifiers. Use consistent replacement labels.
       render: text
   - type: textarea
     id: what

@@ -5,6 +5,11 @@ Dated observations on real hardware and real platforms, kept because a rule in
 this is the evidence, so the rule can be short and the reasoning can still be
 checked. Newest first within each section.
 
+Device serials, display UUIDs and host-specific instance components are
+replaced with consistent labels in angle brackets. Their equality or change
+is the observation; the identifying bytes are unnecessary. Numeric protocol
+values and documented placeholder serials remain literal.
+
 **A plausible inference is not a measurement.** Three claims were once written
 into the instructions as measured and were wrong, each an inference from a real
 observation: "IOBluetooth never returns" (an unanswered permission prompt sat
@@ -125,10 +130,10 @@ are on this Mac, at `locationID` 1245184 and 1314816:
 
 The hoped-for answer was that macOS might see a serial where Windows sees none.
 **It does not.** `kUSBSerialNumberString` is surfaced and real -- the webcam
-reports `11223344`, the Clarett `IFACE001`, `LG Monitor Controls` `LG0000000001`
+reports `<webcam-serial>`, the Clarett `<interface-serial>`, `LG Monitor Controls` `<lg-ascii-serial>`
 -- so the route exists; it is simply absent on the devices where it would decide
 something. And a serial is not automatically unique anyway: the two Apple hubs
-(`05ac:8009`, `05ac:800a`) both report `0000001`.
+(`05ac:8009`, `05ac:800a`) both report `<shared-hub-serial>`.
 
 **Consequence for revision 12, measured rather than assumed:** on this desk macOS
 can write NO token for `usb:046d:c547`, because `detector.md` §4.1 requires a
@@ -324,7 +329,7 @@ switching on signal loss despite the wording.
 
 | panel | EDID | connector | EDID serial | outputId |
 |---|---|---|---|---|
-| LG ULTRAGEAR+ | `1E6D:9E9D` | DisplayPort | `0x00001111` | `0x00000200` |
+| LG ULTRAGEAR+ | `1E6D:9E9D` | DisplayPort | `<lg-edid-serial>` | `0x00000200` |
 | ASUS PG42UQ | `06B3:42E0` | HDMI | `0x01010101` | `0x00000100` |
 
 **What is measured is the value, not what it means.** `0x01010101` has the shape
@@ -339,7 +344,7 @@ tag `0xFF`, the ASCII serial-number string, is not read by this code** -- it is
 where a real per-unit serial lives when the numeric field is a placeholder, and
 **both panels here carry one.** Measured 2026-09-05 from
 `WmiMonitorID.SerialNumberID`, which surfaces that descriptor: ASUS
-`AS0000000001`, LG `LG0000000001`. So `0x01010101` is a property of this ASUS's
+`<asus-ascii-serial>`, LG `<lg-ascii-serial>`. So `0x01010101` is a property of this ASUS's
 numeric FIELD, not of the panel. This section previously called that unmeasured
 while the 2026-09-01 entry below had already recorded the ASUS string in passing;
 the two are now in step.
@@ -420,12 +425,11 @@ on the boot recorded above.
 
 | panel | displayId | outputId | connector | reachable by | PnP instance |
 |---|---|---|---|---|---|
-| ASUS `06B3:42E0` | `0x80061083` | `0x00000100` | HDMI | nvapi, dxva2 | `DISPLAY\AUS42E0\5&aaaaaaaa&0&UID4352_0` |
-| LG `1E6D:9E9D` | `0x80061082` | `0x00000200` | DisplayPort | nvapi, dxva2 | `DISPLAY\GSM9E9D\5&aaaaaaaa&0&UID4353_0` |
+| ASUS `06B3:42E0` | `0x80061083` | `0x00000100` | HDMI | nvapi, dxva2 | `DISPLAY\AUS42E0\5&<adapter-instance-a>&0&UID4352_0` |
+| LG `1E6D:9E9D` | `0x80061082` | `0x00000200` | DisplayPort | nvapi, dxva2 | `DISPLAY\GSM9E9D\5&<adapter-instance-a>&0&UID4353_0` |
 
 The ASUS's PnP instance path is character-for-character the one recorded before
-its 2026-09-01 cable move (below). That is what "putting the cable back restored
-the PnP path exactly" meant, and it is now checkable rather than remembered.
+its 2026-09-01 cable move (below). The same label denotes the same measured instance component throughout.
 
 `trigger-kvm list -Raw` at the same moment, which is the form an implementation
 actually consumes -- the trailing field is the attached-panel count added at
@@ -433,7 +437,7 @@ revision 13:
 
 ```
 06B3|42E0|AUS|HDMI|01010101|PG42UQ|nvapi,dxva2|1
-1E6D|9E9D|GSM|DisplayPort|00001111|LG ULTRAGEAR+|nvapi,dxva2|1
+1E6D|9E9D|GSM|DisplayPort|<lg-edid-serial>|LG ULTRAGEAR+|nvapi,dxva2|1
 ```
 
 GDI device names at the same moment, recorded because they are the identifier
@@ -514,10 +518,10 @@ input, read `0x9e9f` -- the same value the Mac Studio reads on that same input.
 So the input decides it, and a host still may only use the value it measures on
 its own input.
 
-Around it: the EDID *serial* (`0x00001111`) is stable across all of them, while
+Around it: the EDID *serial* (`<lg-edid-serial>`) is stable across all of them, while
 the EDID's own length is not -- 384 bytes on USB-C, 512 on HDMI 1. And because
 `CGDisplayCreateUUIDFromDisplayID` derives from the product id, the UUID m1ddc
-keys on is per-input as well (`aaaaaaaa...` USB-C, `bbbbbbbb...` HDMI 1). The
+keys on is per-input as well (`<usb-c-uuid>` USB-C, `<hdmi1-uuid>` HDMI 1). The
 ASUS reports `0x42e0` everywhere, and its UUID was correspondingly identical
 across two readings on one input.
 
@@ -668,7 +672,7 @@ is not stable across a hotplug -- the same hazard as the Windows index swap,
 reached from a different direction, and the same answer: resolve by EDID.
 
 **`display-probe` loses two fields on Intel, and the cause is the EDID lookup.**
-It printed `1E6D|9E9E|GSM||00001111|<uuid>|` for the format
+It printed `1E6D|9E9E|GSM||<lg-edid-serial>|<uuid>|` for the format
 `vendor|product|mfg|connector|serial|uuid|name`: **connector and name both
 empty**, on both panels, on every reading. `collect_edids()` walks the registry
 for a property literally named `EDID` and reads `Metadata`/`DFP Type
@@ -764,7 +768,7 @@ adapter. `trigger-kvm list` correspondingly showed one row, and
 
 ```
 REFUSING PG42UQ switch: no output identifies as it (EDID 0x06B3:0x42E0).
-NVAPI enumerated: outputId=0x00000200 connector=DisplayPort edid=0x1E6D:0x9E9D serial=0x00001111
+NVAPI enumerated: outputId=0x00000200 connector=DisplayPort edid=0x1E6D:0x9E9D serial=<lg-edid-serial>
 ```
 
 which is the correct behaviour -- it declined rather than mis-aiming -- but it is
@@ -809,10 +813,10 @@ write.
 
 **2026-09-01, Windows -- one EDID key does serve both transports, and the rest
 of the PnP path does not.** Moving the ASUS between adapters changed its PnP
-instance path from `DISPLAY\AUS42E0\5&aaaaaaaa&0&UID4352_0` to
-`DISPLAY\AUS42E0\4&bbbbbbbb&0&UID49_0`, and its GDI name from `\\.\DISPLAY1` to
+instance path from `DISPLAY\AUS42E0\5&<adapter-instance-a>&0&UID4352_0` to
+`DISPLAY\AUS42E0\4&<adapter-instance-b>&0&UID49_0`, and its GDI name from `\\.\DISPLAY1` to
 `\\.\DISPLAY7`. The `AUS42E0` component -- EDID vendor `AUS` (`0x06B3`) plus
-product `0x42E0` -- was unchanged, as was the EDID serial `AS0000000001`. Putting
+product `0x42E0` -- was unchanged, as was the EDID serial `<asus-ascii-serial>`. Putting
 the cable back on the 4090 restored the PnP path exactly, but **not** the GDI
 name: the ASUS came back as `\\.\DISPLAY3`, a third value, having been
 `\\.\DISPLAY1` before the move and `\\.\DISPLAY7` during it. Restoring the

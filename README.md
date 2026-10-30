@@ -5,8 +5,10 @@
 Two or more computers share the same monitors. Each computer is cabled directly
 to every monitor, on its own input. A USB switch moves the keyboard, mouse and
 whatever else you share. When those devices arrive at a computer, it commands
-each monitor over DDC/CI to select that computer's input. Nothing switches
-video, so the link never drops and your window layout survives every switch.
+each monitor over DDC/CI to select that computer's input. The video cables stay
+connected. Link renegotiation and window layout still depend on the monitor,
+adapter and operating system; the LG on the reference desk flickers during each
+input change.
 
 ```
                     ┌────────────────────┐
@@ -38,8 +40,9 @@ hardware they do not own. Read [Safety](#safety) before you run it.
 | Permissions | None. "Start from boot" asks for your password once to install a system launchd job that then runs as you | None for "start from login". "Start from boot" raises one UAC prompt to register a task that then runs as you; your account must be an administrator |
 | Triggers | USB devices, and Bluetooth devices that connect | USB devices, and Bluetooth devices that connect |
 
-**Monitors.** Each must accept input selection over DDC/CI. Most do. A few
-ignore the standard command and only answer their manufacturer's own method;
+**Monitors.** Each must accept input selection over DDC/CI. Support varies by
+model. A few ignore the standard command and only answer their manufacturer's
+own method;
 one such method is supported, LG's, and it is offered for LG panels only,
 because it uses a service channel that must never be sent to another make. A
 monitor that answers neither is unsupported, and the setup walkthrough says so
@@ -55,7 +58,8 @@ device wired directly to one computer cannot be a trigger. A webcam is a good
 one; audio interfaces can re-enumerate on their own and are weaker.
 
 The other computer's operating system does not matter to this one. Each runs
-its own copy and only ever selects its own inputs.
+its own copy; automatic triggers select only its own inputs. Manual commands
+can select another configured computer.
 
 ## Before you install
 
@@ -69,9 +73,20 @@ its own copy and only ever selects its own inputs.
 
 ## Install
 
-Run the installer on each computer from a checkout of this repository. It
-builds or copies what it needs, then, when there is no configuration yet,
-starts the setup walkthrough. There is nothing to run afterwards.
+Obtain the source on each computer with Git, then follow the platform's
+prerequisites and installation steps: [macOS](macos/README.md#requirements) or
+[Windows](windows/README.md). Run these commands in Terminal on macOS, or in
+Windows PowerShell on Windows:
+
+```sh
+git clone https://github.com/chrisrishel/trigger-kvm.git
+cd trigger-kvm
+```
+
+If you download a source ZIP instead, extract it and open a terminal in the
+extracted directory. The installer builds or copies the program and opens the
+walkthrough when no configuration exists. After installation, open a new
+terminal if the command is not yet on PATH.
 
 ```sh
 cd macos && ./install.sh            # macOS
@@ -84,9 +99,10 @@ cd windows; .\install.ps1           # Windows
 The walkthrough is one menu: name the computers, say which computer is on
 which input of each monitor, tick the devices that travel with the switch,
 choose when it starts, optionally test the inputs and the trigger while you
-watch, then save. Nothing is written until Save, and one monitor always stays
-on this computer during a test so you can read the question. The full contract
-is [`specs/configure.md`](specs/configure.md).
+watch, then save. Configuration is written only on Save. With multiple monitors,
+each test keeps one here so you can read the question. With one monitor, the
+walkthrough warns you before switching it and explains how to restore its input
+manually. The full contract is [`specs/configure.md`](specs/configure.md).
 
 | | macOS | Windows |
 |---|---|---|
@@ -107,22 +123,22 @@ receives the devices. The verbs are the same on both platforms; flags follow
 each platform's convention (`--only` / `-Only`, `--dry-run` / `-WhatIf`,
 `--fresh` / `-Fresh`).
 
-```
-trigger-kvm                      the verbs, with a line each; exits 2
-trigger-kvm pull                 point every configured monitor at THIS computer
-trigger-kvm to <computer>        point them at another computer, by name. Manual only
-trigger-kvm pull --only main     one monitor only; use when testing (works with `to` as well)
-trigger-kvm pull --dry-run       resolve and print the packets, send nothing
-trigger-kvm list                 connected displays, with their identifiers
-trigger-kvm discover             what is attached, in the form the config wants
-trigger-kvm configure            change any of it (the same walkthrough)
-trigger-kvm configure --fresh    ...pre-filling nothing
-trigger-kvm status               is it running, when it starts, what that covers
-trigger-kvm logs                 tail the log
-trigger-kvm restart              make a hand-edited config take effect now
-trigger-kvm pause                stand the watcher down; restart brings it back
-trigger-kvm uninstall            remove the program, keeping the config and the log
-```
+| Command | Purpose |
+|---|---|
+| `trigger-kvm` | the verbs, with a line each; exits 2 |
+| `trigger-kvm pull` | point every configured monitor at THIS computer |
+| `trigger-kvm to <computer>` | point them at another computer, by name. Manual only |
+| `trigger-kvm pull --only main` | one monitor only; use when testing (works with to as well) |
+| `trigger-kvm pull --dry-run` | resolve and print the packets, send nothing |
+| `trigger-kvm list` | connected displays, with their identifiers |
+| `trigger-kvm discover` | what is attached, in the form the config wants |
+| `trigger-kvm configure` | change any of it (the same walkthrough) |
+| `trigger-kvm configure --fresh` | open the walkthrough without pre-filled answers |
+| `trigger-kvm status` | is it running, when it starts, what that covers |
+| `trigger-kvm logs` | tail the log |
+| `trigger-kvm restart` | make a hand-edited config take effect now |
+| `trigger-kvm pause` | stand the watcher down; restart brings it back |
+| `trigger-kvm uninstall` | remove the program, keeping the config and the log |
 
 There is no `install` verb: installing is what produced the command. To upgrade
 or repair, fetch the source and run its installer again.
@@ -134,7 +150,7 @@ both verbs is one map:
 
 ```
 computer.this = desktop
-display.main.input.0x11 = desktop       which computer is on which input
+display.main.input.0x11 = desktop       # which computer is on which input
 display.main.input.0x0f = laptop
 trigger.device = usb:046d:0843, bt:0011223344ff
 ```

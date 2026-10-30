@@ -1,7 +1,6 @@
-# The file-only checks, on every push and pull request: each platform's spec
-# conformance and revision check, and its structural conventions. Neither job
-# needs hardware, and neither can move a monitor. The full suites run on the
-# desks (`make test`, `tests\run.ps1`), where the watcher tests have devices.
+# Fixture-backed behavior, spec conformance and conventions on each platform.
+# Windows transport cases explicitly skip without their hardware; a hosted
+# runner cannot establish physical monitor compatibility.
 name: checks
 
 on:
@@ -11,23 +10,19 @@ on:
 jobs:
   macos:
     runs-on: macos-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - run: brew install shellcheck
-      - run: cd macos && make && bash tests/run.sh spec
-      - run: cd macos && bash tests/run.sh --no-lint conventions
+      - run: cd macos && make test
 
   windows:
     runs-on: windows-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - shell: powershell
         run: |
           cd windows\tests
-          .\run.ps1 spec
-          exit $LASTEXITCODE
-      - shell: powershell
-        run: |
-          cd windows\tests
-          .\run.ps1 conventions
+          .\run.ps1
           exit $LASTEXITCODE

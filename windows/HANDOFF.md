@@ -207,3 +207,33 @@ the local-console requirement for dxva2 and mark real switching unverified until
 observed. Review stale references to `ideas/nvapi-transport.md` and the handoff's
 own format against `specs/README.md`; spec changes arrive through the revision
 ledger, not duplicate inbox entries.
+
+### Publication privacy: device-instance examples in source comments
+
+- **Kind:** defect report
+- **Spec:** publication-readiness privacy review in `TODO.md`; no behavior change.
+- **Why:** comments near the display identity merge in `trigger-kvm.ps1`
+  retain the reference desk's host-specific PnP instance components. Their
+  exact bytes are unnecessary to explain why EDID identity survives a cable
+  move; the shared measurements now use consistent replacement labels.
+- **Owed:** replace those instance components with clearly synthetic examples
+  or the labels used in `docs/measurements.md`, retaining the identity comparison.
+  Inspect the rest of the Windows source and docs for unnecessary real device
+  identifiers. Do not rewrite history or change human author metadata.
+- **Verified:** current tracked-file comparison located the two remaining
+  instance-component examples in `trigger-kvm.ps1` (near lines 631 and 720).
+  No Windows files outside this handoff were edited from macOS.
+
+### Escape audit: nested removal and monitor menus
+
+- **Kind:** defect report
+- **Spec:** `specs/configure.md` 3.3 (submenu Escape changes nothing).
+- **Why:** the macOS follow-up reproduced the same in-place mutation defect in
+  `wt_remove_computer` and `wt_monitors`: remove or edit, then Escape retained
+  the modified panel maps. The existing computer-submenu report should include
+  these sibling paths on Windows.
+- **Owed:** test Escape after a confirmed removal while another computer remains,
+  and after completing a panel edit but before Done in the Monitors list.
+  Restore submenu-entry state on Escape wherever those cases fail.
+- **Verified:** fixture-driven reproductions and fixes on macOS; the corresponding
+  Windows sequences still need native execution.

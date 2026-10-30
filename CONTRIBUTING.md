@@ -53,7 +53,7 @@ facts, not guesses. Open a **New monitor report** issue and include:
 
 - Make and model, and the EDID vendor and product ids exactly as
   `trigger-kvm list` prints them.
-- The full output of `trigger-kvm list`.
+- The output of `trigger-kvm list`, with personal identifiers redacted as below.
 - Which method worked: **standard** DDC/CI (VCP `0x60`), or a manufacturer
   method the walkthrough offered. Say which input values you confirmed, and
   confirm each one **visually**, in both directions.
@@ -72,3 +72,10 @@ own, and the answer may be that it cannot be helped.
 Include the platform, `trigger-kvm status`, the relevant lines of
 `trigger-kvm logs`, and what you saw on the screens. A log line saying a switch
 was sent is not evidence it happened; what the monitor showed is.
+
+Before posting diagnostic output, remove device serials, Bluetooth addresses,
+usernames, personal paths and device names, and USB/PnP instance identifiers.
+Use consistent labels such as `<device-a>` where identity relationships matter.
+Keep model names, EDID vendor/product ids, input values and error messages;
+those explain the behavior without identifying your devices. Review screenshots
+and attachments too. Never attach credentials or an unreviewed configuration.

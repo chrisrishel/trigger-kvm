@@ -9,23 +9,29 @@ Milestones are `ROADMAP.md`; what each platform owes the other is its
 Keep the repository private until these checks are complete. The review baseline
 is `318fc79`; Windows defects are tracked individually in `windows/HANDOFF.md`.
 
-- [ ] macOS: ambiguity must re-baseline without firing, including one-shot
-  checks; restore a paused watcher on EOF and cancellation; refuse an incomplete
-  boot-tier removal; discard computer-submenu edits on Escape.
+- [x] macOS: ambiguity re-baselines without firing, including one-shot checks;
+  trigger-check cleanup restores only a watcher it paused; incomplete boot-tier
+  removal refuses; Escape discards computer, removal and monitor submenu edits.
+  Verified with `make test` (13 files plus shellcheck) and
+  `bash tests/mutate.sh publication` (11 mutations caught).
 - [ ] Windows: reproduce and resolve the publication-review defect reports in
   its handoff, with regression and mutation tests under Windows PowerShell 5.1.
-- [ ] Shared contracts: settle menu overflow and clearly distinguish current
-  saved configuration in `status` from the running watcher's loaded settings.
+- [x] Shared contracts: revision 15 settles menu overflow and labels `status`
+  as the current saved configuration. macOS implements it; Windows must advance
+  its own revision after implementing and testing it.
 - [ ] Documentation: copyable installation and usage examples, explicit
   prerequisites, bounded compatibility claims, accurate file references and
-  privacy guidance for diagnostic output. Each platform owns its README.
-- [ ] CI: run hardware-independent behavioral tests on both platforms; keep
-  native transport and physical confirmation requirements visible.
+  privacy guidance for diagnostic output. Shared and macOS documentation are
+  updated; Windows documentation remains in its handoff.
+- [x] CI configuration: run both platforms' full suites, with hardware skips
+  explicit. Hosted results must still be checked; Windows conformance is expected
+  to fail until revision 15 lands there. CI cannot prove physical switching.
 - [ ] Windows release checks: fresh profiles, administrator and standard-user
   installation paths, apostrophe/non-ASCII paths, and both autostart tiers.
   The physical `dxva2` check below is also required before claiming it verified.
-- [ ] Privacy: remove unnecessary device identifiers from current shared docs;
-  decide whether the historical author email is intended to be public. Before
+- [ ] Privacy: shared measurement notes now use consistent labels for device
+  identifiers; remaining Windows source examples are in its handoff. Decide
+  whether the historical author email is intended to be public. Before
   any approved history rewrite, prepare a private backup and exact replacement
   preview, finish both platforms' work, and synchronize both checkouts. Re-scan
   all published refs and GitHub surfaces afterward. Do not remove human
