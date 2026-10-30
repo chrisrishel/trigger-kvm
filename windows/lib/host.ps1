@@ -1512,25 +1512,36 @@ function Invoke-Install {
     # recover.
     try {
         Register-ScheduledTask @register `
-            -Description "trigger-kvm: pull the configured monitors to this computer when the shared peripherals arrive." | Out-Null
+            -Description "trigger-kvm: pull the configured monitors to this computer when the shared peripherals arrive." -ErrorAction Stop | Out-Null
     } catch {
         Write-Log ("could not register the task '{0}': {1}" -f $TASK, $_.Exception.Message)
-        Write-Log 'the scripts are installed and the config is intact; what is missing is the autostart entry.'
-        Write-Log 'nothing is watching until that is fixed. To try again:'
-        Write-Log ("    {0}" -f $TK_SELF)
-        Write-Log 'or start one for this session only:  trigger-kvm restart'
+        Write-Log 'the scripts are installed and the config is intact; the watcher task is missing.'
+        Write-Log 'nothing is watching until that is fixed. From your source checkout root, run:'
+        Write-Host '    powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\windows\install.ps1'
         return 1
     }
 
     # `pause` disables the task; installing again must undo that or the watcher
     # would be registered, reported healthy, and never actually start.
-    Enable-ScheduledTask -TaskName $TASK -ErrorAction SilentlyContinue | Out-Null
+    try {
+        Enable-ScheduledTask -TaskName $TASK -ErrorAction Stop | Out-Null
+    } catch {
+        Write-Log ("the task is registered but could not be enabled: {0}" -f $_.Exception.Message)
+        Write-Log 'no start was requested. Check: trigger-kvm status, then rerun the installer.'
+        return 1
+    }
     # Persist the tier that was actually installed, so a later bare install --
     # or the elevated relaunch -- keeps it instead of reverting to the default.
     Set-ConfigValue -Path $CONFIG -Key 'install.autostart' `
                     -Value $(switch ($tier) { 's4u' { 'boot' } 'manual' { 'no' } default { 'login' } })
 
-    Start-ScheduledTask -TaskName $TASK
+    try {
+        Start-ScheduledTask -TaskName $TASK -ErrorAction Stop
+    } catch {
+        Write-Log ("the task is registered and enabled but its start request failed: {0}" -f $_.Exception.Message)
+        Write-Log 'check: trigger-kvm status, then try: trigger-kvm restart'
+        return 1
+    }
     Write-Log ("registered and started task '{0}' ({1})" -f $TASK, `
                $(switch ($tier) {
                    's4u'    { 'starts at boot' }
@@ -1542,17 +1553,14 @@ function Invoke-Install {
     # day: a surviving watcher held the lock and the new one exited on it. A
     # registered task with nothing watching is the failure shape that looks most
     # like success, so it gets its own sentence.
-    $running = $true
-    if ($tier -ne 'manual') {
-        Start-Sleep -Seconds 2
-        $running = Test-WatcherRunning
-        if ($running) {
-            Write-Log 'a watcher is running.'
-        } else {
-            Write-Log 'WARNING: the task is registered but NO WATCHER is running.'
-            Write-Log 'nothing will switch until one starts. Check:  trigger-kvm logs'
-            Write-Log 'then try:  trigger-kvm restart'
-        }
+    Start-Sleep -Seconds 2
+    $running = Test-WatcherRunning
+    if ($running) {
+        Write-Log 'a watcher is running.'
+    } else {
+        Write-Log 'WARNING: the task is registered but NO WATCHER is running.'
+        Write-Log 'nothing will switch until one starts. Check:  trigger-kvm logs'
+        Write-Log 'then try:  trigger-kvm restart'
     }
 
     # Skipped when this process is the elevated child of a standard account:
@@ -1570,7 +1578,7 @@ function Invoke-Install {
     $cmd    = if ($onPath) { 'trigger-kvm' } else { $SHIM }
     Write-Host ''
     if (-not $running) {
-        Write-Host '  Installed, and set up to start on its own -- but NO WATCHER is running'
+        Write-Host '  Installed, but NO WATCHER is running'
         Write-Host '  yet, so nothing will switch until one does.'
         Write-Host ''
         Write-Host ("    {0} logs        why it did not start" -f $cmd)

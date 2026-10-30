@@ -1140,6 +1140,42 @@ alter the paths covered by the dated visual observations. Those observations
 remain tied to their recorded candidate and environment; no new physical
 switching is claimed by the installation checks.
 
+**Fresh standard-user install at `ed1a0c0`, 2026-10-30.** From boot was
+selectable; the owner approved UAC using the separate disposable administrator.
+Config and program files were created in the standard user's profile and
+installed script hashes matched the candidate. `Register-ScheduledTask`
+reported access denied (0x80070005); no task or watcher existed afterwards,
+and overall exit was 1. The intervening "registered and started" and installed
+autostart messages were false. The failed state and saved config/stamp snapshots
+were preserved privately; it is not an installation pass.
+
+A native PowerShell module fixture reproduced the error-handling gap before
+the production change. Its task commands emit nonterminating errors under
+their module scope, so the caller's preference alone did not invoke the catch.
+The actual installer returned 0 after a failed registration. Registration,
+enablement and start now request terminating errors explicitly and report only
+the state reached. Manual installs also check the watcher lock before claiming
+success. The full Windows PowerShell 5.1 run passed all 19 test files without
+skips, including parsing/conventions; all 42 publication mutations were caught,
+including the four new task-operation/manual-start mutations. Commands were
+`powershell.exe -NoProfile -ExecutionPolicy Bypass -File windows/tests/run.ps1`
+and `powershell.exe -NoProfile -ExecutionPolicy Bypass -File windows/tests/mutate.ps1 publication`.
+Existing assertions remain. This is fixture/native-suite validation, not a
+successful repeat of the standard-user installation.
+
+Microsoft's [task security documentation](https://learn.microsoft.com/en-us/windows/win32/taskschd/security-contexts-for-running-tasks)
+requires a password for an administrator to register S4U for a different user.
+This is a candidate explanation, not an established complete cause. The native
+bounded diagnostic also denied the standard user's own S4U registration without
+triggers (0x80070005), as well as administrator-to-standard-user registration.
+The administrator's own S4U control registered and ran in session 0. Because
+the seed could not be created, adding a boot trigger to it was **not tested**.
+All fixture tasks were removed; no product task or monitor input was changed.
+The control reported enabled administrator membership despite requesting Limited;
+actual task settings and process-token elevation require a separate native
+check. Do not infer an unelevated token solely from the requested task principal.
+No standard-user boot workaround is yet validated.
+
 CI at `4c0f13b` passed both platforms on the second attempt. The first Windows
 attempt failed before the unchanged native-cleanup fixture's child produced a
 report; the cause was not established. All 13 native invocation forms and the

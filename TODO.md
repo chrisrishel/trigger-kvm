@@ -23,7 +23,7 @@ and the command checklist in `windows/RELEASE-CHECKS.md`.
   Verified with `make test` (13 files plus shellcheck) and
   `bash tests/mutate.sh publication` (11 mutations caught).
 - [x] Windows: publication-review defects resolved with native PowerShell 5.1
-  regressions, 19 passing test files and 38 caught publication mutations.
+  regressions, 19 passing test files and 42 caught publication mutations.
   Includes incomplete-check gating, exact-path/owner cleanup with conservative
   execution-boundary recognition, prior watcher state, apostrophes/Unicode,
   fractional settle, restricted DLL loading,
@@ -48,7 +48,7 @@ and the command checklist in `windows/RELEASE-CHECKS.md`.
   bytes, and the original config was restored. On that installed candidate,
   real Ctrl+C restored enabled/running before scheduler self-heal, and both
   panels' NVAPI away-and-back switching was visually confirmed separately.
-  Standard-user UAC and its fresh-profile installation checks remain outstanding.
+  Standard-user product registration and its fresh-profile workflow remain open.
   The profile session must restore
   the owner's boot/enabled/running state afterwards.
   A fresh administrator-capable login installation passed with spaces,
@@ -82,7 +82,15 @@ and the command checklist in `windows/RELEASE-CHECKS.md`.
   original PATH entries. No assertion was weakened.
   The fresh standard-user native probe accepted separate administrator
   credentials but exposed false boot-menu eligibility. The correction reads
-  UAC policy and retains explicit denial; its installed repeat remains open.
+  UAC policy and retains explicit denial. Installed `ed1a0c0` offered boot and
+  accepted UAC, but S4U registration was denied; there is no task/watcher.
+  Standard-user boot remains a blocker while native registration is diagnosed.
+  Its own S4U fixture also failed; the administrator control's reported token
+  membership needs verification before treating RunLevel Limited as proof of
+  an unelevated boot process. Diagnostic task cleanup completed.
+  Nonterminating task errors also exposed false success output, now covered
+  by regression/mutation tests. Full native validation passed; its installed
+  repeat remains with the standard-user registration gate.
 - [ ] Privacy: shared measurement notes now use consistent labels for device
   identifiers; unnecessary current Windows device examples are synthetic.
   The 2026-10-30 audit at `2835cb0` covered 112 tracked files, 226 commits/1,192

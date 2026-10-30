@@ -53,7 +53,7 @@ UAC installed S4U/Limited for the intended user with one watcher. Save/Cancel
 and unknown-key preservation passed in this profile too. The first profile run
 did not reach a UAC prompt; that fallback had existing config. A subsequent
 fresh product-state install, after preserving the retained data, passed actual
-UAC decline and login fallback. Standard-user credentials remain unverified.
+UAC decline and login fallback. Standard-user product registration remains open.
 A real reboot on `4c0f13b` started
 one intended S4U/Limited watcher in session 0 before any test-profile sign-in;
 the owner confirmed signing into only the original account. The read-only
@@ -71,8 +71,17 @@ not mean the watcher runs elevated.
 The fresh standard-user profile's read-only probe accepted a separate
 administrator credential, while `462204a` incorrectly reported boot ineligible.
 The current correction reads Windows UAC policy and permits that credential
-path unless explicitly disabled. It has a failing-before/fixed regression;
-the fresh walkthrough and intended-user installation remain to be tested.
+path unless explicitly disabled. Installed `ed1a0c0` made boot selectable and
+accepted separate administrator credentials, but registration of the standard
+user's S4U task failed with access denied. Config/program files were written
+in the intended profile and matched the candidate; no task or watcher existed,
+and the installer returned 1. Its intermediate success messages were incorrect.
+Task-operation error handling is corrected in source; S4U registration remains
+under native diagnosis before the installation gate can pass. Bounded tasks
+also denied own-standard-user S4U registration without triggers; the
+administrator control ran and cleanup left zero fixture tasks. Its reported
+administrator membership requires actual process-token validation: requested
+RunLevel Limited alone does not establish an unelevated process.
 The probe's initial decline and later approval are not installation-fallback
 results: neither run installed the product or registered a task.
 The current source corrects this by elevating only old-task removal and
@@ -147,6 +156,8 @@ path, since an account's display name alone does not prove a Unicode path.
 
 - Administrator-capable account: first install unelevated; choose boot and
   approve UAC. Confirm S4U, RunLevel Limited, correct user principal and files.
+  Verify the actual watcher process token is unelevated; task settings alone
+  are insufficient, following the bounded control's unexpected membership.
 - Standard account with a separate administrator credential: repeat boot
   installation; verify files and PATH belong to the standard user, not the
   administrator. The elevated child must not change its administrator's PATH.

@@ -1177,6 +1177,21 @@ Invoke-Mutation 'publication: removal-only flag is lost before elevation' `
 Invoke-Mutation 'publication: task removal helper also copies files' `
     'lib\host.ps1' 'privilege.tests.ps1' `
     'function Remove-ProtectedTask {' "function Remove-ProtectedTask {`n    Install-Files"
+Invoke-Mutation 'publication: registration errors are nonterminating' `
+    'lib\host.ps1' 'privilege.tests.ps1' `
+    '-Description "trigger-kvm: pull the configured monitors to this computer when the shared peripherals arrive." -ErrorAction Stop' `
+    '-Description "trigger-kvm: pull the configured monitors to this computer when the shared peripherals arrive."'
+Invoke-Mutation 'publication: task enable errors are suppressed' `
+    'lib\host.ps1' 'privilege.tests.ps1' `
+    'Enable-ScheduledTask -TaskName $TASK -ErrorAction Stop | Out-Null' `
+    'Enable-ScheduledTask -TaskName $TASK -ErrorAction SilentlyContinue | Out-Null'
+Invoke-Mutation 'publication: task start errors are nonterminating' `
+    'lib\host.ps1' 'privilege.tests.ps1' `
+    'Start-ScheduledTask -TaskName $TASK -ErrorAction Stop' `
+    'Start-ScheduledTask -TaskName $TASK'
+Invoke-Mutation 'publication: manual install assumes a running watcher' `
+    'lib\host.ps1' 'privilege.tests.ps1' `
+    '$running = Test-WatcherRunning' '$running = if ($tier -eq ''manual'') { $true } else { Test-WatcherRunning }'
 Invoke-Mutation 'publication: cleanup ignores process ownership' `
     'lib\host.ps1' 'publication.tests.ps1' `
     "if (`$owner.ReturnValue -ne 0 -or ('{0}\{1}' -f `$owner.Domain, `$owner.User) -ne `$FORUSER) { continue }" ''

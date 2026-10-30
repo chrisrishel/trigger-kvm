@@ -44,7 +44,16 @@ Still required before release:
   user. Fresh product-state declined-UAC fallback also passed after preserving
   this profile's retained data. A read-only native standard-user probe accepted
   a separate administrator credential, but exposed false boot eligibility on
-  `462204a`. The policy-aware correction requires its installed repeat.
+  `462204a`. On `ed1a0c0` boot became selectable and separate-user UAC copied
+  the correct files, but S4U task registration failed with access denied.
+  Standard-user boot installation remains blocked pending native diagnosis;
+  no task or watcher was created. The false registration/start success output
+  is corrected with 19 passing native test files and 42 caught publication
+  mutations; the installed standard-user repeat remains outstanding.
+  Bounded own-user standard S4U registration also failed. The administrator
+  control ran but reported administrator membership despite requested Limited;
+  verify the actual process token before relying on the unelevated boot claim.
+  All diagnostic tasks were removed; adding boot to a seed was not reached.
 - Real profile/checkout paths containing spaces, apostrophes and non-ASCII text
   through standard-user elevation and uninstall. Administrator-capable login,
   upgrade, approved/declined UAC and source-unavailable uninstall covered those

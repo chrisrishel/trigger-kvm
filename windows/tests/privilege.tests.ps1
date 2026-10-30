@@ -136,6 +136,69 @@ try {
     $script:removeFails = $true
     Assert-Equal 1 (Remove-ProtectedTask) 'an elevated removal failure is not success'
     Assert-Equal 0 $script:registrations.Count 'the helper never registers a replacement'
+
+    function Test-TaskApiFailures {
+        # Module commands can emit nonterminating errors despite a caller's Stop
+        # preference. Exercise that boundary, not a mock which always throws.
+        $apiState = @{FailAt='';Events=@();Running=$true}
+        $apiModule = New-Module -Name 'TriggerKvmTaskApiFixture' -ArgumentList $apiState -ScriptBlock {
+            param($State)
+            $script:state = $State
+            $ErrorActionPreference = 'Continue'
+            function Register-ScheduledTask {
+                [CmdletBinding()] param($TaskName,$Action,$Principal,$Settings,$Trigger,$Description)
+                $script:state.Events += 'register'
+                if ($script:state.FailAt -eq 'register') {
+                    $PSCmdlet.WriteError([Management.Automation.ErrorRecord]::new([UnauthorizedAccessException]::new('fixture registration denied'),'FixtureDenied',[Management.Automation.ErrorCategory]::PermissionDenied,$TaskName))
+                }
+            }
+            function Enable-ScheduledTask {
+                [CmdletBinding()] param($TaskName)
+                $script:state.Events += 'enable'
+                if ($script:state.FailAt -eq 'enable') {
+                    $PSCmdlet.WriteError([Management.Automation.ErrorRecord]::new([UnauthorizedAccessException]::new('fixture enable denied'),'FixtureDenied',[Management.Automation.ErrorCategory]::PermissionDenied,$TaskName))
+                }
+            }
+            function Start-ScheduledTask {
+                [CmdletBinding()] param($TaskName)
+                $script:state.Events += 'start'
+                if ($script:state.FailAt -eq 'start') {
+                    $PSCmdlet.WriteError([Management.Automation.ErrorRecord]::new([UnauthorizedAccessException]::new('fixture start denied'),'FixtureDenied',[Management.Automation.ErrorCategory]::PermissionDenied,$TaskName))
+                }
+            }
+            Export-ModuleMember -Function Register-ScheduledTask,Enable-ScheduledTask,Start-ScheduledTask
+        }
+        Import-Module $apiModule -Force
+        function Start-Sleep { param($Seconds,$Milliseconds) }
+        function Test-WatcherRunning { $apiState.Events += 'lock'; return $apiState.Running }
+        $script:taskExists = $false
+        $script:tier = 'manual'
+        foreach ($failure in @('register','enable','start')) {
+            $apiState.FailAt = $failure
+            $apiState.Events = @()
+            $script:events = @()
+            $messages = Join-Path $root 'api-messages.txt'
+            $errors = Join-Path $root 'api-errors.txt'
+            $result = Invoke-Install 6> $messages 2> $errors
+            Assert-Equal 1 $result "$failure failure is not a successful installation"
+            $expected = switch ($failure) {'register' {'register'} 'enable' {'register,enable'} 'start' {'register,enable,start'}}
+            Assert-Equal $expected ($apiState.Events -join ',') 'no later task operation or watcher claim after failure'
+            Assert-NoMatch (Get-Content -Raw $messages) 'registered and started|Done\. trigger-kvm is running|Installed, and set up' 'failure output must not claim success'
+            if ($failure -eq 'register') {
+                Assert-Equal 0 @($script:events | Where-Object {$_ -like 'config:*' -or $_ -eq 'path'}).Count 'failed registration cannot record a fallback or edit PATH'
+            }
+        }
+        $apiState.FailAt = ''
+        $apiState.Running = $false
+        foreach ($tier in @('manual','user')) {
+            $script:tier = $tier
+            $apiState.Events = @()
+            Assert-Equal 1 (Invoke-Install) 'every tier requires a running watcher before claiming success'
+            Assert-Equal 'register,enable,start,lock' ($apiState.Events -join ',') 'manual and automatic tiers both inspect the watcher lock'
+        }
+        Remove-Module $apiModule
+    }
+    Test-TaskApiFailures
 } finally {
     $resolved = (Get-Item -LiteralPath $root).FullName
     if ((Split-Path -Parent $resolved) -ne (Get-Item -LiteralPath $env:TEMP).FullName -or

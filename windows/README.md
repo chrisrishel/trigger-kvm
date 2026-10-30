@@ -55,15 +55,19 @@ terminal after adding PATH, or use the installed shim immediately:
 ```
 
 With no config yet it runs the walkthrough first. Choosing "from boot" asks for
-administrator rights to register the task; nothing runs elevated on the switch
-path afterwards. An administrator-capable account can select that tier from an
+administrator rights to register the task, which requests RunLevel Limited.
+Actual boot-process token validation remains a release gate: a bounded native
+control reported administrator membership despite that setting.
+An administrator-capable account can select that tier from an
 ordinary, unelevated PowerShell window; approve UAC when prompted. Removing a
 task registered with elevation also needs approval, including when changing
 from boot to login or no autostart.
 A standard account can choose boot when Windows allows a separate
-administrator credential prompt. Enter that credential in UAC; the task,
-program/config paths and PATH still belong to the intended standard-user
-installation. If Windows policy denies that prompt, the boot row is disabled.
+administrator credential prompt. If Windows policy denies that prompt, the
+boot row is disabled. **Standard-user boot installation is not yet validated:**
+the native separate-account check reached UAC and wrote the intended profile's
+files, but task registration was denied. Use login or no autostart until that
+release blocker is resolved (`RELEASE-CHECKS.md`).
 
 The install is self-contained: the installer copies itself next to the program,
 so uninstalling works after the source tree is gone. To upgrade or repair, run
@@ -147,7 +151,7 @@ program files in place and explains the remaining task.
 
 | Answer | What is installed | Covers |
 |---|---|---|
-| From boot | a Scheduled Task with an S4U principal and RunLevel Limited, triggered at startup. Administrator once, to register; it then runs as you, unelevated, in session 0 | from boot onward -- before the first login, while locked, after a logoff |
+| From boot | a Scheduled Task with an S4U principal and RunLevel Limited, triggered at startup. Administrator once, to register; runs as you in session 0. Actual unelevated-token validation remains open | from boot onward -- before the first login, while locked, after a logoff |
 | From login | the same task with an Interactive principal, triggered at logon | from your logon onward, including while the screen is locked |
 | No | the same task with no triggers, started now | this session only; `restart` starts it again |
 
