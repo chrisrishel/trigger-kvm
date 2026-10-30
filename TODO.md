@@ -7,7 +7,8 @@ Milestones are `ROADMAP.md`; what each platform owes the other is its
 ## Publication readiness
 
 Keep the repository private until these checks are complete. The review baseline
-is `318fc79`; Windows defects are tracked individually in `windows/HANDOFF.md`.
+is `318fc79`; remaining Windows release validation is in `windows/HANDOFF.md`
+and the command checklist in `windows/RELEASE-CHECKS.md`.
 
 - [x] Define the shared product version, pre-1.0 compatibility rules, build
   identity and release gates in `CONTRIBUTING.md`. Version constants remain
@@ -21,25 +22,35 @@ is `318fc79`; Windows defects are tracked individually in `windows/HANDOFF.md`.
   removal refuses; Escape discards computer, removal and monitor submenu edits.
   Verified with `make test` (13 files plus shellcheck) and
   `bash tests/mutate.sh publication` (11 mutations caught).
-- [ ] Windows: reproduce and resolve the publication-review defect reports in
-  its handoff, with regression and mutation tests under Windows PowerShell 5.1.
+- [x] Windows: publication-review defects resolved with native PowerShell 5.1
+  regressions, 17 passing test files and 27 caught publication mutations.
+  Includes incomplete-check gating, exact-path/owner cleanup, prior watcher
+  state, apostrophes/Unicode, fractional settle, restricted DLL loading,
+  Escape rollback, recursive conformance coverage and isolated test paths.
 - [x] Shared contracts: revision 15 settles menu overflow and labels `status`
-  as the current saved configuration. macOS implements it; Windows must advance
-  its own revision after implementing and testing it.
-- [ ] Documentation: copyable installation and usage examples, explicit
+  as the current saved configuration. Both platforms implement revision 15;
+  empty saved triggers also retain the restart reminder on Windows.
+- [x] Documentation: copyable installation and usage examples, explicit
   prerequisites, bounded compatibility claims, accurate file references and
-  privacy guidance for diagnostic output. Shared and macOS documentation are
-  updated; Windows documentation remains in its handoff.
+  privacy guidance for diagnostic output. Shared and both platforms' docs are
+  updated, including the Windows coordinated release checklist.
 - [x] CI configuration: run both platforms' full suites, with hardware skips
-  explicit. Hosted results must still be checked; Windows conformance is expected
-  to fail until revision 15 lands there. CI cannot prove physical switching.
+  explicit. Inspect hosted results for each pushed candidate; CI cannot prove
+  physical switching.
 - [ ] Windows release checks: fresh profiles, administrator and standard-user
   installation paths, apostrophe/non-ASCII paths, and both autostart tiers.
-  The physical `dxva2` check below is also required before claiming it verified.
+  Existing-profile boot-tier upgrade, installed status/Cancel, timeout state
+  restoration and ASUS `dxva2` switching both ways were observed on 2026-10-29.
+  Fresh profiles, standard-user UAC, decline/fallback, tier transitions,
+  installed Save, interactive cancellation and uninstall remain outstanding.
 - [ ] Privacy: shared measurement notes now use consistent labels for device
-  identifiers; remaining Windows source examples are in its handoff. Decide
-  whether the historical author email is intended to be public. Before
-  any approved history rewrite, prepare a private backup and exact replacement
+  identifiers; unnecessary current Windows device examples are synthetic.
+  A limited history scan found prior identifier content in six file paths
+  and one historical author email; identifying values are not repeated here.
+  Decide whether that metadata/content is intended to be public. A current-file
+  scan for common credential patterns found none; it is not a full secrets or
+  history clearance. Before any approved history rewrite, prepare a private
+  backup and exact replacement
   preview, finish both platforms' work, and synchronize both checkouts. Re-scan
   all published refs and GitHub surfaces afterward. Do not remove human
   authorship or rewrite history as part of ordinary fixes.
@@ -60,12 +71,6 @@ is `318fc79`; Windows defects are tracked individually in `windows/HANDOFF.md`.
   struct versions (`docs/nvapi-bindings.md`), that a panel still moves both ways
   watched by eye, and `reachable by` per panel. GDI names are expected to move
   and mean nothing. Trigger: the next driver update.
-
-- **Send something over `dxva2` on the shipped path, and watch it.** Every
-  dxva2 run to date was `-WhatIf` (`docs/decisions/003`). Terminal onto the LG
-  first; ASUS on `transport = dxva2`; `pull` and `to mac` both directions by
-  eye; confirm the boot row is drawn disabled while dxva2 is set; restore.
-  Record in `docs/measurements.md`. Trigger: next time the ASUS can be spared.
 
 - **Verify the boot tier on a standard (non-admin) Windows account.** The
   elevation path is read-verified and covered by `elevation.tests.ps1`, never
@@ -90,11 +95,6 @@ is `318fc79`; Windows defects are tracked individually in `windows/HANDOFF.md`.
   by the user behind a strong disclaimer, never a sweep. Step 4 of
   `ideas/unknown-monitor-discovery.md`. Trigger: someone reports a monitor that
   answers neither standard DDC nor a known dialect.
-
-- **Put `$PID` in every Windows test fixture path.** Each test file writes a
-  fixed name under `%TEMP%`, so two concurrent `run.ps1` instances corrupt each
-  other's fixtures (hit 2026-09-04). Trigger: next time `windows\tests` is
-  touched, or a suite hangs for no visible reason.
 
 - **Build the `configure` output fixture.** Replace string-presence conformance
   with staged inputs (`attached`, `devices`, `answers`) and an expected config

@@ -3,7 +3,7 @@
 Read-only NVAPI display enumeration probe. Sends nothing to any monitor.
 
 .DESCRIPTION
-The measurement the pre-login work rested on (see ..\ideas\nvapi-transport.md),
+The measurement the pre-login work rested on (see ..\docs\nvapi-bindings.md),
 kept because it is the cheapest way to answer the same question again on another
 computer or after a driver change:
 
@@ -41,7 +41,7 @@ Windows display list. See ..\docs\decisions\001-nvapi-as-the-only-windows-transp
 
 Function ids and struct layouts are taken from fiddyschmitt/SimpleKVM (MIT), with
 NvAPI_Initialize / NvAPI_EnumPhysicalGPUs independently corroborated by
-meer-cha/lg-input-switch. See ..\ideas\nvapi-transport.md for provenance, the
+meer-cha/lg-input-switch. See ..\docs\nvapi-bindings.md for provenance, the
 struct traps and the measured results.
 
 This file duplicates the enumeration bindings that trigger-kvm.ps1 also
@@ -91,8 +91,8 @@ public static class NvProbe {
     // ---- loader ------------------------------------------------------------
     // PowerShell 5.1 is .NET Framework, which has no NativeLibrary; use kernel32.
 
-    [DllImport("kernel32.dll", CharSet = CharSet.Ansi, SetLastError = true)]
-    static extern IntPtr LoadLibrary(string lpFileName);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    static extern IntPtr LoadLibraryEx(string lpFileName, IntPtr hFile, uint flags);
 
     [DllImport("kernel32.dll", CharSet = CharSet.Ansi, SetLastError = true, BestFitMapping = false)]
     static extern IntPtr GetProcAddress(IntPtr hModule, string procName);
@@ -181,7 +181,8 @@ public static class NvProbe {
         if (!Environment.Is64BitProcess)
             return "FAIL: not a 64-bit process; nvapi64.dll cannot be loaded";
 
-        IntPtr lib = LoadLibrary("nvapi64.dll");
+        // Absolute system path, with LOAD_LIBRARY_SEARCH_SYSTEM32 for dependencies.
+        IntPtr lib = LoadLibraryEx(System.IO.Path.Combine(Environment.SystemDirectory, "nvapi64.dll"), IntPtr.Zero, 0x00000800);
         if (lib == IntPtr.Zero)
             return "FAIL: nvapi64.dll not found (no NVIDIA driver?)";
 

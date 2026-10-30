@@ -72,8 +72,19 @@ function Get-NormativeFragment {
 # block, which is where comment-based help lives.
 function Remove-Comment {
     param([string]$Text)
-    $out = [regex]::Replace($Text, '(?s)<#.*?#>', '')
-    return (($out -split "`r?`n" | Where-Object { $_ -notmatch '^\s*#' }) -join "`n")
+    $tokens = $null
+    [Management.Automation.Language.Parser]::ParseInput($Text, [ref]$tokens, [ref]$null) | Out-Null
+    $out = $Text
+    foreach ($t in @($tokens | Where-Object { $_.Kind -eq 'Comment' } | Sort-Object { $_.Extent.StartOffset } -Descending)) {
+        $out = $out.Remove($t.Extent.StartOffset, $t.Extent.EndOffset - $t.Extent.StartOffset)
+    }
+    # Embedded C# has its own comment grammar. PowerShell sees it as a string,
+    # so its tokenizer cannot remove these comments for us.
+    return [regex]::Replace($out, "(?ms)@'\r?\n(?=using System)(.*?)\r?\n'@", {
+        param($m)
+        $code = [regex]::Replace($m.Value, '(?s)/\*.*?\*/', '')
+        return [regex]::Replace($code, '(?m)//[^\r\n]*', '')
+    })
 }
 
 # A spec that cannot be read is not a spec that pins nothing: reporting "all 0

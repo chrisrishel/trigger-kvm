@@ -18,7 +18,7 @@ Import-Subject -Script 'lib\checks.ps1'  -Functions @('Invoke-TriggerTest')
 # what it cannot read back".
 . (Join-Path (Split-Path -Parent $PSScriptRoot) 'config.ps1')
 
-$global:CONFIG = Join-Path $env:TEMP 'trigger-kvm-trigcheck.cfg'
+$global:CONFIG = Join-Path $env:TEMP "trigger-kvm-trigcheck-$PID.cfg"
 $global:SWITCH = Join-Path (Split-Path -Parent $PSScriptRoot) 'trigger-kvm.ps1'
 $global:WATCH  = Join-Path (Split-Path -Parent $PSScriptRoot) 'event-watch.ps1'
 $global:DEFAULT_DEBOUNCE = '3.0'
@@ -46,7 +46,8 @@ function Get-WatcherPauseMode { return $script:pauseMode }
 # that always said yes would let the caller claim a pause it never got.
 $script:suspendWorks = $true
 function Suspend-Watcher { $script:watcher += 'suspend'; return $script:suspendWorks }
-function Resume-Watcher  { $script:watcher += 'resume' }
+function Get-WatcherState { [pscustomobject]@{Installed=$true;Enabled=$true;Running=$true} }
+function Resume-Watcher  { param($Prior) $script:watcher += 'resume' }
 
 function Write-Host { param([Parameter(ValueFromPipeline=$true)]$Object, [switch]$NoNewline)
     Add-Printed -Object $Object -NoNewline:$NoNewline
@@ -203,8 +204,11 @@ Assert-NoMatch $said 'The running watcher is paused' `
     'a pause that did not happen must not be announced'
 Assert-Match   $said 'will also fire, using the saved configuration' `
     'and the person is told what will actually happen before they flip'
-Assert-True (-not ($script:watcher -contains 'resume')) `
-    'and nothing is resumed that was never suspended'
+# specs/configure.md 11 requires restoration even after a PARTIAL suspension:
+# task disablement can succeed while the process remains running. The real
+# Resume-Watcher restores the snapshot without starting an already-live watcher.
+Assert-True ($script:watcher -contains 'resume') `
+    'a partial suspension still restores prior task enablement'
 $script:suspendWorks = $true
 
 exit 0

@@ -20,9 +20,14 @@ $Check  = Join-Path $PSScriptRoot 'check-conformance.ps1'
 # hand-written list would have gone on checking three files that no longer held
 # any of it -- reporting conformance about wording it could not see. The
 # self-test below is what caught that, which is the whole reason it is there.
-$Sources = @(@(Get-ChildItem -LiteralPath $WinDir -Filter '*.ps1' -File) +
-             @(Get-ChildItem -LiteralPath (Join-Path $WinDir 'lib') -Filter '*.ps1' -File) |
-             ForEach-Object { $_.FullName })
+function Get-ConformanceSources {
+    param([string]$Root)
+    $tests = (Join-Path $Root 'tests') + [IO.Path]::DirectorySeparatorChar
+    return @(Get-ChildItem -LiteralPath $Root -Filter '*.ps1' -File -Recurse |
+        Where-Object { -not $_.FullName.StartsWith($tests, [StringComparison]::OrdinalIgnoreCase) } |
+        ForEach-Object { $_.FullName } | Sort-Object)
+}
+$Sources = @(Get-ConformanceSources $WinDir)
 Assert-True ($Sources.Count -ge 5) 'the conformance check must have found sources to read'
 
 # A child process, not a dot-source: the checker exits with its verdict, and an
@@ -45,8 +50,20 @@ Assert-True (Test-Path -LiteralPath $Check) "the checker is missing: $Check"
 
 # A conformance check that cannot fail is decoration. Prove it against a
 # throwaway spec rather than by breaking a real one.
-$tmp  = Join-Path $env:TEMP 'trigger-kvm-spec-tests'
+$tmp  = Join-Path $env:TEMP "trigger-kvm-spec-tests-$PID"
 New-Item -ItemType Directory -Force -Path $tmp | Out-Null
+
+# A new directory must join without an edit to this test. Compare elements,
+# not a joined string or count that could hide a missing file.
+$tree = Join-Path $tmp 'source-tree'
+New-Item -ItemType Directory -Force -Path "$tree\lib\nested", "$tree\tests" | Out-Null
+foreach ($name in @('entry.ps1','lib\nested\message.ps1','tests\excluded.ps1')) {
+    Set-Content -LiteralPath (Join-Path $tree $name) -Value '# fixture' -Encoding ASCII
+}
+$listed = @(Get-ConformanceSources $tree)
+Assert-Equal 2 $listed.Count
+Assert-Equal (Join-Path $tree 'entry.ps1') $listed[0]
+Assert-Equal (Join-Path $tree 'lib\nested\message.ps1') $listed[1]
 
 $fake = Join-Path $tmp 'fake-spec.md'
 @'
@@ -107,6 +124,28 @@ $ph = Join-Path $tmp 'ph-spec.md'
 $r = Invoke-Checker $ph
 Assert-Equal 0 $r.Code 'the literal between placeholders is what is checked'
 
+# Comments in both shipped languages cannot supply normative UI wording.
+$commentSource = Join-Path $tmp 'comments.ps1'
+$realSources = $Sources
+$Sources = @($commentSource)
+@(
+    '# --- nowhere ---',
+    'Write-Output "actual text" # --- nowhere ---',
+    '<# --- nowhere --- #>',
+    ('$Native = @' + "'"),
+    'using System;',
+    '// --- nowhere ---',
+    '/* --- nowhere --- */',
+    'public class Fixture { public string Value = "real"; }',
+    ("'" + '@')
+) | Set-Content -LiteralPath $commentSource -Encoding ASCII
+$r = Invoke-Checker $header
+Assert-Equal 1 $r.Code 'neither PowerShell nor embedded C# comments count'
+Add-Content -LiteralPath $commentSource -Value 'Write-Output "--- nowhere ---"' -Encoding ASCII
+$r = Invoke-Checker $header
+Assert-Equal 0 $r.Code 'an actual user-visible string counts'
+$Sources = $realSources
+
 Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
 
 # ---- this implementation conforms -------------------------------------------
@@ -117,7 +156,8 @@ Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
 # nobody will think to add it here.
 #
 # status.md since revision 8.
-$CHECKED = @('configure', 'config-format', 'detector', 'status')
+$CHECKED = @(Get-ChildItem -LiteralPath $Specs -Filter '*.md' -File |
+    Where-Object { $_.Name -notin @('README.md','CHANGELOG.md') } | ForEach-Object { $_.BaseName })
 
 # The two files in specs/ that are NOT contracts, and why each is not:
 #

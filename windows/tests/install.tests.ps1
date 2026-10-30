@@ -106,7 +106,7 @@ Assert-Equal   1 $code 'an incomplete copy is a failure, not a quiet no-op'
 # Against a throwaway key under HKCU\Software. The real PATH is the developer's
 # own working setup and a test must not be one edit away from it.
 
-$KeyPath = 'Software\trigger-kvm-tests'
+$KeyPath = "Software\trigger-kvm-tests-$PID"
 $full    = "HKCU:\$KeyPath"
 Remove-Item -LiteralPath $full -Recurse -Force -ErrorAction SilentlyContinue
 $k = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($KeyPath)
@@ -331,8 +331,12 @@ $cands = @(
 # after the commas included. The report parses it itself, through the one parser
 # the watcher uses, because a caller normalising on the way in is the defect this
 # whole shape exists to prevent.
-$tr = @(Get-TriggerReport -Entries 'usb:046d:c547, usb:1235:820a' -Candidates $cands) -join "`n"
-Assert-Match $tr 'triggers : usb:046d:c547\s+G915 X LIGHTSPEED TKL\s+\(mouse, keyboard\)'
+$tr = @(Get-TriggerReport -Entries 'usb:046d:c547, usb:1235:820a' -Candidates $cands `
+    -Verdicts @{'usb:046d:c547'='present';'usb:1235:820a'='present'}) -join "`n"
+# Revision 15 labels the saved configuration separately from the device rows.
+Assert-Match $tr 'triggers : current saved configuration'
+Assert-Match $tr 'usb:046d:c547\s+G915 X LIGHTSPEED TKL\s+\(mouse, keyboard\)'
+Assert-Match $tr 'trigger-kvm restart'
 Assert-Match $tr 'usb:1235:820a\s+Clarett\+ 2Pre'
 Assert-NoMatch $tr 'not attached' 'nothing is missing, so nothing is said about missing'
 Assert-NoMatch $tr 'MALFORMED'    'and nothing is wrong with either of them'
@@ -349,8 +353,11 @@ Assert-Match $bare ([regex]::Escape('046D:C547@usb-receiver@port-9')) `
 # A TRIGGER THAT IS NOT HERE IS THE ORDINARY CASE, not a fault -- the peripherals
 # are on the other computer, which is exactly when somebody runs status to ask
 # why nothing switched. Say so, or the blank reads as broken.
-$gone = @(Get-TriggerReport -Entries 'usb:046d:c547,bt:0011223344ee' -Candidates $cands) -join "`n"
-Assert-Match $gone 'bt:0011223344ee\s+-- not attached right now'
+$gone = @(Get-TriggerReport -Entries 'usb:046d:c547,bt:001122334455' -Candidates $cands `
+    -Verdicts @{'usb:046d:c547'='present';'bt:001122334455'='absent'}) -join "`n"
+# Discovery supplies names; only the watcher resolver supplies absence (15, 4.1).
+Assert-Match $gone 'bt:001122334455\s+-- no device name available'
+Assert-Match $gone 'absent -- not attached or not connected right now'
 Assert-Match $gone 'normal when the switch is on the other computer' `
     'and the absence is explained, once, rather than left to read as a fault'
 
@@ -382,17 +389,20 @@ foreach ($bad in 'usb:046d:c547@has space', 'usb:046d:c547@BadCase', 'nonsense',
 
 # Both at once: the good one still resolves, the bad one is still named, and each
 # note appears for its own reason.
-$mixed = @(Get-TriggerReport -Entries 'usb:046d:c547@BadCase, bt:0011223344ee' -Candidates $cands) -join "`n"
+$mixed = @(Get-TriggerReport -Entries 'usb:046d:c547@BadCase, bt:001122334455' -Candidates $cands `
+    -Verdicts @{'bt:001122334455'='absent'}) -join "`n"
 Assert-Match $mixed 'MALFORMED'
 Assert-Match $mixed ([regex]::Escape('@BadCase')) 'the case is preserved, not folded to @badcase'
-Assert-Match $mixed 'not attached right now'                  'the absent one is still absent'
+Assert-Match $mixed 'absent -- not attached or not connected right now' 'the absent one is still absent'
 Assert-Match $mixed 'normal when the switch is on the other'  'and still explained'
 
+# specs/status.md 4.1 also applies after removing every saved entry: a running
+# watcher may still hold old entries. Empty is a saved state, not a live claim.
 Assert-Match (@(Get-TriggerReport -Entries @() -Candidates $cands) -join "`n") `
-    'none configured  <- nothing will ever fire' `
+    'none configured in the saved configuration' `
     'no triggers at all is a different statement from a trigger that is elsewhere'
 Assert-Match (@(Get-TriggerReport -Entries '   ' -Candidates $cands) -join "`n") `
-    'none configured  <- nothing will ever fire' `
+    'none configured in the saved configuration' `
     'and so is a value that is nothing but whitespace'
 
 # ---- the pieces above have to be WIRED, not merely each correct ---------------
@@ -571,11 +581,12 @@ Assert-Match $rep 'will NOT fire' 'and the consequence is stated'
 Assert-Match $rep 'is disabled, not absent' `
     'because absent and ambiguous are different states with different remedies'
 
-# An UNQUALIFIED entry gets no verdict line: present and absent are already what
-# the row says, and repeating them would be noise on every ordinary desk.
+# An unqualified entry has no token to disambiguate but still gets its current
+# resolver verdict (revision 15); a candidate list is not presence evidence.
 $rep = (Get-TriggerReport -Entries @('usb:046d:0843') -Candidates @() `
                           -Verdicts @{ 'usb:046d:0843' = 'absent' }) -join "`n"
 Assert-NoMatch $rep 'matched by' 'an entry with no token has nothing to disambiguate'
+Assert-Match $rep 'absent --' 'and the resolver still supplies its state'
 
 # ---- "no" means this session only, and nothing that brings it back -----------
 #
@@ -742,6 +753,7 @@ Assert-Match (Get-Content -Raw -LiteralPath $STAMP) 'spec      = 14' 'and the st
 
 # NOW THE SECOND RUN, from what the first one produced. Nothing may throw, and
 # the files must still be there afterwards.
+$savedStamp = Get-Content -Raw -LiteralPath $STAMP
 $global:TK_HOME = $DEST
 $global:TK_SELF = $MANAGE
 Reset-Printed
@@ -760,6 +772,7 @@ foreach ($f in $CFGLIB, $WATCH, $SWITCHER, $MANAGE, (Join-Path $LIBDIR 'host.ps1
 Assert-Equal '# install.ps1' (Get-Content -Raw -LiteralPath $MANAGE).Trim() `
     'with its contents intact'
 Assert-True (Test-Path -LiteralPath $SHIM) 'and the shim is still rewritten, since it is generated, not copied'
+Assert-Equal $savedStamp (Get-Content -Raw -LiteralPath $STAMP) 'configure preserves the installed source commit and specification revision'
 
 Remove-Item -LiteralPath $tree -Recurse -Force -ErrorAction SilentlyContinue
 

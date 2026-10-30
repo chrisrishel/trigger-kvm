@@ -493,7 +493,7 @@ Assert-True (Test-InsideTry -Path $hostLib -Command 'Unregister-ScheduledTask') 
     'and so must Unregister, which is where the ownership trap surfaces'
 
 # The check can see an unguarded call, and does not fire on a guarded one.
-$probe = Join-Path $env:TEMP 'trigger-kvm-try-probe.ps1'
+$probe = Join-Path $env:TEMP "trigger-kvm-try-probe-$PID.ps1"
 'Register-ScheduledTask -TaskName x' | Set-Content -LiteralPath $probe -Encoding ASCII
 Assert-True (-not (Test-InsideTry -Path $probe -Command 'Register-ScheduledTask')) `
     'an unguarded call must be reported'
@@ -789,7 +789,7 @@ Assert-Equal 'trigger-kvm.ps1' ($resolvers -join ', ') `
 #
 # A scan that cannot fail is decoration, and this one is easy to write so that
 # it never fires. Against throwaway copies, never by breaking the real files.
-$scanTmp = Join-Path $env:TEMP 'trigger-kvm-emitter-scan'
+$scanTmp = Join-Path $env:TEMP "trigger-kvm-emitter-scan-$PID"
 Remove-Item -LiteralPath $scanTmp -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $scanTmp | Out-Null
 
@@ -1203,7 +1203,7 @@ foreach ($rel in 'CLAUDE.md', 'macos\CLAUDE.md', 'windows\CLAUDE.md') {
 
 # A structural check that cannot fail is decoration, and this one is easy to
 # write so that it never fires. Prove it against a throwaway file.
-$tmp = Join-Path $env:TEMP 'trigger-kvm-conventions'
+$tmp = Join-Path $env:TEMP "trigger-kvm-conventions-$PID"
 New-Item -ItemType Directory -Force -Path $tmp | Out-Null
 
 $dupe = Join-Path $tmp 'dupe.ps1'
@@ -1368,4 +1368,24 @@ Assert-NoMatch $probeClean.Out 'case\(s\) inside the files'
 Assert-NoMatch $probeClean.Out 'proved nothing'
 
 Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
+
+# Fixture roots must distinguish concurrent processes. A child can inherit a
+# parent's isolated root, but no test may introduce a fixed name under TEMP.
+function Get-FixtureRootComplaint {
+    param([string]$Text)
+    $ast = [Management.Automation.Language.Parser]::ParseInput($Text,[ref]$null,[ref]$null)
+    foreach ($command in $ast.FindAll({param($a)
+        $a -is [Management.Automation.Language.CommandAst] -and $a.GetCommandName() -eq 'Join-Path'
+    },$true)) {
+        if ($command.Extent.Text -match '\$env:(TEMP|TMP)\b' -and $command.Extent.Text -notmatch '\$PID\b') {
+            $command.Extent.Text
+        }
+    }
+}
+Assert-Equal 1 @(Get-FixtureRootComplaint 'Join-Path $env:TEMP ''shared.cfg''').Count
+Assert-Equal 0 @(Get-FixtureRootComplaint 'Join-Path $env:TEMP "fixture-$PID.cfg"').Count
+foreach ($testFile in Get-ChildItem -LiteralPath $PSScriptRoot -Filter '*.ps1' -File -Recurse) {
+    $complaints = @(Get-FixtureRootComplaint (Get-Content -Raw -LiteralPath $testFile.FullName))
+    Assert-Equal 0 $complaints.Count ("$($testFile.Name) has a shared fixture root: $($complaints -join ', ')")
+}
 exit 0

@@ -37,7 +37,7 @@ Import-Subject -Script 'lib\discover.ps1'    -Functions @('ConvertFrom-DisplayRo
 
 # ---- the machine this suite pretends to be sitting at ------------------------
 
-$script:CONFIG = Join-Path $env:TEMP 'trigger-kvm-tests.cfg'
+$script:CONFIG = Join-Path $env:TEMP "trigger-kvm-tests-$PID.cfg"
 $global:CONFIG = $script:CONFIG
 $global:BINDIR = 'C:\fake\bin'
 $global:DEFAULT_DEBOUNCE = '3.0'
@@ -435,8 +435,9 @@ Assert-Match $said '--- how the switch reaches this monitor ---'
 # 6.3 -- in terms of what the person will EXPERIENCE. Not "session 0 has no
 # desktop", which is the mechanism and means nothing to somebody picking a
 # monitor setting.
-Assert-Match $said 'will not follow the switch until'
-Assert-Match $said 'somebody has logged in'
+Assert-Match $said 'Before local login' 'the unavailable period is named as well as the required session'
+Assert-Match $said 'needs a local console session' 'a remote login does not provide the required display context'
+Assert-Match $said 'Remote Desktop is not enough'
 Assert-NoMatch $said 'session 0' 'the mechanism is not what the row is for'
 Assert-Match $said 'works before anyone logs in'
 Assert-Match ((Get-Asked) -join '|') 'Choice \[1\]' `

@@ -100,7 +100,7 @@ function Read-MenuKey {
 # depends on this cap; see there.
 function Get-MenuWidth {
     $w = 100
-    try { $w = [Math]::Max(40, [Math]::Min(110, [Console]::WindowWidth - 1)) } catch { }
+    try { if ([Console]::WindowWidth -gt 1) { $w = [Math]::Max(1, [Math]::Min(110, [Console]::WindowWidth - 1)) } } catch { }
     return $w
 }
 
@@ -121,7 +121,8 @@ function Write-MenuFrame {
     # The real row width, which is NOT the menu's: the previous frame is still
     # sitting in every column past Get-MenuWidth's cap.
     $cols = $Width
-    try { $cols = [Console]::BufferWidth } catch { }
+    try { if ([Console]::BufferWidth -gt 0) { $cols = [Console]::BufferWidth } } catch { }
+    $cols = [Math]::Max(1, $cols)
 
     # Callers wrap their own long content (Split-Detail). Nothing is truncated
     # here -- specs/configure.md 3.1. A still-over-long line wraps in the
@@ -129,10 +130,25 @@ function Write-MenuFrame {
     $n = 0
     foreach ($l in $Lines) {
         $t = "$l"
+        $cells = $t.Length
+        try { $cells = $Host.UI.RawUI.LengthInBufferCells($t) } catch { }
+        $rows = [Math]::Max(1, [Math]::Ceiling($cells / [double]$cols))
+        # Clear BEFORE writing, including each folded row and its last column.
+        # Clearing after a full-width write cannot distinguish the final cell
+        # from the clamped cursor position (windows/AGENTS.md).
+        Clear-ToLineEnd -Rows $rows
         Write-Host $t -NoNewline
+        Write-Host ''
+        $n += $rows
+    }
+    # A shorter replacement must erase the old frame's tail, then leave the
+    # cursor just after the new frame, which is what -Previous measures.
+    for ($i = $n; $i -lt $Previous; $i++) {
         Clear-ToLineEnd
         Write-Host ''
-        $n += [Math]::Max(1, [Math]::Ceiling($t.Length / [double]$cols))
+    }
+    if ($Previous -gt $n) {
+        try { [Console]::SetCursorPosition(0, [Math]::Max(0, [Console]::CursorTop - ($Previous - $n))) } catch { }
     }
     return $n
 }
@@ -141,19 +157,19 @@ function Write-MenuFrame {
 # what specs/configure.md 3.1 asks for. Padding measures a string where a line's
 # end is a column, and pads to the menu's capped width rather than the window's.
 #
-# IT STOPS ONE COLUMN SHORT, AND MUST. Writing into the last column wraps, which
-# costs a row the height count knows nothing about, and [Console]::CursorLeft
-# clamps at BufferWidth-1 so an exactly-full line is indistinguishable from one
-# a column short (windows/AGENTS.md). Only an already-over-long line could have
-# put anything in that last column, and 3.1 forbids one.
-#
-# Not ESC[K: that needs VT processing, which is not on in every console
-# PowerShell 5.1 runs in, and where it is off the escape prints as garbage.
+# RawUI fills cells without moving the cursor or wrapping. This clears the last
+# column too, and needs no VT mode on a Windows PowerShell 5.1 console.
 function Clear-ToLineEnd {
+    param([int]$Rows = 1)
     try {
         $left = [Console]::CursorLeft
-        $end  = [Console]::BufferWidth - 1
-        if ($left -lt $end) { Write-Host (' ' * ($end - $left)) -NoNewline }
+        $top = [Console]::CursorTop
+        $right = [Console]::BufferWidth - 1
+        $bottom = [Math]::Min([Console]::BufferHeight - 1, $top + $Rows - 1)
+        $rect = New-Object Management.Automation.Host.Rectangle $left,$top,$right,$bottom
+        $cell = New-Object Management.Automation.Host.BufferCell (' ', $Host.UI.RawUI.ForegroundColor,
+            $Host.UI.RawUI.BackgroundColor, [Management.Automation.Host.BufferCellType]::Complete)
+        $Host.UI.RawUI.SetBufferContents($rect, $cell)
     } catch { }
 }
 

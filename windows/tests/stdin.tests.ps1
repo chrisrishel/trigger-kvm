@@ -20,7 +20,7 @@ $install = Join-Path (Split-Path -Parent $PSScriptRoot) 'install.ps1'
 # install.ps1 has no -Config: the path is derived from LOCALAPPDATA, so that is
 # what gets moved. A run must never be able to read or write the real config --
 # the developer's own working setup is the thing on the other side of that path.
-$tmp = Join-Path $env:TEMP 'trigger-kvm-stdin-tests'
+$tmp = Join-Path $env:TEMP "trigger-kvm-stdin-tests-$PID"
 Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $tmp | Out-Null
 $cfg = Join-Path $tmp 'trigger-kvm\config'

@@ -52,7 +52,7 @@ and HOW it gets there:
 Absent, transport means nvapi, so configs written before it existed are unchanged.
 Neither is a spray and neither is a fallback: the transport is configuration,
 chosen once and confirmed once by eye, and nothing tries one and falls through to
-the other at switch time. See ..\ideas\nvapi-transport.md for NVAPI's function ids,
+the other at switch time. See ..\docs\nvapi-bindings.md for NVAPI's function ids,
 struct traps and provenance, and ..\docs\decisions\003 for why dxva2 exists.
 
 Identity is ONE key for both: the EDID manufacturer and product, which NVAPI reads
@@ -239,7 +239,7 @@ function Write-Log {
 # meer-cha/lg-input-switch. Enumeration and EDID reads were verified against this
 # hardware on 2026-08-30 in four contexts, including session 0 with no desktop and
 # an at-startup task after a cold boot. The aimed write itself was confirmed
-# visually, both directions, from an inactive link. See ..\ideas\nvapi-transport.md.
+# visually, both directions, from an inactive link. See ..\docs\nvapi-bindings.md.
 
 $TransportSource = @'
 using System;
@@ -268,8 +268,8 @@ public static class NvDdc {
     // ---- loader ------------------------------------------------------------
     // PowerShell 5.1 is .NET Framework, which has no NativeLibrary; use kernel32.
 
-    [DllImport("kernel32.dll", CharSet = CharSet.Ansi, SetLastError = true)]
-    static extern IntPtr LoadLibrary(string lpFileName);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    static extern IntPtr LoadLibraryEx(string lpFileName, IntPtr hFile, uint flags);
 
     [DllImport("kernel32.dll", CharSet = CharSet.Ansi, SetLastError = true, BestFitMapping = false)]
     static extern IntPtr GetProcAddress(IntPtr hModule, string procName);
@@ -375,7 +375,8 @@ public static class NvDdc {
         if (!Environment.Is64BitProcess)
             return "FAIL: not a 64-bit process; nvapi64.dll cannot be loaded";
 
-        IntPtr lib = LoadLibrary("nvapi64.dll");
+        // Absolute system path, with LOAD_LIBRARY_SEARCH_SYSTEM32 for dependencies.
+        IntPtr lib = LoadLibraryEx(System.IO.Path.Combine(Environment.SystemDirectory, "nvapi64.dll"), IntPtr.Zero, 0x00000800);
         if (lib == IntPtr.Zero)
             return "FAIL: nvapi64.dll not found (no NVIDIA driver?)";
 
@@ -594,7 +595,7 @@ public static class NvDdc {
     // report their own shape working; lg-input-switch is the one demonstrably
     // driving THIS panel, so it won the tie -- and the LG switch confirmed it on
     // hardware. If it ever stops working, the alternative is documented in
-    // ..\ideas\nvapi-transport.md -- change it here, do not add a switch.
+    // ..\docs\nvapi-bindings.md -- change it here, do not add a switch.
     static int Send(NvDisplay target, byte[] packet) {
         IntPtr pData = Marshal.AllocHGlobal(packet.Length);
         try {
@@ -628,7 +629,7 @@ public static class NvDdc {
 // the implementation deleted at 70e5ed4, with ONE correction: identity comes from
 // the EDID vendor+product inside the PnP interface path, never the whole path.
 // Moving a cable between adapters changed the path from
-// DISPLAY\AUS42E0\5&aaaaaaaa&0&UID4352_0 to DISPLAY\AUS42E0\4&bbbbbbbb&0&UID49_0
+// DISPLAY\AUS42E0\<adapter-a-instance> to DISPLAY\AUS42E0\<adapter-b-instance>
 // and the GDI name from \\.\DISPLAY1 to \\.\DISPLAY7; only AUS42E0 held.
 //
 // IT CANNOT REACH A SERVICE CHANNEL, and that is a safety property rather than a
@@ -717,7 +718,7 @@ public static class Dxva {
         return mi.szDevice ?? "";
     }
 
-    // "AUS42E0" out of \\?\DISPLAY#AUS42E0#5&aaaaaaaa&0&UID4352#{guid}, then split
+    // "AUS42E0" out of \\?\DISPLAY#AUS42E0#<adapter-a-instance>#{guid}, then split
     // into the packed 5-bit vendor word and the product id. That word is the same
     // one the config stores and NvDdc.DecodeMfg renders, so both transports match
     // on one key and a per-panel transport choice needs no second identity.

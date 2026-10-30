@@ -139,6 +139,7 @@ function Invoke-DisplayTest {
 
     $tmp = Join-Path ([IO.Path]::GetTempPath()) ('trigger-kvm-test-{0}.cfg' -f $PID)
     $bad = @()
+    $confirmed = @{}
     try {
         # The WHOLE answer set goes to the throwaway config, absent panels
         # included: the switcher is asked to move one label at a time, and a
@@ -146,11 +147,6 @@ function Invoke-DisplayTest {
         Write-ConfigFile -Path $tmp -Displays $Answers -Devices @() -Tier 'user' -This $This -Existing @{}
 
         $Answers = $All
-        $others = @()
-        foreach ($a in $Answers) {
-            foreach ($m in $a.Map.Keys) { if ($m -ne $This -and -not ($others -contains $m)) { $others += $m } }
-        }
-
         # Which monitor to check -- their intent, not the tool's convenience.
         # Backing out here is `not checked`, never a pass (specs/configure.md 10.1).
         if ($Answers.Count -gt 1) {
@@ -162,11 +158,17 @@ function Invoke-DisplayTest {
             if ($pick -gt 0) { $Answers = @($Answers[$pick - 1]) }
         }
 
-        if ($others.Count -eq 0) {
-            # Nothing else is on this desk, so there is no claim to check beyond
-            # "the transport reaches each panel".
-            foreach ($a in $Answers) {
-                if (-not (Test-OneComputer -Answer $a -All $All -This $This -Target '' -Config $tmp)) { $bad += $a.Name }
+        # Scope first, then the claims for EACH panel. A panel with only this
+        # computer still owes a transport check when its neighbour has others.
+        $others = @()
+        foreach ($a in $Answers) {
+            $targets = @($a.Map.Keys | Where-Object { $_ -ne $This })
+            foreach ($m in $targets) { if ($others -notcontains $m) { $others += $m } }
+            if ($targets.Count -eq 0) {
+                $result = Test-OneComputer -Answer $a -All $All -This $This -Target '' -Config $tmp
+                if ($null -eq $result) { $bad += '(skipped)' }
+                elseif (-not $result) { $bad += $a.Name }
+                else { $confirmed[$a.Label] = @{ Sig = (Get-PassSignature @($a)); Targets = @('') } }
             }
         }
 
@@ -189,9 +191,21 @@ function Invoke-DisplayTest {
             foreach ($r in $rounds) {
                 $moving = @($r | ForEach-Object { $_.Label })
                 $stays  = @(Get-AttachedManaged -Panels $All | Where-Object { -not ($moving -contains $_.Label) })
-                foreach ($f in (Invoke-TestRound -Panels $r -Stays $stays -Target $m -All $All `
-                                                 -This $This -Config $tmp)) {
+                $failures = @(Invoke-TestRound -Panels $r -Stays $stays -Target $m -All $All `
+                                                 -This $This -Config $tmp)
+                foreach ($f in $failures) {
                     if (-not ($bad -contains $f)) { $bad += $f }
+                }
+                if ($failures.Count -eq 0) {
+                    foreach ($a in $r) {
+                        $sig = Get-PassSignature @($a)
+                        # A repair can change a method or another mapping too.
+                        # Earlier claims on that panel no longer describe it.
+                        if (-not $confirmed.Contains($a.Label) -or $confirmed[$a.Label].Sig -ne $sig) {
+                            $confirmed[$a.Label] = @{ Sig = $sig; Targets = @() }
+                        }
+                        $confirmed[$a.Label].Targets += $m
+                    }
                 }
             }
         }
@@ -201,6 +215,17 @@ function Invoke-DisplayTest {
 
     # Declining is not a failure and must not read as a pass either.
     $scope = @($Answers | ForEach-Object { $_.Label })
+    foreach ($a in $Answers) {
+        $required = @($a.Map.Keys | Where-Object { $_ -ne $This })
+        if (-not $required.Count) { $required = @('') }
+        if (-not $confirmed.Contains($a.Label) -or $confirmed[$a.Label].Sig -ne (Get-PassSignature @($a))) {
+            if (-not $bad.Count) { $bad += '(skipped)' }
+            continue
+        }
+        foreach ($target in $required) {
+            if ($confirmed[$a.Label].Targets -notcontains $target) { $bad += '(skipped)' }
+        }
+    }
     if ($bad -contains '(skipped)') {
         return [PSCustomObject]@{ Ok = $false; Backed = $true; Text = 'not checked'; Sig = ''; Scope = @() }
     }
@@ -280,7 +305,9 @@ function Invoke-TestRoundBody {
 
     $bad = @()
     foreach ($a in $wrong) {
-        if (-not (Test-OneComputer -Answer $a -All $All -This $This -Target $Target -Config $Config)) { $bad += $a.Name }
+        $result = Test-OneComputer -Answer $a -All $All -This $This -Target $Target -Config $Config
+        if ($null -eq $result) { $bad += '(skipped)' }
+        elseif (-not $result) { $bad += $a.Name }
     }
     return $bad
 }
@@ -360,9 +387,9 @@ function Test-OneComputer {
     # configured (specs/configure.md 10.2 and 10.7).
     $outcome = Invoke-PanelSwing -Answer $Answer -All $All -Target $Target -This $This `
                                  -Config $Config
-    # Nowhere to send it, or the person declined at the warning. Neither is a
-    # failure of the panel.
-    if ($null -eq $outcome) { return $true }
+    # Null means untested, including a declined retry. Only the human's
+    # confirmation can make this a pass (specs/configure.md 10.8).
+    if ($null -eq $outcome) { return $null }
     if ($outcome -eq 0) { return $true }
     if ($Attempt -ge 2) { return $false }   # bounded: one retry per fix
 
@@ -378,7 +405,7 @@ function Test-OneComputer {
                              -Method $Answer.Method `
                              -Prompt ("On the {0}, which input is '{1}' on?" -f $Answer.Name, $Target)
         Set-PanelAnswer -Panel $Answer -On $Target -Value ([string]$v) | Out-Null
-        if ($null -eq $v) { return $true }
+        if ($null -eq $v) { return $null }
         return (Test-OneComputer -Answer $Answer -All $All -This $This -Target $Target -Config $Config -Attempt ($Attempt + 1))
     }
 
@@ -582,32 +609,32 @@ function Invoke-TriggerTest {
     # failing. Where standing it down would need a password the person is told
     # instead, before they flip: a check must not raise a prompt of its own.
     $paused = $false
-    switch (Get-WatcherPauseMode) {
-        'can' {
-            # ASKED OF THE LOCK, not assumed from the mode: 'can' is a reading of
-            # the task's principal, and the calls under it fail silently when it
-            # is wrong. Claiming a pause that did not happen would tell somebody
-            # the flip they are about to make is theirs alone.
-            $paused = Suspend-Watcher
-            Write-Host ''
-            if ($paused) {
-                Write-Host '  The running watcher is paused for this check.'
-            } else {
-                Write-Host '  The running watcher will also fire, using the saved configuration.'
-            }
-        }
-        'needs-admin' {
-            Write-Host ''
-            Write-Host '  The running watcher will also fire, using the saved configuration.'
-        }
-    }
-
-    # A throwaway config, for the same reason the monitor check uses one: the
-    # answers are not written yet, and pulling against the saved config would
-    # move the panels to whatever was configured before.
+    $prior = $null
     $tmp = Join-Path ([IO.Path]::GetTempPath()) ('trigger-kvm-trig-{0}.cfg' -f $PID)
     $code = 1
     try {
+        switch (Get-WatcherPauseMode) {
+            'can' {
+                # The lock confirms the pause; the mode only describes whether
+                # this caller is allowed to change the task.
+                $prior = Get-WatcherState
+                $paused = Suspend-Watcher
+                Write-Host ''
+                if ($paused) {
+                    if ($prior.Running) { Write-Host '  The running watcher is paused for this check.' }
+                    else { Write-Host '  The installed watcher is stood down for this check.' }
+                } else {
+                    Write-Host '  The running watcher will also fire, using the saved configuration.'
+                }
+            }
+            'needs-admin' {
+                Write-Host ''
+                Write-Host '  The running watcher will also fire, using the saved configuration.'
+            }
+        }
+
+        # A throwaway config: the answers are not written yet, and pulling
+        # against the saved config would use the previous monitor values.
         Write-ConfigFile -Path $tmp -Displays $Answers -Devices $Devices -Tier 'user' -This $This -Existing @{}
 
         # Piped to the host, not returned: Invoke-Sibling emits the child's
@@ -628,7 +655,7 @@ function Invoke-TriggerTest {
         Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
         # Restored on EVERY way out, including the ones that throw: leaving the
         # task disabled would stop the switch working and say nothing.
-        if ($paused) { Resume-Watcher }
+        if ($null -ne $prior) { Resume-Watcher -Prior $prior }
     }
 
     if ($code -ne 0) {

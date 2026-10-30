@@ -724,7 +724,31 @@ above is unknown.
 
 ## The dxva2 route on the onboard Intel GPU (Windows)
 
-All taken 2026-09-01 on the Windows PC (i9-13900K / UHD 770, ROG STRIX Z790-A
+**2026-10-29, Windows -- the installed shipping path switches the ASUS both
+ways at the local console.** The Windows publication-remediation candidate
+was installed from `0be74f0+dirty`, product 0.2.0, specification revision 15,
+on the reference Windows 11 / RTX 4090 desk (NVIDIA driver 616.64). The user
+confirmed both displays initially showed Windows and moved the terminal to
+the LG. The installed watcher was paused through its supported command with
+UAC; its lock was released. A private copy of the saved configuration changed
+only the ASUS transport to `dxva2`; all input values remained unchanged.
+
+After an ASUS-only dry run resolved EDID `06B3:42E0`, the installed
+`trigger-kvm.ps1 to mac -Only pg42uq -Config <private-copy>` sent standard
+VCP `0x60 = 0x0F`. The user confirmed the ASUS showed the Mac and the LG still
+showed Windows. `pull -Only pg42uq -Config <private-copy>` then sent
+`0x60 = 0x11`; the user confirmed both monitors showed Windows. Neither return
+code was treated as visual evidence. No VCP readback, service-channel command,
+cable move or sleep test was used.
+
+The installed walkthrough, driven through its typed fallback with an isolated
+copy of that config, drew `From boot` disabled, named the ASUS, and refused
+selection. Cancel preserved the real saved configuration. The original boot
+watcher was restored enabled/running. This confirms the shipped dxva2 route
+on this desk, not other adapters or Windows versions. The LG/NVAPI routes
+were not physically re-tested during this check.
+
+**2026-09-01, Intel probe measurements.** Taken on the Windows PC (i9-13900K / UHD 770, ROG STRIX Z790-A
 GAMING WIFI BIOS 0805, RTX 4090), with `iGPU Multi-Monitor` newly enabled in
 BIOS and **the ASUS PG42UQ's PC cable moved from the 4090 to the motherboard
 HDMI output**. The LG stayed on the 4090 throughout, per hard rule 4. The
@@ -910,6 +934,47 @@ agent writing a line a second through `StandardErrorPath`, truncated mid-flight,
 resumed at offset 0 with zero NUL bytes in the file.
 
 ## PowerShell console and language
+
+**2026-10-29, Windows -- publication remediation on Windows PowerShell
+5.1.22621.7582.** The native suite passes all 17 files without skipped cases;
+`tests/mutate.ps1 publication` catches all 27 mutations, and
+`tests/mutate.ps1 'trigger check'` catches all five existing cleanup mutations. These are
+three distinct kinds of evidence:
+
+| Layer | Observed result | Limit |
+|---|---|---|
+| Native PowerShell with fixtures | Declined/incomplete monitor rounds cannot pass; repaired maps invalidate earlier confirmations; Escape restores computer/removal/monitor state; cleanup rejects unrelated paths and owners; trigger cleanup restores enabled/running combinations on timeout, error and cancellation; fractional settle requests 250/750/1125 ms | UI answers, writes and most OS effects are stubbed; this does not prove a physical switch |
+| Native Windows APIs | WSH executes UTF-16 launchers and CMD forwards through apostrophe/Unicode paths; the exact elevation wrapper propagates child exit 7 and its transcript; CIM ownership/path cleanup stops a bounded harmless process; both NVAPI bindings load the system DLL and reject a working-directory fixture under a simulated missing-library name | The child-path fixture is unelevated; it does not validate a separate standard user's UAC credentials |
+| Native console host | 20 cases at widths 24, 60, 80 and 120, around one- and two-row boundaries; dirty buffer cells and shrinking frames leave no folded, final-column or tail residue | Hidden Windows consoles; other terminal hosts remain outside this measurement |
+
+The original publication defects were reproducible under Windows PowerShell
+5.1 with isolated function/OS fixtures; they were not dismissed as PowerShell 7
+differences. The conformance coverage report identified a latent gap rather
+than an already omitted production file: a nested source fixture now proves
+recursive coverage, and comment-only wording is rejected in PowerShell and
+embedded C#. Test roots include the process id and the convention checker
+rejects a shared TEMP root. An empty saved trigger list retains the saved-state
+label and restart reminder: it cannot prove that an already running watcher
+has no older entries (`specs/status.md` 4.1).
+
+**Coordinated installation check, same date.** Before upgrading, the program,
+config and task definition were backed up privately. The existing boot task's
+principal resolved to the current user's SID, S4U, RunLevel Limited. Unelevated
+`pause` correctly refused to claim success; elevated `pause` released the lock.
+The source installer completed through its UAC relaunch with exit 0. Config keys
+and user PATH were unchanged; the new stamp reported 0.2.0 / spec 15 /
+`0be74f0+dirty`, and the watcher held its single-instance lock. Installed-shim
+`status` reported the saved-state label and restart reminder. Installed-shim
+`configure` with `q` then Enter cancelled with exit 1 and no config change.
+
+The installed trigger check also ran against the **real boot task** in three
+states: disabled/stopped, enabled/stopped, and enabled/running. Each used the
+real one-shot with synthetic absent `usb:ffff:ffff`, a two-second timeout and
+no `-Pull`. Each restored its prior enabled/running state; the original
+enabled/running state was restored at the end. Error and Ctrl+C restoration
+remain fixture coverage, not an observed interactive cancellation. Fresh
+profiles, standard-user elevation, UAC decline, tier transitions, logon/reboot
+and uninstall remain the coordinated checks in `windows/RELEASE-CHECKS.md`.
 
 **2026-09-08, Windows -- a `switch` statement takes over `$SWITCH`, in the scope
 that runs it and in every function called from it.** `$switch` is an automatic

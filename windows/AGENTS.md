@@ -118,13 +118,13 @@ that is exactly the two-tiers-two-watchers case the global name prevents.
 
 ## PowerShell hazards
 
-**`[Console]::CursorLeft` CLAMPS at `BufferWidth - 1`, and writing into the last
-column WRAPS.** An exactly-full line therefore reads the same as one a column
-short, and erasing "to the end" costs a row `Write-MenuFrame` knows nothing
-about. `Clear-ToLineEnd` stops one column short; `Get-MenuWidth` caps a menu at
-110. **Do not conclude anything about wrapping from `[Console]::Write`** -- it
-differs from `Write-Host`, which is what the code calls, and the suite has no
-console: measure in a real one.
+**`[Console]::CursorLeft` CLAMPS at `BufferWidth - 1`.** An exactly-full line
+reads the same as one a column short. `Write-MenuFrame` erases with RawUI BEFORE
+writing, including folded rows, the last column and leftover rows after shrinking.
+`Get-MenuWidth` caps the wrapping target at
+110, never the text. **Do not infer wrapping from `[Console]::Write`**: it differs
+from `Write-Host`. `tests/native-publication.tests.ps1` measures the real host's
+cursor and buffer in hidden consoles at widths 24, 60, 80 and 120.
 
 **A SIMPLE PowerShell function SWALLOWS an undeclared named argument into `$args`
 without a word**; a `[CmdletBinding()]` function throws. So a caller left on an

@@ -234,7 +234,7 @@ function Request-Elevation {
         Write-Host ''
         # Quoted, because this line is meant to be pasted and a profile path
         # with a space would not survive being retyped bare either.
-        Write-Host ("Run this from an elevated PowerShell:  & '{0}' {1}" -f $TK_SELF, (Format-ChildArguments $childArgs))
+        Write-Host ("Run this from an elevated PowerShell:  & '{0}' {1}" -f $TK_SELF.Replace("'", "''"), (Format-ChildArguments $childArgs))
         return 1
     }
 
@@ -252,7 +252,7 @@ function Request-Elevation {
     # Braces are doubled for -f, which would otherwise read them as placeholders.
     $inner = ("& {{ try {{ & '{0}' {1} -Relaunched; `$global:tkRc = `$LASTEXITCODE }} " +
               "catch {{ `$_ | Out-String | Write-Output; `$global:tkRc = 1 }} }} *> '{2}'; " +
-              "exit `$global:tkRc") -f $TK_SELF, (Format-ChildArguments $childArgs), $transcript
+              "exit `$global:tkRc") -f $TK_SELF.Replace("'", "''"), (Format-ChildArguments $childArgs), $transcript.Replace("'", "''")
 
     Write-Log 'this needs administrator rights; approving the UAC prompt will continue.'
     $rc = Start-ElevatedChild -Command $inner
@@ -465,14 +465,14 @@ function Clear-InstalledPath {
 function Set-ConfigValue {
     param([string]$Path, [string]$Key, [string]$Value)
     if (-not (Test-Path -LiteralPath $Path)) { return }
-    $lines = @(Get-Content -LiteralPath $Path)
+    $lines = @(Get-Content -LiteralPath $Path -Encoding UTF8)
     $pattern = '^\s*' + [regex]::Escape($Key) + '\s*='
     $hit = $false
     $out = foreach ($l in $lines) {
         if ($l -match $pattern) { $hit = $true; ('{0} = {1}' -f $Key, $Value) } else { $l }
     }
     if (-not $hit) { $out = @($out) + @('', ('{0} = {1}' -f $Key, $Value)) }
-    $out | Set-Content -LiteralPath $Path -Encoding ASCII
+    $out | Set-Content -LiteralPath $Path -Encoding UTF8
 }
 
 # --- the watcher --------------------------------------------------------------
@@ -482,17 +482,32 @@ function Set-ConfigValue {
 # watcher keeps holding the single-instance mutex and the newly installed one
 # exits immediately -- so an upgrade silently goes on running the old code.
 #
-# The 'usb' alternative matches the pre-rename watcher name on purpose: a
-# survivor holds its own debounce clock and fires alongside the new one.
+# Only the target user's scripts in THIS installation belong to us. A script
+# name anywhere else in a command line is neither an identity nor ownership.
 function Stop-Watchers {
-    $procs = Get-CimInstance Win32_Process -Property ProcessId,Name,CommandLine -Verbose:$false |
-        Where-Object {
-            $_.CommandLine -and (
-                ($_.Name -eq 'wscript.exe'    -and $_.CommandLine -match 'launcher\.vbs') -or
-                ($_.Name -eq 'powershell.exe' -and $_.CommandLine -match '(usb|event)-watch\.ps1')
-            )
-        }
+    $procs = Get-CimInstance Win32_Process -Property ProcessId,Name,CommandLine -Verbose:$false
     foreach ($p in $procs) {
+        if (-not $p.CommandLine -or $p.Name -notin @('powershell.exe','wscript.exe')) { continue }
+        $words = @([regex]::Matches($p.CommandLine, '"[^"]*"|[^\s"]+') | ForEach-Object { $_.Value.Trim('"') })
+        $scriptPath = ''
+        if ($p.Name -eq 'powershell.exe') {
+            # -File is the execution boundary. -Command text and arguments to a
+            # different script must never be mistaken for the executed script.
+            for ($i = 1; $i -lt $words.Count; $i++) {
+                if ($words[$i] -in @('-Command','-EncodedCommand','-c','-e','-ec')) { break }
+                if ($words[$i] -eq '-File') {
+                    if ($i + 1 -lt $words.Count) { $scriptPath = $words[$i + 1] }
+                    break
+                }
+            }
+            if ($scriptPath -notin @($WATCH, (Join-Path $DEST 'usb-watch.ps1'))) { continue }
+        } else {
+            $scriptPath = @($words | Select-Object -Skip 1 | Where-Object { $_ -notlike '//*' }) | Select-Object -First 1
+            if ($scriptPath -ne $VBS) { continue }
+        }
+        try { $owner = Invoke-CimMethod -InputObject $p -MethodName GetOwner -ErrorAction Stop }
+        catch { continue } # An unreadable owner is not permission to stop it.
+        if ($owner.ReturnValue -ne 0 -or ('{0}\{1}' -f $owner.Domain, $owner.User) -ne $FORUSER) { continue }
         Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue
         Write-Log ("stopped stale {0} (pid {1})" -f $p.Name, $p.ProcessId)
     }
@@ -541,7 +556,32 @@ function Get-SuspendFailure {
     return @('nothing here could stop it. Check:  trigger-kvm logs')
 }
 
+function Get-WatcherState {
+    $t = Get-ScheduledTask -TaskName $TASK -ErrorAction SilentlyContinue
+    return [PSCustomObject]@{
+        Installed = [bool]$t
+        Enabled = [bool]($t -and $t.Settings.Enabled)
+        Running = [bool](Test-WatcherRunning)
+    }
+}
+
 function Resume-Watcher {
+    param($Prior = $null)
+    # restart intentionally enables and starts. A temporary check restores the
+    # snapshot instead, including after a partially successful suspension.
+    if ($null -ne $Prior) {
+        if (-not $Prior.Installed) { return }
+        $start = $Prior.Running -and -not (Test-WatcherRunning)
+        if ($Prior.Enabled -or $start) {
+            Enable-ScheduledTask -TaskName $TASK -ErrorAction Stop | Out-Null
+        }
+        try {
+            if ($start) { Start-ScheduledTask -TaskName $TASK -ErrorAction Stop }
+        } finally {
+            if (-not $Prior.Enabled) { Disable-ScheduledTask -TaskName $TASK -ErrorAction Stop | Out-Null }
+        }
+        return
+    }
     Enable-ScheduledTask -TaskName $TASK -ErrorAction SilentlyContinue | Out-Null
     Start-ScheduledTask  -TaskName $TASK -ErrorAction SilentlyContinue
 }
@@ -644,7 +684,7 @@ function Get-InputMapReport {
 # uses. A caller pre-normalising it is what let `status` disagree with the
 # watcher about the same line of the same file.
 #
-# WHAT THE WATCHER MAKES OF EACH QUALIFIED ENTRY -- specs/status.md 4.1. Asked
+# HOW THE SAVED ENTRIES RESOLVE NOW -- specs/status.md 4.1. Asked
 # of event-watch.ps1 through -Report, never re-derived here: a second
 # implementation of detector.md 4.1 would be free to disagree with the one that
 # decides whether a monitor moves, and this screen is where somebody looks when
@@ -660,7 +700,10 @@ function Get-TriggerVerdicts {
     if (-not $Entries) { return $out }
     $ew = Get-Sibling 'event-watch.ps1'
     if (-not (Test-Path -LiteralPath $ew -PathType Leaf)) { return $out }
-    foreach ($line in (Invoke-Sibling -Script $ew -Arguments @('-Report', '-Device', ($Entries -join ',')) 2>$null)) {
+    # A malformed entry must not prevent the valid entries being resolved.
+    $valid = @(ConvertFrom-TriggerDevices $Entries | Where-Object { $_.Ok } | ForEach-Object { $_.Raw })
+    if (-not $valid.Count) { return $out }
+    foreach ($line in (Invoke-Sibling -Script $ew -Arguments @('-Report', '-Device', ($valid -join ',')) 2>$null)) {
         $f = "$line" -split '\|', 2
         if ($f.Count -eq 2) { $out[$f[0]] = $f[1] }
     }
@@ -674,17 +717,19 @@ function Get-TriggerReport {
     param([string[]]$Entries, $Candidates, [hashtable]$Verdicts = @{})
 
     $devs = @(ConvertFrom-TriggerDevices $Entries)
-    if ($devs.Count -eq 0) { return @('triggers : none configured  <- nothing will ever fire') }
+    $out = @('triggers : current saved configuration, resolved against devices attached now',
+             '           trigger edits require: trigger-kvm restart',
+             '           the running watcher may still hold an older configuration')
+    if ($devs.Count -eq 0) { return @($out + '           none configured in the saved configuration') }
 
     $by = @{}
     foreach ($c in @($Candidates)) { if ($c) { $by[$c.Key] = $c } }
 
-    $out       = @()
     $missing   = 0
     $bad       = 0
     $ambiguous = 0
     for ($i = 0; $i -lt $devs.Count; $i++) {
-        $label = $(if ($i -eq 0) { 'triggers :' } else { '          ' })
+        $label = '          '
         $d = $devs[$i]
         # Malformed FIRST, and it is not a kind of missing: counted as missing
         # it would draw the "normal when the switch is on the other computer"
@@ -695,24 +740,25 @@ function Get-TriggerReport {
             $bad++
         }
         elseif ($by.Contains($d.Identity)) { $name = Get-CandidateLabel $by[$d.Identity] }
-        else { $name = '-- not attached right now'; $missing++ }
+        else { $name = '-- no device name available' }
         # AS WRITTEN, never canonicalised: this is the string to go looking for
         # in the config file.
         $out += ('{0} {1,-20} {2}' -f $label, $d.Raw, $name)
 
-        # An entry that says WHICH device gets the watcher's verdict on it
-        # (specs/status.md 4.1). An unqualified one does not: `present` and
-        # `absent` are already what the row above says, and repeating them would
-        # be noise on every ordinary desk.
-        if ($d.Ok -and $d.Token -and $Verdicts.Contains($d.Raw)) {
-            $said = switch ($Verdicts[$d.Raw]) {
+        # Discovery supplies names only. Presence (including Bluetooth
+        # connected versus paired) comes exclusively from the watcher resolver.
+        if ($d.Ok) {
+            $verdict = if ($Verdicts.Contains($d.Raw)) { $Verdicts[$d.Raw] } else { 'unavailable' }
+            $said = switch ($verdict) {
                 'where'     { "the device at '$($d.Spot)' is the one this matches -- re-run configure if you have moved them" }
                 'ambiguous' { 'AMBIGUOUS -- more than one device answers to this and none is at the remembered spot, so it will NOT fire' }
-                'present'   { "matched by '$($d.Token)'" }
-                default     { '' }
+                'present'   { if ($d.Token) { "present, matched by '$($d.Token)'" } else { 'present' } }
+                'absent'    { 'absent -- not attached or not connected right now' }
+                default    { 'resolution unavailable -- the watcher could not report this entry' }
             }
             if ($said) { $out += ('           ^ {0}' -f $said) }
-            if ($Verdicts[$d.Raw] -eq 'ambiguous') { $ambiguous++ }
+            if ($verdict -eq 'ambiguous') { $ambiguous++ }
+            if ($verdict -eq 'absent') { $missing++ }
         }
     }
     # NAMED, not pointed at with a `^`: the absent-device note below owns that
@@ -766,7 +812,7 @@ function Get-TransportReport {
     if ($FromBoot -and $stranded.Count -gt 0) {
         $out += '           ^ the autostart line above says it covers the login screen.'
         $out += ("             It does not for {0}: nothing moves that panel until" -f (Join-Names $stranded))
-        $out += '             somebody has logged in.'
+        $out += '             a local console session is available; Remote Desktop is not enough.'
     }
     return $out
 }
@@ -1081,6 +1127,19 @@ function Get-WatcherCommand {
     ) -join ' ')
 }
 
+# Windows Script Host reads UTF-16LE with a BOM. ASCII source is a repository
+# convention; generated launcher paths are user data and may be Unicode.
+function Write-WatcherLauncher {
+    param([string]$Path, [string]$Command)
+    $vbsCmd = $Command -replace '"', '""'
+    @(
+        "' Generated by install.ps1 -- do not edit; re-run install.ps1 instead."
+        "' Runs the watcher with no console allocated and no window to close."
+        'Dim sh: Set sh = CreateObject("WScript.Shell")'
+        "sh.Run ""$vbsCmd"", 0, True"
+    ) | Set-Content -LiteralPath $Path -Encoding Unicode
+}
+
 # The `trigger-kvm` on PATH. A .cmd rather than a .ps1 so it runs from cmd.exe,
 # PowerShell and the Run dialog alike, with no execution-policy friction.
 #
@@ -1166,7 +1225,8 @@ function Install-Files {
     # Copy-Item refuses a file onto itself -- "Cannot overwrite the item ... with
     # itself", measured -- and $ErrorActionPreference = 'Stop' makes that an
     # abort partway through an install that had already said it was installing.
-    if ((Resolve-Path $TK_HOME).Path -eq (Resolve-Path $DEST).Path) {
+    $sameCopy = (Resolve-Path $TK_HOME).Path -eq (Resolve-Path $DEST).Path
+    if ($sameCopy) {
         Write-Log "running from $DEST -- the scripts there are the ones being installed."
     } else {
         Copy-Item (Join-Path $TK_HOME 'config.ps1')       $CFGLIB -Force
@@ -1189,6 +1249,10 @@ function Install-Files {
     }
 
     Get-ShimLines | Set-Content -LiteralPath $SHIM -Encoding ASCII
+
+    # Reconfiguring the installed files does not change their build identity.
+    # The installed directory has no Git metadata or SPEC-REVISION source.
+    if ($sameCopy -and (Test-Path -LiteralPath $STAMP)) { return }
 
     # Version stamp. Records the commit when the source is a git checkout, which
     # is how you tell a released copy from one built off a dirty tree, and the
@@ -1214,7 +1278,7 @@ function Install-Files {
         "source    = $TK_HOME"
         "commit    = $(if ($commit) { $commit } else { '(not a git checkout)' })"
         "spec      = $(if ($specRev) { $specRev } else { 'unknown' })"
-    ) | Set-Content -LiteralPath $STAMP -Encoding ASCII
+    ) | Set-Content -LiteralPath $STAMP -Encoding UTF8
 }
 
 # Copy the files, register the task, start it. This is what installing IS;
@@ -1308,13 +1372,7 @@ function Invoke-Install {
     # watcher runs, so Task Scheduler still reports the task as Running and its
     # restart settings still apply.
     $psCmd  = Get-WatcherCommand -Watcher $WATCH -Switcher $SWITCHER -LogFile $LOG -ConfigFile $CONFIG
-    $vbsCmd = $psCmd -replace '"', '""'
-    @(
-        "' Generated by install.ps1 -- do not edit; re-run install.ps1 instead."
-        "' Runs the watcher with no console allocated and no window to close."
-        'Dim sh: Set sh = CreateObject("WScript.Shell")'
-        "sh.Run ""$vbsCmd"", 0, True"
-    ) | Set-Content -LiteralPath $VBS -Encoding ASCII
+    Write-WatcherLauncher -Path $VBS -Command $psCmd
 
     $action = New-ScheduledTaskAction -Execute 'wscript.exe' -Argument "`"$VBS`""
 

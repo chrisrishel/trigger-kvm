@@ -1,9 +1,10 @@
 # 003 -- dxva2 as a second Windows transport, chosen per panel at configure time
 
 **Date:** 2026-09-01
-**Status:** accepted; built 2026-09-04. **No panel has yet been watched moving
-over the shipped path** (every run was `-WhatIf`); the 2026-09-01 readings that
-moved a panel used a probe, not this code. Hard rule 3: "built" is not "watched".
+**Status:** accepted; built 2026-09-04. The shipped path moved the ASUS PG42UQ
+both ways at the local Windows console on 2026-10-29, confirmed visually.
+The 2026-09-01 Intel measurements used a separate probe. See
+`docs/measurements.md`, "The dxva2 route", for the tested hardware and limits.
 
 ## Context
 

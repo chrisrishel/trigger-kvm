@@ -13,7 +13,7 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'lib.ps1')
 
 $dir = Split-Path -Parent $PSScriptRoot
-$tmp = Join-Path $env:TEMP 'trigger-kvm-oldbuild'
+$tmp = Join-Path $env:TEMP "trigger-kvm-oldbuild-$PID"
 New-Item -ItemType Directory -Force -Path $tmp | Out-Null
 
 # An "older build": the same script with one byte of C# different, so its source hash

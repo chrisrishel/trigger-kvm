@@ -55,7 +55,7 @@ if ($RestoreOnly) { exit 0 }
 function Invoke-Suite {
     param([string]$Suite, [int]$TimeoutSeconds = 300)
 
-    $out = Join-Path $env:TEMP 'trigger-kvm-mutate.out'
+    $out = Join-Path $env:TEMP "trigger-kvm-mutate-$PID.out"
     $err = "$out.err"
     foreach ($f in @($out, $err)) { Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue }
 
@@ -540,17 +540,17 @@ Invoke-Mutation 'trigger check: the live watcher fires alongside the one-shot' `
     '            $paused = $false'
 Invoke-Mutation 'trigger check: the watcher is left disabled afterwards' `
     'lib\checks.ps1' 'trigger-check.tests.ps1' `
-    '        if ($paused) { Resume-Watcher }' ''
+    '        if ($null -ne $prior) { Resume-Watcher -Prior $prior }' ''
 Invoke-Mutation 'trigger check: an admin-owned watcher is disabled anyway' `
     'lib\checks.ps1' 'trigger-check.tests.ps1' `
-    "        'needs-admin' {
-            Write-Host ''
-            Write-Host '  The running watcher will also fire, using the saved configuration.'
-        }" `
-    "        'needs-admin' {
-            Suspend-Watcher
-            `$paused = `$true
-        }"
+    "            'needs-admin' {
+                Write-Host ''
+                Write-Host '  The running watcher will also fire, using the saved configuration.'
+            }" `
+    "            'needs-admin' {
+                Suspend-Watcher
+                `$paused = `$true
+            }"
 
 # --- what the detector refuses before it arms ---------------------------------
 
@@ -1122,6 +1122,91 @@ Invoke-Mutation 'identity: status offers configure as the fix it does not have' 
     '           follow. Fix: trigger-kvm configure'
 
 # =============================================================================
+
+# Publication regressions: each suite is required green before these run.
+Invoke-Mutation 'publication: skipped transport check grants a pass' `
+    'lib\checks.ps1' 'publication.tests.ps1' `
+    'if ($null -eq $outcome) { return $null }' 'if ($null -eq $outcome) { return $true }'
+Invoke-Mutation 'publication: removing a target grants a pass' `
+    'lib\checks.ps1' 'publication.tests.ps1' `
+    'if ($null -eq $v) { return $null }' 'if ($null -eq $v) { return $true }'
+Invoke-Mutation 'publication: transport-only panels in mixed scope are skipped' `
+    'lib\checks.ps1' 'publication.tests.ps1' `
+    'if ($targets.Count -eq 0) {' 'if ($false) {'
+Invoke-Mutation 'publication: a repair keeps confirmations of the old map' `
+    'lib\checks.ps1' 'publication.tests.ps1' `
+    '$confirmed[$a.Label] = @{ Sig = $sig; Targets = @() }' `
+    '$confirmed[$a.Label] = @{ Sig = $sig; Targets = @(if ($confirmed.Contains($a.Label)) { $confirmed[$a.Label].Targets }) }'
+Invoke-Mutation 'publication: Escape retains renamed computer maps' `
+    'lib\walkthrough.ps1' 'publication.tests.ps1' `
+    'Set-PanelAnswer -Panel $Panels[$i] -Map $maps[$i] | Out-Null' ''
+Invoke-Mutation 'publication: monitor Escape commits edits' `
+    'lib\walkthrough.ps1' 'publication.tests.ps1' `
+    'if ($pick -lt 0) { return @($Answers) }' 'if ($pick -lt 0) { return @($out) }'
+Invoke-Mutation 'publication: fresh computer Escape marks setup answered' `
+    'lib\walkthrough.ps1' 'publication.tests.ps1' `
+    'All = @(if ($Existing) { @($This) + $Others })' 'All = @(@($This) + $Others)'
+Invoke-Mutation 'publication: cleanup ignores process ownership' `
+    'lib\host.ps1' 'publication.tests.ps1' `
+    "if (`$owner.ReturnValue -ne 0 -or ('{0}\{1}' -f `$owner.Domain, `$owner.User) -ne `$FORUSER) { continue }" ''
+Invoke-Mutation 'publication: cleanup ignores watcher path' `
+    'lib\host.ps1' 'publication.tests.ps1' `
+    "if (`$scriptPath -notin @(`$WATCH, (Join-Path `$DEST 'usb-watch.ps1'))) { continue }" ''
+Invoke-Mutation 'publication: restore starts a previously stopped watcher' `
+    'lib\host.ps1' 'publication.tests.ps1' `
+    '$start = $Prior.Running -and -not (Test-WatcherRunning)' '$start = -not (Test-WatcherRunning)'
+Invoke-Mutation 'publication: restore enables a previously disabled task' `
+    'lib\host.ps1' 'publication.tests.ps1' `
+    'if (-not $Prior.Enabled) { Disable-ScheduledTask -TaskName $TASK -ErrorAction Stop | Out-Null }' ''
+Invoke-Mutation 'publication: elevated paths lose apostrophe escaping' `
+    'lib\host.ps1' 'publication.tests.ps1' `
+    '$TK_SELF.Replace("''", "''''")' '$TK_SELF'
+Invoke-Mutation 'publication: generated config loses Unicode' `
+    'lib\answers.ps1' 'publication.tests.ps1' `
+    '$lines | Set-Content -LiteralPath $Path -Encoding UTF8' '$lines | Set-Content -LiteralPath $Path -Encoding ASCII'
+Invoke-Mutation 'publication: config updates lose Unicode' `
+    'lib\host.ps1' 'publication.tests.ps1' `
+    '$out | Set-Content -LiteralPath $Path -Encoding UTF8' '$out | Set-Content -LiteralPath $Path -Encoding ASCII'
+Invoke-Mutation 'publication: launcher encoding loses Unicode' `
+    'lib\host.ps1' 'native-publication.tests.ps1' `
+    ') | Set-Content -LiteralPath $Path -Encoding Unicode' ') | Set-Content -LiteralPath $Path -Encoding ASCII'
+Invoke-Mutation 'publication: fractional settle rounds to whole seconds' `
+    'event-watch.ps1' 'publication.tests.ps1' `
+    'Start-Sleep -Milliseconds ([int][Math]::Ceiling($Settle * 1000))' 'Start-Sleep -Seconds $Settle'
+foreach ($loader in @('trigger-kvm.ps1','nvapi-probe.ps1')) {
+    Invoke-Mutation "publication: $loader searches the working directory" `
+        $loader 'native-publication.tests.ps1' `
+        'LoadLibraryEx(System.IO.Path.Combine(Environment.SystemDirectory, "nvapi64.dll"), IntPtr.Zero, 0x00000800)' `
+        'LoadLibraryEx("nvapi64.dll", IntPtr.Zero, 0)'
+}
+Invoke-Mutation 'publication: status omits saved configuration label' `
+    'lib\host.ps1' 'publication.tests.ps1' `
+    'current saved configuration, resolved against devices attached now' 'trigger state'
+Invoke-Mutation 'publication: empty status claims live watcher state' `
+    'lib\host.ps1' 'publication.tests.ps1' `
+    "return @(`$out + '           none configured in the saved configuration')" `
+    "return @('triggers : none configured  <- nothing will ever fire')"
+Invoke-Mutation 'publication: status omits restart reminder' `
+    'lib\host.ps1' 'publication.tests.ps1' `
+    'trigger edits require: trigger-kvm restart' 'trigger edits are saved'
+Invoke-Mutation 'publication: status omits bare and Bluetooth verdicts' `
+    'lib\host.ps1' 'publication.tests.ps1' `
+    '        if ($d.Ok) {' '        if ($d.Ok -and $d.Token) {'
+Invoke-Mutation 'publication: redraw leaves old tail rows' `
+    'lib\menu.ps1' 'native-publication.tests.ps1' `
+    'for ($i = $n; $i -lt $Previous; $i++) {' 'for ($i = $Previous; $i -lt $Previous; $i++) {'
+Invoke-Mutation 'publication: redraw does not erase folded rows' `
+    'lib\menu.ps1' 'native-publication.tests.ps1' `
+    'Clear-ToLineEnd -Rows $rows' 'Clear-ToLineEnd'
+Invoke-Mutation 'publication: conformance ignores nested sources' `
+    'tests\spec.tests.ps1' 'spec.tests.ps1' `
+    "-Filter '*.ps1' -File -Recurse" "-Filter '*.ps1' -File"
+Invoke-Mutation 'publication: test fixtures share one path' `
+    'tests\config.tests.ps1' 'conventions.tests.ps1' `
+    'tk-writer-roundtrip-$PID.cfg' 'tk-writer-roundtrip.cfg'
+Invoke-Mutation 'publication: installed configure erases build identity' `
+    'lib\host.ps1' 'install.tests.ps1' `
+    'if ($sameCopy -and (Test-Path -LiteralPath $STAMP)) { return }' ''
 
 Write-Host ''
 if ($script:Survived -eq 0) {

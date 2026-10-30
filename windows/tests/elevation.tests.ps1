@@ -33,7 +33,7 @@ Assert-Equal "-ForUser 'HOME\O''Brien'" (Format-ChildArguments @('-ForUser', "HO
 # point is what the child's param() does with it -- and the two obvious shapes
 # both produce plausible text that does not bind.
 
-$tmp = Join-Path $env:TEMP 'trigger-kvm-elevation'
+$tmp = Join-Path $env:TEMP "trigger-kvm-elevation-$PID"
 New-Item -ItemType Directory -Force -Path $tmp | Out-Null
 $child = Join-Path $tmp 'child.ps1'
 @'

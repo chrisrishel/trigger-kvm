@@ -46,8 +46,8 @@
 # written in file order, and a reader that cannot reproduce it cannot be checked
 # against the other platform's.
 #
-# Get-Content does the rest of the line rules for free: measured, it strips a
-# UTF-8 byte-order mark and the CR of a CRLF file before this regex sees them.
+# UTF-8 is explicit for BOM-less hand edits; Get-Content also strips a byte-order
+# mark and the CR of a CRLF file before this regex sees them.
 #
 # ASK IT `.Contains(key)`, NOT `.ContainsKey(key)`. An OrderedDictionary has
 # only the IDictionary spelling; a Hashtable has both.
@@ -55,7 +55,7 @@ function Read-Config {
     param([string]$Path)
     $map = [ordered]@{}
     if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { return $map }
-    foreach ($line in (Get-Content -LiteralPath $Path)) {
+    foreach ($line in (Get-Content -LiteralPath $Path -Encoding UTF8)) {
         if ($line -match '^\s*([A-Za-z0-9_.\-]+)\s*=\s*(.*?)\s*(?:#.*)?$') {
             $map[$Matches[1].ToLower()] = $Matches[2]
         }

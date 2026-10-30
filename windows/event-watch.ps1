@@ -1111,7 +1111,8 @@ try {
         }
 
         Write-Log ("arrival {0}; settling {1:N2}s" -f ($arrived -join ', '), $Settle)
-        Start-Sleep -Seconds $Settle
+        # Windows PowerShell 5.1 binds -Seconds as Int32; preserve fractions.
+        Start-Sleep -Milliseconds ([int][Math]::Ceiling($Settle * 1000))
 
         # Settle re-check: is any device that just arrived STILL here?
         $present = Get-PresenceMap

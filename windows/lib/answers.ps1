@@ -533,5 +533,5 @@ function Write-ConfigFile {
     if ($dir -and -not (Test-Path -LiteralPath $dir -PathType Container)) {
         New-Item -ItemType Directory -Force -Path $dir | Out-Null
     }
-    $lines | Set-Content -LiteralPath $Path -Encoding ASCII
+    $lines | Set-Content -LiteralPath $Path -Encoding UTF8
 }

@@ -15,7 +15,7 @@ Import-Subject -Script 'lib\menu.ps1'    -Functions @(
 Import-Subject -Script 'lib\checks.ps1'  -Functions @('Test-DisplayInput','Move-PanelsAndBack')
 
 # Test-DisplayInput defaults -Config to $CONFIG, which install.ps1 sets at load.
-$global:CONFIG = Join-Path $env:TEMP 'trigger-kvm-question.cfg'
+$global:CONFIG = Join-Path $env:TEMP "trigger-kvm-question-$PID.cfg"
 
 function Write-Host { param([Parameter(ValueFromPipeline=$true)]$Object, [switch]$NoNewline)
     Add-Printed -Object $Object -NoNewline:$NoNewline

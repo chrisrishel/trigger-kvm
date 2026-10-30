@@ -48,6 +48,9 @@ function Get-KnownComputers {
 function Read-ComputerRemovals {
     param([string[]]$Others, $Panels)
 
+    # Edit-PanelMaps replaces maps, so retaining their ordered values is a
+    # snapshot. Escape restores this submenu's entry state, including order.
+    $maps = @($Panels | ForEach-Object { $_.Map })
     $rest  = @($Others)
     $edits = $false
     while ($true) {
@@ -69,7 +72,11 @@ function Read-ComputerRemovals {
         Write-Host '  Removing a computer also clears its input on every monitor it is on.'
         Write-Host ''
         $pick = Select-One -Items $rows -Detail $det -Default $done -Escapable
-        if ($pick -lt 0 -or $pick -eq $done) {
+        if ($pick -lt 0) {
+            for ($i = 0; $i -lt @($Panels).Count; $i++) { Set-PanelAnswer -Panel $Panels[$i] -Map $maps[$i] | Out-Null }
+            return [PSCustomObject]@{ Remaining = @($Others); Edited = $false }
+        }
+        if ($pick -eq $done) {
             return [PSCustomObject]@{ Remaining = @($rest); Edited = $edits }
         }
 
@@ -98,6 +105,7 @@ function Read-ComputerRemovals {
 function Read-Computers {
     param([string]$This, [string[]]$Others, [switch]$Existing, $Panels = @())
 
+    $maps = @($Panels | ForEach-Object { $_.Map })
     Write-Host ''
     Write-Host '--- computers ---'
     Write-Host 'These monitors are shared between this computer and some others.'
@@ -149,7 +157,11 @@ function Read-Computers {
         Write-Host ''
         $pick = Select-One -Items $rows -Detail $det -Default ($add + 2) -Escapable `
                            -Help '  Pick a name to change it, or Done.'
-        if ($pick -eq $add + 2 -or $pick -lt 0) { break }
+        if ($pick -lt 0) {
+            for ($i = 0; $i -lt @($Panels).Count; $i++) { Set-PanelAnswer -Panel $Panels[$i] -Map $maps[$i] | Out-Null }
+            return [PSCustomObject]@{ This = $This; All = @(if ($Existing) { @($This) + $Others }); Edited = $false }
+        }
+        if ($pick -eq $add + 2) { break }
 
         if ($pick -eq $add) {
             $rest += Read-Name -Prompt 'Name for the new computer' -Default '' `
@@ -303,15 +315,15 @@ function Read-Transport {
 
     Write-Host ''
     Write-Host '--- how the switch reaches this monitor ---'
-    Write-Host '  Both ways work on this computer. They differ in when they work and'
-    Write-Host '  in what they can say.'
+    Write-Host '  Both paths can identify this monitor. The check below still needs'
+    Write-Host '  you to confirm that it actually switches.'
     Write-Host ''
     # THE CONSEQUENCE, NAMED WHERE THE CHOICE IS MADE, in terms of what the
     # person will experience: nobody picking a monitor setting wants to be told
     # about session 0.
-    Write-Host '  Through Windows, this monitor will not follow the switch until'
-    Write-Host '  somebody has logged in. A PC sitting at the login screen keeps'
-    Write-Host '  showing whatever it was showing.'
+    Write-Host '  Through Windows, this monitor needs a local console session.'
+    Write-Host '  A login through Remote Desktop is not enough. Before local login,'
+    Write-Host '  the panel keeps showing whatever it was showing.'
     if ($d) {
         Write-Host ''
         Write-Host ("  It also cannot use {0}'s own method -- there is no way to send that" -f $d.What)
@@ -326,8 +338,8 @@ function Read-Transport {
     $pick = Select-One -Default ([Math]::Max(0, $now)) -Current $now -Escapable `
                 -Items  @('Through the graphics card', 'Through Windows') `
                 -Detail @('works before anyone logs in',
-                          $(if ($d) { ('login onward only; cannot use {0}''s own method' -f $d.What) }
-                            else    { 'login onward only' }))
+                          $(if ($d) { ('local console only; cannot use {0}''s own method' -f $d.What) }
+                            else    { 'local console only' }))
     if ($pick -lt 0) { return $BACK }
     return $(if ($pick -eq 1) { 'dxva2' } else { 'nvapi' })
 }
@@ -528,7 +540,8 @@ function Read-Monitors {
         Write-Host ''
         # No -Disabled: no row in the Monitors list is ever unpickable.
         $pick = Select-One -Items $items -Detail $detail -Default $land -Escapable
-        if ($pick -eq $done -or $pick -lt 0) { return @($out) }
+        if ($pick -lt 0) { return @($Answers) }
+        if ($pick -eq $done) { return @($out) }
 
         # An absent panel is picked from the second block, and is described by
         # its own record rather than by an enumeration that does not have it.

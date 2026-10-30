@@ -26,7 +26,7 @@ $Watcher = Join-Path $WinDir 'event-watch.ps1'
 Import-Subject -Script 'event-watch.ps1' -Functions @('Resolve-DeviceMatch','Format-UsbRows')
 . (Join-Path $WinDir 'config.ps1')
 
-$tmp = Join-Path $env:TEMP 'trigger-kvm-detector'
+$tmp = Join-Path $env:TEMP "trigger-kvm-detector-$PID"
 Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $tmp | Out-Null
 

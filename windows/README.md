@@ -9,17 +9,49 @@ specified in [`../specs/`](../specs/); the safety rules are in
 
 ## Requirements
 
-Windows 10 or 11 and stock Windows PowerShell 5.1 -- no modules, no downloads,
-no third-party binary. An NVIDIA GPU for the `nvapi` transport, which is the one
-that works before anyone logs in; without one, panels are driven through
-`dxva2`, which needs a desktop.
+64-bit Windows 10 or 11, Windows PowerShell 5.1, Task Scheduler, WMI/CIM, and
+Windows Script Host with VBScript enabled. No PowerShell modules or bundled
+third-party executables are required. Git is optional for acquiring/updating the
+source. Downloaded scripts must be trusted and permitted by local policy.
+
+`nvapi` requires an NVIDIA GPU and its installed driver; the DLL is loaded only
+from the Windows system directory. It supports the boot tier and the LG dialect.
+`dxva2` carries standard DDC/CI only and requires a **local console session**;
+neither an RDP login nor session 0 is sufficient. It is an explicit transport
+choice, never an automatic fallback when NVIDIA is absent.
+
+Validation is bounded to the reference Windows 11 desk, RTX 4090, LG 45GX950A
+and ASUS PG42UQ. NVAPI physical switching has dated observations in
+[`../docs/measurements.md`](../docs/measurements.md). The shipped dxva2 path moved
+the ASUS both ways at the local console, visually confirmed on 2026-10-29.
+Other monitors, adapters and Windows versions are not established by fixture tests. Fresh
+administrator/standard-user profiles and autostart transitions remain release
+checks in [`RELEASE-CHECKS.md`](RELEASE-CHECKS.md).
 
 ## Install
 
 ```powershell
-cd windows
-.\install.ps1                  copy files, register the task, start it
-.\install.ps1 -AddToPath       ...and put `trigger-kvm` on PATH
+# From a directory where you keep source checkouts; repository access is required.
+git clone https://github.com/chrisrishel/trigger-kvm.git
+cd trigger-kvm\windows
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -AddToPath
+```
+
+Alternatively, extract a trusted source archive and open PowerShell in its
+`windows` directory. If Windows marked the download as blocked, review the
+source, then unblock only those scripts:
+
+```powershell
+Get-ChildItem -LiteralPath . -Filter *.ps1 -File -Recurse | Unblock-File
+```
+
+`-ExecutionPolicy Bypass` applies to this process; it does not change machine
+policy or override organizational policy. Start **unelevated** as the user who
+will own the installation. Omit `-AddToPath` to keep PATH unchanged. Open a new
+terminal after adding PATH, or use the installed shim immediately:
+
+```powershell
+& "$env:LOCALAPPDATA\Programs\trigger-kvm\bin\trigger-kvm.cmd" status
 ```
 
 With no config yet it runs the walkthrough first. It asks for administrator
@@ -41,23 +73,23 @@ it again. Only `bin\`, which holds a single `trigger-kvm.cmd`, goes on PATH.
 ## Using it
 
 ```powershell
-trigger-kvm pull                 point every configured monitor at THIS computer
-trigger-kvm to mac               point them at another computer, by name (manual only)
-trigger-kvm list                 attached displays, with EDID ids and names
-trigger-kvm configure            the walkthrough; -Fresh pre-fills nothing
-trigger-kvm status               is it running, when it starts, the input map
-trigger-kvm discover             what is attached, in the form the config wants
-trigger-kvm restart              make a hand-edited config take effect now
-trigger-kvm logs                 tail the log
-trigger-kvm pause                stand the watcher down to test by hand
-trigger-kvm uninstall            remove the program, keeping the config and the log
+trigger-kvm pull                 # point every configured monitor at THIS computer
+trigger-kvm to mac               # another saved computer name; manual only
+trigger-kvm list                 # attached displays, with EDID ids and names
+trigger-kvm configure            # the walkthrough; -Fresh pre-fills nothing
+trigger-kvm status               # watcher state, saved config, input map and build identity
+trigger-kvm discover             # attached USB devices and paired Bluetooth devices
+trigger-kvm restart              # make trigger edits take effect now
+trigger-kvm logs                 # tail the log; Ctrl+C stops tailing
+trigger-kvm pause                # stand the watcher down to test by hand
+trigger-kvm uninstall            # remove program/task/PATH; keep config and log
 ```
 
 Two flags matter when you are testing, and both are the switcher's:
 
 ```powershell
-.\trigger-kvm.ps1 pull -Only asus     one monitor only
-.\trigger-kvm.ps1 pull -WhatIf        resolve and print the packets, send nothing
+.\trigger-kvm.ps1 pull -Only asus     # one saved monitor label; substitute yours
+.\trigger-kvm.ps1 pull -WhatIf        # resolve and print packets, send nothing
 ```
 
 The bare command prints the verbs and exits 2. There is no `install` verb and no
@@ -67,6 +99,35 @@ the watcher next starts, which `restart` does.
 `pull` and `to` are one lookup, one name apart. `computer.this` names inputs on
 hardware this PC is plugged into; any other name describes inputs it cannot
 observe, so the trigger only ever runs `pull`.
+
+Before a manual switch, move the terminal to a monitor that will stay on this
+computer. Use `-Only` for one monitor at a time and confirm the result by eye.
+A successful command or dry run does not establish that a panel moved.
+
+## Upgrade, repair and uninstall
+
+Preserve local work when updating the source. From the checkout root:
+
+```powershell
+git status --short
+git fetch origin
+git merge --ff-only origin/main
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\windows\install.ps1
+```
+
+If fast-forwarding is refused, resolve the local work deliberately; do not reset
+it away. The source installer preserves the saved configuration and existing
+autostart choice, replaces installed scripts, and restarts the watcher. An
+upgrade is disruptive to the watcher, so coordinate it before testing devices.
+Run `trigger-kvm status` afterwards and inspect the version stamp and lock state.
+The product version, specification revision and source commit are separate;
+reconfiguring an installed copy preserves its build stamp.
+
+`trigger-kvm uninstall` works from the installed shim even after the source is
+gone. Config and logs remain in `%LOCALAPPDATA%\trigger-kvm\`; retain them for a
+reinstall or remove them yourself after reviewing their contents. A boot-tier
+task can require UAC for removal. If removal fails, the installer leaves the
+program files in place and explains the remaining task.
 
 ## When it starts
 
@@ -110,8 +171,8 @@ platform:
   LG panels, and only values from [`../displays.toml`](../displays.toml) or
   values you type are ever sent on it.
 - Where a panel enumerated through both transports, the walkthrough asks which
-  one to use and says the consequence: through Windows, that monitor does not
-  follow the switch until somebody has logged in. Choosing it also disables the
+  one to use and says the consequence: dxva2 needs a local console session.
+  Choosing it also disables the
   "from boot" row, and `status` names the panel it strands.
 - A monitor check sends the panels in scope away and back and asks once; one
   panel always stays on this computer. Every path that moves a panel goes
@@ -120,11 +181,14 @@ platform:
 - A pass belongs to the panels it checked and to their method, transport and
   map. Any edit to those puts the row back to `untested`, and the trigger check
   pulls for real only while every managed, attached panel holds a current pass.
+  Declined, skipped or incomplete checks cannot grant that pass. Escape discards
+  computer, removal and monitor submenu edits; Done accepts them in memory.
 - A configured monitor that is not attached today is shown as such, kept on
   Save, and not checked. Only unmanaging forgets it.
 - The trigger check stands the installed watcher down first. On the boot tier
   that would need a password, so instead it says the running watcher will also
-  fire, before you flip.
+  fire, before you flip. Where it can pause, every exit restores the prior task
+  enablement and running state, including a deliberately paused installation.
 
 ## Configuration
 
@@ -139,6 +203,18 @@ walkthrough writes `usb:VVVV:PPPP@token@where`
 ([`../specs/detector.md`](../specs/detector.md) 4.1). Two attached monitors of
 one model are one identity; the switch refuses it, and `list`, `configure` and
 `status` say so.
+
+`status` resolves each trigger in the **current saved configuration** against
+devices attached now, using the watcher's resolver. It does not inspect the
+configuration loaded by an already-running watcher. Trigger edits require
+`trigger-kvm restart`. Display input maps are assertions about cables, never
+verified by a readback. UTF-8 configuration preserves Unicode display names and
+unknown values across Save and autostart updates.
+
+Before sharing status, discovery, probe output, configuration or logs, redact
+Bluetooth addresses, serials, device tokens/locations and personal paths. Keep
+vendor/product IDs and protocol values needed to explain the problem; see
+[`../CONTRIBUTING.md`](../CONTRIBUTING.md#reporting-a-bug).
 
 ## Components
 
@@ -170,8 +246,9 @@ identifies as the panel, and anything other than exactly one match is refused.
 
 **`event-watch.ps1`** is one process with two sources: USB through
 `Win32_DeviceChangeEvent`, a WMI extrinsic event that reaches session 0, and
-Bluetooth by P/Invoke to the classic `bthprops.cpl` API, polled and only when a
-`bt:` device is configured. Bluetooth presence means CONNECTED; the candidate
+Bluetooth by P/Invoke to the classic `bthprops.cpl` API, enumerated once per
+event-driven presence sweep when a `bt:` device is configured. Bluetooth
+presence means CONNECTED; the candidate
 list offers every PAIRED device. An arrival is debounced (`trigger.debounce`,
 default 3 s) and settled (`trigger.settle`, default 0.75 s): it fires only if
 the device that arrived is still there. Devices present at startup never fire.
@@ -184,7 +261,7 @@ unplugging one of two identical devices resolves the entry without firing
 anything, and a watcher whose every entry is ambiguous refuses to start rather
 than running and never firing.
 
-```powershell
+```text
 event-watch.ps1 -Exec PATH [-Arg pull] -Device usb:VVVV:PPPP[@token[@where]]|bt:AAAAAAAAAAAA
                 [-Debounce S] [-Settle S] [-LogFile PATH] [-MaxLogBytes N] [-Config PATH] [-Verbose]
 event-watch.ps1 -ListUsb          what could be a trigger: container|vid|pid|token|where|name
@@ -194,9 +271,9 @@ event-watch.ps1 -IsRunning        is a watcher running, from the lock. Exit 0 me
 event-watch.ps1 -TestTrigger -Device ... [-Timeout S]   report ONE arrival and exit, running nothing
 ```
 
-The listing and reporting modes need no config and refuse nothing: they have to
-answer on a machine with no config at all, because they are what `configure` is
-built on.
+The listing modes need no config. `-Report -Device <entries>` resolves explicitly
+supplied entries without taking the watcher lock; malformed entries are refused.
+With no explicit entries it uses the saved config.
 
 Single instance is a named mutex: `Global\`, so it covers the whole computer and
 not one session, falling back to `Local\` only where the account may not create
@@ -230,17 +307,23 @@ delivered" from "delivered and correctly rejected".
 
 ```powershell
 cd windows\tests
-.\run.ps1                    the suite; no hardware needed
-.\run.ps1 menus              only files whose name matches
-.\mutate.ps1                 reintroduce each bug the suite should catch
+.\run.ps1                    # full suite; hardware-dependent cases report skips
+.\run.ps1 menus              # only files whose name matches
+.\mutate.ps1 publication     # publication regression mutations
+.\mutate.ps1                 # all mutations; run alone, as it edits/restores source
 ```
 
 The suite cannot move a monitor: `Send-Input`, the one place the installer emits
 a packet, is stubbed, and every menu is driven end to end through its typed
 fallback. Each file runs in its own process, because the walkthrough tests
 define stubs with the same names as real functions. A test that did not run
-reports `SKIP` and never counts as a pass -- two files need real hardware, and
-one case inside them needs a local console session rather than a remote one.
+reports `SKIPPED` and never counts as a pass. Transport cases require real
+graphics hardware; the dxva2 case requires a local console session, and the
+native NVAPI module-path case is skipped without an NVIDIA driver.
+Native publication checks exercise harmless WSH/process/DLL fixtures and hidden
+console buffers. No real task is registered or altered by the suite. The
+coordinated installation and physical checks are in
+[`RELEASE-CHECKS.md`](RELEASE-CHECKS.md).
 
 Before running anything against the monitors, check that it parses. Windows
 PowerShell 5.1 reads a `.ps1` with no BOM as ANSI, so a non-ASCII character in a

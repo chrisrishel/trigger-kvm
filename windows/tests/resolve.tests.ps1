@@ -11,7 +11,7 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'lib.ps1')
 
 $sw  = Join-Path (Split-Path -Parent $PSScriptRoot) 'trigger-kvm.ps1'
-$cfg = Join-Path $env:TEMP 'trigger-kvm-resolve.cfg'
+$cfg = Join-Path $env:TEMP "trigger-kvm-resolve-$PID.cfg"
 
 # A synthetic desk. The EDID ids are this project's two known panels, because those
 # are the ones whose packets are documented in displays.toml and can be asserted

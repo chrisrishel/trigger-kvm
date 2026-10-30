@@ -176,7 +176,7 @@ function Get-Entry { param([string]$Text) return (ConvertFrom-TriggerDevices $Te
 # WELL-FORMED, in every spelling the format allows.
 foreach ($ok in 'usb:046d:c547', '046d:c547', 'USB:046D:C547', '046D:C547',
                 'usb:046d:c547@usb-receiver', 'usb:046d:c547@usb-receiver@port-0003-hub-0005',
-                'bt:0011223344ee', 'BT:0011223344ee') {
+                'bt:001122aabbcc', 'BT:001122AABBCC') {
     Assert-True (Get-Entry $ok).Ok "'$ok' is a device"
 }
 
@@ -214,10 +214,10 @@ Assert-Equal (Get-Entry 'usb:046d:c547@tok@port-1').Identity `
 # A LIST: split on commas, and each entry TRIMMED rather than stripped. The
 # whitespace a list must tolerate is what follows a comma, and that is at an
 # entry's ends -- deleting it everywhere is what made `@has space` look valid.
-$list = @(ConvertFrom-TriggerDevices 'usb:046d:c547 , bt:0011223344ee,,  ')
+$list = @(ConvertFrom-TriggerDevices 'usb:046d:c547 , bt:001122aabbcc,,  ')
 Assert-Equal 2 $list.Count            'empty entries are skipped, as they always were'
 Assert-Equal 'usb:046d:c547'  $list[0].Raw
-Assert-Equal 'bt:0011223344ee' $list[1].Raw
+Assert-Equal 'bt:001122aabbcc' $list[1].Raw
 Assert-Equal 'usb' $list[0].Kind
 Assert-Equal 'bt'  $list[1].Kind
 $inner = @(ConvertFrom-TriggerDevices 'usb:046d:c547@has space')
@@ -227,7 +227,7 @@ Assert-True (-not $inner[0].Ok) 'whitespace INSIDE an entry is not whitespace af
 # A REAL ARRAY as well as a comma-separated string: launched via `powershell.exe
 # -File` every argument arrives as one literal string, so the watcher's -Device
 # is a single element there and an array everywhere else.
-Assert-Equal 2 (@(ConvertFrom-TriggerDevices @('usb:046d:c547','bt:0011223344ee')).Count)
+Assert-Equal 2 (@(ConvertFrom-TriggerDevices @('usb:046d:c547','bt:001122aabbcc')).Count)
 Assert-Equal 0 (@(ConvertFrom-TriggerDevices @()).Count)
 Assert-Equal 0 (@(ConvertFrom-TriggerDevices '').Count)
 Assert-Equal 0 (@(ConvertFrom-TriggerDevices '   ').Count)
@@ -235,8 +235,8 @@ Assert-Equal 0 (@(ConvertFrom-TriggerDevices '   ').Count)
 # A Bluetooth address already names one device, so there is nothing to
 # disambiguate -- and the fields are PRESENT and empty, because Set-StrictMode
 # makes reading a property that is not there terminating.
-$b = Get-Entry 'BT:0011223344ee'
-Assert-Equal 'bt:0011223344ee' $b.Key
+$b = Get-Entry 'BT:001122AABBCC'
+Assert-Equal 'bt:001122aabbcc' $b.Key
 Assert-Equal '' $b.Token
 Assert-Equal '' $b.Spot
 Assert-Equal '' $b.Vid
