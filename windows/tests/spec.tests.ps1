@@ -22,6 +22,7 @@ $Check  = Join-Path $PSScriptRoot 'check-conformance.ps1'
 # self-test below is what caught that, which is the whole reason it is there.
 function Get-ConformanceSources {
     param([string]$Root)
+    $Root = (Get-Item -LiteralPath $Root).FullName
     $tests = (Join-Path $Root 'tests') + [IO.Path]::DirectorySeparatorChar
     return @(Get-ChildItem -LiteralPath $Root -Filter '*.ps1' -File -Recurse |
         Where-Object { -not $_.FullName.StartsWith($tests, [StringComparison]::OrdinalIgnoreCase) } |
@@ -52,6 +53,7 @@ Assert-True (Test-Path -LiteralPath $Check) "the checker is missing: $Check"
 # throwaway spec rather than by breaking a real one.
 $tmp  = Join-Path $env:TEMP "trigger-kvm-spec-tests-$PID"
 New-Item -ItemType Directory -Force -Path $tmp | Out-Null
+$tmp = (Get-Item -LiteralPath $tmp).FullName
 
 # A new directory must join without an edit to this test. Compare elements,
 # not a joined string or count that could hide a missing file.
@@ -64,6 +66,15 @@ $listed = @(Get-ConformanceSources $tree)
 Assert-Equal 2 $listed.Count
 Assert-Equal (Join-Path $tree 'entry.ps1') $listed[0]
 Assert-Equal (Join-Path $tree 'lib\nested\message.ps1') $listed[1]
+# Enumeration expands DOS aliases and dot segments. The exclusion must compare
+# canonical paths too, or tests/excluded.ps1 silently joins production sources.
+$shortTree = (New-Object -ComObject Scripting.FileSystemObject).GetFolder($tree).ShortPath
+foreach ($alias in @("$tree\.", $shortTree)) {
+    $aliased = @(Get-ConformanceSources $alias)
+    Assert-Equal 2 $aliased.Count 'path aliases must not include the tests directory'
+    Assert-Equal $listed[0] $aliased[0]
+    Assert-Equal $listed[1] $aliased[1]
+}
 
 $fake = Join-Path $tmp 'fake-spec.md'
 @'

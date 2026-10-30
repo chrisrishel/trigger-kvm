@@ -1201,6 +1201,9 @@ Invoke-Mutation 'publication: redraw does not erase folded rows' `
 Invoke-Mutation 'publication: conformance ignores nested sources' `
     'tests\spec.tests.ps1' 'spec.tests.ps1' `
     "-Filter '*.ps1' -File -Recurse" "-Filter '*.ps1' -File"
+Invoke-Mutation 'publication: conformance includes tests through path aliases' `
+    'tests\spec.tests.ps1' 'spec.tests.ps1' `
+    '$Root = (Get-Item -LiteralPath $Root).FullName' ''
 Invoke-Mutation 'publication: test fixtures share one path' `
     'tests\config.tests.ps1' 'conventions.tests.ps1' `
     'tk-writer-roundtrip-$PID.cfg' 'tk-writer-roundtrip.cfg'

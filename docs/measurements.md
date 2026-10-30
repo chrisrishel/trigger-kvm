@@ -935,6 +935,20 @@ resumed at offset 0 with zero NUL bytes in the file.
 
 ## PowerShell console and language
 
+**2026-10-30, Windows -- CI temp paths exposed DOS-alias assumptions in two
+new fixtures.** The first remediation push (`41218f5`) passed macOS CI but
+failed Windows' native-publication and conformance-source fixtures. Reproduced
+locally: enumerating a source tree through its 8.3 alias or a trailing dot
+segment returned three scripts instead of two because the tests-directory
+exclusion compared an unexpanded prefix. With TEMP/TMP set to the short alias,
+the elevation transcript path was expanded to the long name, so the fixture's
+prefix assertion rejected the same directory. Normalizing with `Get-Item`
+before comparison fixes both. The suite retains its exact two-source and
+apostrophe/Unicode assertions, explicitly exercises aliases, and mutates away
+source-root normalization to prove the exclusion fails again.
+The corrected candidate passes all 17 native test files without skips and all
+28 publication mutations are caught.
+
 **2026-10-29, Windows -- publication remediation on Windows PowerShell
 5.1.22621.7582.** The native suite passes all 17 files without skipped cases;
 `tests/mutate.ps1 publication` catches all 27 mutations, and

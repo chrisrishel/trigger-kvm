@@ -23,7 +23,7 @@ and the command checklist in `windows/RELEASE-CHECKS.md`.
   Verified with `make test` (13 files plus shellcheck) and
   `bash tests/mutate.sh publication` (11 mutations caught).
 - [x] Windows: publication-review defects resolved with native PowerShell 5.1
-  regressions, 17 passing test files and 27 caught publication mutations.
+  regressions, 17 passing test files and 28 caught publication mutations.
   Includes incomplete-check gating, exact-path/owner cleanup, prior watcher
   state, apostrophes/Unicode, fractional settle, restricted DLL loading,
   Escape rollback, recursive conformance coverage and isolated test paths.

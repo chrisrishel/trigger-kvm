@@ -7,6 +7,9 @@ Import-Subject 'lib\host.ps1' -Functions @('Write-WatcherLauncher','Get-WatcherC
     'Request-Elevation','Get-ChildArguments','Format-ChildArguments','Stop-Watchers','Get-ShimLines')
 $root = Join-Path $env:TEMP ("tk-native-$PID-O'Brien-" + [char]0x00E9 + [char]0x6771)
 New-Item -ItemType Directory -Path $root -Force | Out-Null
+# TEMP may contain a DOS 8.3 alias. GetTempFileName and enumeration return long
+# paths; compare the same path representation without dropping Unicode checks.
+$root = (Get-Item -LiteralPath $root).FullName
 $global:FORUSER = [Security.Principal.WindowsIdentity]::GetCurrent().Name
 $global:APPDATA = $root
 $global:INVOKED_WITH = @{}
@@ -25,8 +28,9 @@ try {
     $oldTemp = $env:TEMP
     $oldTmp = $env:TMP
     try {
-        $env:TEMP = $root
-        $env:TMP = $root
+        $shortRoot = (New-Object -ComObject Scripting.FileSystemObject).GetFolder($root).ShortPath
+        $env:TEMP = $shortRoot
+        $env:TMP = $shortRoot
         Request-Elevation install | Out-Null
     } finally { $env:TEMP = $oldTemp; $env:TMP = $oldTmp }
     $inner = $script:commands[-1]
@@ -35,7 +39,7 @@ try {
     Assert-Equal 0 @($parseErrors).Count 'installer AND transcript paths parse'
     $redirect = $ast.Find({param($a) $a -is [Management.Automation.Language.FileRedirectionAst]},$true)
     $transcript = $redirect.Location.SafeGetValue()
-    Assert-True ($transcript.StartsWith($root)) 'the transcript exercises apostrophes and Unicode too'
+    Assert-True ($transcript.StartsWith($root, [StringComparison]::OrdinalIgnoreCase)) 'the transcript exercises apostrophes and Unicode too'
     $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($inner))
     $p = Start-Process powershell.exe -WindowStyle Hidden -Wait -PassThru -ArgumentList @(
         '-NoProfile','-ExecutionPolicy','Bypass','-EncodedCommand',$encoded)
