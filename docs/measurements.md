@@ -31,6 +31,7 @@ making a claim about; if you cannot, say that instead of concluding.
 | [Asking whether a watcher is running](#asking-whether-a-watcher-is-running) | the lock answers; a process count cannot on Windows | `specs/status.md` 2 |
 | [Logs](#logs) | copy-truncate under launchd leaves no hole | `macos/AGENTS.md` |
 | [PowerShell console and language](#powershell-console-and-language) | session-boundary blindness, PATH kinds, console clamping, argument passing | `windows/AGENTS.md` |
+| [Release validation and privacy](#release-validation-and-privacy) | installed-candidate checks and the scope/limits of the publication audit | `CONTRIBUTING.md`, `TODO.md` |
 
 ## Naming a device
 
@@ -323,6 +324,16 @@ across real sleep cycles: enabled, the monitor defects; disabled, it holds. LG
 switching on signal loss despite the wording.
 
 ## Display identity
+
+**2026-10-30, Windows -- read-only identity check after a reboot on NVIDIA
+616.64.** Windows reported its last boot on 2026-10-13, after the recorded live
+driver update. `powershell.exe -NoProfile -ExecutionPolicy Bypass -File
+windows/nvapi-probe.ps1` initialized successfully and enumerated both reference
+panels. Comparing by EDID manufacturer/product, both panels' `displayId`,
+`outputId` and product matched the documented baseline. Raw identifiers remain
+in the private validation record. This closes the deferred post-reboot identity
+check; it does not establish that this candidate starts at boot or that a panel
+physically switches. No VCP read or display write was performed.
 
 **2026-09-05, Windows -- one of the two panels here reports an EDID serial of
 `0x01010101`.** `trigger-kvm list -Raw` on the reference desk:
@@ -935,6 +946,35 @@ resumed at offset 0 with zero NUL bytes in the file.
 
 ## PowerShell console and language
 
+**2026-10-30, Windows -- reviewed candidate `2835cb0` installed and its Save/
+Cancel workflow checked.** Environment: Windows 11 Education build 22631,
+Windows PowerShell 5.1.22621.7582, NVIDIA RTX 4090 driver 616.64 and Intel UHD
+770 driver 32.0.101.7088. Before the coordinated change, the installed stamp
+was `41218f5+dirty`; the task was S4U, Limited, owned by the intended user,
+enabled/running, with the watcher lock held. Private access-restricted backups
+preserved the program, data, task XML and user PATH. The primary checkout's
+pre-existing work was preserved; installation used a clean isolated checkout.
+
+Through the installed shim, `trigger-kvm pause` released the lock. Running the
+clean candidate's `windows/install.ps1` through Windows PowerShell with
+`-NoProfile -ExecutionPolicy Bypass -File` completed successfully. The installed
+stamp is **`2835cb0` / 0.2.0 / spec 15**, and installed script hashes match that
+candidate. All 17 saved keys and user PATH were preserved. Elevated CIM ownership
+inspection found exactly one installed watcher, the lock was held, and the
+original S4U/Limited/enabled/running state was restored.
+
+The installed `trigger-kvm configure` typed-input flow was exercised twice:
+`q` then Enter returned 1 and left config bytes unchanged; selecting Save after
+adding `release.fixture = keep` returned 0, retained that unknown key and every
+original value, and preserved the installed stamp. Original config bytes were
+then restored and `trigger-kvm restart` restored the owner watcher. These are
+native installed-product/Task Scheduler checks, not mocked OS results. They do
+not cover interactive Ctrl+C, a fresh profile or separate-account elevation.
+The full Windows PowerShell 5.1 suite also passed all 18 files without skips.
+An additional spec-only invocation inside the restricted execution sandbox
+returned an 8.3-path alias mismatch; the unchanged test passed when rerun in the
+native user context. No assertion was changed to obtain that pass.
+
 **2026-10-30, Windows -- cleanup must recognize the execution boundary, not
 search for a later `-File`.** At `4a4ba59`, the actual `Stop-Watchers` function
 under Windows PowerShell 5.1.22621.7582 selected an unrelated synthetic process
@@ -1202,3 +1242,41 @@ positional string, not a parameter name. This is why `install.ps1` builds its
 elevated child's command line through `Format-ChildArguments` rather than a join,
 and why the suite round-trips it through a real script instead of asserting on
 the text alone.
+
+## Release validation and privacy
+
+**2026-10-30 -- privacy audit at `2835cb0`, while the repository remains
+private.** Read-only inspection covered all 112 tracked current files and
+every blob reachable from the local refs: 226 commits and 1,192 text blobs,
+with no binary blobs. Remote enumeration advertised only `main` and `v0.2.0`,
+both present locally. Commit messages and author/committer metadata were also
+checked. Pattern checks covered known credential formats/private keys,
+credential assignments, email/profile paths, Bluetooth addresses, serials,
+UUIDs, device-instance and topology paths. No known credential-pattern match
+was found; pattern scanning is not a guarantee that every possible secret is
+absent. Current matches were reviewed as synthetic fixtures/placeholders,
+redacted measurement labels or public API constants.
+
+Historical device identifiers/profile paths remain in earlier file versions.
+Locations include `docs/measurements.md`, `displays.toml`,
+`ideas/telling-two-identical-devices-apart.md`, `macos/README.md`,
+`windows/HANDOFF.md`, `windows/README.md`, `windows/trigger-kvm.ps1` and older
+Windows test fixtures. Raw matches and object IDs are retained privately;
+identifying values are not repeated here. One non-noreply author email remains
+in Git metadata and in GitHub Actions run metadata. Human authorship was not
+changed, and no history rewrite was performed.
+
+The GitHub API reported one branch and one tag; no issues, pull requests, issue/
+review/commit comments, releases or Actions artifacts. Wiki, Pages and
+Discussions were disabled. All 14 existing Actions logs were retrieved and
+scanned; no additional credential or personal-identifier matches were found
+in those logs. Repository/Actions metadata was inspected separately, including
+the retained author email. GitHub secret scanning was disabled and its alerts
+endpoint unavailable. Unadvertised/deleted server-side objects and external
+copies are outside this audit's visibility.
+
+Publication still requires the owner's decision to retain the historical
+identifiers and author email, or to commission a separately approved privacy
+remediation with a concrete preview. This audit does not authorize changing
+metadata, credentials, history or repository visibility. Repeat the applicable
+checks on the final release candidate and any newly created remote surfaces.

@@ -26,20 +26,21 @@ physical panel changed input.
 
 ## Candidate status and next coordinated session
 
-The 2026-10-30 cleanup follow-up is covered by native process fixtures; it has
-not been installed over the live boot-tier copy. The earlier upgrade, installed
-status/Cancel and timeout-restoration checks were observed on 2026-10-29.
-The ASUS dxva2 away-and-back check was visually confirmed that day; this
-follow-up performed no display writes. Fresh profiles, account elevation,
-autostart transitions and final NVAPI physical checks remain open.
+Clean reviewed candidate `2835cb0` was installed on 2026-10-30. Installed script
+hashes, build identity (0.2.0/spec 15), configuration preservation, intended
+S4U/Limited principal, owner PATH and one enabled/running watcher were verified.
+Installed Save preserved a synthetic unknown key; Cancel preserved config bytes.
+Original config bytes and the owner's boot/enabled/running state were restored.
+The earlier timeout-restoration checks were observed on 2026-10-29.
+The ASUS dxva2 away-and-back check was visually confirmed that day. The
+2026-10-30 installed checks performed no display writes. Post-reboot read-only
+NVAPI IDs matched the baseline on driver 616.64. Interactive Ctrl+C, fresh
+profiles, account elevation, autostart transitions and final NVAPI physical
+checks remain open.
 
-For the next agreed installation session, follow the backup/pause/upgrade steps
-below using the pushed candidate. After backing up the configuration, add the
-synthetic unknown key `release.fixture = keep` to the saved config. Run
-`trigger-kvm configure` through the installed shim, Save without changing
-monitor inputs, verify the key survives, and restore the original config.
-Run the trigger check and interrupt it with Ctrl+C; compare prior and resulting
-task enablement and watcher lock state. Keep the owner's original tier/state.
+For the next agreed interactive session, run the installed trigger check and
+interrupt it with Ctrl+C; compare prior and resulting task enablement and watcher
+lock state. Keep the owner's original tier/state.
 Use approved disposable profiles for the separate account, reboot and uninstall
 matrix. Coordinate physical switching as its own one-panel-at-a-time session.
 
@@ -75,6 +76,13 @@ configuration, logs and task XML can contain personal identifiers.
 Use disposable profiles approved by the owner, never repurpose their normal
 account. A fresh directory under an existing profile is not a fresh-profile
 installation test. Account creation, logoff and reboot require coordination.
+The task name is machine-wide: pause the original owner's watcher and preserve
+its task XML before another profile installs. Test one profile at a time, then
+return to the owner and restore the original configuration, tier and state.
+Stage only candidate source in the shared temporary source folder, never the
+owner's config, logs or private backup. Have the owner enter credentials directly
+in Windows; do not put them in transcripts or chat. Verify the actual profile
+path, since an account's display name alone does not prove a Unicode path.
 
 - Administrator-capable account: first install unelevated; choose boot and
   approve UAC. Confirm S4U, RunLevel Limited, correct user principal and files.

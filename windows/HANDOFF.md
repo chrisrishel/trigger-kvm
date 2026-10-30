@@ -35,22 +35,28 @@ Verified: Windows PowerShell 5.1 suite and publication mutations; native Unicode
 
 Still required before release:
 
-- Upgrade the live installed copy to the cleanup follow-up candidate in a
-  coordinated session; it remains on the earlier remediation runtime. Follow
-  RELEASE-CHECKS.md's backup/pause/upgrade and installed Save/Ctrl+C steps.
 - Fresh administrator-capable and separate standard-user profiles; approve and
   decline UAC, verifying the intended user's files, task principal and PATH.
 - Real profile/checkout paths containing spaces, apostrophes and non-ASCII text.
 - Boot/login/no-autostart transitions, actual logon/reboot behavior, and
   uninstall from the installed shim after the source checkout is unavailable.
-- Installed configure Save with unknown keys preserved, and interactive Ctrl+C
-  during a trigger check. Native timeout restoration covered enabled/running,
+- Interactive Ctrl+C during an installed trigger check. Native timeout
+  restoration covered enabled/running,
   enabled/stopped and disabled/stopped; error/cancellation remain fixture tests.
 - Final-candidate NVAPI physical switching, one panel at a time with visual
   confirmation. The ASUS dxva2 check is complete; no LG write was sent in it.
 - Native suites on both platforms at the coordinated release commit, privacy
   review of all refs/GitHub surfaces, and the driver's/port's deferred checks in
-  TODO.md when their triggers occur. Never test S3 standby.
+  TODO.md when their triggers occur. The post-reboot read-only identity check on
+  driver 616.64 is complete; the cable-move/next-driver-update checks remain
+  deferred. Never test S3 standby.
+
+On 2026-10-30 clean `2835cb0` was installed and verified against source hashes,
+with original config values/PATH and S4U/Limited/enabled/running state preserved.
+Installed Save retained a synthetic unknown key and the build stamp; Cancel
+preserved config bytes. Original config bytes were restored afterwards.
+Privacy review covered reachable history and accessible GitHub surfaces;
+historical identifier/author-email publication decisions remain outstanding.
 
 The implementation is at specification revision 15. Product version stays
 0.2.0 during remediation; 0.3.0 is the next coordinated release target.

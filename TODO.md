@@ -42,17 +42,23 @@ and the command checklist in `windows/RELEASE-CHECKS.md`.
   installation paths, apostrophe/non-ASCII paths, and both autostart tiers.
   Existing-profile boot-tier upgrade, installed status/Cancel, timeout state
   restoration and ASUS `dxva2` switching both ways were observed on 2026-10-29.
-  Fresh profiles, standard-user UAC, decline/fallback, tier transitions,
-  installed Save, interactive cancellation and uninstall remain outstanding.
-  The 2026-10-30 cleanup follow-up has native fixture coverage; upgrading the
-  live copy to that candidate remains a coordinated installation check.
+  Clean `2835cb0` was installed on 2026-10-30; installed source/build identity,
+  config/PATH preservation, single watcher and intended task state passed.
+  Installed Save retained an unknown key and the stamp; Cancel preserved config
+  bytes, and the original config was restored. Fresh profiles, standard-user
+  UAC, decline/fallback, tier transitions, interactive cancellation and uninstall
+  remain outstanding, alongside final NVAPI physical switching.
 - [ ] Privacy: shared measurement notes now use consistent labels for device
   identifiers; unnecessary current Windows device examples are synthetic.
-  A limited history scan found prior identifier content in six file paths
-  and one historical author email; identifying values are not repeated here.
-  Decide whether that metadata/content is intended to be public. A current-file
-  scan for common credential patterns found none; it is not a full secrets or
-  history clearance. Before any approved history rewrite, prepare a private
+  The 2026-10-30 audit at `2835cb0` covered 112 tracked files, 226 commits/1,192
+  text blobs, all advertised refs, accessible GitHub metadata and 14 Actions
+  logs. Current matches are synthetic/redacted examples or API constants; no
+  known credential-pattern matches were found. Historical identifiers and one
+  author email remain, including that email in Actions metadata. See the
+  location/category inventory and limits in `docs/measurements.md`, "Release
+  validation and privacy". GitHub secret scanning was disabled/unavailable.
+  Decide whether that metadata/content is intended to be public. Before any
+  separately approved history rewrite, prepare a private
   backup and exact replacement
   preview, finish both platforms' work, and synchronize both checkouts. Re-scan
   all published refs and GitHub surfaces afterward. Do not remove human
@@ -62,11 +68,6 @@ and the command checklist in `windows/RELEASE-CHECKS.md`.
   matches the release commit and privacy review covers its history.
 
 ## Deferred work
-
-- **Re-read the NVAPI ids at the first reboot on driver 616.64.** The 2026-09-05
-  upgrade was applied live, so "reboot on a new driver" is the one combination
-  untaken; one `windows\nvapi-probe.ps1` run answers it. Trigger: the next
-  reboot of the Windows PC.
 
 - **Re-take the NVAPI identity comparison after each graphics driver update.**
   Baseline: NVIDIA 616.64 (`docs/measurements.md`, 2026-09-05). Compare
