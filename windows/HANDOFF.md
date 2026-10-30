@@ -73,3 +73,137 @@ comment count as source (measured — it did). One pattern cannot serve both, as
 `*` opens a block-comment continuation AND a shell `case` branch. Nothing for
 you to do unless Windows ever grows a second language, but `specs/README.md`
 now says the rule.
+
+## Preserve skipped monitor checks as untested
+
+Kind:     defect report
+Spec:     specs/configure.md 4.2, 10.1, 10.8, 11
+Why:      declining a check can authorize a later real pull with unverified inputs
+Owed:     distinguish pass, failure and skipped outcomes; track actual scope
+Verified: actual PowerShell functions at 318fc79, exercised with hardware/UI
+          stubs under PowerShell 7.6.9 on macOS; Windows 5.1 not run
+
+In `lib/checks.ps1`, `Test-OneComputer` returns true when `Invoke-PanelSwing`
+returns null after a declined preamble. With one attached panel mapped only to
+`pc`, `Invoke-DisplayTest` returns Ok=true, Text="all responded", and
+`Test-PullAllowed` returns true, although `Send-Input` was never called.
+
+A separate path computes `$others` before narrowing the selected scope. Give
+panel one only `pc`, panel two `pc` and `mac`, then choose panel one: the check
+returns Ok=true without any write or confirmation question. Test both paths,
+and ensure a retry or removed mapping cannot manufacture a pass either.
+
+## Restrict watcher cleanup to this installation
+
+Kind:     defect report
+Spec:     n/a (process ownership)
+Why:      pause, restart or installation can terminate another application's scripts
+Owed:     identify exact installed script paths and the intended owner before stopping
+Verified: actual `Stop-Watchers` with mocked process enumeration/termination on
+          PowerShell 7.6.9; both unrelated fixture processes were selected
+
+`lib/host.ps1` matches any wscript command containing `launcher.vbs` and any
+PowerShell command containing `(usb|event)-watch.ps1`. Fixtures under
+`C:\UnrelatedApp\launcher.vbs` and `C:\OtherTool\event-watch.ps1` both reached
+`Stop-Process -Force`. Include negative tests for unrelated paths, quoted
+arguments, and other users; verify the real installed watcher still stops.
+
+## Restore the watcher's prior enabled and running states after a check
+
+Kind:     defect report
+Spec:     specs/configure.md 11
+Why:      checking a trigger silently restarts a watcher the user deliberately paused
+Owed:     preserve prior task enablement and running state on all exits
+Verified: actual `Invoke-TriggerTest`, pause-mode and suspend/resume functions,
+          with OS calls stubbed under PowerShell 7.6.9 on macOS
+
+Begin with an Interactive task whose state is Disabled and no running watcher.
+Let the one-shot time out. The check calls both Enable-ScheduledTask and
+Start-ScheduledTask. `Get-WatcherPauseMode` checks ownership, not prior state;
+`$paused = Suspend-Watcher` does not record what existed before the check.
+Cover enabled/running, enabled/stopped and disabled/stopped, plus timeout,
+cancellation and error exits. No native Task Scheduler change was made in review.
+
+## Escape paths inserted into the elevated PowerShell command
+
+Kind:     defect report
+Spec:     specs/configure.md 8
+Why:      a checkout or temporary directory containing an apostrophe breaks elevation
+Owed:     quote the installer and transcript paths as safely as ordinary arguments
+Verified: parsing Request-Elevation's captured command with a synthetic
+          `C:\Users\O'Brien\...` installer path produced four parser errors;
+          no elevated process was launched
+
+`lib/host.ps1` interpolates `$TK_SELF` and `$transcript` into single-quoted
+literals without doubling embedded apostrophes. Exercise both paths and the
+manually suggested command, then verify native child exit-code propagation.
+
+## Preserve Unicode in generated files and carried configuration
+
+Kind:     defect report
+Spec:     specs/config-format.md, "Hand edits survive"; specs/configure.md 8
+Why:      an accented profile path breaks startup and saved values become question marks
+Owed:     choose encodings supported by each generated file's reader; retain ASCII source
+Verified: actual writer and command builder under PowerShell 7.6.9; accented
+          monitor name, unknown-key value and launcher path all failed round-trip
+
+`lib/host.ps1` writes `launcher.vbs` with ASCII after embedding full profile
+paths. `lib/answers.ps1` writes the config with ASCII, as does `Set-ConfigValue`.
+The source-file ASCII rule does not constrain generated user data. Verify with
+Windows 5.1 and Windows Script Host, including repeated configuration updates.
+
+## Convert fractional settle seconds to milliseconds
+
+Kind:     defect report
+Spec:     specs/detector.md 2 and 4
+Why:      a valid fractional settle setting can become no settle at all
+Owed:     preserve fractional seconds at the Windows 5.1 sleep boundary
+Verified: source review and Microsoft Windows PowerShell 5.1 Start-Sleep
+          documentation; integer parameter binding maps 0.75 to 1 and 0.25 to 0
+
+`event-watch.ps1` calls `Start-Sleep -Seconds $Settle`; 5.1's Seconds parameter
+is Int32. Test the emitted delay rather than only the configuration parser.
+Source: https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.utility/start-sleep?view=powershell-5.1
+
+## Restrict NVAPI DLL resolution to the intended system location
+
+Kind:     defect report
+Spec:     n/a (library loading)
+Why:      listing on a machine without NVIDIA can load a counterfeit DLL from a search directory
+Owed:     restrict loading in the shipping transport and the read-only probe
+Verified: bare LoadLibrary call and unconditional list-time Init reviewed;
+          Windows DLL search order checked; no counterfeit DLL was executed
+
+`trigger-kvm.ps1` and `nvapi-probe.ps1` call LoadLibrary with `nvapi64.dll`
+without a path or restricted search flags. Preserve graceful NVAPI absence on
+non-NVIDIA systems. Verify the trusted location and failure behavior natively.
+Source: https://learn.microsoft.com/en-us/windows/win32/dlls/dynamic-link-library-search-order
+
+## Discard computer-submenu edits on Escape
+
+Kind:     defect report
+Spec:     specs/configure.md 3.3
+Why:      Escape promises to change nothing but retains renamed computers and input maps
+Owed:     commit submenu edits only on Done, restoring all dependent state on Escape
+Verified: actual Read-Computers with scripted selections under PowerShell 7.6.9;
+          rename `mac` to `renamed`, then Escape retained both name and map edits
+
+`lib/walkthrough.ps1` edits panel maps in place and handles Done and Escape with
+the same break. Cover rename, addition, removal and the associated pass validity.
+
+## Make the Windows installation guide copyable and match its support claims
+
+Kind:     defect report
+Spec:     n/a (end-user documentation)
+Why:      examples pass prose as arguments and omit first-install bootstrap details
+Owed:     correct Windows README examples, prerequisites and verification limits
+Verified: documentation read at 318fc79; no fresh Windows installation attempted
+
+Use comments or tables for descriptions beside commands. Explain acquiring the
+source, execution policy/download handling without changing machine policy,
+PowerShell 5.1, PATH refresh, repair and uninstall. Describe Bluetooth detection
+as the implemented event-driven presence sweep, not a periodic poll. Preserve
+the local-console requirement for dxva2 and mark real switching unverified until
+observed. Review stale references to `ideas/nvapi-transport.md` and the handoff's
+own format against `specs/README.md`; spec changes arrive through the revision
+ledger, not duplicate inbox entries.

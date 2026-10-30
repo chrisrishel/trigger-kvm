@@ -4,6 +4,38 @@ Deferred, sub-milestone work, each with the trigger that resurfaces it.
 Milestones are `ROADMAP.md`; what each platform owes the other is its
 `HANDOFF.md`.
 
+## Publication readiness
+
+Keep the repository private until these checks are complete. The review baseline
+is `318fc79`; Windows defects are tracked individually in `windows/HANDOFF.md`.
+
+- [ ] macOS: ambiguity must re-baseline without firing, including one-shot
+  checks; restore a paused watcher on EOF and cancellation; refuse an incomplete
+  boot-tier removal; discard computer-submenu edits on Escape.
+- [ ] Windows: reproduce and resolve the publication-review defect reports in
+  its handoff, with regression and mutation tests under Windows PowerShell 5.1.
+- [ ] Shared contracts: settle menu overflow and clearly distinguish current
+  saved configuration in `status` from the running watcher's loaded settings.
+- [ ] Documentation: copyable installation and usage examples, explicit
+  prerequisites, bounded compatibility claims, accurate file references and
+  privacy guidance for diagnostic output. Each platform owns its README.
+- [ ] CI: run hardware-independent behavioral tests on both platforms; keep
+  native transport and physical confirmation requirements visible.
+- [ ] Windows release checks: fresh profiles, administrator and standard-user
+  installation paths, apostrophe/non-ASCII paths, and both autostart tiers.
+  The physical `dxva2` check below is also required before claiming it verified.
+- [ ] Privacy: remove unnecessary device identifiers from current shared docs;
+  decide whether the historical author email is intended to be public. Before
+  any approved history rewrite, prepare a private backup and exact replacement
+  preview, finish both platforms' work, and synchronize both checkouts. Re-scan
+  all published refs and GitHub surfaces afterward. Do not remove human
+  authorship or rewrite history as part of ordinary fixes.
+- [ ] Final release review: both native suites and relevant mutations pass;
+  skipped hardware checks remain explicitly unverified; the documentation
+  matches the release commit and privacy review covers its history.
+
+## Deferred work
+
 - **Re-read the NVAPI ids at the first reboot on driver 616.64.** The 2026-09-05
   upgrade was applied live, so "reboot on a new driver" is the one combination
   untaken; one `windows\nvapi-probe.ps1` run answers it. Trigger: the next
