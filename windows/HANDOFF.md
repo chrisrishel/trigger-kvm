@@ -47,7 +47,9 @@ Still required before release:
   through standard-user elevation and uninstall. Administrator-capable login,
   upgrade and approved/declined UAC covered those characters in both paths.
 - Repeat installed boot-to-login/no-autostart transitions with the corrected
-  removal-only elevation path, then uninstall with the source unavailable.
+  removal-only elevation path in `462204a`, then uninstall with the source
+  unavailable. Its clean native suite passed 19 files without skips; CI passed
+  both platforms with hosted hardware skips explicitly recorded.
   The `4c0f13b` uninstall removed task/program/PATH and retained config/log
   bytes but returned 1 when CMD lost its deleted shim; the generated-shim fix
   has native fixture coverage and awaits an installed repeat.

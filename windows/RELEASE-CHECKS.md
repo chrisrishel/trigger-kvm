@@ -72,7 +72,10 @@ registering the replacement in the normal parent. It also corrects uninstall's
 CMD return path: the installed `4c0f13b` check removed task/program/PATH and
 retained config/log bytes, but CMD returned 1 after its shim was deleted.
 Both corrections have regression/mutation coverage and require an installed
-repeat. Verify task-definition ownership after boot-to-login, then change
+repeat on prepared candidate `462204a`. Its clean native suite passed all 19
+files without skips and CI passed on both platforms, with hosted hardware
+skips recorded in `docs/measurements.md`.
+Verify task-definition ownership after boot-to-login, then change
 login to no autostart without another UAC prompt; require uninstall exit 0.
 
 Installed `4c0f13b` passed real Ctrl+C from enabled/stopped and disabled/stopped

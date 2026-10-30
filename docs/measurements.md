@@ -1074,6 +1074,14 @@ The test now identifies the block containing task unregistration from the AST,
 with a self-test for the later read-only query. Its required `Stop-Watchers`
 assertion is unchanged, and the original cleanup-removal mutation still fails.
 
+Clean candidate `462204a` repeated the full Windows PowerShell 5.1 suite:
+all 19 files passed without skips. CI run `41140109897` passed on both
+platforms: macOS passed 13 files; hosted Windows passed 18 files, skipping
+the NVIDIA-dependent resolve file and two driver cases explicitly. Its complete
+Actions log was inspected and scanned privately. The clean source archive and
+hash are prepared for the coordinated installed repeat; passing fixtures and
+CI do not establish the corrected task permissions or uninstall on that profile.
+
 CI at `4c0f13b` passed both platforms on the second attempt. The first Windows
 attempt failed before the unchanged native-cleanup fixture's child produced a
 report; the cause was not established. All 13 native invocation forms and the
@@ -1493,3 +1501,12 @@ The repository remained private with one branch, one tag, no issues/comments,
 pull requests, releases or artifacts, and Wiki/Pages/Discussions disabled.
 The secret-scanning endpoint remained unavailable. Historical identifiers and
 the author email remain the same unresolved publication decisions.
+
+The refresh through `462204a` covered 113 tracked files, 232 commits and
+1,234 text blobs, with no binary blobs. The only new pattern match was a
+synthetic device-instance fixture in `windows/tests/privilege.tests.ps1`;
+there were no new commit-message candidates or authorship records. All 20
+available Actions runs' logs were scanned. Repository metadata's apparent
+profile-path matches were GitHub user API links. The remote surface counts,
+secret-scanning limitation and unresolved historical publication decisions
+were unchanged. Earlier raw reports were preserved privately before refresh.
