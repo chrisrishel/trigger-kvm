@@ -20,6 +20,12 @@ measured values in [`../displays.toml`](../displays.toml), evidence in
 [`../ARCHITECTURE.md`](../ARCHITECTURE.md). A spec points at those; it does not
 restate them.
 
+Product versions and release checks live in
+[`CONTRIBUTING.md`](../CONTRIBUTING.md#versioning-and-releases). A specification
+revision identifies the contract an implementation satisfies, independently of
+the product release number. Version numbering follows that policy; behaviour
+changes follow the workflow below.
+
 ## The verb surface
 
 One command, and **the verbs are identical on both platforms**. Flags stay

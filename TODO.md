@@ -9,6 +9,13 @@ Milestones are `ROADMAP.md`; what each platform owes the other is its
 Keep the repository private until these checks are complete. The review baseline
 is `318fc79`; Windows defects are tracked individually in `windows/HANDOFF.md`.
 
+- [x] Define the shared product version, pre-1.0 compatibility rules, build
+  identity and release gates in `CONTRIBUTING.md`. Version constants remain
+  unchanged until coordinated release preparation.
+- [ ] Prepare the next coordinated release, targeting **0.3.0**, after these
+  blockers are resolved. The changes since `v0.2.0` include new features and
+  specification revisions. Follow the release policy before changing both
+  platform constants, tagging or publishing.
 - [x] macOS: ambiguity re-baselines without firing, including one-shot checks;
   trigger-check cleanup restores only a watcher it paused; incomplete boot-tier
   removal refuses; Escape discards computer, removal and monitor submenu edits.

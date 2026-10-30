@@ -143,6 +143,12 @@ each platform's convention (`--only` / `-Only`, `--dry-run` / `-WhatIf`,
 There is no `install` verb: installing is what produced the command. To upgrade
 or repair, fetch the source and run its installer again.
 
+`trigger-kvm status` also shows the installed product version, specification
+revision and source commit when available. A clone starts on the development
+branch; select a release tag before installing if you want a released build.
+The version string alone does not identify development changes. Both platforms
+share one product version; see [versioning and releases](CONTRIBUTING.md#versioning-and-releases).
+
 `to <computer>` is manual only. It names inputs on hardware this computer
 cannot see, so a stale name can spoil a command you typed and are watching,
 never an automatic switch. A trigger only ever runs `pull`. The config behind
@@ -214,7 +220,7 @@ input, so there is always a path to command it back. The reasoning is in
 | [`displays.toml`](displays.toml) | Reference values for the two monitors this was developed against |
 | [`docs/`](docs/) | Decision records and the dated hardware measurements the rules rest on |
 | [`AGENTS.md`](AGENTS.md) | Instructions for anyone changing this repo, including AI agents: the safety rules and the order a change to shared behaviour lands in |
-| [`CONTRIBUTING.md`](CONTRIBUTING.md) | How to contribute, and what a useful report about an unfamiliar monitor contains |
+| [`CONTRIBUTING.md`](CONTRIBUTING.md) | Contributing, versioning and releases, and useful monitor and bug reports |
 
 ## Related work
 
