@@ -620,6 +620,31 @@ mutate 'spec: the checker stops reading the C, so the detector holds no wording'
 mutate 'spec: an unreadable spec reports all 0 fragments present' ../specs/check-conformance.sh spec.tests.sh \
   's@^if \[ ! -r "\$SPEC" \]; then$@if false; then@'
 
+# --- publication readiness ----------------------------------------------------
+
+mutate 'publication: resolving ambiguity fires from an arrival callback' event-watch.c publication.tests.sh \
+  '/if (was_ambiguous) return;/d'
+mutate 'publication: resolving ambiguity passes the one-shot' event-watch.c publication.tests.sh \
+  '/if (ambiguous\[i\]) continue;/d'
+mutate 'publication: Escape keeps renamed input maps' lib/walkthrough.sh publication.tests.sh \
+  '/^      WT_A=("\${_saved_a/d'
+mutate 'publication: nested removal Escape keeps map edits' lib/walkthrough.sh publication.tests.sh \
+  '/^wt_remove_computer()/,/^}/ { /^      WT_A=/d; }'
+mutate 'publication: monitor menu Escape keeps map edits' lib/walkthrough.sh publication.tests.sh \
+  '/^wt_monitors()/,/^}/ { /^      WT_A=/d; }'
+mutate 'publication: trigger cleanup is bypassed on EOF' lib/checks.sh publication.tests.sh \
+  '/^  trap .*WT_CHECK_PAUSED.* EXIT$/d'
+mutate 'publication: a refused bootout still changes the tier' lib/manage.sh publication.tests.sh \
+  's@if ! sudo "\$TK_LAUNCHCTL" bootout "system/\$TK_LABEL" >/dev/null 2>\&1; then@if false; then@'
+mutate 'publication: a refused plist removal still changes the tier' lib/manage.sh publication.tests.sh \
+  's@if ! sudo rm -f "\$TK_DAEMON_PLIST"; then@if false; then@'
+mutate 'publication: status omits the saved-configuration label' lib/manage.sh status.tests.sh \
+  '/printf .*current saved configuration, resolved/d'
+mutate 'publication: status omits the restart reminder' lib/manage.sh status.tests.sh \
+  '/printf .*trigger edits require:/d'
+mutate 'publication: redraw leaves folded tails behind' lib/menu.sh menu.tests.sh \
+  's@\\033\[J@@'
+
 echo
 if [ "$survived" = "0" ]; then
   echo "all $checked mutations were caught"

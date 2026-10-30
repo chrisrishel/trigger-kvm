@@ -120,11 +120,17 @@ it cannot reach.
 
 ### 4.1 Triggers
 
-`status` names each configured trigger entry and, for a qualified entry, what
-the watcher currently makes of it ([`detector.md`](detector.md) 4.1): matched
-by token, matched with `where` deciding it, absent, or ambiguous. That verdict
-comes from the watcher's own matching code, never from a second implementation
-of the rule. No wording is prescribed.
+`status` names each trigger entry in the **current saved configuration** and
+reports how it resolves against devices attached now ([`detector.md`](detector.md)
+4.1): present (by token for a qualified entry), matched with `where` deciding
+it, absent, or ambiguous. That verdict comes from the watcher's matching code,
+never from a second implementation of the rule.
+
+Label this as the saved configuration's current resolution, and say that trigger
+edits require `trigger-kvm restart`. It is not a report of the configuration
+loaded by a running watcher; that process may still hold older entries. The
+watcher's running state remains a separate lock query (§2). No exact wording
+is prescribed.
 
 ## 5. An identity that names more than one attached panel
 

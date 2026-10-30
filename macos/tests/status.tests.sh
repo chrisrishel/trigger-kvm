@@ -202,14 +202,19 @@ assert_match "$TK_OUT" 'DISABLED'
 assert_match "$TK_OUT" '2 present devices match'
 assert_match "$TK_OUT" 'trigger-kvm configure'
 
-it 'says nothing about a trigger that simply matched, or one that is absent'
-# Reporting the ordinary case would bury the two above in noise.
+it 'labels the saved configuration and reports present and absent entries'
 printf 'usb:046d:0843|present|1\nusb:1235:820a|absent|0\n' >"$TK_FAKE_REPORT"
 run_tk status --config "$CFG"
+assert_match "$TK_OUT" 'current saved configuration, resolved against devices attached now'
+assert_match "$TK_OUT" 'trigger edits require: trigger-kvm restart'
+assert_match "$TK_OUT" 'usb:046d:0843  <- present'
+assert_match "$TK_OUT" 'usb:1235:820a  <- absent'
 assert_no_match "$TK_OUT" 'remembered port'
 assert_no_match "$TK_OUT" 'DISABLED'
 
 : >"$TK_FAKE_REPORT"
+run_tk status --config "$CFG"
+assert_match "$TK_OUT" 'resolution unavailable'
 
 # =============================================================================
 # 5. an identity that names more than one attached panel

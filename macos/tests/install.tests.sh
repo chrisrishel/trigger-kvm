@@ -271,7 +271,7 @@ mkdir -p "$HOME/Library/LaunchAgents" "$HOME/.local/bin"
 : >"$HOME/.local/bin/usb-watch"
 : >"$HOME/.local/bin/switch-displays.sh"
 : >"$TK_FAKE_LAUNCHCTL"
-run_install
+PATH="$FAKE_DIR/bin:$PATH" run_install
 assert_equal 0 "$INST_RC" "$INST_OUT"
 assert_match "$(cat "$TK_FAKE_LAUNCHCTL")" 'bootout gui/'
 assert_match "$(cat "$TK_FAKE_LAUNCHCTL")" 'com.chrisrishel.displayswitch'

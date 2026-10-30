@@ -141,7 +141,10 @@ menu_frame() {
   local _lines _width _term _n _l _rows
   _lines=$1 _width=$2
   _term=$(menu_term_width)
-  if [ "$MENU_DRAWN" -gt 0 ]; then printf '\033[%dA' "$MENU_DRAWN" >&2; fi
+  if [ "$MENU_DRAWN" -gt 0 ]; then
+    # Clear the previous frame's folded tails and any rows the new frame drops.
+    printf '\033[%dA\033[J' "$MENU_DRAWN" >&2
+  fi
   _n=0
   while IFS= read -r _l; do
     # Erase to end of line rather than pad: padding counts bytes, and a

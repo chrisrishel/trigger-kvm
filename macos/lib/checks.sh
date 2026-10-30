@@ -521,8 +521,7 @@ wt_blind_walk() {
 
 # --- the trigger -------------------------------------------------------------
 
-# Restore a watcher the trigger check stood down. Run from a RETURN trap, so it
-# covers every way out; it reports and still returns 0.
+# Restore a watcher the trigger check stood down; failure is reported to stderr.
 wt_resume_watcher() {
   [ -n "$1" ] || return 0
   if ! tk_bootstrap "$(tk_domain)" "$1"; then
@@ -535,10 +534,25 @@ wt_resume_watcher() {
 WT_RAN_TRIGGERS=''
 WT_TRIGGERS_OK=''
 wt_check_triggers() {
-  local _pull _tmp _d _rc _paused
+  local _result _rc
+  _rc=0
+  _result=$(wt_trigger_check_session) || _rc=$?
+  [ "$_rc" = 0 ] || return "$_rc"
+  IFS='|' read -r WT_RAN_TRIGGERS WT_TRIGGERS_OK <<<"$_result"
+}
+
+# The temporary watcher lifetime has its own shell: EXIT covers normal return,
+# EOF and signals without replacing the walkthrough's traps. Only the result
+# goes to stdout; prompts, child output and cleanup diagnostics go to stderr.
+wt_trigger_check_session() (
+  local _pull _d _rc
+  # Bash unwinds function locals before EXIT; this subshell owns cleanup state.
+  WT_CHECK_TMP=''; WT_CHECK_PAUSED=''
+  trap 'rm -f "$WT_CHECK_TMP"; wt_resume_watcher "$WT_CHECK_PAUSED"' EXIT
+  trap 'menu_tty_restore; exit 130' INT TERM HUP
   if [ "${#WT_DEVICES[@]}" -eq 0 ]; then
     printf '\n  No trigger devices are chosen yet -- pick some first.\n' >&2
-    WT_RAN_TRIGGERS='no devices chosen'; WT_TRIGGERS_OK=0
+    printf 'no devices chosen|0\n'
     return 0
   fi
 
@@ -559,22 +573,23 @@ wt_check_triggers() {
   # The installed watcher would see the same flip and pull against the SAVED
   # config. Stand it down where that needs no password, and restore it on every
   # way out; the boot tier is left running and said so (11).
-  _paused=''
+  WT_CHECK_PAUSED=''
   case $(tk_installed_tier) in
     login|no)
       if tk_agent_loaded; then
-        "$TK_LAUNCHCTL" bootout "$(tk_domain)/$TK_LABEL" >/dev/null 2>&1 || true
-        _paused=$(tk_agent_plist)
-        printf '\n  The running watcher is paused for this check.\n' >&2
+        if "$TK_LAUNCHCTL" bootout "$(tk_domain)/$TK_LABEL" >/dev/null 2>&1; then
+          WT_CHECK_PAUSED=$(tk_agent_plist)
+          printf '\n  The running watcher is paused for this check.\n' >&2
+        else
+          printf '\n  The running watcher will also fire, using the saved configuration.\n' >&2
+        fi
       fi ;;
     boot)
       printf '\n  The running watcher will also fire, using the saved configuration.\n' >&2 ;;
   esac
 
-  _tmp=$(mktemp -t trigger-kvm-trig)
-  # shellcheck disable=SC2064
-  trap "rm -f '$_tmp'; wt_resume_watcher '$_paused'" RETURN
-  wt_write_config "$_tmp"
+  WT_CHECK_TMP=$(mktemp -t trigger-kvm-trig) || return $?
+  wt_write_config "$WT_CHECK_TMP" || return $?
 
   set -- --test-trigger
   for _d in "${WT_DEVICES[@]}"; do set -- "$@" --device "$_d"; done
@@ -584,26 +599,26 @@ wt_check_triggers() {
   if [ "$_rc" != "0" ]; then
     printf '\n  Nothing arrived, so these may be the wrong devices -- or they may not\n' >&2
     printf '  be on the switch at all. Pick Triggers again to change them.\n' >&2
-    WT_RAN_TRIGGERS='no arrival seen'; WT_TRIGGERS_OK=0
+    printf 'no arrival seen|0\n'
     return 0
   fi
 
   if [ "$_pull" != "1" ]; then
-    WT_RAN_TRIGGERS='arrival seen'; WT_TRIGGERS_OK=1
+    printf 'arrival seen|1\n'
     return 0
   fi
 
   printf '\n  Pulling the monitors here...\n' >&2
-  "$TK_SELF" pull --config "$_tmp" >&2 || true
+  "$TK_SELF" pull --config "$WT_CHECK_TMP" >&2 || true
 
   printf '\n' >&2
   if read_yesno '  Did the monitors come back to this computer?' y; then
-    WT_RAN_TRIGGERS='fired, monitors followed'; WT_TRIGGERS_OK=1
+    printf 'fired, monitors followed|1\n'
     return 0
   fi
   # A monitors fault with the trigger passing.
   printf '\n  The trigger fired, so the devices are right. Something about the\n' >&2
   printf '  monitors is not -- check them again from the row above.\n' >&2
-  WT_RAN_TRIGGERS='fired, but the monitors did not follow'; WT_TRIGGERS_OK=0
+  printf 'fired, but the monitors did not follow|0\n'
   return 0
-}
+)

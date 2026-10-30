@@ -106,9 +106,10 @@ say which device: `usb:VVVV:PPPP[@token[@where]]`.
 **Ambiguous is a state, distinct from absent.** It is re-evaluated on every
 presence sweep, never latched.
 
-- An ambiguous entry does not fire and is reported: in the log once, and in
-  `status`, which reports what the running watcher currently sees (through the
-  watcher, not by re-deriving it). Every other entry keeps watching.
+- An ambiguous entry does not fire and is reported in the log once. `status`
+  uses the same matching code to resolve the current saved configuration
+  against attached devices, labeled as such (`status.md` 4.1). Every other
+  entry keeps watching.
 - **Leaving ambiguity is not an arrival.** When the devices become
   distinguishable again (one of them unplugged, or one moved to `where`), the
   entry's baseline becomes "present" without firing; only a later absent ->

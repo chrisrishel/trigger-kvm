@@ -301,8 +301,19 @@ EOF
   if [ "$TK_TIER_APPLIED" != "boot" ]; then
     if [ -f "$TK_DAEMON_PLIST" ]; then
       tk_log 'removing the previous boot-time start needs your password once.'
-      sudo "$TK_LAUNCHCTL" bootout "system/$TK_LABEL" >/dev/null 2>&1 || true
-      sudo rm -f "$TK_DAEMON_PLIST" || true
+      # A plist may remain after a refused bootstrap, with no job to boot out.
+      # A loaded job must stop before another tier can replace it.
+      if "$TK_LAUNCHCTL" print "system/$TK_LABEL" >/dev/null 2>&1; then
+        if ! sudo "$TK_LAUNCHCTL" bootout "system/$TK_LABEL" >/dev/null 2>&1; then
+          tk_log 'could not stop the boot-time watcher; the start tier was NOT changed.'
+          return 1
+        fi
+      fi
+      if ! sudo rm -f "$TK_DAEMON_PLIST"; then
+        tk_log 'could not remove the boot-time start; no replacement tier was installed.'
+        tk_log 'It may start again at boot. Run configure again to finish the change.'
+        return 1
+      fi
     fi
     # "No" keeps the plist out of ~/Library/LaunchAgents, so nothing returns at
     # the next login; loading it now is what starts it for this session.
@@ -377,7 +388,7 @@ tk_say_done() {
 # specs/status.md. Never sends a packet or reads a VCP value.
 cmd_status() {
   local _note _labels _this _machines _c _v _l _row _first _when _rev _commit
-  local _all _vn _pn _n _d _args _key _verdict
+  local _all _vn _pn _n _d _args _key _verdict _report
   tk_warn_if_stale
   # What the tier COVERS, not just its name: whether a locked or logged-out
   # computer still follows the switch is the question.
@@ -449,14 +460,20 @@ cmd_status() {
   fi
   printf 'triggers : %s\n' "$(config_trigger_devices | tr '\n' ' ' | sed 's/ $//')"
 
-  # specs/status.md 4.1: the watcher's own verdict per entry. A port that
-  # decided a match is said; an ambiguous entry is a trigger that never fires.
+  # Resolve the saved entries with the watcher code, independently of the
+  # configuration a running process loaded (specs/status.md 4.1).
   _args=()
   for _d in $(config_trigger_devices); do _args+=(--device "$_d"); done
   if [ "${#_args[@]}" -gt 0 ]; then
+    printf '           current saved configuration, resolved against devices attached now\n'
+    printf '           trigger edits require: trigger-kvm restart\n'
+    _report=$("$TK_WATCHER" --report "${_args[@]}" 2>/dev/null) || _report=''
+    [ -n "$_report" ] || printf '           resolution unavailable\n'
     while IFS='|' read -r _key _verdict _n; do
       [ -n "$_key" ] || continue
       case $_verdict in
+        present|absent)
+          printf '           %s  <- %s\n' "$_key" "$_verdict" ;;
         where)
           printf '           %s  <- the remembered port decided which device this is\n' "$_key" ;;
         ambiguous)
@@ -464,7 +481,7 @@ cmd_status() {
           printf '              the remembered port. Re-run: trigger-kvm configure\n' ;;
       esac
     done <<EOF
-$("$TK_WATCHER" --report "${_args[@]}" 2>/dev/null || true)
+$_report
 EOF
   fi
 

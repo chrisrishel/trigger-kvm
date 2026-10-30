@@ -8,11 +8,13 @@ in [`../AGENTS.md`](../AGENTS.md).
 
 ## Requirements
 
-An Apple Silicon Mac (`m1ddc` does not support Intel Macs), with:
+An Apple Silicon Mac (`m1ddc` does not support Intel Macs), with
+[Homebrew](https://brew.sh/) and Apple's command line tools. Install these
+prerequisites before running the installer:
 
 ```sh
+xcode-select --install       # complete the installer dialog before continuing
 brew install m1ddc
-xcode-select --install       # clang, to build the two helpers
 ```
 
 The installer checks both before it builds or copies anything.
@@ -20,17 +22,21 @@ The installer checks both before it builds or copies anything.
 ## Install
 
 ```sh
-cd macos && ./install.sh      # build, install, then the walkthrough
-./install.sh uninstall        # remove the program; keep the config and the log
+git clone https://github.com/chrisrishel/trigger-kvm.git
+cd trigger-kvm/macos
+./install.sh
 ```
 
-Run it as yourself, never with `sudo`; it refuses to run as root. The only
-password it ever asks for is the one that installs the "from boot" launchd job,
-and that job then runs as you.
+If you already have a checkout, enter its `macos` directory and run
+`./install.sh`. Run it as yourself, never with `sudo`; it refuses to run as root.
+The only password it asks for installs the "from boot" launchd job, which runs
+as you.
 
 The install is self-contained: the installer copies itself next to the program,
-so uninstalling works after the source tree is gone. To upgrade or repair, run
-it again. Only `~/.local/bin/trigger-kvm`, a single symlink, goes on PATH.
+so `trigger-kvm uninstall` works after the source tree is gone. To upgrade or
+repair, run it again. Only `~/.local/bin/trigger-kvm`, a single symlink, goes on
+PATH. Open a new terminal after installation if the command is not found. You
+can also run it by its full path: `~/.local/bin/trigger-kvm status`.
 
 | | |
 |---|---|
@@ -41,20 +47,20 @@ it again. Only `~/.local/bin/trigger-kvm`, a single symlink, goes on PATH.
 
 ## Using it
 
-```sh
-trigger-kvm pull                 point every configured monitor at THIS computer
-trigger-kvm to pc                point them at another computer, by name (manual only)
-trigger-kvm pull --only asus     one monitor only; use when testing
-trigger-kvm pull --dry-run       resolve and print the packets, send nothing
-trigger-kvm list                 attached displays, with EDID ids and names
-trigger-kvm discover             what is attached, in the form the config wants
-trigger-kvm configure            the walkthrough; --fresh pre-fills nothing
-trigger-kvm status               is it running, when it starts, the input map
-trigger-kvm restart              make a hand-edited config take effect now
-trigger-kvm logs                 tail the log
-trigger-kvm pause                stand the watcher down to test by hand
-trigger-kvm uninstall            remove the program, keeping the config and the log
-```
+| Command | Purpose |
+|---|---|
+| `trigger-kvm pull` | point every configured monitor at THIS computer |
+| `trigger-kvm to pc` | point them at another computer, by name (manual only) |
+| `trigger-kvm pull --only asus` | one monitor only; use when testing |
+| `trigger-kvm pull --dry-run` | resolve and print the packets, send nothing |
+| `trigger-kvm list` | attached displays, with EDID ids and names |
+| `trigger-kvm discover` | what is attached, in the form the config wants |
+| `trigger-kvm configure` | the walkthrough; --fresh pre-fills nothing |
+| `trigger-kvm status` | is it running, when it starts, the input map |
+| `trigger-kvm restart` | make a hand-edited config take effect now |
+| `trigger-kvm logs` | tail the log |
+| `trigger-kvm pause` | stand the watcher down to test by hand |
+| `trigger-kvm uninstall` | remove the program, keeping the config and the log |
 
 The bare command prints the verbs and exits 2. There is no `install` verb and
 no `apply` step: display edits take effect on the next switch, trigger edits
@@ -76,13 +82,16 @@ The tiers are mutually exclusive: choosing one removes the others. If "from
 boot" cannot be installed (no password, or launchd refuses the job) it falls
 back to login, says so, and the config records login. `status` says which tier
 is installed and what it covers, and `restart` reports whether anything came up.
+If the existing boot job cannot be stopped or removed, changing to another
+tier fails with an explanation; rerun `configure` to finish the change.
 
 ## The walkthrough and the checks
 
 `trigger-kvm configure` is one menu: name the computers, say which computer is
 on which input of each monitor, tick the devices that travel with the switch,
 choose when it starts, test the inputs and the trigger while you watch, then
-save. Nothing is written until Save. The contract is
+save. Escape discards changes in the submenu you leave. Configuration is written
+only on Save. The contract is
 [`../specs/configure.md`](../specs/configure.md); what is specific to this
 platform:
 
@@ -94,6 +103,9 @@ platform:
   other computer is configured, and a retry of one panel, go through the same
   warning. The trigger check pulls for real only while every managed, attached
   panel holds a current pass; an edit to a map or method retires it.
+- The trigger check restores a login or session watcher it successfully paused,
+  including on EOF or cancellation. A watcher already paused stays paused. The
+  boot watcher remains running, and the check says so.
 - A configured monitor that is not attached today is shown as such, kept on
   Save, and not checked. Only unmanaging forgets it.
 - A trigger entry saved with a `@token@where` suffix stays selected and is
@@ -110,9 +122,10 @@ with `trigger-kvm list`.
 
 Two devices of one model share a vendor:product id. Where that matters the
 walkthrough writes `usb:VVVV:PPPP@token@where` and `status` says how the
-watcher currently resolves it ([`../specs/detector.md`](../specs/detector.md)
-4.1). Two attached monitors of one model are one identity; the switch refuses
-it, and `list`, `configure` and `status` say so.
+current saved configuration resolves it ([`../specs/detector.md`](../specs/detector.md)
+4.1). This does not read a running watcher's loaded settings; trigger edits
+require `trigger-kvm restart`. Two attached monitors of one model are one
+identity; the switch refuses it, and `list`, `configure` and `status` say so.
 
 ## Components
 

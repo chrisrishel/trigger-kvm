@@ -14,6 +14,21 @@ rest.
 
 ---
 
+## Revision 15 -- 2026-10-29
+
+**Status resolves the saved configuration, and menu overflow preserves text.**
+
+Sections: [`status.md`](status.md) 4.1; [`detector.md`](detector.md) 4.1;
+[`configure.md`](configure.md) 3.1. No new normative strings.
+
+**Act on (both platforms):** label trigger resolution as the current saved
+configuration, show each entry's current result using the watcher resolver,
+and remind the user that trigger edits require `trigger-kvm restart`. Do not
+imply that this reads the running watcher's loaded configuration. Preserve
+unbreakable menu text, including in narrow terminals, and account for folded
+and leftover rows during redraw; the width is a wrapping target, not a reason
+to truncate identifiers.
+
 ## Revision 14 -- 2026-09-07
 
 **Ambiguity is a state, a pass is bound to what it checked, absent panels and
@@ -81,7 +96,8 @@ Sections: [`detector.md`](detector.md) 1, 2, 4, 4.1; [`configure.md`](configure.
 
 ## Older revisions
 
-Both platforms are at 13; these are kept as one line each.
+Revisions through 13 are condensed below; each platform's `SPEC-REVISION`
+records its current implementation.
 
 - **13** (2026-09-05): two attached panels with one EDID id are shown, refused
   in the walkthrough, and reported by `status` (`configure.md` 6.4, `status.md` 5).

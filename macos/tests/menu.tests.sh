@@ -223,6 +223,15 @@ menu_reset; menu_add 'One' "$huge"
 COLUMNS=60 keys 'Enter' select_one --default 0
 assert_match "$MENU_TEXT" "$huge" 'an unbreakable item must survive whole'
 
+it 'clears folded tails and dropped rows when a frame shrinks'
+MENU_DRAWN=0
+COLUMNS=60 menu_frame "$huge
+another row" 59 2>"$OUT"
+assert_equal 3 "$MENU_DRAWN" 'the long identifier occupies two terminal rows'
+COLUMNS=60 menu_frame short 59 2>"$OUT"
+assert_match "$(cat "$OUT")" "$(printf '\033[3A\033[J')" 'erase the old frame before drawing'
+assert_equal 1 "$MENU_DRAWN"
+
 it 'widens the item column for a long item instead of running into the detail'
 menu_reset
 menu_add 'Yes, but it did not change back to mac' 'the input for mac is wrong'

@@ -139,8 +139,7 @@ a shell `case` branch and a C block-comment continuation both open with `*`.
 **What the check does and does not prove.** It proves a string is present in
 the sources. It is blind to a behavioural change with no new wording, to a
 removed or renamed string, to a comment that happens to contain the wording, and
-to a string in a shadowed definition (Windows pairs it with a duplicate-definition
-scan; bash's last definition wins and the macOS suite sources the real files, so
-it needs none). The revision ledger and the shared fixtures in
+to a string in a shadowed definition. Both platforms pair it with a
+duplicate-definition scan. The revision ledger and the shared fixtures in
 `config-format.md` close the gaps that matter; a behavioural fixture for the
 walkthrough is the next step (`ROADMAP.md`).

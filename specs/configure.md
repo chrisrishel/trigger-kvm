@@ -53,9 +53,10 @@ Item on the left, its value on the right.
 - **Wrapping, never truncation.** A long detail wraps at the `", "` between
   items onto continuation lines aligned under the column. An unbreakable single
   item overruns rather than being cut.
-- **Nothing a menu writes may exceed the terminal width.** A wrapped line's tail
-  is not cleared on redraw and a line landing exactly on the fold counts as one
-  row while occupying two, so the frame corrupts.
+- **Target one column less than the terminal width when wrapping details.**
+  An unbreakable item or a row wider than a narrow terminal may fold naturally;
+  preserve its full text. Redraw must account for the physical rows occupied,
+  including folds, and erase any rows left over from the preceding frame.
 - Redrawing **erases each line to its end** rather than padding to the width;
   a measurement in bytes is not a measurement in columns.
 - **One punctuation rule down the value column**: `", "` separates items, `": "`

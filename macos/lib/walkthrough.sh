@@ -68,7 +68,8 @@ wt_default_this() {
 # offers the same names (specs 5).
 wt_computers() {
   local _first_run _me _rest _c _n _a _i _q _addrow _removerow _donerow _pick
-  local _idx _victim _others _new
+  local _idx _victim _others _new _saved_a
+  _saved_a=("${WT_A[@]+${WT_A[@]}}")
   printf '\n--- computers ---\n' >&2
   printf 'These monitors are shared between this computer and some others.\n' >&2
   printf 'Each one gets a name, and the name is how you switch to it:\n' >&2
@@ -122,7 +123,10 @@ wt_computers() {
     select_one --default "$_donerow" --escapable \
                --help '  Pick a name to change it, or Done.'
     _pick=$MENU_PICK
-    [ "$_pick" -lt 0 ] && break
+    if [ "$_pick" -lt 0 ]; then
+      WT_A=("${_saved_a[@]+${_saved_a[@]}}")
+      return 0
+    fi
     [ "$_pick" -eq "$_donerow" ] && break
 
     if [ "$_pick" -eq "$_addrow" ]; then
@@ -153,7 +157,8 @@ wt_computers() {
 # WT_REMAINING. This computer is never offered: its name is what `pull` resolves.
 WT_REMAINING=()
 wt_remove_computer() {
-  local _rest _c _i _on _donerow _pick _victim _next
+  local _rest _c _i _on _donerow _pick _victim _next _saved_a
+  _saved_a=("${WT_A[@]+${WT_A[@]}}")
   _rest=("$@")
   while [ "${#_rest[@]}" -gt 0 ]; do
     menu_reset
@@ -176,7 +181,11 @@ wt_remove_computer() {
     printf '  Removing a computer also clears its input on every monitor it is on.\n\n' >&2
     select_one --default "$_donerow" --escapable
     _pick=$MENU_PICK
-    [ "$_pick" -lt 0 ] && break
+    if [ "$_pick" -lt 0 ]; then
+      WT_A=("${_saved_a[@]+${_saved_a[@]}}")
+      WT_REMAINING=("$@")
+      return 0
+    fi
     [ "$_pick" -eq "$_donerow" ] && break
 
     _victim=${_rest[$_pick]}
@@ -449,7 +458,8 @@ wt_display_answers() {
 # The monitors as a list: every attached panel, then every configured panel
 # that is not attached today (6).
 wt_monitors() {
-  local _i _ai _nf _absent _donerow _land _pick _key _row _ambiguous
+  local _i _ai _nf _absent _donerow _land _pick _key _row _ambiguous _saved_a
+  _saved_a=("${WT_A[@]+${WT_A[@]}}")
   while :; do
     menu_reset
     _ambiguous=0
@@ -506,7 +516,10 @@ wt_monitors() {
     fi
     select_one --default "$_land" --escapable
     _pick=$MENU_PICK
-    [ "$_pick" -lt 0 ] && return 0
+    if [ "$_pick" -lt 0 ]; then
+      WT_A=("${_saved_a[@]+${_saved_a[@]}}")
+      return 0
+    fi
     [ "$_pick" -eq "$_donerow" ] && return 0
 
     if [ "$_pick" -lt "$_nf" ]; then

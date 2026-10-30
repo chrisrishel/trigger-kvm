@@ -539,11 +539,23 @@ static void arrival(watch_t *w) {
 // device the entry resolves to (specs/detector.md 2): with a qualified entry,
 // another device sharing the id arriving while the configured one is already
 // present is not an edge. The first call per entry establishes the baseline.
+static bool usb_set_has(const usb_set_t *set, const usb_dev_t *d);
 static void usb_arrived(watch_t *w, const usb_set_t *arrived) {
     usb_set_t now;
     usb_snapshot(&now);
     bool by_where;
     int n = usb_resolve(&now, w, &by_where);
+    bool was_ambiguous = w->ambiguous;
+    if (was_ambiguous) {
+        // Removal has no callback. Resolve the devices present BEFORE this
+        // arrival so an earlier unplug can establish absence or a unique
+        // baseline, while an arrival that itself breaks a tie cannot fire.
+        usb_set_t before; before.n = 0;
+        for (int i = 0; i < now.n; i++)
+            if (!usb_set_has(arrived, &now.d[i])) usb_set_add(&before, &now.d[i]);
+        bool previous_where;
+        was_ambiguous = usb_resolve(&before, w, &previous_where) > 1;
+    }
     bool usable = usb_report_state(w, n, by_where);
 
     int hit = 0;
@@ -563,6 +575,7 @@ static void usb_arrived(watch_t *w, const usb_set_t *arrived) {
     if (!usable || n == 0) return;
     if (hit == 0) { vlog("%s: a device sharing its id arrived, but not the one it names", w->key); return; }
     w->present = true;
+    if (was_ambiguous) return;
     arrival(w);
 }
 
@@ -892,9 +905,12 @@ int main(int argc, char **argv) {
         while (time(NULL) < deadline) {
             usleep(700 * 1000);
             bool now[MAX_WATCH];
+            bool ambiguous[MAX_WATCH];
+            for (int i = 0; i < g_nwatch; i++) ambiguous[i] = g_watch[i].ambiguous;
             presence_sweep(now);
             for (int i = 0; i < g_nwatch; i++) {
                 if (now[i] == state[i]) continue;
+                if (ambiguous[i]) continue; // resolution establishes the baseline
                 if (now[i]) {
                     printf("  %s arrived -- this is what fires the switch.\n", g_watch[i].key);
                     fflush(stdout);
