@@ -994,7 +994,31 @@ Selecting From boot again and approving UAC produced an S4U/Limited task for
 that same user, with one owned watcher in session 0. Installed source hashes
 matched `4c0f13b`, and the intended profile's files and PATH were verified.
 Both source and profile paths contained spaces, an apostrophe and Unicode.
-Actual reboot/logon, the standard-user profile and uninstall remain open.
+After a coordinated normal reboot, the owner signed into only the original
+account, not either disposable account. The read-only native collector found
+exactly one watcher for the test administrator in session 0, started at
+21:40:43 UTC after the 21:40:14 UTC boot. Its task was enabled, S4U/Limited,
+owned by the intended test user and had a boot trigger. This establishes
+boot startup without that user's interactive logon on `4c0f13b`; it sends no
+monitor writes and does not establish physical switching from session 0.
+The installed shim then changed boot to login with exit 0. Before sign-out,
+the intended Interactive/Limited task held logon/self-heal triggers and one
+watcher in session 2. The owner signed out of the test account and signed back
+in. The new session 3 held exactly one intended watcher created at 21:52:04 UTC,
+before the helper was reopened, with the OS boot timestamp unchanged.
+The installed login-to-no-autostart transition then produced an enabled
+Interactive/Limited task with no triggers and one running watcher. After a
+second real sign-out/sign-in, session 4 had no watcher process and the watcher
+lock was free; the no-trigger task remained enabled. The standard-user profile,
+fresh declined-UAC fallback and source-unavailable uninstall remain open.
+
+The owner observed another UAC prompt for login-to-no-autostart. Read-only
+Task Scheduler security inspection confirmed an Administrators-owned task;
+the intended test user had mask `0x00120089` (read), while Administrators held
+full access. The boot-to-login replacement had itself been registered by the
+elevated installer, so the next replacement required elevation too. This is
+the documented protected-task limitation, separate from the watcher's Limited
+run level. No task ACL or owner was changed to bypass it.
 
 CI at `4c0f13b` passed both platforms on the second attempt. The first Windows
 attempt failed before the unchanged native-cleanup fixture's child produced a
@@ -1003,6 +1027,30 @@ generated launch chain passed locally, and the failed CI job passed on an
 unchanged rerun. No assertion or timeout was changed. Hosted Windows passed
 17 files, with one NVIDIA-dependent file and two driver cases explicitly
 skipped; macOS passed 13 files.
+
+**2026-10-30, Windows -- native fixture report publication.** The post-reboot
+full suite failed in `native-cleanup.tests.ps1` after its first invocation case:
+the parent saw `received.json` while the child still held it open for writing,
+and `Get-Content` raised an `IOException`. A bounded native child holding that
+file open reproduced the failure in the unchanged `Wait-FixtureReport`.
+This identifies the local failure; it does not establish the cause of the
+earlier CI report-timeout failure.
+
+Fixture children write complete JSON to a sibling temporary file, close it,
+then move it to the final report name. A native self-test holds publication
+behind an explicit gate and asserts the final report is absent, then releases
+it and checks the complete JSON. Publishing to the final name prematurely is
+a mutation. The existing 13 execution-boundary cases, quoted generated
+launcher/watcher checks, owner/path assertions and 10-second report bound are
+retained. Only the test protocol changes; installed product files are unchanged.
+The full `windows/tests/mutate.ps1 publication` run caught all 31 mutations,
+including the new publication-boundary assertion. The subsequent Windows
+PowerShell 5.1 `windows/tests/run.ps1` run passed all 18 files, including parsing
+and conventions. One dxva2 dry-run case explicitly skipped because that session
+enumerated no physical panel during the account-switching matrix; that case
+is not a pass. Once the owner returned to the original local console,
+`windows/tests/run.ps1 resolve -Verbose` passed without skips, including that
+dxva2 dry run. Neither invocation sent physical monitor writes.
 
 **2026-10-30, Windows -- reviewed candidate `2835cb0` installed and its Save/
 Cancel workflow checked.** Environment: Windows 11 Education build 22631,
@@ -1380,3 +1428,11 @@ identifiers and author email, or to commission a separately approved privacy
 remediation with a concrete preview. This audit does not authorize changing
 metadata, credentials, history or repository visibility. Repeat the applicable
 checks on the final release candidate and any newly created remote surfaces.
+
+The post-reboot refresh through `3d3fe8a` covered 230 commits and 1,213 text
+blobs, with no binary blobs or new finding categories. All 18 available Actions
+runs' logs were scanned; matches were hosted-runner paths and generated UUIDs.
+The repository remained private with one branch, one tag, no issues/comments,
+pull requests, releases or artifacts, and Wiki/Pages/Discussions disabled.
+The secret-scanning endpoint remained unavailable. Historical identifiers and
+the author email remain the same unresolved publication decisions.

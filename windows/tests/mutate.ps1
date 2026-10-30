@@ -1149,6 +1149,9 @@ Invoke-Mutation 'publication: monitor Escape commits edits' `
 Invoke-Mutation 'publication: fresh computer Escape marks setup answered' `
     'lib\walkthrough.ps1' 'publication.tests.ps1' `
     'All = @(if ($Existing) { @($This) + $Others })' 'All = @(@($This) + $Others)'
+Invoke-Mutation 'publication: native report is visible before publication' `
+    'tests\native-cleanup.tests.ps1' 'native-cleanup.tests.ps1' `
+    '$pending = "$Path.pending"' '$pending = $Path'
 Invoke-Mutation 'publication: cleanup ignores process ownership' `
     'lib\host.ps1' 'publication.tests.ps1' `
     "if (`$owner.ReturnValue -ne 0 -or ('{0}\{1}' -f `$owner.Domain, `$owner.User) -ne `$FORUSER) { continue }" ''

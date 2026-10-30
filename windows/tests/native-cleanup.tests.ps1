@@ -21,12 +21,53 @@ function Wait-FixtureReport { param($Path, $Process)
     Assert-True (Test-Path -LiteralPath $Path) 'bounded child must execute the fixture script'
     Get-Content -Raw -LiteralPath $Path -Encoding UTF8 | ConvertFrom-Json
 }
+# A final filename is the parent's readiness signal. Publish only after closing
+# the complete JSON file; Set-Content exposes its destination while writing.
+# The optional gate lets the native self-test hold publication back explicitly.
+$reportWriter = @'
+function Write-FixtureReport { param($Path, $Value, [string]$Gate = '')
+    $pending = "$Path.pending"
+    [IO.File]::WriteAllText($pending, ($Value | ConvertTo-Json), (New-Object Text.UTF8Encoding $true))
+    if ($Gate) {
+        [IO.File]::WriteAllText("$Gate.ready", 'ready')
+        $limit = (Get-Date).AddSeconds(10)
+        while (-not [IO.File]::Exists($Gate) -and (Get-Date) -lt $limit) {
+            Start-Sleep -Milliseconds 20
+        }
+        if (-not [IO.File]::Exists($Gate)) { throw 'Fixture publication gate timed out' }
+    }
+    [IO.File]::Move($pending, $Path)
+}
+'@
 try {
-    $inspect = Join-Path $root 'inspect.ps1'
-    @('param($File)',
-      '@{Script=$PSCommandPath;File=$File;Version=$PSVersionTable.PSVersion.ToString()} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $PSScriptRoot ''received.json'') -Encoding UTF8',
-      'Start-Sleep -Seconds 20') | Set-Content -LiteralPath $inspect -Encoding ASCII
     $report = Join-Path $root 'received.json'
+    $gate = Join-Path $root 'publish'
+    $protocol = Join-Path $root 'report-protocol.ps1'
+    @($reportWriter,
+      'Write-FixtureReport -Path (Join-Path $PSScriptRoot ''received.json'') -Value @{Complete=$true} -Gate (Join-Path $PSScriptRoot ''publish'')',
+      'Start-Sleep -Seconds 20') | Set-Content -LiteralPath $protocol -Encoding ASCII
+    $writer = Start-Process powershell.exe -WindowStyle Hidden -PassThru `
+        -ArgumentList ('-NoProfile -ExecutionPolicy Bypass -File "{0}"' -f $protocol)
+    try {
+        $limit = (Get-Date).AddSeconds(10)
+        while (-not (Test-Path "$gate.ready") -and (Get-Date) -lt $limit -and -not $writer.HasExited) {
+            Start-Sleep -Milliseconds 20
+        }
+        Assert-True (Test-Path "$gate.ready") 'bounded writer must reach the publication gate'
+        Assert-True (-not (Test-Path $report)) 'report must remain absent until the writer publishes it'
+        [IO.File]::WriteAllText($gate, 'publish')
+        $received = Wait-FixtureReport $report $writer
+        Assert-Equal $true $received.Complete 'published report must contain complete JSON'
+        Assert-True (-not (Test-Path "$report.pending")) 'publication moves the completed temporary file'
+        Write-Host 'ok: native fixture report is published only after its complete write'
+    } finally {
+        if (-not $writer.HasExited) { $writer.Kill(); $writer.WaitForExit() }
+        $writer.Dispose()
+    }
+    $inspect = Join-Path $root 'inspect.ps1'
+    @('param($File)', $reportWriter,
+      'Write-FixtureReport -Path (Join-Path $PSScriptRoot ''received.json'') -Value @{Script=$PSCommandPath;File=$File;Version=$PSVersionTable.PSVersion.ToString()}',
+      'Start-Sleep -Seconds 20') | Set-Content -LiteralPath $inspect -Encoding ASCII
     # The argument is synthetic data, not a file we execute or create.
     $global:DEST = 'C:\FixtureInstall'
     $global:WATCH = Join-Path $DEST 'event-watch.ps1'
@@ -65,8 +106,8 @@ try {
     New-Item -ItemType Directory -Path $DEST | Out-Null
     $global:WATCH = Join-Path $DEST 'event-watch.ps1'
     $global:VBS = Join-Path $DEST 'launcher.vbs'
-    @('param($Exec,$Arg,$LogFile,$Config)',
-      '@{Script=$PSCommandPath;Id=$PID;Config=$Config} | ConvertTo-Json | Set-Content -LiteralPath $Config -Encoding UTF8',
+    @('param($Exec,$Arg,$LogFile,$Config)', $reportWriter,
+      'Write-FixtureReport -Path $Config -Value @{Script=$PSCommandPath;Id=$PID;Config=$Config}',
       'Start-Sleep -Seconds 20') | Set-Content -LiteralPath $WATCH -Encoding ASCII
     Remove-Item -LiteralPath $report -Force
     Write-WatcherLauncher -Path $VBS -Command (Get-WatcherCommand -Watcher $WATCH `
@@ -94,5 +135,7 @@ try {
         $script:fixtureIds = @()
     }
 } finally {
+    if ((Split-Path -Parent $root) -ne (Get-Item -LiteralPath $env:TEMP).FullName -or
+        (Split-Path -Leaf $root) -ne "tk-cleanup-$PID") { throw 'Fixture cleanup escaped its temporary root' }
     Remove-Item -LiteralPath $root -Recurse -Force
 }

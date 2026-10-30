@@ -45,8 +45,14 @@ Still required before release:
 - Real profile/checkout paths containing spaces, apostrophes and non-ASCII text
   through standard-user elevation and uninstall. Administrator-capable login,
   upgrade and approved/declined UAC covered those characters in both paths.
-- Boot/login/no-autostart transitions, actual logon/reboot behavior, and
-  uninstall from the installed shim after the source checkout is unavailable.
+- Uninstall from the installed shim after the source checkout is unavailable.
+  On `4c0f13b`, a real reboot started exactly one
+  intended S4U/Limited watcher in session 0 without the test user signing in.
+  This is native startup evidence, not physical switching evidence.
+  Boot-to-login also passed through the installed shim; a real test-user
+  sign-out/sign-in produced one new watcher in the new interactive session.
+  Login-to-no-autostart started one watcher immediately; after another real
+  sign-out/sign-in the enabled task had no triggers and no watcher was running.
 - Interactive Ctrl+C from enabled/stopped and disabled/stopped task states.
   Enabled/running cancellation passed on installed `2835cb0`, before the next
   scheduler self-heal and without helper recovery. Native timeout restoration

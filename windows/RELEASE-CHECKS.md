@@ -21,6 +21,8 @@ the native cleanup tests use bounded, harmless children. The command-boundary
 test restricts CIM enumeration to its recorded fixture PIDs and checks 13 real
 PowerShell 5.1 invocation forms plus the generated WSH/watcher launch chain.
 It confirms script identity and arguments before asserting cleanup decisions.
+Fixture reports become visible only after their complete writes; a gated native
+self-test checks that publication boundary.
 Transport tests enumerate real displays and use `-WhatIf`; none prove that a
 physical panel changed input.
 
@@ -38,7 +40,7 @@ one watcher returned before the next scheduled self-heal, without helper
 recovery. NVAPI away-and-back writes on each panel were visually confirmed,
 one panel at a time with the other kept on Windows. Post-reboot read-only
 NVAPI IDs matched the baseline on driver 616.64. Fresh profiles, account
-elevation, autostart transitions, logon/reboot, source-unavailable uninstall
+elevation, remaining autostart/logon checks, source-unavailable uninstall
 and interactive cancellation from the two stopped states remain open.
 
 The first fresh administrator-capable profile installed the `2835cb0` archive
@@ -51,8 +53,20 @@ was selectable unelevated; declining UAC retained a working login tier; approvin
 UAC installed S4U/Limited for the intended user with one watcher. Save/Cancel
 and unknown-key preservation passed in this profile too. The first profile run
 did not reach a UAC prompt; the later fallback had existing config. Fresh
-fallback, standard-user credentials, actual logon/reboot and uninstall remain
-distinct unverified cases.
+fallback, standard-user credentials and
+uninstall remain distinct unverified cases. A real reboot on `4c0f13b` started
+one intended S4U/Limited watcher in session 0 before any test-profile sign-in;
+the owner confirmed signing into only the original account. The read-only
+collector checked boot/process timestamps and task ownership. This verifies
+startup, not physical switching from session 0.
+The installed boot-to-login transition also passed: after an actual sign-out
+and sign-in, one new intended watcher ran in the new interactive session under
+the correct Interactive/Limited task.
+Login-to-no-autostart started one watcher immediately; an actual sign-out/
+sign-in left it stopped with an enabled, trigger-free task. The transition
+requested UAC because the elevated boot-to-login replacement left a protected
+task definition. Read-only task-security inspection confirmed this; it does
+not mean the watcher runs elevated.
 
 For the remaining cancellation cases, run the installed trigger check and
 interrupt it with Ctrl+C; compare prior and resulting task enablement and watcher

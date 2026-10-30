@@ -23,7 +23,7 @@ and the command checklist in `windows/RELEASE-CHECKS.md`.
   Verified with `make test` (13 files plus shellcheck) and
   `bash tests/mutate.sh publication` (11 mutations caught).
 - [x] Windows: publication-review defects resolved with native PowerShell 5.1
-  regressions, 18 passing test files and 30 caught publication mutations.
+  regressions, 18 passing test files and 31 caught publication mutations.
   Includes incomplete-check gating, exact-path/owner cleanup with conservative
   execution-boundary recognition, prior watcher state, apostrophes/Unicode,
   fractional settle, restricted DLL loading,
@@ -48,9 +48,8 @@ and the command checklist in `windows/RELEASE-CHECKS.md`.
   bytes, and the original config was restored. On that installed candidate,
   real Ctrl+C restored enabled/running before scheduler self-heal, and both
   panels' NVAPI away-and-back switching was visually confirmed separately.
-  Fresh profiles, standard-user UAC, decline/fallback, tier transitions,
-  logon/reboot, Ctrl+C from the two stopped states and source-unavailable
-  uninstall remain outstanding. The coordinated profile session must restore
+  Fresh fallback, standard-user UAC, Ctrl+C from the two stopped states and
+  source-unavailable uninstall remain outstanding. The profile session must restore
   the owner's boot/enabled/running state afterwards.
   A fresh administrator-capable login installation passed with spaces,
   apostrophe and Unicode in both profile/source paths. It exposed a boot-row
@@ -60,6 +59,13 @@ and the command checklist in `windows/RELEASE-CHECKS.md`.
   registration, and profile Save/Cancel. Native regression/mutation coverage
   accompanies the fix; fresh fallback, standard-user elevation and the
   remaining session/uninstall cases are still open.
+  A real reboot on `4c0f13b` started exactly one intended S4U/Limited watcher
+  in session 0 without the test user signing in. This is native startup
+  evidence; no physical switching was performed by that check.
+  The installed boot-to-login transition and real sign-out/sign-in also passed,
+  with one new intended watcher in the new interactive session.
+  Login-to-no-autostart started a watcher immediately and left it stopped after
+  a real sign-out/sign-in, with the task enabled and no triggers.
 - [ ] Privacy: shared measurement notes now use consistent labels for device
   identifiers; unnecessary current Windows device examples are synthetic.
   The 2026-10-30 audit at `2835cb0` covered 112 tracked files, 226 commits/1,192

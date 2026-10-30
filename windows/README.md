@@ -54,10 +54,12 @@ terminal after adding PATH, or use the installed shim immediately:
 & "$env:LOCALAPPDATA\Programs\trigger-kvm\bin\trigger-kvm.cmd" status
 ```
 
-With no config yet it runs the walkthrough first. It asks for administrator
-rights ONCE, and only if you choose "from boot"; nothing runs elevated on the
-switch path afterwards. An administrator-capable account can select that tier
-from an ordinary, unelevated PowerShell window; approve UAC when prompted.
+With no config yet it runs the walkthrough first. Choosing "from boot" asks for
+administrator rights to register the task; nothing runs elevated on the switch
+path afterwards. An administrator-capable account can select that tier from an
+ordinary, unelevated PowerShell window; approve UAC when prompted. Later changes
+to a task registered with elevation can prompt again, as explained below under
+autostart tiers.
 
 The install is self-contained: the installer copies itself next to the program,
 so uninstalling works after the source tree is gone. To upgrade or repair, run
@@ -154,11 +156,15 @@ installing a different tier on top would be a second install you did not ask
 for. `status` says which tier is installed and what it covers, and `restart`
 reports whether a watcher actually came up.
 
-**One admin run poisons the task for later unelevated ones.** The definition
-under `System32\Tasks` belongs to whoever registered it, so after an
-administrator install -- including the boot tier's -- an ordinary `install` or
-`uninstall` fails with `Access is denied`. Both say so. To recover, run
-`uninstall` from an elevated PowerShell once, then install normally.
+**A task registered with administrator rights needs those rights to replace
+or remove it.** This includes the boot tier. The installer and uninstaller
+explain the permission restriction and request UAC. Replacing boot with login
+also registers the replacement from the elevated process, so a later change
+from login to no autostart can prompt again. The watcher's `Limited` run level
+does not grant permission to edit the task definition. To return to ordinary
+user control, uninstall with elevation, then reinstall the retained config
+from an unelevated shell with login or no autostart selected. Config and logs
+are retained by uninstall; the running watcher never requires elevation.
 
 The two automatic tiers also carry a one-minute repeating trigger, which is what
 brings a killed watcher back. Task Scheduler's own RestartCount does not: it
