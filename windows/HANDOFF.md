@@ -42,17 +42,20 @@ Still required before release:
   passed selection from ordinary PowerShell, declined-UAC login fallback with
   existing config, and approved-UAC S4U/Limited installation for the intended
   user. Fresh product-state declined-UAC fallback also passed after preserving
-  this profile's retained data. Separate standard-user elevation is unverified.
+  this profile's retained data. A read-only native standard-user probe accepted
+  a separate administrator credential, but exposed false boot eligibility on
+  `462204a`. The policy-aware correction requires its installed repeat.
 - Real profile/checkout paths containing spaces, apostrophes and non-ASCII text
   through standard-user elevation and uninstall. Administrator-capable login,
-  upgrade and approved/declined UAC covered those characters in both paths.
-- Repeat installed boot-to-login/no-autostart transitions with the corrected
-  removal-only elevation path in `462204a`, then uninstall with the source
-  unavailable. Its clean native suite passed 19 files without skips; CI passed
+  upgrade, approved/declined UAC and source-unavailable uninstall covered those
+  characters in both paths. Installed `462204a` upgrade preserved config bytes/PATH;
+  boot-to-login produced
+  a user-owned task, and login-to-no-autostart completed without another UAC
+  prompt. Both user tiers had one intended watcher; manual had no triggers.
+  Its clean native suite passed 19 files without skips; CI passed
   both platforms with hosted hardware skips explicitly recorded.
-  The `4c0f13b` uninstall removed task/program/PATH and retained config/log
-  bytes but returned 1 when CMD lost its deleted shim; the generated-shim fix
-  has native fixture coverage and awaits an installed repeat.
+  Its source-unavailable uninstall returned 0, removed task/program/PATH,
+  stopped the watcher and retained config/log bytes and original PATH entries.
   On `4c0f13b`, a real reboot started exactly one
   intended S4U/Limited watcher in session 0 without the test user signing in.
   This is native startup evidence, not physical switching evidence.
@@ -83,7 +86,8 @@ prompt; no single-press responsiveness claim is made. These no-autostart tasks
 had no self-heal trigger. Native timeout checks cover all three states; error
 paths remain fixture coverage.
 Privacy review covered reachable history and accessible GitHub surfaces;
-historical identifier/author-email publication decisions remain outstanding.
+the owner explicitly kept publication blocked for a separate privacy review
+on 2026-10-30. Historical identifier/author-email publication is not approved.
 
 The implementation is at specification revision 15. Product version stays
 0.2.0 during remediation; 0.3.0 is the next coordinated release target.

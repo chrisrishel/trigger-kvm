@@ -15,10 +15,19 @@ Import-Subject -Script 'lib\host.ps1' -Functions @(
     'Format-ChildArguments', 'Get-ChildArguments', 'Request-Elevation', 'Invoke-BootTierElevation',
     'Test-CanElevate')
 
-# Boot eligibility is group membership, including a split token's deny-only
-# Administrators claim. Other claim types or groups cannot establish it.
+# With credential prompts denied for standard users, eligibility needs enabled
+# or deny-only administrator membership. Other claims cannot establish it.
 $script:claimReadFails = $false
 $script:tokenClaims = @()
+$script:policyReadFails = $false
+$script:elevationPolicy = [pscustomobject]@{EnableLUA=1;ConsentPromptBehaviorUser=0}
+function Get-ItemProperty {
+    param($LiteralPath,$Name,$ErrorAction)
+    Assert-Equal 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' $LiteralPath
+    Assert-Equal 'ConsentPromptBehaviorUser,EnableLUA' (($Name | Sort-Object) -join ',')
+    if ($script:policyReadFails) { throw 'policy query unavailable' }
+    return $script:elevationPolicy
+}
 function Get-CurrentTokenClaims {
     if ($script:claimReadFails) { throw 'token query unavailable' }
     return $script:tokenClaims
@@ -42,6 +51,29 @@ $global:IsElevated = $false
 $script:claimReadFails = $true
 Assert-True (Test-CanElevate) 'an unavailable token query does not hide a potentially usable UAC prompt'
 $script:claimReadFails = $false
+
+# Native standard-user validation proved that separate administrator credentials
+# can succeed while this account has no Administrators claim. These settings
+# decide whether Windows offers that prompt; they never grant elevation.
+$script:tokenClaims = @(New-Object Security.Claims.Claim([Security.Claims.ClaimTypes]::GroupSid, 'S-1-5-32-545'))
+foreach ($promptPolicy in @(1,3)) {
+    $script:elevationPolicy.ConsentPromptBehaviorUser = $promptPolicy
+    Assert-True (Test-CanElevate) 'standard users may request separate administrator credentials when policy permits'
+}
+$script:elevationPolicy.ConsentPromptBehaviorUser = 0
+Assert-Equal $false (Test-CanElevate) 'policy can explicitly deny standard-user elevation prompts'
+$script:elevationPolicy.EnableLUA = 0
+$script:elevationPolicy.ConsentPromptBehaviorUser = 3
+Assert-Equal $false (Test-CanElevate) 'disabled UAC does not provide the standard-user credential path'
+$script:elevationPolicy.EnableLUA = 1
+$script:elevationPolicy.ConsentPromptBehaviorUser = 99
+Assert-True (Test-CanElevate) 'an unknown policy value does not establish that elevation is impossible'
+$script:policyReadFails = $true
+Assert-True (Test-CanElevate) 'an unreadable policy does not hide a potentially usable credential prompt'
+$script:policyReadFails = $false
+$script:elevationPolicy = [pscustomobject]@{EnableLUA=1}
+Assert-True (Test-CanElevate) 'an absent policy value is uncertainty, not a denial'
+$script:elevationPolicy = [pscustomobject]@{EnableLUA=1;ConsentPromptBehaviorUser=0}
 
 # ---- flags stay bare, values get quoted --------------------------------------
 #

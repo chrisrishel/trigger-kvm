@@ -322,11 +322,11 @@ function Get-CurrentTokenClaims {
     finally { $identity.Dispose() }
 }
 
-# Boot-menu eligibility is administrator membership, not current elevation.
-# WindowsIdentity.Groups omits deny-only memberships in a split UAC token;
-# claims retain them. UAC still decides whether an operation may elevate.
-# A query error leaves the option available: uncertainty cannot justify hiding
-# a usable prompt. See docs/measurements.md, "PowerShell console and language".
+# Boot-menu eligibility includes split-token administrators and standard users
+# allowed to supply a separate administrator credential. Claims retain deny-only
+# membership; the read-only UAC policy check identifies explicit standard-user
+# denials. Unknown policy/query results leave the prompt available. Windows
+# decides whether elevation succeeds; see docs/measurements.md.
 function Test-CanElevate {
     if ($IsElevated) { return $true }
     try {
@@ -335,7 +335,9 @@ function Test-CanElevate {
                                  [Security.Claims.ClaimTypes]::DenyOnlySid) -and
                 $claim.Value -eq 'S-1-5-32-544') { return $true }
         }
-        return $false
+        $policy = Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' `
+            -Name EnableLUA,ConsentPromptBehaviorUser -ErrorAction Stop
+        return ($policy.EnableLUA -ne 0 -and $policy.ConsentPromptBehaviorUser -ne 0)
     } catch { return $true }
 }
 

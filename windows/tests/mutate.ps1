@@ -1162,6 +1162,15 @@ Invoke-Mutation 'publication: uninstall shim reads its return after deleting its
 Invoke-Mutation 'publication: user tier replacement elevates the whole install' `
     'lib\host.ps1' 'privilege.tests.ps1' `
     "Request-Elevation -Verb 'install' -TaskRemovalOnly" "Request-Elevation -Verb 'install'"
+Invoke-Mutation 'publication: standard-user credential prompts are hidden' `
+    'lib\host.ps1' 'elevation.tests.ps1' `
+    'return ($policy.EnableLUA -ne 0 -and $policy.ConsentPromptBehaviorUser -ne 0)' 'return $false'
+Invoke-Mutation 'publication: standard-user prompt denial is ignored' `
+    'lib\host.ps1' 'elevation.tests.ps1' `
+    'return ($policy.EnableLUA -ne 0 -and $policy.ConsentPromptBehaviorUser -ne 0)' 'return ($policy.EnableLUA -ne 0)'
+Invoke-Mutation 'publication: disabled UAC offers standard-user credentials' `
+    'lib\host.ps1' 'elevation.tests.ps1' `
+    'return ($policy.EnableLUA -ne 0 -and $policy.ConsentPromptBehaviorUser -ne 0)' 'return ($policy.ConsentPromptBehaviorUser -ne 0)'
 Invoke-Mutation 'publication: removal-only flag is lost before elevation' `
     'lib\host.ps1' 'elevation.tests.ps1' `
     "if (`$TaskRemovalOnly) { `$childArgs += '-RemoveTaskOnly' }" ''

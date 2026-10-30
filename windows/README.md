@@ -60,6 +60,10 @@ path afterwards. An administrator-capable account can select that tier from an
 ordinary, unelevated PowerShell window; approve UAC when prompted. Removing a
 task registered with elevation also needs approval, including when changing
 from boot to login or no autostart.
+A standard account can choose boot when Windows allows a separate
+administrator credential prompt. Enter that credential in UAC; the task,
+program/config paths and PATH still belong to the intended standard-user
+installation. If Windows policy denies that prompt, the boot row is disabled.
 
 The install is self-contained: the installer copies itself next to the program,
 so uninstalling works after the source tree is gone. To upgrade or repair, run

@@ -1082,6 +1082,64 @@ Actions log was inspected and scanned privately. The clean source archive and
 hash are prepared for the coordinated installed repeat; passing fixtures and
 CI do not establish the corrected task permissions or uninstall on that profile.
 
+**Installed task-permission repeat at `462204a`, 2026-10-30.** The disposable
+administrator upgraded through the source installer in ordinary PowerShell;
+configuration bytes and user PATH were unchanged, exit was 0, and installed
+script hashes matched the candidate. The installed shim then changed login to
+boot, boot to login, and login to no autostart. Native task security showed the
+boot definition owned by Administrators; the login/manual replacements were
+owned by the intended user, with that user's full-control ACE. Both user tiers
+had Limited principals and exactly one visible, correctly owned watcher.
+The final enabled manual task had no triggers, and its watcher held the lock.
+The owner confirmed approving UAC for boot and its removal, then receiving no
+UAC prompt for login to no autostart. The boot snapshot established S4U/Limited,
+the intended principal and a held lock; its unelevated process enumeration did
+not expose the session-0 process, so that snapshot alone does not count it.
+The subsequent source-unavailable uninstall also passed. The helper paused
+through the installed shim, renamed only the disposable source directory,
+invoked installed `uninstall`, then restored the source name. Exit was 0;
+task/program were absent and the watcher was stopped. Config/log bytes were
+retained unchanged, the installed bin was removed from PATH, and all original
+PATH entries remained. These checks close the two installed correction gates
+for the administrator-capable profile; standard-user elevation remains separate.
+
+**Standard-user boot eligibility, 2026-10-30.** Before any product installation
+in the fresh standard-user profile, a harmless native Windows PowerShell 5.1
+probe loaded the actual `462204a` eligibility functions. `Test-CanElevate`
+returned false, although `EnableLUA = 1` and `ConsentPromptBehaviorUser = 3`.
+The owner first declined the credential prompt (exit 1), then repeated it with
+the disposable administrator credential. The second child exited 0 and recorded
+an elevated token for that administrator. The standard user's PATH was unchanged;
+the probe registered no task and changed no installation or policy. The approved
+run's private receipt was preserved before the production change. This is native
+credential capability evidence, not a standard-user installation pass.
+
+The regression reproduced the false eligibility before the fix. The check now
+recognizes standard-user credential prompts unless UAC is disabled or policy
+explicitly denies them. Microsoft's [UAC policy table](https://learn.microsoft.com/en-us/windows/security/application-security/application-control/user-account-control/settings-and-configuration/)
+defines prompt values 1 and 3 and denial value 0. It reads policy only; Windows
+still decides whether elevation succeeds. Unknown or unreadable policy keeps
+the prompt available. The existing negative membership assertions remain,
+with an explicit denied-prompt fixture; new cases cover permitted prompts,
+disabled UAC, denial, unknown/missing values and read errors. The corrected
+standard-user walkthrough and separate-credential install still need their
+coordinated native repeat.
+
+The full Windows PowerShell 5.1 suite passed all 19 files without skips;
+`tests/mutate.ps1 publication` caught all 38 mutations. The three new mutations
+hide permitted credential prompts, ignore explicit denial, and ignore disabled
+UAC; each was caught. An earlier mutation run stopped when the unchanged
+harness's `Move-Item -Force` could not restore `host.ps1`. The preserved backup
+differed only by that temporary mutation; it was copied back and verified by
+hash before repeating the unchanged harness. The restoration failure's cause
+was not established. No assertions were weakened and no mutant remained.
+
+The watcher, switcher, configuration library and monitor/trigger-check code
+remain identical to `2835cb0`; these installer eligibility corrections do not
+alter the paths covered by the dated visual observations. Those observations
+remain tied to their recorded candidate and environment; no new physical
+switching is claimed by the installation checks.
+
 CI at `4c0f13b` passed both platforms on the second attempt. The first Windows
 attempt failed before the unchanged native-cleanup fixture's child produced a
 report; the cause was not established. All 13 native invocation forms and the
@@ -1510,3 +1568,8 @@ available Actions runs' logs were scanned. Repository metadata's apparent
 profile-path matches were GitHub user API links. The remote surface counts,
 secret-scanning limitation and unresolved historical publication decisions
 were unchanged. Earlier raw reports were preserved privately before refresh.
+
+On 2026-10-30 the owner chose to keep publication blocked for a separate privacy
+review. Historical identifier and author-metadata retention is not approved for
+publication. No history rewrite, author-metadata change or visibility change is
+authorized by that decision.

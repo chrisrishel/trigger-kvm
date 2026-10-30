@@ -39,8 +39,8 @@ The ASUS dxva2 away-and-back check was visually confirmed that day. On
 one watcher returned before the next scheduled self-heal, without helper
 recovery. NVAPI away-and-back writes on each panel were visually confirmed,
 one panel at a time with the other kept on Windows. Post-reboot read-only
-NVAPI IDs matched the baseline on driver 616.64. Fresh profiles, account
-elevation and corrected source-unavailable uninstall remain open.
+NVAPI IDs matched the baseline on driver 616.64. The fresh standard-user
+installation and separate administrator-credential cases remain open.
 
 The first fresh administrator-capable profile installed the `2835cb0` archive
 successfully in the login tier, with profile and source paths containing spaces,
@@ -53,8 +53,8 @@ UAC installed S4U/Limited for the intended user with one watcher. Save/Cancel
 and unknown-key preservation passed in this profile too. The first profile run
 did not reach a UAC prompt; that fallback had existing config. A subsequent
 fresh product-state install, after preserving the retained data, passed actual
-UAC decline and login fallback. Standard-user credentials and corrected
-uninstall remain unverified. A real reboot on `4c0f13b` started
+UAC decline and login fallback. Standard-user credentials remain unverified.
+A real reboot on `4c0f13b` started
 one intended S4U/Limited watcher in session 0 before any test-profile sign-in;
 the owner confirmed signing into only the original account. The read-only
 collector checked boot/process timestamps and task ownership. This verifies
@@ -67,16 +67,29 @@ sign-in left it stopped with an enabled, trigger-free task. The transition
 requested UAC because the elevated boot-to-login replacement left a protected
 task definition. Read-only task-security inspection confirmed this; it does
 not mean the watcher runs elevated.
+
+The fresh standard-user profile's read-only probe accepted a separate
+administrator credential, while `462204a` incorrectly reported boot ineligible.
+The current correction reads Windows UAC policy and permits that credential
+path unless explicitly disabled. It has a failing-before/fixed regression;
+the fresh walkthrough and intended-user installation remain to be tested.
+The probe's initial decline and later approval are not installation-fallback
+results: neither run installed the product or registered a task.
 The current source corrects this by elevating only old-task removal and
 registering the replacement in the normal parent. It also corrects uninstall's
 CMD return path: the installed `4c0f13b` check removed task/program/PATH and
 retained config/log bytes, but CMD returned 1 after its shim was deleted.
-Both corrections have regression/mutation coverage and require an installed
-repeat on prepared candidate `462204a`. Its clean native suite passed all 19
+Both corrections have regression/mutation coverage. Installed `462204a` passed
+the upgrade with config bytes/PATH preserved, then boot-to-login and
+login-to-no-autostart. Native task security confirmed user ownership of both
+replacement definitions; the owner confirmed no UAC on the final change.
+Each user tier had one intended watcher; the final manual task had no triggers.
+The subsequent source-unavailable uninstall returned 0, removed task/program
+and the installed PATH entry, stopped the watcher, and retained config/log
+bytes and all original PATH entries.
+The candidate's clean native suite passed all 19
 files without skips and CI passed on both platforms, with hosted hardware
 skips recorded in `docs/measurements.md`.
-Verify task-definition ownership after boot-to-login, then change
-login to no autostart without another UAC prompt; require uninstall exit 0.
 
 Installed `4c0f13b` passed real Ctrl+C from enabled/stopped and disabled/stopped
 in elevated disposable-profile consoles, preserving task enablement, stopped
@@ -92,6 +105,8 @@ fresh-boot/session-0 writes.
 
 These are outstanding release gates alongside the privacy review in `TODO.md`;
 automated cleanup validation does not clear them.
+The owner explicitly kept publication blocked for a separate privacy review
+on 2026-10-30.
 
 ## Coordinate before changing an installation
 

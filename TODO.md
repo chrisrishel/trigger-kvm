@@ -23,7 +23,7 @@ and the command checklist in `windows/RELEASE-CHECKS.md`.
   Verified with `make test` (13 files plus shellcheck) and
   `bash tests/mutate.sh publication` (11 mutations caught).
 - [x] Windows: publication-review defects resolved with native PowerShell 5.1
-  regressions, 19 passing test files and 35 caught publication mutations.
+  regressions, 19 passing test files and 38 caught publication mutations.
   Includes incomplete-check gating, exact-path/owner cleanup with conservative
   execution-boundary recognition, prior watcher state, apostrophes/Unicode,
   fractional settle, restricted DLL loading,
@@ -48,8 +48,8 @@ and the command checklist in `windows/RELEASE-CHECKS.md`.
   bytes, and the original config was restored. On that installed candidate,
   real Ctrl+C restored enabled/running before scheduler self-heal, and both
   panels' NVAPI away-and-back switching was visually confirmed separately.
-  Standard-user UAC and installed repeats of the task-permission and
-  source-unavailable-uninstall fixes remain outstanding. The profile session must restore
+  Standard-user UAC and its fresh-profile installation checks remain outstanding.
+  The profile session must restore
   the owner's boot/enabled/running state afterwards.
   A fresh administrator-capable login installation passed with spaces,
   apostrophe and Unicode in both profile/source paths. It exposed a boot-row
@@ -74,8 +74,15 @@ and the command checklist in `windows/RELEASE-CHECKS.md`.
   profile's data separately. Uninstall retained config/log bytes and removed
   task/program/PATH but reported exit 1; the self-deleting CMD shim is corrected
   with native regressions. User-tier replacement now elevates only removal of
-  a protected task and registers the replacement in the normal parent. Both
-  corrections require an installed repeat; no assertion was weakened.
+  a protected task and registers the replacement in the normal parent.
+  Installed `462204a` preserved config/PATH through upgrade and verified
+  user-owned login/manual tasks, one watcher and no second UAC prompt for
+  login-to-no-autostart. Its source-unavailable uninstall returned 0, removed
+  task/program/PATH and stopped the watcher, retaining config/log bytes and
+  original PATH entries. No assertion was weakened.
+  The fresh standard-user native probe accepted separate administrator
+  credentials but exposed false boot-menu eligibility. The correction reads
+  UAC policy and retains explicit denial; its installed repeat remains open.
 - [ ] Privacy: shared measurement notes now use consistent labels for device
   identifiers; unnecessary current Windows device examples are synthetic.
   The 2026-10-30 audit at `2835cb0` covered 112 tracked files, 226 commits/1,192
@@ -85,7 +92,9 @@ and the command checklist in `windows/RELEASE-CHECKS.md`.
   author email remain, including that email in Actions metadata. See the
   location/category inventory and limits in `docs/measurements.md`, "Release
   validation and privacy". GitHub secret scanning was disabled/unavailable.
-  Decide whether that metadata/content is intended to be public. Before any
+  On 2026-10-30 the owner chose to keep publication blocked for a separate
+  privacy review; retaining that historical content/metadata for publication
+  is not approved. Before any
   separately approved history rewrite, prepare a private
   backup and exact replacement
   preview, finish both platforms' work, and synchronize both checkouts. Re-scan
@@ -105,8 +114,8 @@ and the command checklist in `windows/RELEASE-CHECKS.md`.
   and mean nothing. Trigger: the next driver update.
 
 - **Verify the boot tier on a standard (non-admin) Windows account.** The
-  elevation path is read-verified and covered by `elevation.tests.ps1`, never
-  run on such an account. Check the task principal, the files' `%LOCALAPPDATA%`
+  credential-only native probe passed on 2026-10-30; product installation is
+  still unverified. Check the task principal, the files' `%LOCALAPPDATA%`
   and whose `PATH` gains `bin`. Trigger: a standard-user account is available.
 
 - **Complete the fresh standard-user installed workflow.** The fresh
