@@ -968,12 +968,48 @@ The installed `trigger-kvm configure` typed-input flow was exercised twice:
 adding `release.fixture = keep` returned 0, retained that unknown key and every
 original value, and preserved the installed stamp. Original config bytes were
 then restored and `trigger-kvm restart` restored the owner watcher. These are
-native installed-product/Task Scheduler checks, not mocked OS results. They do
-not cover interactive Ctrl+C, a fresh profile or separate-account elevation.
+native installed-product/Task Scheduler checks, not mocked OS results. Fresh
+profiles and separate-account elevation require the matrix below.
 The full Windows PowerShell 5.1 suite also passed all 18 files without skips.
 An additional spec-only invocation inside the restricted execution sandbox
 returned an 8.3-path alias mismatch; the unchanged test passed when rerun in the
 native user context. No assertion was changed to obtain that pass.
+
+**Interactive cancellation, same candidate and environment.** Through the
+installed CMD shim, the owner selected Test the triggers and pressed real
+Ctrl+C during the 90-second wait, without moving the USB switch. The owner
+confirmed the keystroke; the console recorded the interrupted pipeline and CMD's
+termination prompt. An independent observer saw enabled/running become
+disabled/stopped at 20:42:12.947 UTC and enabled/running with exactly one watcher
+again at 20:42:17.500 UTC. The previously recorded next scheduled run was
+20:42:42 UTC, so the observed restart preceded scheduler self-heal. The final
+lock check passed and the helper's recovery path was not used. This is native
+interactive cancellation evidence for the enabled/running starting state;
+enabled/stopped and disabled/stopped Ctrl+C cases remain untested interactively.
+Timeout restoration has native coverage for all three states; error paths have
+fixture coverage.
+
+**Physical NVAPI switching, same candidate and environment.** The installed
+watcher was paused through `trigger-kvm pause`. From the installed directory,
+Windows PowerShell 5.1 ran `trigger-kvm.ps1 to mac -Only pg42uq`, then
+`trigger-kvm.ps1 pull -Only pg42uq`, using the original saved configuration.
+The terminal stayed on the LG. The owner visually confirmed the ASUS showed
+the Mac and then Windows, while the LG remained on Windows. After the owner
+moved the terminal to the ASUS, the same two commands with `-Only lg` moved
+the LG to the Mac and back; the owner confirmed both changes and that the ASUS
+remained on Windows. All commands returned 0; the visual confirmations, not
+those exit codes, establish physical switching.
+
+The saved ASUS standard-DDC values were `0x0F` (Mac) and `0x11` (Windows);
+the LG's gated manufacturer path used `0xD1` and `0xD0`, respectively. No VCP
+readback, service-channel probing or S3 test occurred. The UAC prompt in this
+session was for pausing the protected boot task; the manual switch commands
+did not request elevation. This proves local-console NVAPI switching on the
+reference desk, not a fresh boot/session-0 write. The 2026-10-29 ASUS dxva2
+observation is separate evidence on the earlier candidate; that transport is
+unchanged. The watcher remains deliberately paused during the coordinated
+disposable-profile matrix, whose restoration step must restore the owner's
+boot/enabled/running state.
 
 **2026-10-30, Windows -- cleanup must recognize the execution boundary, not
 search for a later `-File`.** At `4a4ba59`, the actual `Stop-Watchers` function
@@ -1274,6 +1310,12 @@ in those logs. Repository/Actions metadata was inspected separately, including
 the retained author email. GitHub secret scanning was disabled and its alerts
 endpoint unavailable. Unadvertised/deleted server-side objects and external
 copies are outside this audit's visibility.
+
+A follow-up scan through documentation commit `a05876b` covered 227 commits
+and 1,196 text blobs, with no binary blobs or new finding categories. The
+additional Actions run's log was also checked; its matches were hosted-runner
+paths and generated UUIDs. The historical publication decisions below remain
+open.
 
 Publication still requires the owner's decision to retain the historical
 identifiers and author email, or to commission a separately approved privacy

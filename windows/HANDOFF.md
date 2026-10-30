@@ -40,11 +40,10 @@ Still required before release:
 - Real profile/checkout paths containing spaces, apostrophes and non-ASCII text.
 - Boot/login/no-autostart transitions, actual logon/reboot behavior, and
   uninstall from the installed shim after the source checkout is unavailable.
-- Interactive Ctrl+C during an installed trigger check. Native timeout
-  restoration covered enabled/running,
-  enabled/stopped and disabled/stopped; error/cancellation remain fixture tests.
-- Final-candidate NVAPI physical switching, one panel at a time with visual
-  confirmation. The ASUS dxva2 check is complete; no LG write was sent in it.
+- Interactive Ctrl+C from enabled/stopped and disabled/stopped task states.
+  Enabled/running cancellation passed on installed `2835cb0`, before the next
+  scheduler self-heal and without helper recovery. Native timeout restoration
+  covers all three states; error paths remain fixture tests.
 - Native suites on both platforms at the coordinated release commit, privacy
   review of all refs/GitHub surfaces, and the driver's/port's deferred checks in
   TODO.md when their triggers occur. The post-reboot read-only identity check on
@@ -55,6 +54,12 @@ On 2026-10-30 clean `2835cb0` was installed and verified against source hashes,
 with original config values/PATH and S4U/Limited/enabled/running state preserved.
 Installed Save retained a synthetic unknown key and the build stamp; Cancel
 preserved config bytes. Original config bytes were restored afterwards.
+The same installed candidate passed real interactive Ctrl+C from enabled/running
+and NVAPI away-and-back switching on both panels, each visually confirmed with
+the other display kept on Windows. These local-console writes do not establish
+fresh-boot/session-0 behavior. The owner watcher is deliberately paused for the
+coordinated profile matrix; restore the original boot/enabled/running state when
+that session ends.
 Privacy review covered reachable history and accessible GitHub surfaces;
 historical identifier/author-email publication decisions remain outstanding.
 

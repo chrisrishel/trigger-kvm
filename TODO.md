@@ -45,9 +45,13 @@ and the command checklist in `windows/RELEASE-CHECKS.md`.
   Clean `2835cb0` was installed on 2026-10-30; installed source/build identity,
   config/PATH preservation, single watcher and intended task state passed.
   Installed Save retained an unknown key and the stamp; Cancel preserved config
-  bytes, and the original config was restored. Fresh profiles, standard-user
-  UAC, decline/fallback, tier transitions, interactive cancellation and uninstall
-  remain outstanding, alongside final NVAPI physical switching.
+  bytes, and the original config was restored. On that installed candidate,
+  real Ctrl+C restored enabled/running before scheduler self-heal, and both
+  panels' NVAPI away-and-back switching was visually confirmed separately.
+  Fresh profiles, standard-user UAC, decline/fallback, tier transitions,
+  logon/reboot, Ctrl+C from the two stopped states and source-unavailable
+  uninstall remain outstanding. The coordinated profile session must restore
+  the owner's boot/enabled/running state afterwards.
 - [ ] Privacy: shared measurement notes now use consistent labels for device
   identifiers; unnecessary current Windows device examples are synthetic.
   The 2026-10-30 audit at `2835cb0` covered 112 tracked files, 226 commits/1,192

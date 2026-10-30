@@ -32,17 +32,23 @@ S4U/Limited principal, owner PATH and one enabled/running watcher were verified.
 Installed Save preserved a synthetic unknown key; Cancel preserved config bytes.
 Original config bytes and the owner's boot/enabled/running state were restored.
 The earlier timeout-restoration checks were observed on 2026-10-29.
-The ASUS dxva2 away-and-back check was visually confirmed that day. The
-2026-10-30 installed checks performed no display writes. Post-reboot read-only
-NVAPI IDs matched the baseline on driver 616.64. Interactive Ctrl+C, fresh
-profiles, account elevation, autostart transitions and final NVAPI physical
-checks remain open.
+The ASUS dxva2 away-and-back check was visually confirmed that day. On
+2026-10-30, installed `2835cb0` passed interactive Ctrl+C from enabled/running:
+one watcher returned before the next scheduled self-heal, without helper
+recovery. NVAPI away-and-back writes on each panel were visually confirmed,
+one panel at a time with the other kept on Windows. Post-reboot read-only
+NVAPI IDs matched the baseline on driver 616.64. Fresh profiles, account
+elevation, autostart transitions, logon/reboot, source-unavailable uninstall
+and interactive cancellation from the two stopped states remain open.
 
-For the next agreed interactive session, run the installed trigger check and
+For the remaining cancellation cases, run the installed trigger check and
 interrupt it with Ctrl+C; compare prior and resulting task enablement and watcher
-lock state. Keep the owner's original tier/state.
+lock state before the next self-heal. Keep the owner's original tier/state.
 Use approved disposable profiles for the separate account, reboot and uninstall
-matrix. Coordinate physical switching as its own one-panel-at-a-time session.
+matrix. The owner watcher is deliberately paused during that session; restore
+its boot/enabled/running state when finished. Repeat physical checks if changes
+to the candidate affect the tested paths; these observations do not establish
+fresh-boot/session-0 writes.
 
 These are outstanding release gates alongside the privacy review in `TODO.md`;
 automated cleanup validation does not clear them.
