@@ -1124,6 +1124,9 @@ Invoke-Mutation 'identity: status offers configure as the fix it does not have' 
 # =============================================================================
 
 # Publication regressions: each suite is required green before these run.
+Invoke-Mutation 'publication: elevation ignores deny-only administrator claims' `
+    'lib\host.ps1' 'elevation.tests.ps1' `
+    '[Security.Claims.ClaimTypes]::DenyOnlySid' '[Security.Claims.ClaimTypes]::PrimarySid'
 Invoke-Mutation 'publication: skipped transport check grants a pass' `
     'lib\checks.ps1' 'publication.tests.ps1' `
     'if ($null -eq $outcome) { return $null }' 'if ($null -eq $outcome) { return $true }'

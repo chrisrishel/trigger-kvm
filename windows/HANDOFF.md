@@ -37,7 +37,12 @@ Still required before release:
 
 - Fresh administrator-capable and separate standard-user profiles; approve and
   decline UAC, verifying the intended user's files, task principal and PATH.
-- Real profile/checkout paths containing spaces, apostrophes and non-ASCII text.
+  The first fresh administrator-capable login installation passed on `2835cb0`,
+  but its boot row rejected the unelevated administrator. The deny-only token
+  membership correction must pass the coordinated installed boot/UAC repeat.
+- Real profile/checkout paths containing spaces, apostrophes and non-ASCII text
+  through elevation and uninstall. Fresh administrator-capable login installation
+  covered those characters in both paths; the remaining flows are unverified.
 - Boot/login/no-autostart transitions, actual logon/reboot behavior, and
   uninstall from the installed shim after the source checkout is unavailable.
 - Interactive Ctrl+C from enabled/stopped and disabled/stopped task states.

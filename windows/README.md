@@ -56,7 +56,8 @@ terminal after adding PATH, or use the installed shim immediately:
 
 With no config yet it runs the walkthrough first. It asks for administrator
 rights ONCE, and only if you choose "from boot"; nothing runs elevated on the
-switch path afterwards.
+switch path afterwards. An administrator-capable account can select that tier
+from an ordinary, unelevated PowerShell window; approve UAC when prompted.
 
 The install is self-contained: the installer copies itself next to the program,
 so uninstalling works after the source tree is gone. To upgrade or repair, run

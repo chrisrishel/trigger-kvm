@@ -41,6 +41,15 @@ NVAPI IDs matched the baseline on driver 616.64. Fresh profiles, account
 elevation, autostart transitions, logon/reboot, source-unavailable uninstall
 and interactive cancellation from the two stopped states remain open.
 
+The first fresh administrator-capable profile installed the `2835cb0` archive
+successfully in the login tier, with profile and source paths containing spaces,
+an apostrophe and Unicode. Intended files/PATH, source hashes, Interactive/Limited
+principal and one watcher were verified. From boot was incorrectly disabled:
+the eligibility query omitted deny-only administrator membership. The Windows
+correction has native and fixture regressions; repeat the installed boot/UAC
+cases on the corrected candidate before clearing this gate. The first profile
+run did not reach a UAC prompt and does not count as declined-UAC fallback.
+
 For the remaining cancellation cases, run the installed trigger check and
 interrupt it with Ctrl+C; compare prior and resulting task enablement and watcher
 lock state before the next self-heal. Keep the owner's original tier/state.

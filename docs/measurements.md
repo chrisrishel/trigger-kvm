@@ -946,6 +946,40 @@ resumed at offset 0 with zero NUL bytes in the file.
 
 ## PowerShell console and language
 
+**2026-10-30, Windows -- an unelevated administrator must still be offered
+boot installation.** A new administrator-capable profile installed `2835cb0`
+from a source archive, using profile and source paths that each contained a
+space, apostrophe and Unicode. The fresh login-tier installation succeeded:
+config and program were created in that user's profile, source hashes matched,
+the installed shim reported 0.2.0/spec 15 and archive provenance, PATH contained
+the intended `bin`, and one watcher ran as the intended Interactive/Limited
+principal. The owner reported that From boot was disabled with the
+administrator-account explanation. No UAC-decline/fallback observation can be
+claimed from this run because the prompt was never reached.
+
+Native Windows PowerShell 5.1.22621.7582 reproduced the eligibility failure
+before production code changed: `whoami /groups /fo csv /nh` included the
+Administrators SID as deny-only, `WindowsIdentity.Groups` omitted it, and the
+actual `Test-CanElevate` returned false. The new native regression failed
+`expected 'True', got 'False'`. This is token-query evidence, not a mocked
+membership check. The same token's `WindowsIdentity.Claims` retained the
+deny-only SID. Microsoft's [.NET reference source](https://github.com/microsoft/referencesource/blob/main/mscorlib/system/security/principal/windowsidentity.cs)
+documents the filtering and claim generation.
+
+Eligibility now accepts the exact Administrators SID only from enabled-group
+or deny-only-group claims. It does not treat that as an elevated token or grant
+access; installation still goes through UAC. Fixtures cover both group forms,
+unrelated claim types/groups, empty claims, the already-elevated case and query
+failure. The native test compares the actual function against `whoami`'s group
+view. Replacing deny-only recognition with an unrelated claim type fails the
+fixture. These checks do not yet prove the corrected installed boot/UAC flow;
+that coordinated repeat remains in `windows/RELEASE-CHECKS.md`.
+Validation commands: `powershell.exe -NoProfile -ExecutionPolicy Bypass -File
+windows/tests/run.ps1` passed all 18 files without skips, and the same invocation
+of `windows/tests/mutate.ps1 publication` caught all 30 mutations. Product
+version remains 0.2.0 and specification revision 15; this corrects the existing
+boot-menu contract without changing shared behavior.
+
 **2026-10-30, Windows -- reviewed candidate `2835cb0` installed and its Save/
 Cancel workflow checked.** Environment: Windows 11 Education build 22631,
 Windows PowerShell 5.1.22621.7582, NVIDIA RTX 4090 driver 616.64 and Intel UHD

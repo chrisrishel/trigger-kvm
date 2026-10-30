@@ -313,27 +313,25 @@ function Invoke-BootTierElevation {
     return 'user'
 }
 
-# Can this account obtain administrator rights AT ALL?
-#
-# Not "is this process elevated" -- that is $IsElevated. This is the prior
-# question: whether a UAC prompt would be a CONSENT prompt for this person or a
-# CREDENTIAL prompt for somebody else. On a standard account it is the second,
-# and everything the resulting process installs belongs to that other account.
-#
-# Membership of the local Administrators group is the test: a split UAC token
-# still LISTS that group -- marked deny-only, but present -- so an admin running
-# unelevated answers true, which is right.
-#
-# On an error it answers TRUE. Being unable to ask is not evidence that the
-# answer is no, and a wrongly hidden option is worse than a prompt that turns
-# out to be refused: the prompt at least says so.
+# Materialize claims before disposing the native identity/token handle.
+function Get-CurrentTokenClaims {
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    try { return @($identity.Claims) }
+    finally { $identity.Dispose() }
+}
+
+# Boot-menu eligibility is administrator membership, not current elevation.
+# WindowsIdentity.Groups omits deny-only memberships in a split UAC token;
+# claims retain them. UAC still decides whether an operation may elevate.
+# A query error leaves the option available: uncertainty cannot justify hiding
+# a usable prompt. See docs/measurements.md, "PowerShell console and language".
 function Test-CanElevate {
     if ($IsElevated) { return $true }
     try {
-        $admins = New-Object Security.Principal.SecurityIdentifier(
-                      [Security.Principal.WellKnownSidType]::BuiltinAdministratorsSid, $null)
-        foreach ($g in [Security.Principal.WindowsIdentity]::GetCurrent().Groups) {
-            if ($g.Translate([Security.Principal.SecurityIdentifier]) -eq $admins) { return $true }
+        foreach ($claim in @(Get-CurrentTokenClaims)) {
+            if ($claim.Type -in @([Security.Claims.ClaimTypes]::GroupSid,
+                                 [Security.Claims.ClaimTypes]::DenyOnlySid) -and
+                $claim.Value -eq 'S-1-5-32-544') { return $true }
         }
         return $false
     } catch { return $true }

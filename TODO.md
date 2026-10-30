@@ -23,7 +23,7 @@ and the command checklist in `windows/RELEASE-CHECKS.md`.
   Verified with `make test` (13 files plus shellcheck) and
   `bash tests/mutate.sh publication` (11 mutations caught).
 - [x] Windows: publication-review defects resolved with native PowerShell 5.1
-  regressions, 18 passing test files and 29 caught publication mutations.
+  regressions, 18 passing test files and 30 caught publication mutations.
   Includes incomplete-check gating, exact-path/owner cleanup with conservative
   execution-boundary recognition, prior watcher state, apostrophes/Unicode,
   fractional settle, restricted DLL loading,
@@ -52,6 +52,11 @@ and the command checklist in `windows/RELEASE-CHECKS.md`.
   logon/reboot, Ctrl+C from the two stopped states and source-unavailable
   uninstall remain outstanding. The coordinated profile session must restore
   the owner's boot/enabled/running state afterwards.
+  A fresh administrator-capable login installation passed with spaces,
+  apostrophe and Unicode in both profile/source paths. It exposed a boot-row
+  eligibility defect: the managed groups API omits deny-only administrator
+  membership. The correction has native regression coverage and a caught
+  mutation; repeat the installed boot/UAC cases before clearing this gate.
 - [ ] Privacy: shared measurement notes now use consistent labels for device
   identifiers; unnecessary current Windows device examples are synthetic.
   The 2026-10-30 audit at `2835cb0` covered 112 tracked files, 226 commits/1,192

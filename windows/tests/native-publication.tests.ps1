@@ -4,7 +4,26 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'lib.ps1')
 . (Join-Path $WinDir 'config.ps1')
 Import-Subject 'lib\host.ps1' -Functions @('Write-WatcherLauncher','Get-WatcherCommand',
-    'Request-Elevation','Get-ChildArguments','Format-ChildArguments','Stop-Watchers','Get-ShimLines')
+    'Request-Elevation','Get-ChildArguments','Format-ChildArguments','Stop-Watchers','Get-ShimLines',
+    'Test-CanElevate','Get-CurrentTokenClaims')
+
+# whoami reports deny-only groups that WindowsIdentity.Groups omits. Compare
+# the actual eligibility function with the independent native token view.
+$nativeGroups = @(& whoami.exe /groups /fo csv /nh |
+    ConvertFrom-Csv -Header 'Group','Kind','Sid','Attributes')
+Assert-Equal 0 $LASTEXITCODE 'native token groups can be read'
+Assert-True ($nativeGroups.Count -gt 0) 'the native group view is not empty'
+$nativeAdmin = [bool]($nativeGroups.Sid -contains 'S-1-5-32-544')
+$tokenClaims = @(Get-CurrentTokenClaims)
+$claimedAdmin = @($tokenClaims | Where-Object {
+    $_.Type -in @([Security.Claims.ClaimTypes]::GroupSid,[Security.Claims.ClaimTypes]::DenyOnlySid) -and
+    $_.Value -eq 'S-1-5-32-544'
+}).Count -gt 0
+Assert-Equal $nativeAdmin $claimedAdmin 'claims preserve native administrator membership after the identity is disposed'
+$global:IsElevated = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
+    [Security.Principal.WindowsBuiltInRole]::Administrator)
+Assert-Equal $nativeAdmin (Test-CanElevate) `
+    'boot eligibility includes the native deny-only administrator membership'
 $root = Join-Path $env:TEMP ("tk-native-$PID-O'Brien-" + [char]0x00E9 + [char]0x6771)
 New-Item -ItemType Directory -Path $root -Force | Out-Null
 # TEMP may contain a DOS 8.3 alias. GetTempFileName and enumeration return long

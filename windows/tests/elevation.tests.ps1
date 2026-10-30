@@ -12,7 +12,36 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'lib.ps1')
 
 Import-Subject -Script 'lib\host.ps1' -Functions @(
-    'Format-ChildArguments', 'Get-ChildArguments', 'Request-Elevation', 'Invoke-BootTierElevation')
+    'Format-ChildArguments', 'Get-ChildArguments', 'Request-Elevation', 'Invoke-BootTierElevation',
+    'Test-CanElevate')
+
+# Boot eligibility is group membership, including a split token's deny-only
+# Administrators claim. Other claim types or groups cannot establish it.
+$script:claimReadFails = $false
+$script:tokenClaims = @()
+function Get-CurrentTokenClaims {
+    if ($script:claimReadFails) { throw 'token query unavailable' }
+    return $script:tokenClaims
+}
+$global:IsElevated = $false
+foreach ($claimType in @([Security.Claims.ClaimTypes]::GroupSid, [Security.Claims.ClaimTypes]::DenyOnlySid)) {
+    $script:tokenClaims = @(New-Object Security.Claims.Claim($claimType, 'S-1-5-32-544'))
+    Assert-True (Test-CanElevate) 'enabled and deny-only administrator groups may request UAC'
+}
+foreach ($claimType in @([Security.Claims.ClaimTypes]::Name, [Security.Claims.ClaimTypes]::PrimarySid)) {
+    $script:tokenClaims = @(New-Object Security.Claims.Claim($claimType, 'S-1-5-32-544'))
+    Assert-Equal $false (Test-CanElevate) 'an unrelated claim with the administrator SID is not group membership'
+}
+$script:tokenClaims = @(New-Object Security.Claims.Claim([Security.Claims.ClaimTypes]::GroupSid, 'S-1-5-32-545'))
+Assert-Equal $false (Test-CanElevate) 'ordinary Users membership does not establish an administrator account'
+$script:tokenClaims = @()
+Assert-Equal $false (Test-CanElevate) 'an empty claim set does not establish membership'
+$global:IsElevated = $true
+Assert-True (Test-CanElevate) 'an already elevated token needs no membership query'
+$global:IsElevated = $false
+$script:claimReadFails = $true
+Assert-True (Test-CanElevate) 'an unavailable token query does not hide a potentially usable UAC prompt'
+$script:claimReadFails = $false
 
 # ---- flags stay bare, values get quoted --------------------------------------
 #
