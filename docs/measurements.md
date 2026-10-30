@@ -972,13 +972,37 @@ access; installation still goes through UAC. Fixtures cover both group forms,
 unrelated claim types/groups, empty claims, the already-elevated case and query
 failure. The native test compares the actual function against `whoami`'s group
 view. Replacing deny-only recognition with an unrelated claim type fails the
-fixture. These checks do not yet prove the corrected installed boot/UAC flow;
-that coordinated repeat remains in `windows/RELEASE-CHECKS.md`.
+fixture.
 Validation commands: `powershell.exe -NoProfile -ExecutionPolicy Bypass -File
 windows/tests/run.ps1` passed all 18 files without skips, and the same invocation
 of `windows/tests/mutate.ps1 publication` caught all 30 mutations. Product
 version remains 0.2.0 and specification revision 15; this corrects the existing
 boot-menu contract without changing shared behavior.
+
+**Installed repeat at `4c0f13b`.** In the same disposable profile, the supported
+source installer upgraded the login-tier installation with identical saved
+config bytes. Through the installed shim from ordinary PowerShell, the owner
+could select From boot and declined the UAC prompt. The command returned 0;
+the resulting task was Interactive/Limited, owned by the intended user,
+enabled/running, with the saved tier still login and original config bytes
+unchanged. This is a declined-UAC fallback with existing configuration, not
+a fresh-profile fallback observation.
+
+The installed Save/Cancel check then passed: Cancel preserved bytes and Save
+retained the synthetic unknown key; original config bytes were restored.
+Selecting From boot again and approving UAC produced an S4U/Limited task for
+that same user, with one owned watcher in session 0. Installed source hashes
+matched `4c0f13b`, and the intended profile's files and PATH were verified.
+Both source and profile paths contained spaces, an apostrophe and Unicode.
+Actual reboot/logon, the standard-user profile and uninstall remain open.
+
+CI at `4c0f13b` passed both platforms on the second attempt. The first Windows
+attempt failed before the unchanged native-cleanup fixture's child produced a
+report; the cause was not established. All 13 native invocation forms and the
+generated launch chain passed locally, and the failed CI job passed on an
+unchanged rerun. No assertion or timeout was changed. Hosted Windows passed
+17 files, with one NVIDIA-dependent file and two driver cases explicitly
+skipped; macOS passed 13 files.
 
 **2026-10-30, Windows -- reviewed candidate `2835cb0` installed and its Save/
 Cancel workflow checked.** Environment: Windows 11 Education build 22631,

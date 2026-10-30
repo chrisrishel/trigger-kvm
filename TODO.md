@@ -55,8 +55,11 @@ and the command checklist in `windows/RELEASE-CHECKS.md`.
   A fresh administrator-capable login installation passed with spaces,
   apostrophe and Unicode in both profile/source paths. It exposed a boot-row
   eligibility defect: the managed groups API omits deny-only administrator
-  membership. The correction has native regression coverage and a caught
-  mutation; repeat the installed boot/UAC cases before clearing this gate.
+  membership. Corrected `4c0f13b` passed installed boot selection unelevated,
+  declined-UAC login fallback with existing config, approved-UAC boot
+  registration, and profile Save/Cancel. Native regression/mutation coverage
+  accompanies the fix; fresh fallback, standard-user elevation and the
+  remaining session/uninstall cases are still open.
 - [ ] Privacy: shared measurement notes now use consistent labels for device
   identifiers; unnecessary current Windows device examples are synthetic.
   The 2026-10-30 audit at `2835cb0` covered 112 tracked files, 226 commits/1,192

@@ -38,11 +38,13 @@ Still required before release:
 - Fresh administrator-capable and separate standard-user profiles; approve and
   decline UAC, verifying the intended user's files, task principal and PATH.
   The first fresh administrator-capable login installation passed on `2835cb0`,
-  but its boot row rejected the unelevated administrator. The deny-only token
-  membership correction must pass the coordinated installed boot/UAC repeat.
+  but its boot row rejected the unelevated administrator. Corrected `4c0f13b`
+  passed selection from ordinary PowerShell, declined-UAC login fallback with
+  existing config, and approved-UAC S4U/Limited installation for the intended
+  user. Fresh fallback and separate standard-user elevation remain unverified.
 - Real profile/checkout paths containing spaces, apostrophes and non-ASCII text
-  through elevation and uninstall. Fresh administrator-capable login installation
-  covered those characters in both paths; the remaining flows are unverified.
+  through standard-user elevation and uninstall. Administrator-capable login,
+  upgrade and approved/declined UAC covered those characters in both paths.
 - Boot/login/no-autostart transitions, actual logon/reboot behavior, and
   uninstall from the installed shim after the source checkout is unavailable.
 - Interactive Ctrl+C from enabled/stopped and disabled/stopped task states.

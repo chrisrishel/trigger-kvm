@@ -45,10 +45,14 @@ The first fresh administrator-capable profile installed the `2835cb0` archive
 successfully in the login tier, with profile and source paths containing spaces,
 an apostrophe and Unicode. Intended files/PATH, source hashes, Interactive/Limited
 principal and one watcher were verified. From boot was incorrectly disabled:
-the eligibility query omitted deny-only administrator membership. The Windows
-correction has native and fixture regressions; repeat the installed boot/UAC
-cases on the corrected candidate before clearing this gate. The first profile
-run did not reach a UAC prompt and does not count as declined-UAC fallback.
+the eligibility query omitted deny-only administrator membership. Corrected
+`4c0f13b` passed the installed repeat: upgrade preserved config bytes; From boot
+was selectable unelevated; declining UAC retained a working login tier; approving
+UAC installed S4U/Limited for the intended user with one watcher. Save/Cancel
+and unknown-key preservation passed in this profile too. The first profile run
+did not reach a UAC prompt; the later fallback had existing config. Fresh
+fallback, standard-user credentials, actual logon/reboot and uninstall remain
+distinct unverified cases.
 
 For the remaining cancellation cases, run the installed trigger check and
 interrupt it with Ctrl+C; compare prior and resulting task enablement and watcher
