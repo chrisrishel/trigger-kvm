@@ -2029,6 +2029,47 @@ evidence above; privacy and coordinated release checks remain separate gates.
 
 ## Release validation and privacy
 
+**2026-10-31 -- Windows 0.3.0 preparation at clean candidate
+`e2636e099827f903ee9bf62c1ab1c0855d9e7916`.** Windows 11 Education build 22631,
+Windows PowerShell 5.1.22621.7649, an administrator-capable account without
+elevation; NVIDIA RTX 4090 driver 32.0.16.1664 (616.64) and Intel UHD 770 driver
+32.0.101.7088. From the repository root:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\windows\tests\run.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\windows\tests\mutate.ps1 release-stamp
+```
+
+All 23 test files passed without skips, including parsing/conventions,
+specification conformance and native process/console cases. All three
+`release-stamp` mutations were caught and restored: replacing the stamped
+version, reading the source constant instead of the installed stamp, and
+rewriting build identity during reconfiguration. The tree was clean before
+and after these commands. Raw receipts remain private.
+
+The existing isolated installer fixture now copies the shipping scripts into
+its temporary installation, reads the source version dynamically, and verifies
+product 0.3.0 and specification 16 as separate stamp fields. It invokes the
+installed status function with a deliberately different source version in
+scope, then checks that reconfiguration preserves the exact stamp. Task,
+watcher and device queries are fixture stubs; this is installation-file/status
+coverage, not a live product upgrade. Existing assertions are retained.
+
+Compared with sanitized `ab82fce`, the only shipping Windows code change is
+the version constant. Bootstrap, detector, switcher and configuration/menu
+behavior are unchanged. The dated installed/profile/reboot and visually
+confirmed physical observations are therefore reused with their existing
+limits. Read-only before/after checks found identical saved config, installed
+stamp, user PATH and task XML; task enablement/running state was unchanged and
+the watcher lock remained held. The live installation remains product 0.2.0,
+specification 16, with its original stamp. No installer, UAC, account/profile
+change, reboot or monitor write was performed.
+
+This evidence receipt is a later documentation commit. The final coordinated
+candidate still requires matching native macOS validation, passing CI, final
+remote/Actions privacy and documentation review, and explicit release/visibility
+approval. No tag, release or visibility change is part of this preparation.
+
 **2026-10-31 -- macOS 0.3.0 preparation and documentation review.** The
 preparation worktree is based on `065cc0f`; the only runtime change is
 `TK_VERSION` from 0.2.0 to 0.3.0. Both specification revisions remain 16.

@@ -42,9 +42,13 @@ The Windows 0.3.0 preparation changes only the shipping version constant,
 tests and documentation. The isolated installer fixture copies the current
 shipping scripts, verifies that the source version reaches the stamp and
 installed `status`, and checks that reconfiguration preserves that identity.
-All three `release-stamp` mutations were caught. The fixture stubs task,
-watcher and device queries; it does not upgrade the owner's installation.
-Clean-candidate native results belong in `../docs/measurements.md`.
+Clean candidate `e2636e0` passed all 23 native PowerShell 5.1 files without
+skips on 2026-10-31, and all three `release-stamp` mutations were caught and
+restored. The fixture stubs task, watcher and device queries; it does not
+upgrade the owner's installation. The exact candidate, environment, commands
+and preservation checks are recorded in `../docs/measurements.md`. A later
+documentation receipt does not change the tested runtime; the final candidate
+still needs matching native macOS validation and final review/approval.
 
 The sanitized Windows checkout at `2551331` passed all 23 native PowerShell 5.1
 test files without skips on 2026-10-31. It is the active top-level workspace;

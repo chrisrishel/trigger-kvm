@@ -38,6 +38,10 @@ coordinated release is **0.3.0**. Product versions, evidence and approval follow
 - [x] Coordinated source versions are **0.3.0** and both specification revisions
   stay at 16. The Windows guide distinguishes released sources from development
   main; isolated installer/status fixtures verify version stamping and retention.
+- [x] Windows release preparation at clean `e2636e0`: all 23 native PowerShell
+  5.1 test files passed without skips; all three installed-version mutations
+  were caught and restored. Existing installation/state and dated hardware,
+  profile and reboot evidence are preserved (`docs/measurements.md`).
 
 ### Remaining
 
