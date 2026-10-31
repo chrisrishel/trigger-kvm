@@ -66,6 +66,24 @@ try {
     catch { $refused = $true }
     Assert-True $refused 'a failed restricted launch is refused'
 
+    # Inject a restriction failure before a child exists. The protected host
+    # must not follow a user-controlled log path while it still has its token.
+    $originalSource = $UserLaunchSource
+    try {
+        $UserLaunchSource = $UserLaunchSource.Replace('IntPtr token = CreateOrdinaryToken();',
+            'throw new InvalidOperationException("fixture restriction failure"); IntPtr token = CreateOrdinaryToken();')
+        $failureLog = Join-Path $root 'before-restriction.log'
+        $failureReport = Join-Path $root 'before-restriction.json'
+        $start.Arguments = Get-BootTaskArguments -Watcher $watcher -Switcher (Join-Path $root 'trigger-kvm.ps1') -LogFile $failureLog -ConfigFile $failureReport
+        $process.Dispose()
+        $process = [Diagnostics.Process]::Start($start)
+        $errors = $process.StandardError.ReadToEndAsync()
+        Assert-True ($process.WaitForExit(20000)) 'bounded restriction-failure fixture finished'
+        Assert-Equal 1 $process.ExitCode 'restriction failure fails the task'
+        Assert-True (-not (Test-Path -LiteralPath $failureReport)) 'restriction failure never starts the watcher'
+        Assert-True (-not (Test-Path -LiteralPath $failureLog)) 'privileged bootstrap never writes to a user-controlled log path'
+    } finally { $UserLaunchSource = $originalSource }
+
     $UserLaunchSource += "`n// fixture source change"
     $refused = $false
     try { Initialize-UserLaunch } catch { $refused = $_.Exception.Message -match 'already loaded' }

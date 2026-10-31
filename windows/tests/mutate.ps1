@@ -1124,6 +1124,14 @@ Invoke-Mutation 'identity: status offers configure as the fix it does not have' 
 # =============================================================================
 
 # Publication regressions: each suite is required green before these run.
+Invoke-Mutation 'publication: privileged boot failure writes a user-controlled log' `
+    'lib\user-launch.ps1' 'boot-launch.tests.ps1' `
+    @'
+'Write-Error $_ -ErrorAction Continue'
+'@ `
+    @'
+('Add-Content -LiteralPath ''{0}'' -Value ''fixture'' ' -f $LogFile.Replace("'", "''"))
+'@
 Invoke-Mutation 'publication: boot action bypasses the protected token bootstrap' `
     'lib\host.ps1' 'privilege.tests.ps1' `
     '$bootArguments = Get-BootTaskArguments -Watcher $WATCH -Switcher $SWITCHER -LogFile $LOG -ConfigFile $CONFIG' `

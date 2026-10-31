@@ -1246,6 +1246,19 @@ Microsoft documents [S4U authentication and batch-logon requirements](https://le
 [SAFER token computation](https://learn.microsoft.com/en-us/windows/win32/api/winsafer/nf-winsafer-safercomputetokenfromlevel)
 and [mandatory integrity control](https://learn.microsoft.com/en-us/windows/win32/secauthz/mandatory-integrity-control).
 
+**2026-10-30, Windows -- boot bootstrap failure handling.** A native bounded
+fault-injection fixture made token restriction fail before any watcher started.
+The bootstrap returned failure but wrote its user-supplied log path while still
+holding the original token. The regression reproduced that file write before
+the correction. The handler now reports the failure to stderr and exits 1;
+it does not write to user-controlled paths. Early bootstrap failures are
+diagnosed through Task Scheduler's Last Run Result. The regression asserts
+failure, no child receipt and no log file. All 12 affected boot mutations were
+caught, including reintroducing this write. The full native PowerShell 5.1 suite
+passed all 21 files without skips again; the preceding full publication run
+caught all 53 mutations before the new case was added. No installed task,
+account right or monitor was changed by this test.
+
 CI at `4c0f13b` passed both platforms on the second attempt. The first Windows
 attempt failed before the unchanged native-cleanup fixture's child produced a
 report; the cause was not established. All 13 native invocation forms and the

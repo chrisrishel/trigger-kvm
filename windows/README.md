@@ -184,7 +184,8 @@ is separate from permission to edit the task definition. Start the installer
 unelevated even when changing away from boot; let it request the required step.
 Config and logs are retained by uninstall. The watcher requires no administrator
 operations. Boot startup refuses rather than launching with excess privileges
-if token restriction fails; inspect `trigger-kvm logs`.
+if token restriction fails. Check the task's Last Run Result in Task Scheduler;
+this early failure cannot write to the user log while still privileged.
 
 The two automatic tiers also carry a one-minute repeating trigger, which is what
 brings a killed watcher back. Task Scheduler's own RestartCount does not: it

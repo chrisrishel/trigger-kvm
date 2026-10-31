@@ -182,7 +182,7 @@ function Initialize-UserLaunch {
 }
 
 # Embed the bootstrap in the administrator-protected task definition. Never
-# load a user-writable script or library while still holding the S4U token.
+# dot-source installed scripts while still holding the S4U token.
 function Get-BootTaskArguments {
     param([string]$Watcher, [string]$Switcher, [string]$LogFile, [string]$ConfigFile)
     $arguments = '-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "{0}" -Exec "{1}" -Arg pull -LogFile "{2}" -Config "{3}"' -f `
@@ -199,7 +199,7 @@ function Get-BootTaskArguments {
         ('exit ([TkUserLaunch]::Run(''{0}'', ''{1}'', ''{2}''))' -f `
             (Join-Path $PSHOME 'powershell.exe').Replace("'", "''"), $arguments.Replace("'", "''"), (Split-Path -Parent $Watcher).Replace("'", "''"))
         '} catch {'
-        ('try {{ Add-Content -LiteralPath ''{0}'' -Value (''boot launcher: '' + $_.Exception.Message) -Encoding UTF8 }} catch {{ }}' -f $LogFile.Replace("'", "''"))
+        'Write-Error $_ -ErrorAction Continue'
         'exit 1'
         '}'
     ) -join "`n"
