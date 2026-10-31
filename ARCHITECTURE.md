@@ -190,12 +190,14 @@ on Windows, so the debounce is load-bearing.
 
 ## When it starts
 
-Both platforms offer two tiers with the same property: **elevation once, to
-register, and nothing elevated on the switch path.**
+Both platforms' contract requires **elevation once, to register, and nothing
+elevated on the switch path.** Windows boot-token enforcement remains a release
+blocker: the 2026-10-30 bounded S4U control ran elevated despite RunLevel Limited
+(`docs/measurements.md`).
 
 | | boot | login |
 |---|---|---|
-| Windows | Scheduled Task, S4U principal, session 0, unelevated; admin once to register | Scheduled Task, interactive |
+| Windows | Scheduled Task, S4U principal, session 0, requests Limited; actual token restriction unresolved; admin once to register | Scheduled Task, interactive |
 | macOS | LaunchDaemon with `UserName` set: runs as the user, unelevated, with no session; `sudo` once to install | LaunchAgent |
 
 Windows boot registration runs in an elevated child with the intended user's

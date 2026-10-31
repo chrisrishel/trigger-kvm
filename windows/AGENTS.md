@@ -108,9 +108,9 @@ values quoted (`Format-ChildArguments`). And its only voice is the transcript
 the terminating error and flattens the exit code (measured), so the catch goes
 INSIDE the redirection.
 
-**Tiers**: the task-registration logic lives in `lib/host.ps1` only, and the boot
-tier is an S4U task -- "run as this user without their password", which is what
-costs the one admin prompt. `event-watch.ps1` takes a `Global\` mutex so
+**Tiers**: `lib/host.ps1` registers S4U for boot. `RunLevel Limited` does NOT
+prove an unelevated process token (2026-10-30 measurement); validate the actual
+token. `event-watch.ps1` takes a `Global\` mutex so
 exclusion covers the computer rather than one session, and falls back to
 `Local\` ONLY where the account may not create a global name. A watcher finding
 the global name held by ANOTHER ACCOUNT stands down instead of falling back --

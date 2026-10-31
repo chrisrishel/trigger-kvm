@@ -56,8 +56,8 @@ terminal after adding PATH, or use the installed shim immediately:
 
 With no config yet it runs the walkthrough first. Choosing "from boot" asks for
 administrator rights to register the task, which requests RunLevel Limited.
-Actual boot-process token validation remains a release gate: a bounded native
-control reported administrator membership despite that setting.
+Actual boot-process token restriction remains a release gate: a bounded native
+control ran with an elevated administrator token despite that setting.
 An administrator-capable account can select that tier from an
 ordinary, unelevated PowerShell window; approve UAC when prompted. Removing a
 task registered with elevation also needs approval, including when changing
@@ -151,7 +151,7 @@ program files in place and explains the remaining task.
 
 | Answer | What is installed | Covers |
 |---|---|---|
-| From boot | a Scheduled Task with an S4U principal and RunLevel Limited, triggered at startup. Administrator once, to register; runs as you in session 0. Actual unelevated-token validation remains open | from boot onward -- before the first login, while locked, after a logoff |
+| From boot | a Scheduled Task with an S4U principal and RunLevel Limited, triggered at startup. Administrator once, to register; runs as you in session 0. Actual token restriction remains unresolved | from boot onward -- before the first login, while locked, after a logoff |
 | From login | the same task with an Interactive principal, triggered at logon | from your logon onward, including while the screen is locked |
 | No | the same task with no triggers, started now | this session only; `restart` starts it again |
 
@@ -172,8 +172,9 @@ unelevated process then registers the replacement, so later login/no-autostart
 changes do not require administrator rights. The watcher's `Limited` run level
 is separate from permission to edit the task definition. Start the installer
 unelevated even when changing away from boot; let it request the required step.
-Config and logs are retained by uninstall; the running watcher never requires
-elevation.
+Config and logs are retained by uninstall. The watcher requires no administrator
+operations; the unresolved boot-token issue above concerns the privileges Windows
+actually grants it.
 
 The two automatic tiers also carry a one-minute repeating trigger, which is what
 brings a killed watcher back. Task Scheduler's own RestartCount does not: it

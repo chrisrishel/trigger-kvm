@@ -79,9 +79,10 @@ and the installer returned 1. Its intermediate success messages were incorrect.
 Task-operation error handling is corrected in source; S4U registration remains
 under native diagnosis before the installation gate can pass. Bounded tasks
 also denied own-standard-user S4U registration without triggers; the
-administrator control ran and cleanup left zero fixture tasks. Its reported
-administrator membership requires actual process-token validation: requested
-RunLevel Limited alone does not establish an unelevated process.
+administrator control ran and cleanup left zero fixture tasks. Follow-up process
+inspection confirmed TokenElevation 1/type 1 and enabled administrator membership
+despite registered RunLevel Limited. Actual boot-token restriction must be fixed
+and validated, including the installed watcher and required device access.
 The probe's initial decline and later approval are not installation-fallback
 results: neither run installed the product or registered a task.
 The current source corrects this by elevating only old-task removal and
@@ -157,7 +158,7 @@ path, since an account's display name alone does not prove a Unicode path.
 - Administrator-capable account: first install unelevated; choose boot and
   approve UAC. Confirm S4U, RunLevel Limited, correct user principal and files.
   Verify the actual watcher process token is unelevated; task settings alone
-  are insufficient, following the bounded control's unexpected membership.
+  are insufficient, following the bounded control's confirmed elevated token.
 - Standard account with a separate administrator credential: repeat boot
   installation; verify files and PATH belong to the standard user, not the
   administrator. The elevated child must not change its administrator's PATH.

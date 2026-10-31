@@ -51,8 +51,8 @@ Still required before release:
   is corrected with 19 passing native test files and 42 caught publication
   mutations; the installed standard-user repeat remains outstanding.
   Bounded own-user standard S4U registration also failed. The administrator
-  control ran but reported administrator membership despite requested Limited;
-  verify the actual process token before relying on the unelevated boot claim.
+  control ran elevated despite registered Limited (verified process token);
+  enforce and validate actual token restriction before clearing the boot gate.
   All diagnostic tasks were removed; adding boot to a seed was not reached.
 - Real profile/checkout paths containing spaces, apostrophes and non-ASCII text
   through standard-user elevation and uninstall. Administrator-capable login,
@@ -100,3 +100,11 @@ on 2026-10-30. Historical identifier/author-email publication is not approved.
 
 The implementation is at specification revision 15. Product version stays
 0.2.0 during remediation; 0.3.0 is the next coordinated release target.
+
+## Enforce an unelevated boot process token
+
+Kind:     defect report
+Spec:     configure.md section 8; root AGENTS.md, host-owned startup tier
+Why:      S4U / RunLevel Limited did not produce an unelevated administrator process in the native control
+Owed:     implement and test actual token restriction; validate the installed watcher in session 0, ownership, cleanup/single-instance behavior and required device access before restoring the boot installation
+Verified: 2026-10-30 bounded identity-only task, same principal/settings construction as the installer, registered S4U/Limited, correct owner, session 0, TokenElevation 1, TokenElevationType 1, Administrator membership enabled; zero fixture tasks left; no installed watcher or physical switching tested by this diagnostic

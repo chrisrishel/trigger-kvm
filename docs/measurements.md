@@ -10,12 +10,13 @@ replaced with consistent labels in angle brackets. Their equality or change
 is the observation; the identifying bytes are unnecessary. Numeric protocol
 values and documented placeholder serials remain literal.
 
-**A plausible inference is not a measurement.** Three claims were once written
+**A plausible inference is not a measurement.** Four claims were once written
 into the instructions as measured and were wrong, each an inference from a real
 observation: "IOBluetooth never returns" (an unanswered permission prompt sat
 behind it), "a LaunchAgent can never get Bluetooth permission" (the prompt had not
-arrived within the 15 seconds observed), and "reading the displays needs a
-logged-in session" (it does not, at all). Run the thing in the context you are
+arrived within the 15 seconds observed), "reading the displays needs a
+logged-in session" (it does not, at all), and "S4U / Limited proves the process
+is unelevated" (a native control's process token was elevated). Run the thing in the context you are
 making a claim about; if you cannot, say that instead of concluding.
 
 | section | what it settles | rules resting on it |
@@ -267,9 +268,10 @@ function nodes (`SWD\MMDEVAPI\` audio endpoints) did read `Present=False`, but
 they are opaque GUIDs, differ by device class, and appeared twice under two
 service-id forms.
 
-**2026-08-30, Windows -- WMI reaches session 0.** From an unelevated S4U task: 45
+**2026-08-30, Windows -- WMI reaches session 0.** From an S4U task: 45
 `Win32_DeviceChangeEvent` indications in 90 s, and `Win32_PnPEntity` presence
-queries worked there too.
+queries worked there too. Its process-token elevation was not recorded; the
+2026-10-30 control invalidates inferring that from the task's Limited setting.
 
 **2026-08-31, macOS -- IOBluetooth works once TCC permission is granted.** One
 probe binary, run from a terminal and from a LaunchAgent: 10 paired devices with
@@ -506,10 +508,10 @@ this file's preamble exists for exactly that distinction. `../TODO.md` carries
 it.
 
 **2026-08-30, Windows -- session 0 reports one phantom monitor.** `nvapi-probe.ps1`
-as SYSTEM and as an unelevated S4U task: `EnumDisplayMonitors` returned **1** in
+as SYSTEM and as an S4U task: `EnumDisplayMonitors` returned **1** in
 each case, not DDC-capable, while NVAPI enumerated both real panels with their
 real EDIDs. NVAPI also **writes** from session 0: the S4U task moved the LG in
-both directions with no desktop.
+both directions with no desktop. The S4U process-token elevation was not recorded.
 
 **2026-08-30, Windows -- `NV_GPU_DISPLAYIDS.isActive` varies over time.** `False`
 for both panels at 15:51 and `True` for both at 16:13 in the same interactive
@@ -811,9 +813,9 @@ also the whole limitation: today an NVAPI-only Windows install covers only
 panels on the NVIDIA card.
 
 **2026-09-01, Windows -- session 0 gives dxva2 no usable handle, with the ASUS
-on the Intel output.** From an unelevated S4U on-demand task (`tk-dxva2-s0`,
+on the Intel output.** From an S4U on-demand task (`tk-dxva2-s0`,
 principal the owner's account, `LogonType S4U`, `RunLevel Limited`,
-`LastTaskResult 0`),
+`LastTaskResult 0`; process-token elevation not recorded),
 running as `sessionId=0 interactive=False`:
 
 ```
@@ -1171,10 +1173,28 @@ triggers (0x80070005), as well as administrator-to-standard-user registration.
 The administrator's own S4U control registered and ran in session 0. Because
 the seed could not be created, adding a boot trigger to it was **not tested**.
 All fixture tasks were removed; no product task or monitor input was changed.
-The control reported enabled administrator membership despite requesting Limited;
-actual task settings and process-token elevation require a separate native
-check. Do not infer an unelevated token solely from the requested task principal.
-No standard-user boot workaround is yet validated.
+The follow-up verified the registered control as S4U / Limited, compatibility
+Win7, yet its session-0 process had `TokenElevation=1`,
+`TokenElevationType=1` (no linked token), and enabled Administrator membership.
+The elevated registration helper had type 2; an ordinary interactive owner
+process had elevation 0/type 3. These read-only `GetTokenInformation` checks
+used the process token, not an inferred task setting. The control used the
+same principal/settings construction as the installer; the actual installed
+watcher was paused and was not measured by this diagnostic.
+Read-only LSA queries found no direct rights for the disposable standard user,
+and no batch-logon right in Users or its other queried well-known groups;
+Administrators did have `SeBatchLogonRight`. No rights were changed by this
+diagnostic. The owner confirmed completion with zero remaining fixture tasks.
+Both standard-user registration and actual boot-token restriction remain
+release blockers. No workaround is yet validated.
+
+The error-reporting correction landed as `b6936eb`. Its clean checkout passed
+all 19 native test files without skips. CI run `41147087456` passed both
+platforms: Windows 18 files, with the NVIDIA resolution file and two driver
+cases explicitly skipped; macOS 13 files. Full logs were inspected. The privacy
+refresh covered 235 commits / 1,253 text blobs and all 23 available Actions
+logs, with no new findings or authorship changes; secret scanning remained
+unavailable. The owner's separate privacy-review block remains in force.
 
 CI at `4c0f13b` passed both platforms on the second attempt. The first Windows
 attempt failed before the unchanged native-cleanup fixture's child produced a

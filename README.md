@@ -37,7 +37,7 @@ hardware they do not own. Read [Safety](#safety) before you run it.
 |---|---|---|
 | Computer | Apple Silicon (`m1ddc`, the DDC tool used, does not support Intel Macs) | Any GPU for a monitor that takes the standard DDC/CI command. An **NVIDIA** GPU for a monitor that needs a manufacturer's own method (the LG here does), and for any monitor that must follow the switch at the login screen |
 | Software | Homebrew `m1ddc`; Xcode command line tools | Windows PowerShell 5.1, as shipped |
-| Permissions | None. "Start from boot" asks for your password once to install a system launchd job that then runs as you | None for "start from login". "Start from boot" raises one UAC prompt to register a task that then runs as you; your account must be an administrator |
+| Permissions | None. "Start from boot" asks for your password once to install a system launchd job that then runs as you | None for "start from login". "Start from boot" requests administrator approval; standard-user registration and boot-process token restriction remain [release blockers](windows/RELEASE-CHECKS.md) |
 | Triggers | USB devices, and Bluetooth devices that connect | USB devices, and Bluetooth devices that connect |
 
 **Monitors.** Each must accept input selection over DDC/CI. Support varies by

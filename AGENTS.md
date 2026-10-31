@@ -64,7 +64,7 @@ on.** Link renegotiation, and each write is sent twice on purpose. Not a bug.
 
 ## Rules both platforms share
 
-Each rests on a measurement in `docs/measurements.md`, whose opening lists three
+Each rests on a measurement in `docs/measurements.md`, whose opening lists
 "measurements" that were wrong. Re-measure before changing a detector rule.
 
 - **The detector fires on an absent -> present EDGE, debounced and settled**
