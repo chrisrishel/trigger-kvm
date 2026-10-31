@@ -1871,9 +1871,9 @@ by an older backup. The source snapshot tested in session 0 matched
 `windows/lib/user-launch.ps1` SHA-256
 `4EDD6073A6766B17AAB9331669F866C9C16DCCDA1E1E527288AF7F2AF43221FB`.
 Private task/token receipts are retained outside tracked files. No account
-rights, live installation, reboot or monitor inputs were changed. The installed
-`6a5afcf` task therefore still needs a coordinated supported-installer upgrade
-to receive this bootstrap; a watcher restart alone does not regenerate it.
+rights, live installation, reboot or monitor inputs were changed by that
+fixture session. The subsequent coordinated upgrade below regenerated the
+installed task; a watcher restart alone does not regenerate it.
 
 CI for `7e65036` (validation record retained privately)
 passed both jobs. Inspection with `gh run view 41190219699 --log` confirmed
@@ -1882,6 +1882,30 @@ hardware, and two real-driver cases explicitly skipped; macOS: all 13 files
 passed. These hosted results do not replace the local 22-file no-skip run or
 physical observations. The final coordinated release candidate and separate
 privacy review remain open gates.
+
+**2026-10-31, 03:14 PDT (10:14 UTC) -- installed upgrade to `6f65aff`.** The
+owner authorized the supported installer and UAC prompt. A clean detached
+checkout supplied the candidate; the main checkout's pre-existing local work
+was preserved. Private backups captured the then-current configuration, program
+files, task XML and PATH, with clean `6a5afcf` source prepared for recovery.
+In the original owner's elevated Windows PowerShell 5.1 context, the installed
+shim's `pause` was followed by `powershell.exe -NoProfile -ExecutionPolicy Bypass
+-File .\windows\install.ps1` from the clean candidate. The installer exited 0;
+rollback was not needed.
+
+All installed script hashes and the stamp matched `6f65aff`, product 0.2.0 /
+specification 15. Current configuration bytes and PATH matched their private
+pre-upgrade snapshots exactly. The protected task contained the embedded
+assembly bootstrap with module autoload disabled and zero PowerShell command
+AST nodes. The intended owner's S4U/Limited task was enabled with a boot
+trigger, and exactly one owned watcher held its lock. Its actual token was in
+session 0 with medium integrity, no enabled administrator/power-user membership
+and only change-notify privilege. The installed shim's `status` succeeded;
+independent post-session checks confirmed source identity, preservation, task
+state, secured bootstrap and watcher lock. No account rights, reboot or monitor
+inputs were changed. This is installed/native OS evidence, not a new physical
+switching or pre-login reboot observation. Private backups and receipts remain
+outside tracked files.
 
 ## Release validation and privacy
 

@@ -36,7 +36,8 @@ and the command checklist in `windows/RELEASE-CHECKS.md`.
   corrected. Native suite: 22 files; relevant mutations: 20 caught. Bounded
   session-0 control/success/failure checks passed on 2026-10-31; reuse completed
   installed/reboot/physical evidence for unchanged behavior.
-  The live installation remains `6a5afcf` until a coordinated upgrade.
+  The coordinated live upgrade to `6f65aff` passed on 2026-10-31: current config
+  bytes/PATH preserved, secured task rebuilt, one ordinary boot watcher running.
 - [x] Shared contracts: revision 15 settles menu overflow and labels `status`
   as the current saved configuration. Both platforms implement revision 15;
   empty saved triggers also retain the restart reminder on Windows.

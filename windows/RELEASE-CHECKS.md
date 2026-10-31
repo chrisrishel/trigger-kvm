@@ -64,16 +64,20 @@ installed stamp, task XML/enabled/running state, watcher lock and PATH matched
 before/after snapshots. No account rights, installation, reboot or monitors
 were changed. This closes the affected-context validation gap.
 
-The live `6a5afcf` installation has not been changed by this follow-up. Applying
-the fix there requires a supported installer upgrade to regenerate the
-protected task, coordinated separately. Existing manual evidence is reused
-where behavior is unchanged.
+The owner's installed candidate is now **`6f65aff`**, product 0.2.0 /
+specification 15. The authorized supported-installer upgrade on 2026-10-31
+regenerated the secured bootstrap, preserved current configuration bytes and
+PATH, and left the boot task enabled with exactly one owned watcher running.
+Installed source hashes/stamp and the actual ordinary session-0 token passed;
+independent checks confirmed the lock and a bootstrap with no command lookup.
+Private program/config/task/PATH backups are retained. No reboot or physical
+write was repeated; existing manual evidence is reused for unchanged behavior.
 
-The original owner's installed candidate is now **`6a5afcf`**, product 0.2.0 /
-specification 15. The supported installer restored its intended boot/enabled/
-running state on 2026-10-30. Source hashes/stamp match the clean checkout,
-configuration bytes and owner PATH are unchanged, and exactly one intended
-watcher holds its lock. Its actual session-0 token has medium integrity, no
+Earlier installed/reboot evidence is tied to **`6a5afcf`**. The supported
+installer restored its intended boot/enabled/running state on 2026-10-30.
+Source hashes/stamp matched the clean checkout, configuration bytes and owner
+PATH were unchanged, and exactly one intended watcher held its lock. Its
+actual session-0 token had medium integrity, no
 administrator/power-user membership and only change-notify privilege. The
 temporary Switch user policy is restored to its original value.
 The restored owner's final real reboot also passed: one restricted watcher

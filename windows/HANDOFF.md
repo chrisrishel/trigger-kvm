@@ -36,9 +36,10 @@ Verified: 2026-10-30, Windows PowerShell 5.1 suite: 21 files without skips; inst
 Completed installed/hardware evidence is retained; the changed bootstrap's
 bounded session-0 check also passed on 2026-10-31. Detailed candidate evidence
 and limits are in `../docs/measurements.md` and `RELEASE-CHECKS.md`. Do not repeat
-completed profile checks. The owner installation is `6a5afcf`, with original
-config/PATH and boot/enabled/running state restored on 2026-10-30; the temporary
-Switch user policy is also restored. Both disposable accounts/profiles were privately backed up and
+completed profile checks. The owner installation was restored at `6a5afcf` on
+2026-10-30 and upgraded to `6f65aff` on 2026-10-31 with current config/PATH and
+boot/enabled/running state preserved. The temporary Switch user policy is also
+restored. Both disposable accounts/profiles were privately backed up and
 removed with approval; the standard account's test-added right was restored
 first. Independent verification passed after cleanup.
 
@@ -60,12 +61,12 @@ S4U session-0 success/control/failure checks passed. Fixture tasks were removed
 and the current owner configuration, task, PATH and watcher state were preserved.
 See the dated measurement and release-check records for details.
 
-The live `6a5afcf` installation still contains the original embedded bootstrap.
-Applying the dependency-loading fix requires rerunning the supported installer
-to regenerate the protected task; copying scripts or restarting does not do
-that. Coordinate a live upgrade if requested and preserve the then-current
-configuration and enabled/running state. No repeat of the complete manual
-matrix is required for unchanged detector, switcher or token-restriction code.
+The authorized live upgrade to `6f65aff` used the supported installer and
+rebuilt the secured task. Installed hashes/stamp, exact config bytes, PATH,
+boot/enabled/running state, one owned watcher and its ordinary session-0 token
+passed verification. Private backups are retained. No repeat of the complete
+manual matrix is required for unchanged detector, switcher or token-restriction
+code; no reboot or physical write was performed during this upgrade.
 
 Privacy remains a separate task. The owner's policy is to retain public
 authorship/name and GitHub handle while removing private email addresses,
