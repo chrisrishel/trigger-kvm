@@ -1277,6 +1277,69 @@ absent for the profile matrix. Receipts completed at 2026-10-31 01:34 UTC.
 This is native session-0 token/launch evidence, not an installed watcher,
 startup-after-reboot, device-access or physical-switching result.
 
+**2026-10-30, Windows -- installed standard-profile workflow on `6a5afcf`.**
+Windows 11 build 22631, native Windows PowerShell 5.1, with spaces, an
+apostrophe and Unicode in the actual profile and source paths. The retained
+archive manifest/hash and every installed source hash identify `6a5afcf`; the
+installed 0.2.0/specification-15 stamp correctly says it is not a Git checkout.
+The owner supplied a console transcript and the helper saved before/after
+receipts privately. Review of those receipts passed 46 explicit assertions.
+
+After approving separate-administrator UAC, cancelling the intended standard
+user's password dialog preserved every program hash, config hash and PATH,
+with no task or watcher created. Retrying with that user's password succeeded:
+S4U/Limited, the intended principal, one watcher holding its lock, session 0,
+medium integrity (8192), no administrator/power-user membership and only
+`SeChangeNotifyPrivilege`. Config bytes and PATH were preserved. The program
+directory was owned by Administrators; the config was owned by the intended
+standard user. That user subsequently configured and uninstalled the program
+successfully through its installed shim.
+
+A real reboot occurred at 2026-10-31 02:38:26.5 UTC. The one intended watcher
+started at 02:39:05.552 UTC, about 39 seconds after boot and 174 seconds before
+the first interactive logon at 02:41:59.585 UTC. Its actual token again passed
+the same rights checks. This establishes installed pre-login startup, not a
+physical switch. Boot-to-login produced a user-owned Interactive task. Installed
+Save retained a synthetic unknown key; Cancel preserved config bytes and the
+helper restored the original config afterward. Real sign-out/sign-in produced
+one new watcher in the new interactive session. Changing to no autostart started
+one watcher immediately, then a further sign-out/sign-in left the enabled task
+without triggers or a watcher.
+
+Both source-unavailable uninstalls removed task/program/watcher and the product
+PATH entry while retaining exact config/log bytes. The original PATH entries
+and ordering survived; an original trailing semicolon was normalized away by
+the existing PATH helpers. A private byte-identical-PATH assertion failed on
+that one-character difference, which was investigated and retained as an
+explicit limitation rather than reported as byte preservation. No repository
+test assertion was changed. Between uninstalls, a fresh product-state setup
+(no program/config/task, retained data backed up separately) accepted actual
+UAC decline and installed a working login fallback. This is fresh product
+state in the existing disposable profile, distinct from its earlier first
+profile installation. No monitor or trigger checks were run in this session.
+
+**Original-owner restoration, 2026-10-30.** The coordinated supported installer
+upgraded the original owner from `2835cb0` to clean `6a5afcf`. Installed source
+hashes/stamp, unchanged original config bytes/PATH, boot/S4U enabled state and
+exactly one intended watcher were verified. Its actual token passed the same
+session-0/ordinary-rights checks. The temporary Switch user policy was restored
+to its original DWORD 1. No fixture tasks remain. Read-only account-right
+comparison found only the standard user's expected added batch-logon right,
+retained after successful uninstall by design. The separate administrator-PATH
+check remains unverified: its profile hive was unloaded and Windows rejected
+the private copied-hive read. This does not establish corruption of the live
+profile. The restored owner's real reboot, restricted session-0 device access
+and visually confirmed switching remain outstanding. Account/profile deletion
+has not been performed.
+
+After the profile session, native
+`powershell.exe -NoProfile -ExecutionPolicy Bypass -File windows/tests/run.ps1`
+passed all 21 files without skips, including parsing/conventions. No production
+code changed during this evidence review. Earlier mutation results retain
+their stated candidate scope. CI `41157257426` at `d4152aa` passed both platforms:
+macOS 13 files plus shellcheck; hosted Windows 20 files, with its NVIDIA
+resolution file and two driver cases explicitly skipped.
+
 CI at `4c0f13b` passed both platforms on the second attempt. The first Windows
 attempt failed before the unchanged native-cleanup fixture's child produced a
 report; the cause was not established. All 13 native invocation forms and the

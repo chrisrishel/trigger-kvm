@@ -29,94 +29,50 @@ Resolve it with native evidence; remove it in the commit that lands the fix.
 
 Kind:     defect report
 Spec:     CONTRIBUTING.md, Versioning and releases; TODO.md, Publication readiness
-Why:      automated regressions and one existing-profile upgrade do not establish all installation/support claims
-Owed:     run the remaining checks in RELEASE-CHECKS.md with the owner present
-Verified: Windows PowerShell 5.1 suite and publication mutations; native Unicode/apostrophe child, WSH and CMD fixtures; cleanup execution boundaries across 13 native invocation forms and generated launcher/watcher fixtures (2026-10-30); real boot-tier upgrade, installed status/Cancel, native task restoration after timeout; shipped ASUS dxva2 switching both ways visually confirmed on 2026-10-29
+Why:      native installation evidence does not establish restricted session-0 display writes or finish the release/privacy gates
+Owed:     finish the owner reboot/device checks and remaining evidence collection in RELEASE-CHECKS.md
+Verified: 2026-10-30, native PowerShell 5.1 suite: 21 files without skips; 6a5afcf standard-user credential Cancel/success, restricted installed boot watcher, pre-login startup after a real reboot, installed Save/Cancel, login/manual sign-out/sign-in, fresh-product UAC-decline fallback and source-unavailable uninstalls; original owner upgraded/restored to 6a5afcf with unchanged config/PATH and one enabled/running restricted boot watcher
 
-Still required before release:
+Remaining work:
 
-- Fresh administrator-capable and separate standard-user profiles; approve and
-  decline UAC, verifying the intended user's files, task principal and PATH.
-  The first fresh administrator-capable login installation passed on `2835cb0`,
-  but its boot row rejected the unelevated administrator. Corrected `4c0f13b`
-  passed selection from ordinary PowerShell, declined-UAC login fallback with
-  existing config, and approved-UAC S4U/Limited installation for the intended
-  user. Fresh product-state declined-UAC fallback also passed after preserving
-  this profile's retained data. A read-only native standard-user probe accepted
-  a separate administrator credential, but exposed false boot eligibility on
-  `462204a`. On `ed1a0c0` boot became selectable and separate-user UAC copied
-  the correct files, but S4U task registration failed with access denied.
-  Standard-user boot installation remains blocked pending its installed repeat;
-  no task or watcher was created. The false registration/start success output
-  is corrected with 19 passing native test files and 42 caught publication
-  mutations; the installed standard-user repeat remains outstanding.
-  Bounded own-user standard S4U registration also failed. The administrator
-  control ran elevated despite registered Limited (verified process token);
-  the source now enforces token restriction in the protected task bootstrap.
-  Password-authenticated S4U registration and a batch-logon grant succeeded in
-  bounded native diagnostics; the source implements both without saved passwords.
-  Validate the credential dialog, Cancel/failure, installed watcher token,
-  cleanup/single instance and restricted session-0 device access before clearing
-  the boot gate. Diagnostic cleanup restored rights and removed its tasks.
-  All diagnostic tasks were removed; adding boot to a seed was not reached.
-- Real profile/checkout paths containing spaces, apostrophes and non-ASCII text
-  through standard-user elevation and uninstall. Administrator-capable login,
-  upgrade, approved/declined UAC and source-unavailable uninstall covered those
-  characters in both paths. Installed `462204a` upgrade preserved config bytes/PATH;
-  boot-to-login produced
-  a user-owned task, and login-to-no-autostart completed without another UAC
-  prompt. Both user tiers had one intended watcher; manual had no triggers.
-  Its clean native suite passed 19 files without skips; CI passed
-  both platforms with hosted hardware skips explicitly recorded.
-  Its source-unavailable uninstall returned 0, removed task/program/PATH,
-  stopped the watcher and retained config/log bytes and original PATH entries.
-  On `4c0f13b`, a real reboot started exactly one
-  intended S4U/Limited watcher in session 0 without the test user signing in.
-  This is native startup evidence, not physical switching evidence.
-  Boot-to-login also passed through the installed shim; a real test-user
-  sign-out/sign-in produced one new watcher in the new interactive session.
-  Login-to-no-autostart started one watcher immediately; after another real
-  sign-out/sign-in the enabled task had no triggers and no watcher was running.
-- Native suites on both platforms at the coordinated release commit, privacy
-  review of all refs/GitHub surfaces, and the driver's/port's deferred checks in
-  TODO.md when their triggers occur. The post-reboot read-only identity check on
-  driver 616.64 is complete; the cable-move/next-driver-update checks remain
-  deferred. Never test S3 standby.
+- Verify the restored original-owner installation after a real reboot, including
+  its process token, single watcher and startup before interactive login.
+- Validate required device access through the restricted session-0 path. Use the
+  installed switcher, one panel at a time, and require visual confirmation in
+  both directions. Prior local-console ASUS dxva2 (2026-10-29) and both-panel
+  NVAPI (2026-10-30) observations remain valid for those tested contexts; they do
+  not establish this new execution path. Never test S3 standby.
+- Complete the separate administrator-PATH comparison. Its profile hive was
+  unloaded and the private copied-hive reader failed; this is explicitly
+  unverified. The standard account received only the expected batch-logon right,
+  which remains after successful installation/uninstall by design. Coordinate
+  disposable-account cleanup separately; no accounts have been deleted.
+- Run both native platforms' suites at the coordinated release commit, inspect
+  CI, and complete the separately requested privacy review. Publication remains
+  blocked by the owner's 2026-10-30 decision about historical identifiers and
+  author metadata. Driver-update/port-move checks retain their TODO triggers.
 
-On 2026-10-30 clean `2835cb0` was installed and verified against source hashes,
-with original config values/PATH and S4U/Limited/enabled/running state preserved.
-Installed Save retained a synthetic unknown key and the build stamp; Cancel
-preserved config bytes. Original config bytes were restored afterwards.
-The same installed candidate passed real interactive Ctrl+C from enabled/running
-and NVAPI away-and-back switching on both panels, each visually confirmed with
-the other display kept on Windows. These local-console writes do not establish
-fresh-boot/session-0 behavior. The owner watcher is deliberately paused for the
-coordinated profile matrix; restore the original boot/enabled/running state when
-that session ends.
-Installed `4c0f13b` also restored enabled/stopped and disabled/stopped after
-real Ctrl+C in elevated test-profile consoles, with config bytes unchanged and
-no helper recovery. Each required three presses before CMD's termination
-prompt; no single-press responsiveness claim is made. These no-autostart tasks
-had no self-heal trigger. Native timeout checks cover all three states; error
-paths remain fixture coverage.
-Privacy review covered reachable history and accessible GitHub surfaces;
-the owner explicitly kept publication blocked for a separate privacy review
-on 2026-10-30. Historical identifier/author-email publication is not approved.
+The standard-profile program directory was owned by Administrators; the config
+was owned by the intended standard user. That user successfully configured and
+uninstalled through the installed shim. Uninstall preserved all original PATH
+entries/order, removing a trailing semicolon; do not claim byte-identical PATH.
+The exact archive candidate is established by provenance and installed source
+hashes; its stamp correctly says it is not a Git checkout.
 
-The implementation is at specification revision 15. Product version stays
-0.2.0 during remediation; 0.3.0 is the next coordinated release target.
+The owner's original boot/enabled/running state and temporary Switch user policy
+have been restored. Dated evidence and earlier administrator-profile/Ctrl+C
+results are in `../docs/measurements.md`; do not repeat completed profile work.
+Product version remains 0.2.0, specification revision 15; 0.3.0 is the next
+coordinated release target.
 
-## Enforce an unelevated boot process token
+## Validate the restricted boot path's device access
 
 Kind:     defect report
 Spec:     configure.md section 8; root AGENTS.md, host-owned startup tier
-Why:      S4U / RunLevel Limited did not produce an unelevated administrator process in the native control
-Owed:     validate the new protected bootstrap with the installed watcher in session 0, ownership, cleanup/single-instance behavior and required device access before restoring the boot installation
-Verified: 2026-10-30 bounded identity-only task, same principal/settings construction as the installer, registered S4U/Limited, correct owner, session 0, TokenElevation 1, TokenElevationType 1, Administrator membership enabled; zero fixture tasks left; no installed watcher or physical switching tested by this diagnostic
+Why:      S4U / RunLevel Limited alone did not restrict the native administrator control
+Owed:     confirm required device access and physical switching through the protected bootstrap's restricted session-0 child
+Verified: clean 6a5afcf native bootstrap fixture passed, missing-integrity mutation refused before launch; actual installed standard-user watcher and post-reboot watcher had the intended owner, session 0, medium integrity, no administrator/power-user membership and only change-notify privilege; restored original-owner watcher passed the same token checks
 
-The protected bootstrap from clean `6a5afcf` passed a coordinated native
-session-0 fixture on 2026-10-30: correct owner/session, medium integrity, no
-administrator/power-user membership and only change-notify privilege. Removing
-the integrity-setting call was caught before child launch or a log write.
-Cleanup independently verified zero fixture tasks. The installed watcher,
-reboot and required device access remain unverified on this execution path.
+All bounded diagnostic tasks were removed. Token/launch and installed startup
+evidence are complete for the observed cases. Physical switching through this
+restricted session-0 execution path remains unverified.

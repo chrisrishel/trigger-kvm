@@ -28,114 +28,73 @@ physical panel changed input.
 
 ## Candidate status and next coordinated session
 
-Clean reviewed candidate `2835cb0` was installed on 2026-10-30. Installed script
-hashes, build identity (0.2.0/spec 15), configuration preservation, intended
-S4U/Limited principal, owner PATH and one enabled/running watcher were verified.
-Installed Save preserved a synthetic unknown key; Cancel preserved config bytes.
-Original config bytes and the owner's boot/enabled/running state were restored.
-The earlier timeout-restoration checks were observed on 2026-10-29.
-The ASUS dxva2 away-and-back check was visually confirmed that day. On
-2026-10-30, installed `2835cb0` passed interactive Ctrl+C from enabled/running:
-one watcher returned before the next scheduled self-heal, without helper
-recovery. NVAPI away-and-back writes on each panel were visually confirmed,
-one panel at a time with the other kept on Windows. Post-reboot read-only
-NVAPI IDs matched the baseline on driver 616.64. The fresh standard-user
-installation and separate administrator-credential cases remain open.
+The original owner's installed candidate is now **`6a5afcf`**, product 0.2.0 /
+specification 15. The supported installer restored its intended boot/enabled/
+running state on 2026-10-30. Source hashes/stamp match the clean checkout,
+configuration bytes and owner PATH are unchanged, and exactly one intended
+watcher holds its lock. Its actual session-0 token has medium integrity, no
+administrator/power-user membership and only change-notify privilege. The
+temporary Switch user policy is restored to its original value.
 
-The first fresh administrator-capable profile installed the `2835cb0` archive
-successfully in the login tier, with profile and source paths containing spaces,
-an apostrophe and Unicode. Intended files/PATH, source hashes, Interactive/Limited
-principal and one watcher were verified. From boot was incorrectly disabled:
-the eligibility query omitted deny-only administrator membership. Corrected
-`4c0f13b` passed the installed repeat: upgrade preserved config bytes; From boot
-was selectable unelevated; declining UAC retained a working login tier; approving
-UAC installed S4U/Limited for the intended user with one watcher. Save/Cancel
-and unknown-key preservation passed in this profile too. The first profile run
-did not reach a UAC prompt; that fallback had existing config. A subsequent
-fresh product-state install, after preserving the retained data, passed actual
-UAC decline and login fallback. Standard-user product registration remains open.
-A real reboot on `4c0f13b` started
-one intended S4U/Limited watcher in session 0 before any test-profile sign-in;
-the owner confirmed signing into only the original account. The read-only
-collector checked boot/process timestamps and task ownership. This verifies
-startup, not physical switching from session 0.
-The installed boot-to-login transition also passed: after an actual sign-out
-and sign-in, one new intended watcher ran in the new interactive session under
-the correct Interactive/Limited task.
-Login-to-no-autostart started one watcher immediately; an actual sign-out/
-sign-in left it stopped with an enabled, trigger-free task. The transition
-requested UAC because the elevated boot-to-login replacement left a protected
-task definition. Read-only task-security inspection confirmed this; it does
-not mean the watcher runs elevated.
+Completed installation evidence on Windows 11 build 22631 / PowerShell 5.1:
 
-The fresh standard-user profile's read-only probe accepted a separate
-administrator credential, while `462204a` incorrectly reported boot ineligible.
-The current correction reads Windows UAC policy and permits that credential
-path unless explicitly disabled. Installed `ed1a0c0` made boot selectable and
-accepted separate administrator credentials, but registration of the standard
-user's S4U task failed with access denied. Config/program files were written
-in the intended profile and matched the candidate; no task or watcher existed,
-and the installer returned 1. Its intermediate success messages were incorrect.
-Task-operation error handling is corrected. Bounded tasks
-also denied own-standard-user S4U registration without triggers; the
-administrator control ran and cleanup left zero fixture tasks. Follow-up process
-inspection confirmed TokenElevation 1/type 1 and enabled administrator membership
-despite registered RunLevel Limited. Password-authenticated COM S4U registration
-then succeeded; execution required a separate batch-logon grant. Temporary
-rights and tasks were restored/removed. The source now implements cross-user
-credential entry, batch-logon permission and a protected bootstrap that restricts
-effective privileges and integrity. Validate these through the installed shim,
-including credential Cancel/failure, the actual session-0 watcher token, cleanup,
-one watcher and required device access. Fixture and bounded task results do not
-close those installation gates.
-Candidate `473274d` and its clean checkout passed all 21 native test files
-without skips; all 53 publication mutations were caught. CI `41153314261`
-passed both platforms. Hosted Windows passed 20 files, with one NVIDIA-dependent
-file and two driver cases skipped; macOS passed 13.
-The prepared installation candidate is now `6a5afcf`, which removes privileged
-error-log writes from the bootstrap. Its clean native suite again passed all
-21 files without skips, all 12 affected boot mutations were caught, and CI
-`41154488503` passed both platforms with the same hosted hardware skips.
-No installed copy has been upgraded to this candidate yet.
-The coordinated session-0 bootstrap check passed on 2026-10-30: clean
-`6a5afcf` retained the owner/session, medium integrity and ordinary rights;
-omitting the integrity restriction failed before the child or a log write.
-Both bounded fixture tasks were removed. The installed watcher, reboot and
-restricted device-access checks remain open; no physical switching occurred.
-The probe's initial decline and later approval are not installation-fallback
-results: neither run installed the product or registered a task.
-The current source corrects this by elevating only old-task removal and
-registering the replacement in the normal parent. It also corrects uninstall's
-CMD return path: the installed `4c0f13b` check removed task/program/PATH and
-retained config/log bytes, but CMD returned 1 after its shim was deleted.
-Both corrections have regression/mutation coverage. Installed `462204a` passed
-the upgrade with config bytes/PATH preserved, then boot-to-login and
-login-to-no-autostart. Native task security confirmed user ownership of both
-replacement definitions; the owner confirmed no UAC on the final change.
-Each user tier had one intended watcher; the final manual task had no triggers.
-The subsequent source-unavailable uninstall returned 0, removed task/program
-and the installed PATH entry, stopped the watcher, and retained config/log
-bytes and all original PATH entries.
-The earlier `462204a` clean native suite passed all 19
-files without skips and CI passed on both platforms, with hosted hardware
-skips recorded in `docs/measurements.md`.
+- The disposable administrator-capable profile passed fresh setup, approved
+  boot/declined login fallback, boot/login/manual transitions, real reboot and
+  logon checks, installed Save/Cancel and source-unavailable uninstall on the
+  earlier recorded candidates. `462204a` confirmed user-owned login/manual
+  tasks and no additional UAC for login-to-manual.
+- The standard profile passed corrected `6a5afcf` boot registration with separate
+  administrator credentials and its own password. Credential Cancel preserved
+  program/config/PATH and absent task/watcher state. Successful setup preserved
+  config/PATH, matched source hashes, and produced one restricted boot watcher.
+  After a real restart it started 39 seconds after boot and 174 seconds before
+  the first interactive logon. The actual token was verified in both cases.
+- Through the standard profile's installed shim, boot-to-login produced a
+  user-owned task; Save preserved an unknown key and Cancel preserved config
+  bytes, which were restored afterward. Real sign-out/sign-in started one new
+  login watcher; the manual tier had no watcher or triggers after another login.
+  Fresh product-state UAC decline produced a working login fallback. Both
+  source-unavailable uninstalls removed program/task/watcher/PATH entry and
+  retained exact config/log bytes. Original PATH entries/order survived; one
+  trailing semicolon was normalized away.
+- Actual profile and checkout paths contain spaces, an apostrophe and Unicode.
+  The elevated standard-profile program directory is owned by Administrators;
+  its config is owned by the intended user, who successfully configured and
+  uninstalled it. Archive identity uses the retained manifest/source hashes;
+  the archive stamp correctly says it is not a Git checkout.
+- Installed real Ctrl+C preserved enabled/running on `2835cb0` before scheduler
+  self-heal; enabled/stopped and disabled/stopped passed on `4c0f13b` without
+  helper recovery or self-heal. The stopped cases required three presses before
+  CMD's termination prompt. Error paths remain fixture coverage.
 
-Installed `4c0f13b` passed real Ctrl+C from enabled/stopped and disabled/stopped
-in elevated disposable-profile consoles, preserving task enablement, stopped
-watcher state and config bytes without helper recovery. The no-autostart task
-had no self-heal trigger. The owner needed three Ctrl+C presses in each case
-before CMD asked to terminate the batch job; single-press responsiveness was
-not established. Keep the owner's original tier/state.
-Use approved disposable profiles for the separate account, reboot and uninstall
-matrix. The owner watcher is deliberately paused during that session; restore
-its boot/enabled/running state when finished. Repeat physical checks if changes
-to the candidate affect the tested paths; these observations do not establish
-fresh-boot/session-0 writes.
+The full native PowerShell 5.1 suite passed all 21 files without skips again
+after this session. The clean `6a5afcf` suite also passed 21; all 12 affected
+boot mutations were caught after the prior full 53-mutation publication run.
+CI `41157257426` at documentation commit `d4152aa` passed macOS 13 files and
+Windows 20, with the NVIDIA resolution file and two driver cases explicitly
+skipped. The coordinated session-0 bootstrap fixture and its missing-integrity
+mutation passed; both bounded tasks were removed. These are separate from
+installed-product and physical observations.
 
-These are outstanding release gates alongside the privacy review in `TODO.md`;
-automated cleanup validation does not clear them.
-The owner explicitly kept publication blocked for a separate privacy review
-on 2026-10-30.
+Still required:
+
+1. Repeat the restored original-owner startup check after a real reboot.
+2. Observe NVAPI writes through the restricted session-0 path, one panel at a
+   time with visual confirmation. ASUS dxva2 away/back was confirmed on
+   2026-10-29; both panels' local-console NVAPI away/back on installed `2835cb0`
+   were confirmed on 2026-10-30. No physical writes occurred in the standard
+   profile session. Those observations do not prove the new execution path.
+3. Finish the separate administrator-PATH comparison: its unloaded profile's
+   copied-hive read failed, so no pass is recorded. Read-only account-right
+   comparison confirmed only the standard user's expected batch-logon grant;
+   successful installation deliberately retains it after uninstall. Coordinate
+   final account/profile cleanup separately.
+4. Complete both native suites at the coordinated release commit and the
+   separate privacy review. The owner explicitly kept publication blocked on
+   2026-10-30. Deferred driver/port checks keep their documented triggers.
+
+See `../docs/measurements.md` for dated receipts, candidate history and limits.
+Never test S3 standby.
 
 ## Coordinate before changing an installation
 

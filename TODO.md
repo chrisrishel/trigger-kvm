@@ -38,67 +38,25 @@ and the command checklist in `windows/RELEASE-CHECKS.md`.
 - [x] CI configuration: run both platforms' full suites, with hardware skips
   explicit. Inspect hosted results for each pushed candidate; CI cannot prove
   physical switching.
-- [ ] Windows release checks: fresh profiles, administrator and standard-user
-  installation paths, apostrophe/non-ASCII paths, and both autostart tiers.
-  Existing-profile boot-tier upgrade, installed status/Cancel, timeout state
-  restoration and ASUS `dxva2` switching both ways were observed on 2026-10-29.
-  Clean `2835cb0` was installed on 2026-10-30; installed source/build identity,
-  config/PATH preservation, single watcher and intended task state passed.
-  Installed Save retained an unknown key and the stamp; Cancel preserved config
-  bytes, and the original config was restored. On that installed candidate,
-  real Ctrl+C restored enabled/running before scheduler self-heal, and both
-  panels' NVAPI away-and-back switching was visually confirmed separately.
-  Standard-user product registration and its fresh-profile workflow remain open.
-  The profile session must restore
-  the owner's boot/enabled/running state afterwards.
-  A fresh administrator-capable login installation passed with spaces,
-  apostrophe and Unicode in both profile/source paths. It exposed a boot-row
-  eligibility defect: the managed groups API omits deny-only administrator
-  membership. Corrected `4c0f13b` passed installed boot selection unelevated,
-  declined-UAC login fallback with existing config, approved-UAC boot
-  registration, and profile Save/Cancel. Native regression/mutation coverage
-  accompanies the fix; standard-user elevation and corrected installation
-  paths still need their coordinated repeat.
-  A real reboot on `4c0f13b` started exactly one intended S4U/Limited watcher
-  in session 0 without the test user signing in. This is native startup
-  evidence; no physical switching was performed by that check.
-  The installed boot-to-login transition and real sign-out/sign-in also passed,
-  with one new intended watcher in the new interactive session.
-  Login-to-no-autostart started a watcher immediately and left it stopped after
-  a real sign-out/sign-in, with the task enabled and no triggers.
-  Real Ctrl+C on `4c0f13b` also preserved enabled/stopped and disabled/stopped
-  in elevated no-autostart consoles with no helper recovery or self-heal.
-  Each required three presses before CMD's termination prompt; this establishes
-  cleanup, not single-press responsiveness.
-  Fresh product-state declined-UAC fallback passed after retaining the test
-  profile's data separately. Uninstall retained config/log bytes and removed
-  task/program/PATH but reported exit 1; the self-deleting CMD shim is corrected
-  with native regressions. User-tier replacement now elevates only removal of
-  a protected task and registers the replacement in the normal parent.
-  Installed `462204a` preserved config/PATH through upgrade and verified
-  user-owned login/manual tasks, one watcher and no second UAC prompt for
-  login-to-no-autostart. Its source-unavailable uninstall returned 0, removed
-  task/program/PATH and stopped the watcher, retaining config/log bytes and
-  original PATH entries. No assertion was weakened.
-  The fresh standard-user native probe accepted separate administrator
-  credentials but exposed false boot-menu eligibility. The correction reads
-  UAC policy and retains explicit denial. Installed `ed1a0c0` offered boot and
-  accepted UAC, but S4U registration was denied; there is no task/watcher.
-  Standard-user boot remains a blocker pending its corrected installed repeat.
-  Its own S4U fixture also failed; native process-token inspection confirmed
-  the administrator S4U/Limited control was elevated. Actual boot-token
-  restriction is a separate release blocker. Password-authenticated S4U plus
-  batch-logon permission succeeded in bounded native diagnostics. The source
-  now implements that registration and an embedded token-restricting bootstrap;
-  the actual installed token, cleanup and restricted device access still need
-  validation. Diagnostic cleanup restored rights and removed all fixture tasks.
-  Clean `6a5afcf` passed the native session-0 bootstrap check with the expected
-  ordinary rights; the missing-integrity mutation was caught before launch.
-  Both bounded fixture tasks were removed. This does not establish installed
-  watcher behavior, startup after reboot or physical switching.
-  Nonterminating task errors also exposed false success output, now covered
-  by regression/mutation tests. Full native validation passed; its installed
-  repeat remains with the standard-user registration gate.
+- [x] Windows installed workflows and startup: administrator-capable and standard
+  profiles exercised actual paths with spaces/apostrophes/Unicode, approved and
+  declined UAC, intended task principals/files/PATH, boot/login/manual tiers,
+  real reboot/logon behavior and source-unavailable uninstall. Standard-user
+  `6a5afcf` completed credential Cancel/success, installed Save/Cancel/unknown-key
+  preservation and fresh-product login fallback on 2026-10-30. Its restricted
+  session-0 watcher started before the first login after reboot. Earlier
+  administrator-profile and real Ctrl+C results remain in the measurements.
+  The separate administrator-PATH comparison below remains unverified.
+- [ ] Windows final release validation: the original owner is restored to clean
+  `6a5afcf` with its config/PATH unchanged and one enabled/running restricted
+  boot watcher. Repeat its real reboot check and validate required device access
+  and physical switching through the restricted session-0 path. Earlier ASUS
+  dxva2 and both-panel local-console NVAPI visual confirmations are separate
+  evidence. Complete the administrator-PATH comparison: the unloaded profile's
+  copied-hive read failed. The standard account's only added right was the
+  expected batch-logon grant, retained after successful uninstall by design.
+  Temporary Switch user policy is restored; coordinate account/profile cleanup
+  separately. See `windows/RELEASE-CHECKS.md` for the remaining steps and limits.
 - [ ] Privacy: shared measurement notes now use consistent labels for device
   identifiers; unnecessary current Windows device examples are synthetic.
   The 2026-10-30 audit at `2835cb0` covered 112 tracked files, 226 commits/1,192
@@ -128,18 +86,6 @@ and the command checklist in `windows/RELEASE-CHECKS.md`.
   struct versions (`docs/nvapi-bindings.md`), that a panel still moves both ways
   watched by eye, and `reachable by` per panel. GDI names are expected to move
   and mean nothing. Trigger: the next driver update.
-
-- **Verify the boot tier on a standard (non-admin) Windows account.** The
-  credential-only native probe passed on 2026-10-30; product installation is
-  still unverified. Check the task principal, the files' `%LOCALAPPDATA%`
-  and whose `PATH` gains `bin`. Trigger: a standard-user account is available.
-
-- **Complete the fresh standard-user installed workflow.** The fresh
-  administrator-capable profile passed initial setup, installed-shim
-  `configure`, Save/Cancel and `status` on 2026-10-30. Repeat those checks in
-  the separate standard-user profile, including creation of its new
-  `%LOCALAPPDATA%\trigger-kvm\` directory and intended-user ownership.
-  Trigger: the approved standard-user session in the release matrix.
 
 - **Measure a same-GPU, different-port re-plug on Windows.** The 2026-09-01
   cable move changed GPU and adapter together. Move only the GPU end of the

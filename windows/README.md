@@ -24,9 +24,10 @@ Validation is bounded to the reference Windows 11 desk, RTX 4090, LG 45GX950A
 and ASUS PG42UQ. NVAPI physical switching has dated observations in
 [`../docs/measurements.md`](../docs/measurements.md). The shipped dxva2 path moved
 the ASUS both ways at the local console, visually confirmed on 2026-10-29.
-Other monitors, adapters and Windows versions are not established by fixture tests. Fresh
-administrator/standard-user profiles and autostart transitions remain release
-checks in [`RELEASE-CHECKS.md`](RELEASE-CHECKS.md).
+Other monitors, adapters and Windows versions are not established by fixture
+tests. Administrator/standard-user installation and autostart checks have native
+evidence; restricted session-0 physical switching and the remaining release
+gates are tracked in [`RELEASE-CHECKS.md`](RELEASE-CHECKS.md).
 
 ## Install
 
@@ -161,7 +162,7 @@ program files in place and explains the remaining task.
 
 | Answer | What is installed | Covers |
 |---|---|---|
-| From boot | an S4U Scheduled Task; its protected bootstrap enforces ordinary user rights and medium integrity in session 0. Administrator rights to register; intended-user password for cross-user registration | from boot onward -- before the first login, while locked, after a logoff; corrected restricted-token path pending installed validation |
+| From boot | an S4U Scheduled Task; its protected bootstrap enforces ordinary user rights and medium integrity in session 0. Administrator rights to register; intended-user password for cross-user registration | from boot onward -- before the first login, while locked, after a logoff; restricted standard-user startup observed; restricted session-0 device writes remain unverified |
 | From login | the same task with an Interactive principal, triggered at logon | from your logon onward, including while the screen is locked |
 | No | the same task with no triggers, started now | this session only; `restart` starts it again |
 
