@@ -1,11 +1,12 @@
 # trigger-kvm on Windows
 
-A watcher (`event-watch.ps1`) runs `trigger-kvm pull` when a configured device
-arrives; `pull` resolves each configured monitor by the EDID it reads at that
-moment and sends it the input-select write over DDC/CI. The shared behaviour is
-specified in [`../specs/`](../specs/); the safety rules are in
-[`../AGENTS.md`](../AGENTS.md) and this platform's hazards in
-[`AGENTS.md`](AGENTS.md).
+Make your monitors follow the keyboard and mouse when you move them to this
+PC with a USB switch. Setup lets you choose the devices to watch and the input
+each computer uses on each monitor. You can also switch inputs manually.
+
+Start with the [shared setup guide](../README.md). This page covers Windows
+installation, permissions and transport limits. See the
+[0.3.0 release notes](../docs/releases/0.3.0.md) for changes and upgrade notes.
 
 ## Requirements
 
@@ -36,13 +37,25 @@ release/privacy gates are tracked in [`RELEASE-CHECKS.md`](RELEASE-CHECKS.md).
 ```powershell
 # From a directory where you keep source checkouts; repository access is required.
 git clone https://github.com/chrisrishel/trigger-kvm.git
-cd trigger-kvm\windows
+cd trigger-kvm
+```
+
+Choose your source **before installing**. Cloning selects development `main`.
+For a released build, choose a [published tag](https://github.com/chrisrishel/trigger-kvm/tags)
+and run `git checkout vX.Y.Z`, replacing `vX.Y.Z` with that tag. Alternatively,
+extract that tag's source ZIP. To use the development build, stay on `main`.
+Version 0.3.0 is in preparation; its tag is not yet published.
+
+Open **Windows PowerShell as your normal user**, without "Run as administrator."
+From the chosen source directory:
+
+```powershell
+cd windows
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -AddToPath
 ```
 
-Alternatively, extract a trusted source archive and open PowerShell in its
-`windows` directory. If Windows marked the download as blocked, review the
-source, then unblock only those scripts:
+If Windows marked downloaded scripts as blocked, review the source, then
+unblock only those scripts from the `windows` directory and rerun the installer:
 
 ```powershell
 Get-ChildItem -LiteralPath . -Filter *.ps1 -File -Recurse | Unblock-File
@@ -134,12 +147,22 @@ A successful command or dry run does not establish that a panel moved.
 
 ## Upgrade, repair and uninstall
 
-Preserve local work when updating the source. From the checkout root:
+Back up your configuration privately and preserve any local source edits before
+upgrading. A checkout from before the privacy rewrite needs the
+[fresh-clone migration](../docs/privacy.md#refreshing-the-windows-checkout).
+For a released build, select its tag or extract its source archive as described
+above. For development `main`, run from the checkout root:
 
 ```powershell
 git status --short
 git fetch origin
+git checkout main
 git merge --ff-only origin/main
+```
+
+After selecting the intended source, run:
+
+```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\windows\install.ps1
 ```
 
@@ -148,8 +171,10 @@ it away. The source installer preserves the saved configuration and existing
 autostart choice, replaces installed scripts, and restarts the watcher. An
 upgrade is disruptive to the watcher, so coordinate it before testing devices.
 Run `trigger-kvm status` afterwards and inspect the version stamp and lock state.
+Updating source alone does not update the installed program or boot task.
 The product version, specification revision and source commit are separate;
-reconfiguring an installed copy preserves its build stamp.
+reconfiguring an installed copy preserves its build stamp. Upgrading from
+0.2.0 to 0.3.0 requires no configuration-file conversion.
 
 Process cleanup requires the exact installed script path and intended owner.
 For PowerShell it recognizes `-File`, optionally preceded by `-NoProfile`,
@@ -364,8 +389,8 @@ cd windows\tests
 ```
 
 The suite cannot move a monitor: `Send-Input`, the one place the installer emits
-a packet, is stubbed, and every menu is driven end to end through its typed
-fallback. Each file runs in its own process, because the walkthrough tests
+a packet, is stubbed. Menus are driven through typed input and bounded native
+console fixtures. Each file runs in its own process, because the walkthrough tests
 define stubs with the same names as real functions. A test that did not run
 reports `SKIPPED` and never counts as a pass. Transport cases require real
 graphics hardware; the dxva2 case requires a local console session, and the

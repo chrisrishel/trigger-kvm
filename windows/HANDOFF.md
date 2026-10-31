@@ -29,8 +29,8 @@ Resolve it with native evidence; remove it in the commit that lands the fix.
 
 Kind:     defect report
 Spec:     CONTRIBUTING.md, Versioning and releases; TODO.md, Publication readiness
-Why:      validated Windows behavior does not approve publication of historical identifiers or complete coordinated release preparation
-Owed:     complete final sanitized remote-surface/linked-Projects review and release approval, and run both native platforms' suites at the final coordinated release commit
+Why:      Windows validation does not complete the same-candidate native and publication approval gates
+Owed:     complete final sanitized remote-surface/Actions review and release approval, and run both native platforms' suites at the final coordinated release commit
 Verified: 2026-10-30, Windows PowerShell 5.1 suite: 21 files without skips; installed 6a5afcf standard-user workflow, owner restoration/reboot and actual ordinary session-0 watcher tokens; both panels' NVAPI away/back through the installed restricted session-0 path, explicitly confirmed by the owner; administrator PATH unchanged
 
 Completed installed/hardware evidence is retained; the changed bootstrap's
@@ -51,8 +51,9 @@ unchanged switcher/config source. Driver-update/port-move checks keep their
 TODO triggers; never test S3 standby.
 
 Publication remains blocked by the final review and approval gates in TODO.md.
-Product version remains 0.2.0; 0.3.0 is the next coordinated release target.
-Windows source and the installed `ab82fce` implement specification revision 16.
+Both source versions are 0.3.0. The unchanged installed copy is product 0.2.0,
+corresponding to sanitized source `ab82fce`; it retains its original stamp.
+Both sources and that installed copy implement specification revision 16.
 Do not tag, publish or change visibility as part of this validation.
 
 The 2026-10-31 review findings are resolved in Windows code/tests/docs. Native
@@ -72,7 +73,9 @@ The owner's privacy policy is to retain public
 authorship/name and GitHub handle while removing private email addresses,
 device identifiers and personal machine/profile details from everything
 published. This work authorizes neither history/author-metadata changes nor
-publication, tags or visibility changes. Product version remains 0.2.0.
+publication, tags or visibility changes. The authorized privacy rewrite is
+complete, and the owner confirmed there are no linked Projects. Final remote
+checks and publication approval remain open.
 
 Revision 16's menu-height defect was reproduced in a native 12-row console
 before implementation. Both primitives now share the viewport renderer; 30

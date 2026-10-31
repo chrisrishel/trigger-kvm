@@ -166,7 +166,7 @@ $CONFIG = Join-Path (Split-Path $LOG) 'config'
 # Recorded at install time and shown by `status`. Not an updater -- updating is
 # "fetch the new source and run it" -- but it answers the question that bites:
 # is what is installed what I think it is?
-$VERSION = '0.2.0'
+$VERSION = '0.3.0'
 
 # Used ONLY when generating a config that does not exist yet. Timings, not
 # identities: a default debounce is a reasonable thing to ship, a default DEVICE

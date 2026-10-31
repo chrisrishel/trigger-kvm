@@ -35,13 +35,12 @@ coordinated release is **0.3.0**. Product versions, evidence and approval follow
 - [x] macOS release preparation: installer regressions, all 14 native test files
   and ShellCheck passed without skips; all 11 publication mutations were caught
   and restored. The only runtime edit is the product version constant.
+- [x] Coordinated source versions are **0.3.0** and both specification revisions
+  stay at 16. The Windows guide distinguishes released sources from development
+  main; isolated installer/status fixtures verify version stamping and retention.
 
 ### Remaining
 
-- [ ] Complete the coordinated version update. macOS is prepared as **0.3.0**;
-  Windows must update its own constant and release documentation through
-  `windows/HANDOFF.md`. Both specification revisions stay at 16. Do not tag
-  this intermediate state.
 - [ ] Validate clean checkouts of the same final candidate on native macOS and
   Windows PowerShell 5.1, with relevant mutations and passing CI. Record exact
   commands, commit, results and skips. Reuse dated installed/profile/reboot/

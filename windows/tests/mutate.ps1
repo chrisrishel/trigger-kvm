@@ -177,6 +177,18 @@ Invoke-Mutation 'docs: a CLAUDE.md becomes a second copy instead of an import' `
     'CLAUDE.md' 'conventions.tests.ps1' `
     '@AGENTS.md' '# Windows -- agent instructions'
 
+# --- installed build identity ------------------------------------------------
+
+Invoke-Mutation 'release-stamp: installer drops the source product version' `
+    'lib\host.ps1' 'install.tests.ps1' `
+    '"version   = $VERSION"' '"version   = 0.0.0-mutant"'
+Invoke-Mutation 'release-stamp: status uses the source version instead of the stamp' `
+    'lib\host.ps1' 'install.tests.ps1' `
+    '$v[''version'']' '$VERSION'
+Invoke-Mutation 'release-stamp: configure rewrites installed build identity' `
+    'lib\host.ps1' 'install.tests.ps1' `
+    'if ($sameCopy -and (Test-Path -LiteralPath $STAMP)) { return }' ''
+
 # --- which config the watcher reads ------------------------------------------
 
 # Replaced rather than deleted: dropping the last element of the array would

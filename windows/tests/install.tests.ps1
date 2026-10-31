@@ -777,6 +777,46 @@ Assert-Equal '# install.ps1' (Get-Content -Raw -LiteralPath $MANAGE).Trim() `
 Assert-True (Test-Path -LiteralPath $SHIM) 'and the shim is still rewritten, since it is generated, not copied'
 Assert-Equal $savedStamp (Get-Content -Raw -LiteralPath $STAMP) 'configure preserves the installed source commit and specification revision'
 
+# Exercise the shipping version through the real file installer and the status
+# function it installs. No release literal: each candidate supplies its value.
+Import-Subject -Script 'install.ps1' -Variables @('VERSION')
+$releaseVersion = $VERSION
+$global:TK_HOME = $WinDir
+$global:TK_SELF = Join-Path $WinDir 'install.ps1'
+Install-Files
+$releaseStamp = Read-Config -Path $STAMP
+Assert-Equal $releaseVersion $releaseStamp['version'] 'the source version reaches the installed stamp'
+Assert-Equal (Read-Config -Path (Join-Path $WinDir 'SPEC-REVISION'))['revision'] $releaseStamp['spec'] `
+    'product version and specification revision remain separate stamp fields'
+
+$sourceWinDir = $script:WinDir
+try {
+    $script:WinDir = $DEST
+    Import-Subject -Script 'lib\host.ps1' -Functions @('Invoke-Status', 'Get-DisplayAmbiguityReport')
+    Import-Subject -Script 'lib\walkthrough.ps1' -Functions @('Get-KnownComputers')
+} finally { $script:WinDir = $sourceWinDir }
+$global:CONFIG = Join-Path $tree 'state\config'
+Set-Content -LiteralPath $CONFIG -Value 'computer.this = fixture' -Encoding ASCII
+function global:Get-ScheduledTask { param($TaskName, $ErrorAction) return $null }
+function global:Get-UserPath { return '' }
+function global:Get-TriggerCandidates { return @() }
+function global:Get-TriggerVerdicts { param($Entries) return @{} }
+function global:Test-WatcherRunning { return $false }
+function global:Write-Host { param($Object, [switch]$NoNewline) Add-Printed -Object $Object -NoNewline:$NoNewline }
+
+# Status must read the installed stamp, even if another source version is in
+# scope. Reconfiguring those installed files must retain that same identity.
+$global:VERSION = '0.0.0-uninstalled'
+Reset-Printed
+Assert-Equal 1 (Invoke-Status) 'the isolated status fixture has no registered task'
+Assert-Match (Get-Printed) ('(?m)^version\s+:\s+' + [regex]::Escape($releaseVersion) + '\s+\(') `
+    'installed status reports the stamped product version, not a source constant'
+$savedStamp = Get-Content -Raw -LiteralPath $STAMP
+$global:TK_HOME = $DEST
+$global:TK_SELF = $MANAGE
+Install-Files
+Assert-Equal $savedStamp (Get-Content -Raw -LiteralPath $STAMP) 'reconfiguration retains the installed release identity'
+
 Remove-Item -LiteralPath $tree -Recurse -Force -ErrorAction SilentlyContinue
 
 exit 0

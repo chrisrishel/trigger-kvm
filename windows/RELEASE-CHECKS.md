@@ -2,14 +2,15 @@
 
 Run from a clean candidate checkout, in **Windows PowerShell 5.1**. Record the
 commit, OS/driver versions, account type, commands, outcomes and skips in
-`docs/measurements.md`. Product version remains 0.2.0 during remediation;
-the next coordinated target is 0.3.0 (`../CONTRIBUTING.md`).
+`docs/measurements.md`. Both source versions are 0.3.0, with specification
+revision 16. Release approval is still required (`../CONTRIBUTING.md`).
 
 ## Automated checks (no physical switching)
 
 ```powershell
 cd windows
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\run.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\mutate.ps1 release-stamp
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\mutate.ps1 publication
 ```
 
@@ -37,6 +38,14 @@ controlled policy fixtures cover permitted, denied and unavailable settings.
 
 ## Candidate status
 
+The Windows 0.3.0 preparation changes only the shipping version constant,
+tests and documentation. The isolated installer fixture copies the current
+shipping scripts, verifies that the source version reaches the stamp and
+installed `status`, and checks that reconfiguration preserves that identity.
+All three `release-stamp` mutations were caught. The fixture stubs task,
+watcher and device queries; it does not upgrade the owner's installation.
+Clean-candidate native results belong in `../docs/measurements.md`.
+
 The sanitized Windows checkout at `2551331` passed all 23 native PowerShell 5.1
 test files without skips on 2026-10-31. It is the active top-level workspace;
 the old checkout and local/private work are archived separately. Git integrity,
@@ -53,9 +62,9 @@ boundary. All 16 viewport, 3 existing menu and 2 existing folded/tail-redraw
 mutations were caught. This changes only menu
 interaction; earlier boot/profile/physical evidence is reused for unchanged
 behavior. The supported upgrade below installed `ab82fce` at revision 16.
-The final native Windows PowerShell 5.1 suite passed all 23 files without skips,
-including parsing/conventions and revision-16 conformance. Product version
-remains 0.2.0; privacy and coordinated publication gates remain open.
+The revision-16 native Windows PowerShell 5.1 suite passed all 23 files without
+skips, including parsing/conventions and conformance. That dated preparation
+used product version 0.2.0; the source version is now 0.3.0.
 CI for `ab82fce` (validation record retained privately)
 passed: macOS 14 files; Windows 22 files, with one hardware-dependent file and
 two NVIDIA driver cases explicitly skipped on the hosted runner.
@@ -87,8 +96,9 @@ installed stamp, task XML/enabled/running state, watcher lock and PATH matched
 before/after snapshots. No account rights, installation, reboot or monitors
 were changed. This closes the affected-context validation gap.
 
-The owner's installed candidate is now **`ab82fce`**, product 0.2.0 /
-specification 16. The authorized supported-installer upgrade from `6f65aff`
+The owner's installed copy corresponds to sanitized source **`ab82fce`**,
+product 0.2.0 / specification 16, and retains its original pre-rewrite stamp.
+Release preparation leaves it unchanged. The authorized supported-installer upgrade from `6f65aff`
 on 2026-10-31 regenerated the secured bootstrap, preserved current configuration
 bytes and PATH, and left the boot task enabled with exactly one owned watcher running.
 Installed source hashes/stamp and the actual ordinary session-0 token passed;
@@ -179,9 +189,11 @@ without following their targets. Independent checks confirmed both profiles
 and accounts absent, the original installation/state intact and the temporary
 Switch user policy restored. Private backups and validation evidence are retained.
 
-Still required: both native suites at the coordinated release commit and the
-separate privacy review. The owner explicitly kept publication blocked on
-2026-10-30. Deferred driver/port checks keep their documented triggers.
+Still required: both native suites at the coordinated release commit, final
+remote refs/Actions privacy checks and explicit release/visibility approval.
+The authorized privacy cleanup and checkout migration are complete; the owner
+confirmed there are no linked Projects. Deferred driver/port checks keep their
+documented triggers.
 
 See `../docs/measurements.md` for dated receipts, candidate history and limits.
 Never test S3 standby.
