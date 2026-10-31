@@ -1782,8 +1782,8 @@ elevated child's command line through `Format-ChildArguments` rather than a join
 and why the suite round-trips it through a real script instead of asserting on
 the text alone.
 
-**2026-10-31, Windows -- boot dependency-loading review of `cfc84ed`.** Fresh
-Windows PowerShell 5.1.22621.7649 children executed the actual generated
+**2026-10-31, Windows -- boot dependency-loading review of `cfc84ed`, fixed in
+`7e65036`.** Fresh Windows PowerShell 5.1.22621.7649 children executed the actual generated
 bootstrap, with no trusted Utility module preloaded. Normal startup reached a
 bounded harmless child and returned its exit code 7. With only the fixture
 process's module path changed to put an isolated substitute
@@ -1874,6 +1874,14 @@ Private task/token receipts are retained outside tracked files. No account
 rights, live installation, reboot or monitor inputs were changed. The installed
 `6a5afcf` task therefore still needs a coordinated supported-installer upgrade
 to receive this bootstrap; a watcher restart alone does not regenerate it.
+
+CI for `7e65036` (validation record retained privately)
+passed both jobs. Inspection with `gh run view 41190219699 --log` confirmed
+Windows PowerShell: 21 files passed, `resolve.tests.ps1` skipped without NVIDIA
+hardware, and two real-driver cases explicitly skipped; macOS: all 13 files
+passed. These hosted results do not replace the local 22-file no-skip run or
+physical observations. The final coordinated release candidate and separate
+privacy review remain open gates.
 
 ## Release validation and privacy
 

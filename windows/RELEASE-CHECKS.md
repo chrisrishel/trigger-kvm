@@ -37,9 +37,9 @@ controlled policy fixtures cover permitted, denied and unavailable settings.
 
 ## Candidate status
 
-The 2026-10-31 review follow-up confirms pre-restriction module loading under
-native PowerShell 5.1 and moves compilation to task registration. The protected
-task embeds the assembly and performs only in-memory Framework operations
+The 2026-10-31 review follow-up, implementation candidate **`7e65036`**, confirms
+pre-restriction module loading under native PowerShell 5.1 and moves compilation
+to task registration. The protected task embeds the assembly and performs only in-memory Framework operations
 before restricting the token; failure reports directly to stderr. Normal and
 error-path adversarial mutations are caught. The stale installation-guide
 claim is corrected, and existing installed/reboot/physical evidence below is
@@ -48,6 +48,10 @@ retained for unchanged behavior.
 Native Windows PowerShell 5.1: all 22 test files passed without skips, including
 parsing/conventions; all 14 boot, 3 standard-user and 3 elevation mutations were
 caught. Run commands and evidence limits are in `../docs/measurements.md`.
+CI for `7e65036` (validation record retained privately)
+passed on both platforms: Windows 21 files with one hardware-dependent file
+and two driver cases explicitly skipped; macOS 13 files passed. Local native
+Windows validation ran all 22 files without skips.
 
 On 2026-10-31, four bounded S4U/Limited session-0 tasks passed: the original
 bootstrap executed the hostile-module control with enabled administrator
