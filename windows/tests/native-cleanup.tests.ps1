@@ -134,6 +134,32 @@ try {
         }
         $script:fixtureIds = @()
     }
+    # The boot host embeds its restriction instead of running WSH. Cleanup
+    # still recognizes the exact child invocation and the waiter exits with it.
+    . (Join-Path $WinDir 'lib\user-launch.ps1')
+    Remove-Item -LiteralPath $report -Force
+    $bootArguments = Get-BootTaskArguments -Watcher $WATCH -Switcher $inspect -LogFile (Join-Path $root 'boot.log') -ConfigFile $report
+    $launcher = Start-Process powershell.exe -WindowStyle Hidden -PassThru -ArgumentList $bootArguments
+    $child = $null
+    try {
+        $received = Wait-FixtureReport $report $launcher
+        Assert-Equal $WATCH $received.Script 'boot bootstrap executes the exact quoted watcher path'
+        $child = Get-Process -Id $received.Id
+        $script:fixtureIds = @($launcher.Id,$child.Id)
+        Assert-True (-not $launcher.HasExited -and -not $child.HasExited) 'boot waiter and fixture child are running'
+        Stop-Watchers
+        Assert-True ($child.WaitForExit(5000)) 'the restricted watcher remains stoppable'
+        Assert-True ($launcher.WaitForExit(5000)) 'boot waiter exits after its watcher is stopped'
+        Write-Host 'ok: native cleanup stops the restricted boot watcher fixture and its waiter exits'
+    } finally {
+        foreach ($fixture in @($launcher,$child)) {
+            if ($null -ne $fixture) {
+                if (-not $fixture.HasExited) { $fixture.Kill(); $fixture.WaitForExit() }
+                $fixture.Dispose()
+            }
+        }
+        $script:fixtureIds = @()
+    }
 } finally {
     if ((Split-Path -Parent $root) -ne (Get-Item -LiteralPath $env:TEMP).FullName -or
         (Split-Path -Leaf $root) -ne "tk-cleanup-$PID") { throw 'Fixture cleanup escaped its temporary root' }

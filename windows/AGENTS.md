@@ -108,9 +108,10 @@ values quoted (`Format-ChildArguments`). And its only voice is the transcript
 the terminating error and flattens the exit code (measured), so the catch goes
 INSIDE the redirection.
 
-**Tiers**: `lib/host.ps1` registers S4U for boot. `RunLevel Limited` does NOT
-prove an unelevated process token (2026-10-30 measurement); validate the actual
-token. `event-watch.ps1` takes a `Global\` mutex so
+**Tiers**: boot's protected task embeds `lib/user-launch.ps1`'s token restriction;
+Limited alone does not restrict S4U (2026-10-30). `lib/boot-registration.ps1`'s
+native block prompts for credentials and sets only the batch-logon right.
+Neither binding accesses displays. `event-watch.ps1` takes a `Global\` mutex so
 exclusion covers the computer rather than one session, and falls back to
 `Local\` ONLY where the account may not create a global name. A watcher finding
 the global name held by ANOTHER ACCOUNT stands down instead of falling back --
@@ -164,7 +165,6 @@ Every script must parse clean before running against hardware; `README.md` has
 the one-liner.
 
 **`trigger-kvm pause` before running one by hand, never `Stop-ScheduledTask`.**
-The watcher is a GRANDCHILD of the task (task -> `wscript.exe` ->
-`powershell.exe`), so stopping the task kills the shim and leaves the watcher
-holding the mutex -- and the 1-minute self-heal starts it again anyway. `pause`
-disables as well as stops; `restart` puts it back. Commands in `README.md`.
+Stopping the task kills its host waiter, leaving the watcher holding the mutex;
+the 1-minute self-heal can start it again. `pause` disables and stops;
+`restart` puts it back. Commands in `README.md`.

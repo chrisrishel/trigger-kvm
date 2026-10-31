@@ -1185,8 +1185,8 @@ Read-only LSA queries found no direct rights for the disposable standard user,
 and no batch-logon right in Users or its other queried well-known groups;
 Administrators did have `SeBatchLogonRight`. No rights were changed by this
 diagnostic. The owner confirmed completion with zero remaining fixture tasks.
-Both standard-user registration and actual boot-token restriction remain
-release blockers. No workaround is yet validated.
+Both standard-user registration and actual boot-token restriction require
+the further native validation below before the installed boot gate can pass.
 
 The error-reporting correction landed as `b6936eb`. Its clean checkout passed
 all 19 native test files without skips. CI run `41147087456` passed both
@@ -1195,6 +1195,52 @@ cases explicitly skipped; macOS 13 files. Full logs were inspected. The privacy
 refresh covered 235 commits / 1,253 text blobs and all 23 available Actions
 logs, with no new findings or authorship changes; secret scanning remained
 unavailable. The owner's separate privacy-review block remains in force.
+
+**2026-10-30, Windows -- authenticated S4U registration and token restriction.**
+The disposable standard account's bounded own-user and different-administrator
+registration attempts still failed after temporarily adding only
+`SeBatchLogonRight`. The original rights were restored and no fixture tasks
+remained. A subsequent console in the original account used a password entered
+locally for the disposable standard account; it was passed only in memory to
+COM `RegisterTaskDefinition` with logon type 2 (S4U). Registration succeeded,
+retaining S4U/Limited and the intended owner. It did not add the batch-logon
+right. Without that right no action receipt appeared; after a temporary grant,
+the identity-only action completed in session 0 with the intended standard
+owner, medium integrity, no administrator membership and no writable handle to
+`HKLM\SYSTEM`. Cleanup restored the prior rights and removed both fixture tasks.
+No product installation or display input changed.
+
+The administrator S4U control had high integrity, enabled administrator
+membership and administrative privileges despite Limited. SAFER NORMALUSER
+removed administrator membership and all privileges except change-notify,
+but retained high integrity. Explicitly setting medium integrity produced the
+intended effective restrictions and refused the writable registry handle.
+`TokenElevation` remained 1/type 1: these tests establish effective rights,
+not a split UAC token or a cleared elevation flag. The ordinary interactive
+owner could also launch a bounded child through this restricted-token path.
+
+The Windows host now embeds its bootstrap in the protected task definition;
+it checks owner, session, memberships, integrity and retained privileges before
+loading any installed watcher code. Cross-user boot registration uses a local,
+non-persisting credential dialog and S4U authentication, with a narrowly scoped
+batch-logon grant and rollback on registration failure. The installed workflow,
+credential dialog and restricted session-0 device access remain release gates.
+The native Windows PowerShell 5.1 suite passed all 21 files without skips,
+including parsing/conventions, actual encoded-bootstrap children and bounded
+cleanup through both launch chains. All 53 publication mutations were caught.
+The cross-user installer regression first failed because the actual old flow
+omitted the password request and authenticated registration; it now also checks
+Cancel before task/file changes and secret disposal on success/failure. Native
+COM definition tests retain startup, self-heal, battery and restart settings;
+fixture registration tests check authentication and selective rights rollback.
+These results are automated/native OS evidence, not an installed workflow or
+physical switching result. Commands were `powershell.exe -NoProfile
+-ExecutionPolicy Bypass -File windows/tests/run.ps1` and the same invocation of
+`windows/tests/mutate.ps1 publication`.
+Microsoft documents [S4U authentication and batch-logon requirements](https://learn.microsoft.com/en-us/windows/win32/taskschd/security-contexts-for-running-tasks),
+[S4U registration without stored passwords](https://learn.microsoft.com/en-us/windows/win32/taskschd/taskfolder-registertaskdefinition),
+[SAFER token computation](https://learn.microsoft.com/en-us/windows/win32/api/winsafer/nf-winsafer-safercomputetokenfromlevel)
+and [mandatory integrity control](https://learn.microsoft.com/en-us/windows/win32/secauthz/mandatory-integrity-control).
 
 CI at `4c0f13b` passed both platforms on the second attempt. The first Windows
 attempt failed before the unchanged native-cleanup fixture's child produced a

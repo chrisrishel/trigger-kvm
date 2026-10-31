@@ -84,10 +84,14 @@ and the command checklist in `windows/RELEASE-CHECKS.md`.
   credentials but exposed false boot-menu eligibility. The correction reads
   UAC policy and retains explicit denial. Installed `ed1a0c0` offered boot and
   accepted UAC, but S4U registration was denied; there is no task/watcher.
-  Standard-user boot remains a blocker while native registration is diagnosed.
+  Standard-user boot remains a blocker pending its corrected installed repeat.
   Its own S4U fixture also failed; native process-token inspection confirmed
   the administrator S4U/Limited control was elevated. Actual boot-token
-  restriction is a separate release blocker. Diagnostic cleanup completed.
+  restriction is a separate release blocker. Password-authenticated S4U plus
+  batch-logon permission succeeded in bounded native diagnostics. The source
+  now implements that registration and an embedded token-restricting bootstrap;
+  the actual installed token, cleanup and restricted device access still need
+  validation. Diagnostic cleanup restored rights and removed all fixture tasks.
   Nonterminating task errors also exposed false success output, now covered
   by regression/mutation tests. Full native validation passed; its installed
   repeat remains with the standard-user registration gate.

@@ -19,7 +19,7 @@ child-process quoting/exit codes, process ownership, DLL loading and hidden
 console buffers. Task Scheduler transitions in the behavioral suite are mocks;
 the native cleanup tests use bounded, harmless children. The command-boundary
 test restricts CIM enumeration to its recorded fixture PIDs and checks 13 real
-PowerShell 5.1 invocation forms plus the generated WSH/watcher launch chain.
+PowerShell 5.1 invocation forms plus the WSH and restricted boot launch chains.
 It confirms script identity and arguments before asserting cleanup decisions.
 Fixture reports become visible only after their complete writes; a gated native
 self-test checks that publication boundary.
@@ -76,13 +76,21 @@ accepted separate administrator credentials, but registration of the standard
 user's S4U task failed with access denied. Config/program files were written
 in the intended profile and matched the candidate; no task or watcher existed,
 and the installer returned 1. Its intermediate success messages were incorrect.
-Task-operation error handling is corrected in source; S4U registration remains
-under native diagnosis before the installation gate can pass. Bounded tasks
+Task-operation error handling is corrected. Bounded tasks
 also denied own-standard-user S4U registration without triggers; the
 administrator control ran and cleanup left zero fixture tasks. Follow-up process
 inspection confirmed TokenElevation 1/type 1 and enabled administrator membership
-despite registered RunLevel Limited. Actual boot-token restriction must be fixed
-and validated, including the installed watcher and required device access.
+despite registered RunLevel Limited. Password-authenticated COM S4U registration
+then succeeded; execution required a separate batch-logon grant. Temporary
+rights and tasks were restored/removed. The source now implements cross-user
+credential entry, batch-logon permission and a protected bootstrap that restricts
+effective privileges and integrity. Validate these through the installed shim,
+including credential Cancel/failure, the actual session-0 watcher token, cleanup,
+one watcher and required device access. Fixture and bounded task results do not
+close those installation gates.
+The corrected source passed all 21 native test files without skips and all 53
+publication mutations. The bounded session-0 bootstrap check, installed repeat
+and CI on the new candidate must be recorded separately.
 The probe's initial decline and later approval are not installation-fallback
 results: neither run installed the product or registered a task.
 The current source corrects this by elevating only old-task removal and
@@ -162,6 +170,12 @@ path, since an account's display name alone does not prove a Unicode path.
 - Standard account with a separate administrator credential: repeat boot
   installation; verify files and PATH belong to the standard user, not the
   administrator. The elevated child must not change its administrator's PATH.
+  Enter the intended standard user's password in the separate boot-registration
+  dialog, never in chat or a transcript. Check Cancel preserves the old task and
+  program files; a failed authentication must not claim success. Record the
+  batch-logon right before/after. Registration failure must undo only a new grant;
+  successful setup retains it for the task and does not revoke it on uninstall.
+  Verify no password appears in task XML, command lines, config or logs.
 - Decline UAC on a fresh install: verify the stated login fallback and the
   saved `install.autostart = login`, only after task registration succeeds.
 - Login tier: confirm Interactive principal, automatic logon start and only one
@@ -176,6 +190,16 @@ path, since an account's display name alone does not prove a Unicode path.
   shim after moving the source checkout aside. Confirm task/program/PATH
   removal, config/log retention, and no unrelated script or user's process
   stopped. Restore the source location afterwards.
+
+Batch the remaining standard-profile work into one coordinated session: upgrade
+the failed partial installation, inspect ownership/PATH/build/token, run installed
+Save/Cancel, exercise the user tiers and their required sign-ins, then uninstall
+with source unavailable. Retain already-passed administrator-profile evidence;
+repeat only boot checks affected by the token bootstrap. Restore the original
+owner on the final candidate, verify one ordinary-rights watcher in session 0,
+then coordinate the final reboot and one-panel-at-a-time NVAPI checks. Restore
+the temporary Switch user policy afterward; remove disposable profiles only
+after the owner approves that destructive cleanup.
 
 ## Physical switching (one monitor at a time)
 

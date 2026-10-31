@@ -15,6 +15,7 @@ $global:ME = $FORUSER
 $global:IsElevated = $false
 $global:RENAMED_KEYS = @{}
 $global:WATCH = Join-Path $root 'event-watch.ps1'
+$global:DEST = $root
 $global:SWITCHER = Join-Path $root 'trigger-kvm.ps1'
 $global:LOG = Join-Path $root 'fixture.log'
 $global:VBS = Join-Path $root 'launcher.vbs'
@@ -33,8 +34,18 @@ $script:events = @()
 function Get-EffectiveTier { $script:tier }
 function Install-Files { $script:events += 'files' }
 function Get-WatcherCommand { param($Watcher,$Switcher,$LogFile,$ConfigFile) 'fixture-command' }
+function Get-BootTaskArguments { param($Watcher,$Switcher,$LogFile,$ConfigFile)
+    Assert-Equal $WATCH $Watcher
+    Assert-Equal $SWITCHER $Switcher
+    Assert-Equal $LOG $LogFile
+    Assert-Equal $CONFIG $ConfigFile
+    '-EncodedCommand fixture-bootstrap'
+}
 function Write-WatcherLauncher { param($Path,$Command) $script:events += 'launcher' }
-function New-ScheduledTaskAction { param($Execute,$Argument) 'fixture-action' }
+function New-ScheduledTaskAction { param($Execute,$Argument)
+    $script:lastAction = [pscustomobject]@{Execute=$Execute;Argument=$Argument}
+    'fixture-action'
+}
 function New-ScheduledTaskPrincipal { param($UserId,$LogonType,$RunLevel)
     [pscustomobject]@{UserId=$UserId;LogonType=$LogonType;RunLevel=$RunLevel}
 }
@@ -137,6 +148,56 @@ try {
     Assert-Equal 1 (Remove-ProtectedTask) 'an elevated removal failure is not success'
     Assert-Equal 0 $script:registrations.Count 'the helper never registers a replacement'
 
+    $script:taskExists = $false
+    $script:tier = 's4u'
+    $global:IsElevated = $true
+    Assert-Equal 0 (Invoke-Install) 'the boot installation can register its host launcher'
+    Assert-Equal 'powershell.exe' (Split-Path -Leaf $script:lastAction.Execute) 'boot uses the token-restricting host launcher'
+    Assert-Equal '-EncodedCommand fixture-bootstrap' $script:lastAction.Argument 'boot embeds the token restriction before loading installed scripts'
+
+    # The elevated child belongs to a different administrator. Authenticate the
+    # intended owner before replacing anything, and dispose the secret always.
+    $global:FORUSER = 'FIXTURE\Standard'
+    $script:taskExists = $false
+    $script:promptFails = $false
+    $script:crossFails = $false
+    function Request-BootPassword { param($User)
+        Assert-Equal $FORUSER $User
+        $script:events += 'password'
+        if ($script:promptFails) { throw 'fixture credential entry cancelled' }
+        $script:password = ConvertTo-SecureString 'synthetic fixture only' -AsPlainText -Force
+        return $script:password
+    }
+    function Register-CrossUserBootTask { param($Name,$User,$Execute,$Arguments,$Password)
+        $script:events += 'cross-register'
+        Assert-Equal $TASK $Name
+        Assert-Equal $FORUSER $User
+        Assert-Equal 'powershell.exe' (Split-Path -Leaf $Execute)
+        Assert-Equal '-EncodedCommand fixture-bootstrap' $Arguments
+        Assert-True ($Password -is [Security.SecureString]) 'credentials remain a secure value until COM authentication'
+        if ($script:crossFails) { throw 'fixture authenticated registration failed' }
+    }
+    $script:events = @()
+    Assert-Equal 0 (Invoke-Install) 'separate-administrator boot uses authenticated S4U registration'
+    Assert-Equal 'password,files,launcher,cross-register,enable-task,config:boot,start-task' ($script:events -join ',') 'prompt precedes changes; administrator PATH is never edited'
+    $disposed = $false
+    # PS 5.1 masks a disposed Length getter as null; Copy reliably throws.
+    try { $null = $script:password.Copy() } catch { $disposed = $true }
+    Assert-True $disposed 'the installation releases its secure password'
+    $script:crossFails = $true
+    $script:events = @()
+    Assert-Equal 1 (Invoke-Install) 'authenticated registration failure is not success'
+    Assert-Equal 'password,files,launcher,cross-register' ($script:events -join ',') 'failed authentication cannot enable or start a task'
+    $disposed = $false
+    try { $null = $script:password.Copy() } catch { $disposed = $true }
+    Assert-True $disposed 'failure also releases its secure password'
+    $script:crossFails = $false
+    $script:promptFails = $true
+    $script:events = @()
+    Assert-Equal 1 (Invoke-Install) 'cancelled credential entry is a failed install'
+    Assert-Equal 'password' ($script:events -join ',') 'cancellation preserves existing task/files/state'
+    $global:FORUSER = $ME
+
     function Test-TaskApiFailures {
         # Module commands can emit nonterminating errors despite a caller's Stop
         # preference. Exercise that boundary, not a mock which always throws.
@@ -199,6 +260,7 @@ try {
         Remove-Module $apiModule
     }
     Test-TaskApiFailures
+
 } finally {
     $resolved = (Get-Item -LiteralPath $root).FullName
     if ((Split-Path -Parent $resolved) -ne (Get-Item -LiteralPath $env:TEMP).FullName -or

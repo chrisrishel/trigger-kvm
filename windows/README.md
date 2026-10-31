@@ -55,19 +55,29 @@ terminal after adding PATH, or use the installed shim immediately:
 ```
 
 With no config yet it runs the walkthrough first. Choosing "from boot" asks for
-administrator rights to register the task, which requests RunLevel Limited.
-Actual boot-process token restriction remains a release gate: a bounded native
-control ran with an elevated administrator token despite that setting.
+administrator rights to register the task. Its protected bootstrap restricts
+the watcher to ordinary user privileges and medium integrity before loading
+installed scripts; RunLevel Limited alone is insufficient for S4U.
 An administrator-capable account can select that tier from an
 ordinary, unelevated PowerShell window; approve UAC when prompted. Removing a
 task registered with elevation also needs approval, including when changing
 from boot to login or no autostart.
 A standard account can choose boot when Windows allows a separate
 administrator credential prompt. If Windows policy denies that prompt, the
-boot row is disabled. **Standard-user boot installation is not yet validated:**
-the native separate-account check reached UAC and wrote the intended profile's
-files, but task registration was denied. Use login or no autostart until that
-release blocker is resolved (`RELEASE-CHECKS.md`).
+boot row is disabled. When a different administrator approves UAC, a second
+Windows dialog requests the **intended user's account password**, not that
+administrator's password or a Windows Hello PIN. It authenticates S4U
+registration once; neither trigger-kvm nor Task Scheduler saves that password.
+Cancel preserves the existing task and program files. Choose login if the
+account password is unavailable. Windows policy can still refuse registration.
+
+Cross-user boot setup grants that user **Log on as a batch job**. Failed
+registration removes only a grant added by that attempt. After successful
+registration, the right is retained through uninstall: another task may rely
+on it. No deny policy or other account right is changed. S4U cannot access
+network resources or EFS-encrypted files; use a local, unencrypted install.
+**The corrected boot paths still require installed validation** in
+[`RELEASE-CHECKS.md`](RELEASE-CHECKS.md), including restricted session-0 device access.
 
 The install is self-contained: the installer copies itself next to the program,
 so uninstalling works after the source tree is gone. To upgrade or repair, run
@@ -151,7 +161,7 @@ program files in place and explains the remaining task.
 
 | Answer | What is installed | Covers |
 |---|---|---|
-| From boot | a Scheduled Task with an S4U principal and RunLevel Limited, triggered at startup. Administrator once, to register; runs as you in session 0. Actual token restriction remains unresolved | from boot onward -- before the first login, while locked, after a logoff |
+| From boot | an S4U Scheduled Task; its protected bootstrap enforces ordinary user rights and medium integrity in session 0. Administrator rights to register; intended-user password for cross-user registration | from boot onward -- before the first login, while locked, after a logoff; corrected restricted-token path pending installed validation |
 | From login | the same task with an Interactive principal, triggered at logon | from your logon onward, including while the screen is locked |
 | No | the same task with no triggers, started now | this session only; `restart` starts it again |
 
@@ -173,8 +183,8 @@ changes do not require administrator rights. The watcher's `Limited` run level
 is separate from permission to edit the task definition. Start the installer
 unelevated even when changing away from boot; let it request the required step.
 Config and logs are retained by uninstall. The watcher requires no administrator
-operations; the unresolved boot-token issue above concerns the privileges Windows
-actually grants it.
+operations. Boot startup refuses rather than launching with excess privileges
+if token restriction fails; inspect `trigger-kvm logs`.
 
 The two automatic tiers also carry a one-minute repeating trigger, which is what
 brings a killed watcher back. Task Scheduler's own RestartCount does not: it
@@ -308,10 +318,12 @@ A force-killed watcher leaves the mutex ABANDONED, which is a normal condition
 here and not an error -- see [`AGENTS.md`](AGENTS.md). The log rotates at
 startup, after the lock, and nowhere else.
 
-The task runs `wscript.exe launcher.vbs`, which runs `powershell.exe`, because
-powershell is a console-subsystem binary and would flash a window at every
-logon. The watcher is therefore a GRANDCHILD of the task: stopping the task does
-not stop it.
+Login/manual tasks run `wscript.exe launcher.vbs`, which starts PowerShell
+without flashing a console. Boot instead embeds the native token bootstrap in
+the protected task definition. It removes administrator/power-user membership
+and all privileges except change-notify, sets medium integrity, checks owner
+and session, then starts the watcher. Both hosts wait for the one detector and
+forward its exit code. Stopping only the host does not stop the watcher.
 
 ## Running a watcher by hand
 

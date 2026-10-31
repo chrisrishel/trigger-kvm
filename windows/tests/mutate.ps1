@@ -1124,6 +1124,40 @@ Invoke-Mutation 'identity: status offers configure as the fix it does not have' 
 # =============================================================================
 
 # Publication regressions: each suite is required green before these run.
+Invoke-Mutation 'publication: boot action bypasses the protected token bootstrap' `
+    'lib\host.ps1' 'privilege.tests.ps1' `
+    '$bootArguments = Get-BootTaskArguments -Watcher $WATCH -Switcher $SWITCHER -LogFile $LOG -ConfigFile $CONFIG' `
+    '$bootArguments = $psCmd'
+Invoke-Mutation 'publication: boot restriction keeps the fully trusted token' `
+    'lib\user-launch.ps1' 'boot-launch.tests.ps1' `
+    'SaferCreateLevel(2, 0x20000, 1,' 'SaferCreateLevel(2, 0x40000, 1,'
+Invoke-Mutation 'publication: boot token accepts high integrity' `
+    'lib\user-launch.ps1' 'boot-launch.tests.ps1' `
+    'facts.Integrity != 8192' 'facts.Integrity < 8192'
+Invoke-Mutation 'publication: boot token accepts retained privileges' `
+    'lib\user-launch.ps1' 'boot-launch.tests.ps1' `
+    'privilege != "SeChangeNotifyPrivilege"' 'false'
+Invoke-Mutation 'publication: boot launch raises integrity' `
+    'lib\user-launch.ps1' 'boot-launch.tests.ps1' `
+    'new SecurityIdentifier("S-1-16-8192")' 'new SecurityIdentifier("S-1-16-12288")'
+Invoke-Mutation 'publication: cross-user install omits password prompt' `
+    'lib\host.ps1' 'privilege.tests.ps1' `
+    '$bootPassword = Request-BootPassword -User $FORUSER' '$bootPassword = $null'
+Invoke-Mutation 'publication: boot install retains its password object' `
+    'lib\host.ps1' 'privilege.tests.ps1' `
+    '$bootPassword.Dispose()' '$null = $bootPassword'
+Invoke-Mutation 'publication: cross-user registration stores the password' `
+    'lib\boot-registration.ps1' 'boot-registration.tests.ps1' `
+    '.RegisterTaskDefinition($Name, $definition, 2, $User, $plain, 2)' '.RegisterTaskDefinition($Name, $definition, 2, $User, $plain, 1)'
+Invoke-Mutation 'publication: cross-user registration skips batch permission' `
+    'lib\boot-registration.ps1' 'boot-registration.tests.ps1' `
+    '$added = Set-BootBatchRight -User $User -Add $true' '$added = $false'
+Invoke-Mutation 'publication: failed registration revokes an existing batch right' `
+    'lib\boot-registration.ps1' 'boot-registration.tests.ps1' `
+    'if ($added) { Set-BootBatchRight' 'if ($true) { Set-BootBatchRight'
+Invoke-Mutation 'publication: cross-user boot definition drops self-heal' `
+    'lib\boot-registration.ps1' 'boot-registration.tests.ps1' `
+    '$heal.Repetition.Interval = ''PT1M''' '$heal.Repetition.Interval = ''PT5M'''
 Invoke-Mutation 'publication: elevation ignores deny-only administrator claims' `
     'lib\host.ps1' 'elevation.tests.ps1' `
     '[Security.Claims.ClaimTypes]::DenyOnlySid' '[Security.Claims.ClaimTypes]::PrimarySid'

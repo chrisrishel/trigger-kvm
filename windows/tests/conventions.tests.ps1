@@ -758,7 +758,7 @@ foreach ($f in (Get-ShippedScript)) {
 
 # NAMED, not counted loosely: a new embedded block is a decision somebody has to
 # make deliberately, and this is where they are told so.
-$expected = 'event-watch.ps1', 'event-watch.ps1', 'lib\host.ps1', 'nvapi-probe.ps1', 'trigger-kvm.ps1'
+$expected = 'event-watch.ps1', 'event-watch.ps1', 'lib\boot-registration.ps1', 'lib\host.ps1', 'lib\user-launch.ps1', 'nvapi-probe.ps1', 'trigger-kvm.ps1'
 Assert-Equal ($expected -join ', ') ((@($blocks | ForEach-Object { $_.File }) | Sort-Object) -join ', ') `
     ('the embedded native source in this tree is not what this scan was written against. ' +
      'A new block is a new way to reach hardware: name it here, and in windows\AGENTS.md.')

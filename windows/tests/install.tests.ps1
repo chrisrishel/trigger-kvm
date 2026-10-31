@@ -705,6 +705,9 @@ foreach ($n in 'install.ps1', 'config.ps1', 'event-watch.ps1', 'trigger-kvm.ps1'
     Set-Content -LiteralPath (Join-Path $src $n) -Value "# $n" -Encoding ASCII
 }
 Set-Content -LiteralPath (Join-Path $src 'lib\host.ps1') -Value '# host' -Encoding ASCII
+foreach ($n in 'user-launch.ps1', 'boot-registration.ps1') {
+    Set-Content -LiteralPath (Join-Path $src ('lib\' + $n)) -Value "# $n" -Encoding ASCII
+}
 Set-Content -LiteralPath (Join-Path $src 'SPEC-REVISION') -Value 'revision = 14' -Encoding ASCII
 
 $global:VERSION = '0.0.0-test'
@@ -742,7 +745,7 @@ try {
     switch ('install') { default { Install-Files } }
 } finally { Pop-Location }
 
-foreach ($f in $CFGLIB, $WATCH, $SWITCHER, $MANAGE, $SHIM, $STAMP, (Join-Path $LIBDIR 'host.ps1')) {
+foreach ($f in $CFGLIB, $WATCH, $SWITCHER, $MANAGE, $SHIM, $STAMP, (Join-Path $LIBDIR 'host.ps1'), (Join-Path $LIBDIR 'user-launch.ps1'), (Join-Path $LIBDIR 'boot-registration.ps1')) {
     Assert-True (Test-Path -LiteralPath $f) ("an install from a source tree lands {0}" -f (Split-Path -Leaf $f))
 }
 Assert-Equal '# install.ps1' (Get-Content -Raw -LiteralPath $MANAGE).Trim() `
@@ -766,7 +769,7 @@ Assert-Equal '' $threw 'installing from the installed copy must not throw on a f
 
 Assert-Match (Get-Printed) 'the scripts there are the ones being installed' `
     'and it says why nothing was copied, rather than claiming a copy'
-foreach ($f in $CFGLIB, $WATCH, $SWITCHER, $MANAGE, (Join-Path $LIBDIR 'host.ps1')) {
+foreach ($f in $CFGLIB, $WATCH, $SWITCHER, $MANAGE, (Join-Path $LIBDIR 'host.ps1'), (Join-Path $LIBDIR 'user-launch.ps1'), (Join-Path $LIBDIR 'boot-registration.ps1')) {
     Assert-True (Test-Path -LiteralPath $f) ("{0} survives the second run" -f (Split-Path -Leaf $f))
 }
 Assert-Equal '# install.ps1' (Get-Content -Raw -LiteralPath $MANAGE).Trim() `

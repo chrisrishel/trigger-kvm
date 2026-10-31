@@ -1383,6 +1383,17 @@ function Invoke-Install {
     $settle   = $(if ($cfg.Contains('trigger.settle'))   { $cfg['trigger.settle'] }   else { $DEFAULT_SETTLE })
     Write-Log "config says: watch $devices  (debounce ${debounce}s, settle ${settle}s)"
 
+    $bootPassword = $null
+    try {
+    if ($tier -eq 's4u' -and $FORUSER -ne $ME) {
+        try { $bootPassword = Request-BootPassword -User $FORUSER }
+        catch {
+            Write-Log $_.Exception.Message
+            Write-Log 'no task or program files were replaced. Run configure again; choose From login if the account password is unavailable.'
+            return 1
+        }
+    }
+
     Install-Files
 
     # --- the task ------------------------------------------------------------
@@ -1400,10 +1411,15 @@ function Invoke-Install {
     Write-WatcherLauncher -Path $VBS -Command $psCmd
 
     $action = New-ScheduledTaskAction -Execute 'wscript.exe' -Argument "`"$VBS`""
+    if ($tier -eq 's4u') {
+        # The host bootstrap replaces WSH in session 0, where there is no
+        # interactive console to flash. It restricts the token before launch.
+        $bootArguments = Get-BootTaskArguments -Watcher $WATCH -Switcher $SWITCHER -LogFile $LOG -ConfigFile $CONFIG
+        $action = New-ScheduledTaskAction -Execute (Join-Path $PSHOME 'powershell.exe') -Argument $bootArguments
+    }
 
-    # The tier differs in exactly two things: when it starts, and as whom.
-    # Everything below -- the self-heal trigger, the settings, the action -- is
-    # shared, because the tier is not supposed to change what the watcher does.
+    # The host owns startup and token restriction. The detector is the same
+    # in every tier; the shared self-heal and battery settings apply to it.
     #
     # $FORUSER, never this process's own name: boot registration can run as a
     # different administrator supplied at the standard user's UAC prompt.
@@ -1415,9 +1431,8 @@ function Invoke-Install {
         $principal = New-ScheduledTaskPrincipal -UserId $FORUSER `
             -LogonType Interactive -RunLevel Limited
     } elseif ($tier -eq 's4u') {
-        # S4U means "run as this user without their password": no stored
-        # credential, and RunLevel Limited means ordinary user rights at run
-        # time even though registering it needed admin.
+        # S4U stores no password. Limited is only a requested task setting;
+        # the boot host launcher enforces ordinary rights in the process token.
         $triggers = @( (New-ScheduledTaskTrigger -AtStartup) )
         $principal = New-ScheduledTaskPrincipal -UserId $FORUSER `
             -LogonType S4U -RunLevel Limited
@@ -1511,8 +1526,13 @@ function Invoke-Install {
     # cannot leave a working setup, it has to say what is left and how to
     # recover.
     try {
-        Register-ScheduledTask @register `
-            -Description "trigger-kvm: pull the configured monitors to this computer when the shared peripherals arrive." -ErrorAction Stop | Out-Null
+        if ($tier -eq 's4u' -and $FORUSER -ne $ME) {
+            Register-CrossUserBootTask -Name $TASK -User $FORUSER -Execute (Join-Path $PSHOME 'powershell.exe') `
+                -Arguments $bootArguments -Password $bootPassword
+        } else {
+            Register-ScheduledTask @register `
+                -Description "trigger-kvm: pull the configured monitors to this computer when the shared peripherals arrive." -ErrorAction Stop | Out-Null
+        }
     } catch {
         Write-Log ("could not register the task '{0}': {1}" -f $TASK, $_.Exception.Message)
         Write-Log 'the scripts are installed and the config is intact; the watcher task is missing.'
@@ -1603,4 +1623,7 @@ function Invoke-Install {
     Write-Host ("    {0} configure   change any of this" -f $cmd)
     Write-Host ''
     return 0
+    } finally {
+        if ($null -ne $bootPassword) { $bootPassword.Dispose() }
+    }
 }

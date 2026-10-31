@@ -95,9 +95,10 @@ not built in: a Stream Deck macro or a scheduled task can run `trigger-kvm pull`
 inputs on hardware this computer cannot observe. Nothing in the trigger path
 takes a name at all; `pull` looks up `computer.this`.
 
-On Windows the watcher is a *grandchild* of the scheduled task: the task runs a
-generated `wscript.exe` shim (which keeps any console from being allocated), and
-the shim runs the watcher. Stopping the task does not stop the watcher, so
+On Windows a host waiter starts the one detector: login/manual use a generated
+WSH shim to avoid flashing a console; boot embeds a token-restricting bootstrap
+in the protected task definition, before loading user-writable scripts.
+Stopping the task does not stop the watcher, so
 `event-watch.ps1` enforces single-instance itself with a named mutex.
 
 ## Two kinds of knowledge, two homes
@@ -191,13 +192,14 @@ on Windows, so the debounce is load-bearing.
 ## When it starts
 
 Both platforms' contract requires **elevation once, to register, and nothing
-elevated on the switch path.** Windows boot-token enforcement remains a release
-blocker: the 2026-10-30 bounded S4U control ran elevated despite RunLevel Limited
-(`docs/measurements.md`).
+elevated on the switch path.** Windows boot uses SAFER normal-user restriction
+plus explicit medium integrity; the host verifies rights, owner and session
+before starting the detector. S4U / Limited alone does not restrict the token
+(`docs/measurements.md`). Installed device-access validation remains open.
 
 | | boot | login |
 |---|---|---|
-| Windows | Scheduled Task, S4U principal, session 0, requests Limited; actual token restriction unresolved; admin once to register | Scheduled Task, interactive |
+| Windows | S4U Scheduled Task, session 0, protected token bootstrap; admin to register, intended-user password for cross-user registration | Scheduled Task, interactive |
 | macOS | LaunchDaemon with `UserName` set: runs as the user, unelevated, with no session; `sudo` once to install | LaunchAgent |
 
 Windows boot registration runs in an elevated child with the intended user's
@@ -206,6 +208,10 @@ or no autostart splits the work: the elevated child removes the old task only,
 then the original unelevated parent registers the replacement. Its definition
 is therefore controllable by that user. The removal child does not install
 files, register a task, update configuration or edit PATH (`windows/lib/host.ps1`).
+Cross-user boot registration uses a local credential dialog and COM S4U
+authentication without stored credentials. Its batch-logon grant rolls back on
+registration failure if newly added; a successful grant is retained because
+other tasks may depend on it (`windows/lib/boot-registration.ps1`).
 
 The boot tier covers the login screen after a reboot and the time after a
 logoff, both measured on Windows with nobody signed in. Locking is covered by
