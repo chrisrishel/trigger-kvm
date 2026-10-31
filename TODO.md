@@ -29,6 +29,12 @@ and the command checklist in `windows/RELEASE-CHECKS.md`.
   execution-boundary recognition, prior watcher state, apostrophes/Unicode,
   fractional settle, restricted DLL loading,
   Escape rollback, recursive conformance coverage and isolated test paths.
+- [ ] Windows follow-up review at `7a2a9a4`: resolve the boot bootstrap's
+  pre-restriction module-loading concern, the native UAC-eligibility assertion
+  and stale boot-validation wording. `windows/HANDOFF.md` contains the evidence
+  and acceptance criteria. Prefer focused automated/native fixtures and reuse
+  completed installed/hardware evidence where behavior is unchanged; coordinate
+  only the smallest necessary additional manual checks.
 - [x] Shared contracts: revision 15 settles menu overflow and labels `status`
   as the current saved configuration. Both platforms implement revision 15;
   empty saved triggers also retain the restart reminder on Windows.
