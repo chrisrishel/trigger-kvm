@@ -13,7 +13,7 @@ try {
     Assert-True (Test-Path -LiteralPath $report) 'native menu fixture must publish its result'
     $result = Get-Content -LiteralPath $report -Raw -Encoding UTF8 | ConvertFrom-Json
     Assert-True $result.Ok ($result | ConvertTo-Json -Compress -Depth 4)
-    Assert-Equal 27 $result.Cases 'all native viewport cases reached their completion guard'
+    Assert-Equal 30 $result.Cases 'all native viewport cases reached their completion guard'
 } finally {
     if ($process) {
         if (-not $process.HasExited) { $process.Kill(); $process.WaitForExit() }

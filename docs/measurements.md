@@ -1963,7 +1963,7 @@ terminal token and actual frame/highlight bounds; it does not interpret those
 duplicated RawUI cells as lost/duplicated source characters.
 
 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File
-windows/tests/run.ps1 viewport` passed 27 cases in actual hidden console
+windows/tests/run.ps1 viewport` passed 30 cases in actual hidden console
 windows. Scripted `ConsoleKey` values drive the unchanged input boundary;
 buffer cells, cursor positions, window/buffer dimensions and resize operations
 are native. Coverage includes 12x80, 10x55, 16x80, 8x80, 6x24 and 14x80 windows,
@@ -1972,7 +1972,15 @@ disabled/separator rows, page distances/end clamping, arrow wrap, empty-Done
 refusal, resized fallback and Escape/selection preservation. These are automated
 console fixtures, not manual keypress or physical-monitor observations.
 
-Using the same native host, `windows/tests/mutate.ps1 viewport` caught all 14
+The resize-to-fallback boundary has three additional Escape cases. Native
+reproduction showed that an Escape arriving with an undersized resize was
+consumed before the numbered prompt. The transition now honors submenu
+cancellation immediately, or moves the top-level default to Cancel while
+still requiring confirmation. Multi-select cancellation discards in-progress
+checks at that boundary too; two specific mutations remove those protections
+and fail the native cases.
+
+Using the same native host, `windows/tests/mutate.ps1 viewport` caught all 16
 new mutations; the refined current-highlight mutation was also rerun separately
 and failed specifically after moving the selection. Filters `menus` and
 `redraw` caught all 3 and 2 existing mutations. The full suite before advancing

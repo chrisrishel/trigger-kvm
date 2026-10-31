@@ -437,6 +437,13 @@ function Select-One {
             $view = Get-MenuViewport -Entries $entries -Controls $controls -Selected $sel[$at] -First $first -Geometry $geometry
             if (-not $view.Fits) {
                 Reset-MenuViewport -State $frame -Geometry $geometry
+                # Escape keeps its meaning even when that key also reveals a
+                # resize too small to draw the next interactive frame.
+                if ($key -eq 'Escape') {
+                    if ($Escapable) { Write-Host ''; return -1 }
+                    $to = $sel.IndexOf($EscapeTo)
+                    if ($to -ge 0) { $at = $to }
+                }
                 Write-Host '  The console is too small for an entry and its controls; using numbered input.'
                 $Default = $sel[$at]
                 break
@@ -547,6 +554,7 @@ function Select-Many {
             $view = Get-MenuViewport -Entries $entries -Controls $controls -Selected $cursor -First $first -Geometry $geometry
             if (-not $view.Fits) {
                 Reset-MenuViewport -State $frame -Geometry $geometry
+                if ($key -eq 'Escape' -and $Escapable) { Write-Host ''; return $null }
                 Write-Host '  The console is too small for an entry and its controls; using numbered input.'
                 break
             }

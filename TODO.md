@@ -43,7 +43,7 @@ and the command checklist in `windows/RELEASE-CHECKS.md`.
   empty saved triggers also retain the restart reminder on Windows.
 - [x] Revision 16: both platforms implement terminal-height viewports in their
   common menu primitives, including wrapped details, page/end navigation,
-  resize reflow and numbered fallback with state preserved. Windows has 27
+  resize reflow and numbered fallback with state preserved. Windows has 30
   automated native console cases and relevant mutation coverage. No monitor
   switching, reboot, profile changes or repeat boot validation was needed.
 - [x] Documentation: copyable installation and usage examples, explicit

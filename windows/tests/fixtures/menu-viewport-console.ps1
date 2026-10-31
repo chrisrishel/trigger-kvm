@@ -219,6 +219,18 @@ try {
     Require ($script:transcript.Replace("`n",'').Contains($longDone)) 'Done text is never truncated'
     Finish-Case
 
+    Start-Case -Steps @(Step Escape row00 -Width 24 -Height 6)
+    Require ((Select-One -Items $items -Escapable) -eq -1) 'Escape at the resize boundary still returns to the parent'
+    Finish-Case
+
+    Start-Case -Steps @(Step Escape row00 -Width 24 -Height 6) -Answers @('')
+    Require ((Select-One -Items $items -EscapeTo 29) -eq 29) 'Escape at the resize boundary moves the numbered default to Cancel'
+    Finish-Case
+
+    Start-Case -Steps @((Step Spacebar row00),(Step Escape row00 -Width 24 -Height 6))
+    Require ($null -eq (Select-Many -Items $items -Escapable)) 'multi-select Escape at the resize boundary cancels in-progress checks'
+    Finish-Case
+
     @{Ok=$true;Cases=$script:cases} | ConvertTo-Json | Set-Content -LiteralPath $Report -Encoding UTF8
 } catch {
     @{Ok=$false;Cases=$script:cases;Error="$_";Frames=$script:frames} | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $Report -Encoding UTF8

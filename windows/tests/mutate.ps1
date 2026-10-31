@@ -499,6 +499,12 @@ Invoke-Mutation 'viewport: oversized entries are allowed into the frame' `
 Invoke-Mutation 'viewport: controls get no reserved height' `
     'lib\menu.ps1' 'viewport.tests.ps1' `
     '$Geometry.Height - 1 - (Get-MenuRows -Lines $Controls -Columns $Geometry.Columns)' '$Geometry.Height - 1'
+Invoke-Mutation 'viewport: single-choice fallback consumes pending Escape' `
+    'lib\menu.ps1' 'viewport.tests.ps1' `
+    "if (`$key -eq 'Escape') {" 'if ($false) {'
+Invoke-Mutation 'viewport: multi-select fallback consumes pending Escape' `
+    'lib\menu.ps1' 'viewport.tests.ps1' `
+    "if (`$key -eq 'Escape' -and `$Escapable) { Write-Host ''; return `$null }" ''
 
 Invoke-Mutation 'menus: q is dead on the top menu in the typed fallback' `
     'lib\menu.ps1' 'menus.tests.ps1' `

@@ -76,8 +76,8 @@ published. This work authorizes neither history/author-metadata changes nor
 publication, tags or visibility changes. Product version remains 0.2.0.
 
 Revision 16's menu-height defect was reproduced in a native 12-row console
-before implementation. Both primitives now share the viewport renderer; 27
-automated native console cases and 19 relevant mutations cover scrolling,
+before implementation. Both primitives now share the viewport renderer; 30
+automated native console cases and 21 relevant mutations cover scrolling,
 wrapping, resize, navigation, Done, disabled/separator rows and fallback state.
 See the dated evidence in `../docs/measurements.md`. This menu-only work does
 not repeat hardware, reboot, profile or installed boot validation. The separate
