@@ -81,3 +81,20 @@ wrapping, resize, navigation, Done, disabled/separator rows and fallback state.
 See the dated evidence in `../docs/measurements.md`. This menu-only work does
 not repeat hardware, reboot, profile or installed boot validation. The separate
 privacy and coordinated-release gates remain open.
+
+## Refresh the checkout after the authorized privacy rewrite
+
+Kind:     defect report
+Spec:     ../docs/privacy.md; CONTRIBUTING.md, Versioning and releases
+Why:      the old checkout carries identifiers and email metadata that must not be merged or pushed back into the sanitized history
+Owed:     archive the old checkout privately, clone main anew, set the repository-local GitHub noreply email, open the new checkout in development tools, and run the native Windows PowerShell 5.1 suite
+Verified: the owner authorized the cross-platform privacy substitutions, historical commit/message/metadata rewrite, replacement of main and v0.2.0, and removal of affected Actions records on 2026-10-31; this supersedes earlier statements withholding history-cleanup approval, but does not authorize publication
+
+Follow the exact migration instructions in `../docs/privacy.md`. Preserve and
+review any uncommitted file edits before copying them into the new clone; do
+not import old branches, tags or Git metadata. The display-row fixture uses a
+synthetic serial with every existing assertion retained. Historical commit
+references now identify the sanitized source; installed copies retain their
+original stamps. Privacy-only edits do not require a reinstall, new profiles,
+reboot or physical monitor testing. Record the native suite outcome and skips;
+product version remains 0.2.0 and the next coordinated release is 0.3.0.

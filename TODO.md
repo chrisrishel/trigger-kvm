@@ -83,25 +83,19 @@ and the command checklist in `windows/RELEASE-CHECKS.md`.
   for the evidence and remaining
   coordinated release/privacy gates. This does not mark the repository ready
   for publication.
-- [ ] Privacy: shared measurement notes now use consistent labels for device
-  identifiers; unnecessary current Windows device examples are synthetic.
-  The 2026-10-30 audit at `2835cb0` covered 112 tracked files, 226 commits/1,192
-  text blobs, all advertised refs, accessible GitHub metadata and 14 Actions
-  logs. Current matches are synthetic/redacted examples or API constants; no
-  known credential-pattern matches were found. Historical identifiers and one
-  author email remain, including that email in Actions metadata. See the
-  location/category inventory and limits in `docs/measurements.md`, "Release
-  validation and privacy". GitHub secret scanning was disabled/unavailable.
-  The refresh through `1f00e7e` covered 242 commits / 1,298 text blobs and all
-  30 Actions runs' logs, with no new findings or authorship records.
-  On 2026-10-30 the owner chose to keep publication blocked for a separate
-  privacy review; retaining that historical content/metadata for publication
-  is not approved. Before any
-  separately approved history rewrite, prepare a private
-  backup and exact replacement
-  preview, finish both platforms' work, and synchronize both checkouts. Re-scan
-  all published refs and GitHub surfaces afterward. Do not remove human
-  authorship or rewrite history as part of ordinary fixes.
+- [x] Privacy history cleanup: the owner authorized preserving the development
+  history while replacing private identifiers and author/committer/tagger email.
+  The isolated rewrite retains all 251 commits and their parent relationships,
+  names and dates, and replaces the remaining real Windows fixture serial without
+  changing assertions. Private recovery and Actions evidence are retained.
+  See `docs/privacy.md` for scope, residual risk and checkout migration.
+- [ ] Windows checkout migration: replace the old checkout with a fresh clone,
+  set the repository-local noreply email and run the native suite. Do not pull,
+  merge or push the old history. No repeated hardware/profile/reboot matrix is
+  required for privacy-only edits.
+- [ ] Publication: verify the final sanitized remote refs and Actions metadata,
+  review any linked Projects not accessible to the audit, and obtain explicit
+  approval for the coordinated release and repository visibility change.
 - [ ] Final release review: both native suites and relevant mutations pass;
   skipped hardware checks remain explicitly unverified; the documentation
   matches the release commit and privacy review covers its history.

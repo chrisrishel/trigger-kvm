@@ -2029,6 +2029,43 @@ evidence above; privacy and coordinated release checks remain separate gates.
 
 ## Release validation and privacy
 
+**2026-10-31 -- owner-authorized, history-preserving privacy cleanup.** The
+pre-rewrite audit covered 121 current files, 251 commits, 1,363 text blobs,
+the annotated tag, and 39 Actions runs with 40 available log attempts. A direct
+comparison with original measurement values found one real LG serial still in
+`windows/tests/identity.tests.ps1`; its display-row fixture now uses `00001111`,
+with every assertion retained. No credential leak was confirmed. Gitleaks'
+generic-key alerts in the source were filename-list assignments, not secrets.
+
+An isolated rewrite retains every commit, parent relationship, author and
+committer name, and timestamp, while replacing identifying values and using
+the maintainer's GitHub noreply email in commit and tag metadata. All 1,363
+old/new blob pairs were compared against the intended substitutions and commit
+reference updates. The annotated `v0.2.0` tag's name, tagger name/date/message
+and corresponding target were checked. Twenty-two deliberate identifier
+reintroductions were caught by the private validation scan. Recovery bundles,
+replacement rules, old/new mappings and all downloaded Actions evidence are
+retained privately. Old CI links refer to those retained validation records;
+affected runs are removed as part of the authorized remote cleanup.
+
+Validation on the sanitized source: `cd macos && make test` passed all 14 test
+files and ShellCheck without skips. The Windows identity test passed under
+PowerShell 7 on macOS; native Windows validation is supplied by hosted CI and
+the Windows checkout migration, not inferred from that portable run. Safe DDC
+allowlist values and current instruction files are byte-identical. Runtime
+changes are limited to comments referring to rewritten commits; no installed
+configuration, watcher, monitor or autostart setting was changed.
+
+The owner accepts that rewriting published refs does not prove deletion of
+cached/unadvertised server objects or outside copies. This decision supersedes
+the earlier withholding of privacy-remediation approval, not the requirement
+for separate publication/release approval. `docs/privacy.md` gives the policy,
+limits and fresh-checkout instructions. Product version remains 0.2.0 and
+specification revision remains 16; 0.3.0 is the next coordinated release target.
+The dated audit entries below describe their original review scope; historical
+examples and commit references are now sanitized.
+
+
 **2026-10-30 -- privacy audit at `2835cb0`, while the repository remains
 private.** Read-only inspection covered all 112 tracked current files and
 every blob reachable from the local refs: 226 commits and 1,192 text blobs,

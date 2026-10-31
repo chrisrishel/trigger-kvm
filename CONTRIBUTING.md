@@ -136,6 +136,9 @@ notes. It still requires safety and privacy review and approval to publish;
 failed automated checks must be resolved before tagging. Each revised candidate
 gets a new tag. A final release must pass the full release checklist.
 
+For publication privacy, commit identity and the one-time checkout migration,
+see [Publication privacy](docs/privacy.md).
+
 ## Reporting a monitor that is not one of the two
 
 This is the most useful thing an outside contributor can do, and it needs
