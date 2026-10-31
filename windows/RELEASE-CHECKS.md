@@ -88,9 +88,11 @@ effective privileges and integrity. Validate these through the installed shim,
 including credential Cancel/failure, the actual session-0 watcher token, cleanup,
 one watcher and required device access. Fixture and bounded task results do not
 close those installation gates.
-The corrected source passed all 21 native test files without skips and all 53
-publication mutations. The bounded session-0 bootstrap check, installed repeat
-and CI on the new candidate must be recorded separately.
+Candidate `473274d` and its clean checkout passed all 21 native test files
+without skips; all 53 publication mutations were caught. CI `41153314261`
+passed both platforms. Hosted Windows passed 20 files, with one NVIDIA-dependent
+file and two driver cases skipped; macOS passed 13. The bounded session-0
+bootstrap check and installed repeat must be recorded separately.
 The probe's initial decline and later approval are not installation-fallback
 results: neither run installed the product or registered a task.
 The current source corrects this by elevating only old-task removal and
@@ -105,7 +107,7 @@ Each user tier had one intended watcher; the final manual task had no triggers.
 The subsequent source-unavailable uninstall returned 0, removed task/program
 and the installed PATH entry, stopped the watcher, and retained config/log
 bytes and all original PATH entries.
-The candidate's clean native suite passed all 19
+The earlier `462204a` clean native suite passed all 19
 files without skips and CI passed on both platforms, with hosted hardware
 skips recorded in `docs/measurements.md`.
 

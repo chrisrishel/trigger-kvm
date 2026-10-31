@@ -1237,6 +1237,10 @@ These results are automated/native OS evidence, not an installed workflow or
 physical switching result. Commands were `powershell.exe -NoProfile
 -ExecutionPolicy Bypass -File windows/tests/run.ps1` and the same invocation of
 `windows/tests/mutate.ps1 publication`.
+The fix landed as `473274d`. Its clean checkout also passed all 21 native files
+without skips. CI `41153314261` passed both platforms: Windows 20 files, with
+`resolve.tests.ps1` and two NVIDIA-driver cases explicitly skipped; macOS 13
+files. Full logs were inspected. No installed copy was upgraded by these tests.
 Microsoft documents [S4U authentication and batch-logon requirements](https://learn.microsoft.com/en-us/windows/win32/taskschd/security-contexts-for-running-tasks),
 [S4U registration without stored passwords](https://learn.microsoft.com/en-us/windows/win32/taskschd/taskfolder-registertaskdefinition),
 [SAFER token computation](https://learn.microsoft.com/en-us/windows/win32/api/winsafer/nf-winsafer-safercomputetokenfromlevel)
@@ -1675,3 +1679,10 @@ On 2026-10-30 the owner chose to keep publication blocked for a separate privacy
 review. Historical identifier and author-metadata retention is not approved for
 publication. No history rewrite, author-metadata change or visibility change is
 authorized by that decision.
+
+The refresh through `473274d` covered 237 commits / 1,279 text blobs, with no
+binary blobs, and all 25 accessible Actions logs. Comparison with the prior
+private inventory found no new current/history/remote identifying values or
+authorship records. The repository remained private with one branch and one
+tag; other remote surface counts were unchanged. Secret scanning remained
+unavailable. The owner's separate privacy-review block remains in force.
