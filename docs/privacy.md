@@ -20,8 +20,9 @@ rewritten history. Hardware observations and safe DDC values are retained.
 The annotated `v0.2.0` tag retains its name, tagger name, date and message and
 points to the corresponding sanitized commit. Its object ID changes. This is
 the owner's one-time pre-publication privacy exception to tag immutability;
-ordinary releases still follow `CONTRIBUTING.md`. No `0.3.0` tag is created by
-this cleanup, and the product version remains `0.2.0`.
+ordinary releases still follow `CONTRIBUTING.md`. The cleanup did not create a
+release or change the `0.2.0` product version; subsequent release preparation
+is tracked in [TODO](../TODO.md#publication-readiness).
 
 The original bundle, replacement inventory, commit mapping and Actions evidence
 are retained privately outside tracked files. Affected Actions runs are removed
@@ -92,10 +93,10 @@ They are not a proof that every possible identifier or secret is absent.
 
 A rewrite does not guarantee deletion of cached or unadvertised GitHub objects
 or outside copies. The owner accepts that residual risk for the identifiers
-found here. GitHub secret scanning was disabled during the audit; linked
-Projects could not be inspected with the available authorization. Repeat the
-accessible-surface checks for the final release candidate and review any
-additional surfaces before making the repository public.
+found here. GitHub secret scanning was disabled during the audit. The API could
+not enumerate linked Projects; the owner confirmed on 2026-10-31 that there
+are none. Repeat the accessible-surface checks for the final release candidate
+and review any additional surfaces before making the repository public.
 
 References: [GitHub email identities](https://docs.github.com/en/account-and-profile/concepts/email-addresses),
 [history cleanup](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/removing-sensitive-data-from-a-repository),

@@ -22,7 +22,7 @@ TK_SESSION_PLIST=${TK_SESSION_PLIST:-$TK_PREFIX/$TK_LABEL.plist}             # n
 # recorder. tests/conventions.tests.sh scans for a bare launchctl.
 TK_LAUNCHCTL=${TK_LAUNCHCTL:-/bin/launchctl}
 
-TK_VERSION="0.2.0"
+TK_VERSION="0.3.0"
 
 # To stderr, never stdout: stdout carries `list --raw` rows and captured
 # results, and a log line there is a row the caller misreads.

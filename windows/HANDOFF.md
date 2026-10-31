@@ -91,3 +91,45 @@ config bytes, PATH and the enabled/running boot task are unchanged. Installed
 stamps retain their original IDs; historical source references use sanitized
 IDs (`../docs/privacy.md`). No reinstall, profile, reboot or physical test was
 needed. See `../docs/measurements.md` for the migration evidence.
+
+## Prepare Windows for the coordinated 0.3.0 release
+
+Kind:     defect report
+Spec:     ../CONTRIBUTING.md, Preparing and publishing a release; ../TODO.md, Publication readiness
+Why:      the final release must have matching platform versions, current user documentation and native validation of the same candidate
+Owed:     update the Windows version constant and guide, validate the resulting clean candidate under native PowerShell 5.1, and return its exact commit and results for macOS validation
+Verified: the owner approved release preparation and a concise user-focused README on 2026-10-31; the root README and draft notes at ../docs/releases/0.3.0.md are prepared, macOS TK_VERSION is 0.3.0, and both platforms implement revision 16; tagging, release publication and visibility still require final approval
+
+This is a bounded release-preparation task. The migration at `2551331` already
+passed all 23 native files without skips; completed bootstrap/profile/reboot/
+physical checks remain valid for unchanged code. The owner confirmed there are
+no linked Projects. Final remote privacy checks still cover the release commit
+and subsequent Actions output.
+
+1. Update `$VERSION` in `windows/install.ps1` from `0.2.0` to `0.3.0`.
+   Keep `SPEC-REVISION` at 16. Verify the install stamp and installed `status`
+   receive that version using existing isolated installer fixtures; avoid an
+   unnecessary live upgrade. Search for affected version assertions and docs.
+2. Bring `windows/README.md` into line with the root guide: a brief user-facing
+   introduction, a clear choice between a released tag/archive and development
+   main before installation, and a link to the 0.3.0 notes. Preserve the
+   detailed account/password, policy, transport and local-console limits in
+   this platform guide. Correct present-tense `0.2.0`/privacy-blocker wording
+   in `RELEASE-CHECKS.md` and resolve obsolete handoff statements; retain dated
+   evidence as dated evidence. Do not edit `macos/` or governance files.
+3. Run `powershell.exe -NoProfile -ExecutionPolicy Bypass -File
+   .\windows\tests\run.ps1` on the final clean candidate and inspect all skips.
+   Run relevant installer/version mutation checks if available; retain the
+   already recorded mutation evidence for unchanged runtime code. Do not add
+   tests that merely pin a version literal, weaken assertions, or repeat the
+   manual account/profile/reboot/monitor matrix for a version-and-docs change.
+4. Compare the candidate with the installed/physical evidence and report any
+   genuinely affected check before taking an action on the live installation.
+   No new monitor writes, profile creation, account changes or reboot are
+   requested. Preserve the existing config, PATH, task and watcher state.
+5. Commit and push the finished Windows change using the repository-local
+   noreply identity. Record the exact candidate tested, PowerShell/OS version,
+   commands, results/skips and fixture stamp verification; keep raw receipts
+   private. If a documentation receipt creates a later commit, identify that
+   separately. Return the final candidate commit for the matching Mac suite
+   and CI/privacy checks. Do not tag, publish or change visibility.

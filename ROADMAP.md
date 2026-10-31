@@ -15,8 +15,11 @@ contracts in [`specs/`](specs/README.md).
 - **Aimed writes.** The LG's service channel reaches exactly one output, gated
   at the transport by EDID vendor, on both platforms.
 - **Two Windows transports**, `nvapi` and `dxva2`, chosen per panel at configure
-  time, never a fallback (decision 003). The shipped `dxva2` path has not yet
-  been watched moving a panel; every run so far was `-WhatIf`.
+  time, never a fallback (decision 003). The shipped `dxva2` path moved the ASUS
+  both ways at the local console, visually confirmed on 2026-10-29
+  (`docs/measurements.md`); other hardware remains unverified.
+- **Menus that fit the terminal.** Long lists scroll with selection, including
+  wrapped details, page/end navigation and resizing on both platforms.
 - **Identity the tool cannot resolve is made visible**: two panels with one EDID
   id are refused and named in `list`, `configure` and `status`; two USB devices
   with one vendor:product can be told apart by `@token@where`; `status` shows the
@@ -26,7 +29,8 @@ contracts in [`specs/`](specs/README.md).
 
 ## Next
 
-- **Watch a panel move over the shipped `dxva2` path** (`TODO.md`).
+- **Release 0.3.0 and public distribution**, after the final coordinated
+  validation and approval gates in [`TODO.md`](TODO.md).
 - **A tiebreak for two identical monitors**, designed and unbuilt
   ([`ideas/telling-two-identical-monitors-apart.md`](ideas/telling-two-identical-monitors-apart.md)).
   The measurement it waited on (NVAPI ids survive reboots and a driver update)

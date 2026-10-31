@@ -2029,6 +2029,25 @@ evidence above; privacy and coordinated release checks remain separate gates.
 
 ## Release validation and privacy
 
+**2026-10-31 -- macOS 0.3.0 preparation and documentation review.** The
+preparation worktree is based on `065cc0f`; the only runtime change is
+`TK_VERSION` from 0.2.0 to 0.3.0. Both specification revisions remain 16.
+`cd macos && bash tests/install.tests.sh` passed, followed by `make test`:
+all 14 native test files and ShellCheck passed without skips. Native PTY and
+process access were available. `bash tests/mutate.sh publication` caught all
+11 mutations against passing baselines; hashes of every tracked file matched
+before and after the mutation run. Raw receipts remain private.
+
+The shared README was reviewed through GitHub's file-style Markdown renderer
+at desktop and narrow widths, with local link/heading checks. Its setup and
+everyday-use sections point to platform guides for the full command surface
+and implementation details. The owner confirmed there are no linked GitHub
+Projects, closing that audit access gap by owner confirmation, not API access.
+No installed watcher, configuration, task, account, monitor or startup state
+was changed. Windows version preparation and native validation of the final
+coordinated candidate remain in `windows/HANDOFF.md`; no tag or publication
+is implied by these checks.
+
 **2026-10-31 -- native Windows checkout migration at `2551331`.** The fresh
 sanitized clone was promoted to the top-level development workspace; the old
 checkout, its local edit, private validation/installation backups, linked

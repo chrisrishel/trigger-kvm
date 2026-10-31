@@ -1,10 +1,9 @@
 # trigger-kvm on macOS
 
-A watcher (`event-watch`) runs `trigger-kvm pull` when a configured device
-arrives; `pull` resolves each configured monitor by the EDID it reads at that
-moment and sends it the input-select write over DDC/CI through `m1ddc`. The
-shared behaviour is specified in [`../specs/`](../specs/); the safety rules are
-in [`../AGENTS.md`](../AGENTS.md).
+Install trigger-kvm on an Apple Silicon Mac to make your monitors follow the
+devices on your USB switch. Start with the [setup overview](../README.md) for
+cabling, monitor settings and safety. This guide covers macOS installation,
+commands and troubleshooting; implementation details follow below.
 
 ## Requirements
 
@@ -23,14 +22,22 @@ The installer checks both before it builds or copies anything.
 
 ```sh
 git clone https://github.com/chrisrishel/trigger-kvm.git
-cd trigger-kvm/macos
+cd trigger-kvm
+```
+
+For a released build, select a [release tag](https://github.com/chrisrishel/trigger-kvm/tags)
+with `git checkout vX.Y.Z`, replacing `vX.Y.Z` with the chosen tag. Otherwise
+these steps install the development branch. From that source directory:
+
+```sh
+cd macos
 ./install.sh
 ```
 
 If you already have a checkout, enter its `macos` directory and run
 `./install.sh`. Run it as yourself, never with `sudo`; it refuses to run as root.
-The only password it asks for installs the "from boot" launchd job, which runs
-as you.
+The only password it asks for installs or removes the "from boot" launchd job,
+which runs as you.
 
 The install is self-contained: the installer copies itself next to the program,
 so `trigger-kvm uninstall` works after the source tree is gone. To upgrade or

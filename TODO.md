@@ -6,101 +6,54 @@ Milestones are `ROADMAP.md`; what each platform owes the other is its
 
 ## Publication readiness
 
-Keep the repository private until these checks are complete. The review baseline
-is `318fc79`; remaining Windows release validation is in `windows/HANDOFF.md`
-and the command checklist in `windows/RELEASE-CHECKS.md`.
+Keep the repository private until the gates below are complete. The next
+coordinated release is **0.3.0**. Product versions, evidence and approval follow
+[the release policy](CONTRIBUTING.md#preparing-and-publishing-a-release);
+[release notes](docs/releases/0.3.0.md) describe the user-facing changes.
 
-- [x] Define the shared product version, pre-1.0 compatibility rules, build
-  identity and release gates in `CONTRIBUTING.md`. Version constants remain
-  unchanged until coordinated release preparation.
-- [ ] Prepare the next coordinated release, targeting **0.3.0**, after these
-  blockers are resolved. The changes since `v0.2.0` include new features and
-  specification revisions. Follow the release policy before changing both
-  platform constants, tagging or publishing.
-- [x] macOS: ambiguity re-baselines without firing, including one-shot checks;
-  trigger-check cleanup restores only a watcher it paused; incomplete boot-tier
-  removal refuses; Escape discards computer, removal and monitor submenu edits.
-  Verified with `make test` (13 files plus shellcheck) and
-  `bash tests/mutate.sh publication` (11 mutations caught).
-- [x] Windows: publication-review defects resolved with native PowerShell 5.1
-  regressions and 21 passing test files. A full 53-mutation publication run
-  passed; all 12 affected boot mutations were caught after the final code fix.
-  Includes incomplete-check gating, exact-path/owner cleanup with conservative
-  execution-boundary recognition, prior watcher state, apostrophes/Unicode,
-  fractional settle, restricted DLL loading,
-  Escape rollback, recursive conformance coverage and isolated test paths.
-- [x] Windows follow-up review at `7a2a9a4`: resolve the boot bootstrap's
-  native-confirmed pre-restriction module-loading defect. Task registration now
-  embeds a compiled assembly; native adversarial success/error checks and
-  mutations cover dependency loading. The UAC assertion and stale README are
-  corrected. Native suite: 22 files; relevant mutations: 20 caught. Bounded
-  session-0 control/success/failure checks passed on 2026-10-31; reuse completed
-  installed/reboot/physical evidence for unchanged behavior.
-  The coordinated live upgrade to `6f65aff` passed on 2026-10-31: current config
-  bytes/PATH preserved, secured task rebuilt, one ordinary boot watcher running.
-- [x] Shared contracts: revision 15 settles horizontal menu overflow and labels
-  `status` as the current saved configuration. Both platforms implement it;
-  empty saved triggers also retain the restart reminder on Windows.
-- [x] Revision 16: both platforms implement terminal-height viewports in their
-  common menu primitives, including wrapped details, page/end navigation,
-  resize reflow and numbered fallback with state preserved. Windows has 30
-  automated native console cases and relevant mutation coverage. No monitor
-  switching, reboot, profile changes or repeat boot validation was needed.
-  The supported upgrade to `ab82fce` passed on 2026-10-31: current configuration
-  bytes/PATH preserved, installed revision 16, one enabled/running ordinary
-  session-0 watcher and boot task verified.
-- [x] Documentation: copyable installation and usage examples, explicit
-  prerequisites, bounded compatibility claims, accurate file references and
-  privacy guidance for diagnostic output. Shared and both platforms' docs are
-  updated, including the Windows coordinated release checklist.
-- [x] CI configuration: run both platforms' full suites, with hardware skips
-  explicit. Inspect hosted results for each pushed candidate; CI cannot prove
-  physical switching.
-- [x] Windows installed workflows and startup: administrator-capable and standard
-  profiles exercised actual paths with spaces/apostrophes/Unicode, approved and
-  declined UAC, intended task principals/files/PATH, boot/login/manual tiers,
-  real reboot/logon behavior and source-unavailable uninstall. Standard-user
-  `6a5afcf` completed credential Cancel/success, installed Save/Cancel/unknown-key
-  preservation and fresh-product login fallback on 2026-10-30. Its restricted
-  session-0 watcher started before the first login after reboot. Earlier
-  administrator-profile and real Ctrl+C results remain in the measurements.
-  The separate administrator PATH was also unchanged, verified from a clean
-  private hive copy using Windows' read-only offline registry API.
-- [x] Windows installed-candidate and hardware validation: the original owner
-  was restored to clean `6a5afcf` with its config/PATH unchanged and one
-  enabled/running restricted boot watcher. Its final real reboot started that
-  watcher before interactive login. The installed switcher passed both panels'
-  NVAPI away/back checks under the same restricted session-0 bootstrap, one panel at a time with explicit
-  visual confirmation. These physical writes ran after local sign-in; they
-  do not establish a detector-triggered or pre-login physical switch. Earlier
-  ASUS dxva2 and local-console NVAPI confirmations remain separate evidence;
-  switcher/config code is unchanged from that tested candidate.
-  The standard account's only added right was the
-  expected batch-logon grant, retained after successful uninstall by design.
-  Temporary Switch user policy is restored. Both disposable profiles were
-  privately backed up and removed with approval; the standard account's
-  test-added batch-logon right was restored first. See `windows/RELEASE-CHECKS.md`
-  for the evidence and remaining
-  coordinated release/privacy gates. This does not mark the repository ready
-  for publication.
-- [x] Privacy history cleanup: the owner authorized preserving the development
-  history while replacing private identifiers and author/committer/tagger email.
-  The isolated rewrite retains all 251 commits and their parent relationships,
-  names and dates, and replaces the remaining real Windows fixture serial without
-  changing assertions. Private recovery and Actions evidence are retained.
-  See `docs/privacy.md` for scope, residual risk and checkout migration.
-- [x] Windows checkout migration: the fresh sanitized clone at `2551331` is
-  the active workspace, with repository-local noreply email. The old checkout,
-  local edits and private backups are archived separately; no old Git objects
-  or refs were imported. Native Windows PowerShell 5.1 passed all 23 test files
-  without skips on 2026-10-31. Installation/configuration/PATH and the running
-  boot task are unchanged; no hardware/profile/reboot matrix was repeated.
-- [ ] Publication: verify the final sanitized remote refs and Actions metadata,
-  review any linked Projects not accessible to the audit, and obtain explicit
-  approval for the coordinated release and repository visibility change.
-- [ ] Final release review: both native suites and relevant mutations pass;
-  skipped hardware checks remain explicitly unverified; the documentation
-  matches the release commit and privacy review covers its history.
+### Complete
+
+- [x] Both platforms implement specification revision **16**, including menu
+  viewports, saved-configuration status, ambiguity refusals and the reviewed
+  installer/trigger-check fixes. Native suites and relevant mutation coverage
+  are recorded in `docs/measurements.md`.
+- [x] Windows boot security, administrator/standard-account workflows,
+  installation/upgrade, autostart and restricted session-0 physical switching
+  have dated evidence. Retain its stated limits: the final restricted physical
+  writes ran after local sign-in, and did not prove a detector-triggered or
+  pre-login physical write. Detailed coverage is in `windows/RELEASE-CHECKS.md`.
+- [x] Privacy cleanup preserved the 251 original commits while replacing private
+  identifiers and email metadata. Sanitized main/tag were verified remotely;
+  all 39 old Actions runs were privately archived and removed. Mac and Windows
+  checkouts use the sanitized history and repository-local noreply identity.
+  Native Windows migration validation passed all 23 files without skips.
+- [x] The owner confirmed on 2026-10-31 that there are no linked GitHub Projects.
+  The accepted limits of the history cleanup are in `docs/privacy.md`.
+- [x] The shared README separates setup and everyday use from implementation
+  details. Release notes cover changes since `v0.2.0`, upgrades and limitations;
+  the roadmap reflects the completed dxva2 observation.
+- [x] macOS release preparation: installer regressions, all 14 native test files
+  and ShellCheck passed without skips; all 11 publication mutations were caught
+  and restored. The only runtime edit is the product version constant.
+
+### Remaining
+
+- [ ] Complete the coordinated version update. macOS is prepared as **0.3.0**;
+  Windows must update its own constant and release documentation through
+  `windows/HANDOFF.md`. Both specification revisions stay at 16. Do not tag
+  this intermediate state.
+- [ ] Validate clean checkouts of the same final candidate on native macOS and
+  Windows PowerShell 5.1, with relevant mutations and passing CI. Record exact
+  commands, commit, results and skips. Reuse dated installed/profile/reboot/
+  physical evidence where the relevant code is unchanged; repeat affected
+  checks only. Do not turn a skipped hardware test into a compatibility claim.
+- [ ] Review the final documentation and remove the release notes' preparation
+  notice when the candidate is ready for approval. Recheck final refs, new
+  commits, Actions metadata/logs and any new GitHub surfaces or assets for
+  privacy. Export only tracked files for distribution, never a workspace ZIP.
+- [ ] Obtain explicit approval for the tested candidate, annotated `v0.3.0`
+  tag, release publication and public repository visibility. Do not interpret
+  ordinary commit/push authorization as release or visibility approval.
 
 ## Deferred work
 
