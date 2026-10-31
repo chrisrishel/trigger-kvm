@@ -37,7 +37,7 @@ Completed installed/hardware evidence is retained; the changed bootstrap's
 bounded session-0 check also passed on 2026-10-31. Detailed candidate evidence
 and limits are in `../docs/measurements.md` and `RELEASE-CHECKS.md`. Do not repeat
 completed profile checks. The owner installation was restored at `6a5afcf` on
-2026-10-30 and upgraded to `6f65aff` on 2026-10-31 with current config/PATH and
+2026-10-30 and upgraded to `ab82fce` on 2026-10-31 with current config/PATH and
 boot/enabled/running state preserved. The temporary Switch user policy is also
 restored. Both disposable accounts/profiles were privately backed up and
 removed with approval; the standard account's test-added right was restored
@@ -52,9 +52,8 @@ TODO triggers; never test S3 standby.
 
 Publication remains blocked by the owner's 2026-10-30 privacy-review decision.
 Product version remains 0.2.0; 0.3.0 is the next coordinated release target.
-Windows source implements specification revision 16; the installed `6f65aff`
-records revision 15. Do not tag, publish or change visibility as part of this
-validation.
+Windows source and the installed `ab82fce` implement specification revision 16.
+Do not tag, publish or change visibility as part of this validation.
 
 The 2026-10-31 review findings are resolved in Windows code/tests/docs. Native
 5.1 adversarial reproduction, all 22 suite files, 20 mutations and the actual
@@ -62,7 +61,7 @@ S4U session-0 success/control/failure checks passed. Fixture tasks were removed
 and the current owner configuration, task, PATH and watcher state were preserved.
 See the dated measurement and release-check records for details.
 
-The authorized live upgrade to `6f65aff` used the supported installer and
+The authorized live upgrade to `ab82fce` used the supported installer and
 rebuilt the secured task. Installed hashes/stamp, exact config bytes, PATH,
 boot/enabled/running state, one owned watcher and its ordinary session-0 token
 passed verification. Private backups are retained. No repeat of the complete

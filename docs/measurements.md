@@ -1907,6 +1907,28 @@ inputs were changed. This is installed/native OS evidence, not a new physical
 switching or pre-login reboot observation. Private backups and receipts remain
 outside tracked files.
 
+**2026-10-31, 05:02 PDT (12:02 UTC) -- installed upgrade to `ab82fce`.**
+The owner authorized the supported installer and UAC prompt. A clean detached
+checkout supplied `ab82fce`; clean `6f65aff` source was available for rollback.
+Private backups captured the current configuration, installed program, task XML
+and PATH. The installed shim's `pause`, followed by native Windows PowerShell
+5.1 `-NoProfile -ExecutionPolicy Bypass -File .\windows\install.ps1` from the
+candidate under the original owner's elevated context, completed with exit 0.
+Rollback was not needed; the main checkout's existing local work was preserved.
+
+Every installed script hash matched the candidate. The stamp records
+`ab82fce` / product 0.2.0 / specification 16. Configuration bytes and user PATH
+matched the private pre-upgrade snapshots exactly. The intended owner's
+S4U/Limited task was enabled and running with a boot trigger, and exactly one
+owned watcher held its lock. Its actual session-0 token had medium integrity,
+no administrator/power-user membership and only change-notify privilege. The
+rebuilt bootstrap retained disabled module autoload and zero PowerShell command
+AST nodes. Installed `status` succeeded; independent unelevated checks confirmed
+the stamp, saved boot tier, configuration/PATH preservation, task and lock state.
+No profile, account-right, reboot or monitor test was repeated. This is installed
+and native OS evidence, not a new physical-switching or pre-login observation.
+Private backups and receipts are retained outside tracked files.
+
 ## Menu viewport
 
 **2026-10-31 -- terminal height, synthetic lists, macOS.** The installed menu

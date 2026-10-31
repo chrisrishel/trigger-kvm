@@ -42,13 +42,16 @@ primitives. Native hidden-console fixtures cover 30 synthetic cases, including
 small visible windows, physical folds/Unicode, a wider scrollback buffer,
 resize, page/end navigation, disabled/separator rows, Done and numbered
 fallback retaining current choices, including Escape arriving at the resize
-boundary. All 16 viewport, 3 existing menu and 2
-existing folded/tail-redraw mutations were caught. This changes only menu
-interaction: the installed `6f65aff` below remains unchanged at revision 15,
-and its boot/profile/physical evidence is reused for unchanged behavior.
+boundary. All 16 viewport, 3 existing menu and 2 existing folded/tail-redraw
+mutations were caught. This changes only menu
+interaction; earlier boot/profile/physical evidence is reused for unchanged
+behavior. The supported upgrade below installed `ab82fce` at revision 16.
 The final native Windows PowerShell 5.1 suite passed all 23 files without skips,
 including parsing/conventions and revision-16 conformance. Product version
 remains 0.2.0; privacy and coordinated publication gates remain open.
+CI for `ab82fce` (validation record retained privately)
+passed: macOS 14 files; Windows 22 files, with one hardware-dependent file and
+two NVIDIA driver cases explicitly skipped on the hosted runner.
 
 The 2026-10-31 review follow-up, implementation candidate **`7e65036`**, confirms
 pre-restriction module loading under native PowerShell 5.1 and moves compilation
@@ -77,10 +80,10 @@ installed stamp, task XML/enabled/running state, watcher lock and PATH matched
 before/after snapshots. No account rights, installation, reboot or monitors
 were changed. This closes the affected-context validation gap.
 
-The owner's installed candidate is now **`6f65aff`**, product 0.2.0 /
-specification 15. The authorized supported-installer upgrade on 2026-10-31
-regenerated the secured bootstrap, preserved current configuration bytes and
-PATH, and left the boot task enabled with exactly one owned watcher running.
+The owner's installed candidate is now **`ab82fce`**, product 0.2.0 /
+specification 16. The authorized supported-installer upgrade from `6f65aff`
+on 2026-10-31 regenerated the secured bootstrap, preserved current configuration
+bytes and PATH, and left the boot task enabled with exactly one owned watcher running.
 Installed source hashes/stamp and the actual ordinary session-0 token passed;
 independent checks confirmed the lock and a bootstrap with no command lookup.
 Private program/config/task/PATH backups are retained. No reboot or physical

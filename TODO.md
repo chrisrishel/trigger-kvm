@@ -46,6 +46,9 @@ and the command checklist in `windows/RELEASE-CHECKS.md`.
   resize reflow and numbered fallback with state preserved. Windows has 30
   automated native console cases and relevant mutation coverage. No monitor
   switching, reboot, profile changes or repeat boot validation was needed.
+  The supported upgrade to `ab82fce` passed on 2026-10-31: current configuration
+  bytes/PATH preserved, installed revision 16, one enabled/running ordinary
+  session-0 watcher and boot task verified.
 - [x] Documentation: copyable installation and usage examples, explicit
   prerequisites, bounded compatibility claims, accurate file references and
   privacy guidance for diagnostic output. Shared and both platforms' docs are
@@ -64,7 +67,7 @@ and the command checklist in `windows/RELEASE-CHECKS.md`.
   The separate administrator PATH was also unchanged, verified from a clean
   private hive copy using Windows' read-only offline registry API.
 - [x] Windows installed-candidate and hardware validation: the original owner
-  is restored to clean `6a5afcf` with its config/PATH unchanged and one
+  was restored to clean `6a5afcf` with its config/PATH unchanged and one
   enabled/running restricted boot watcher. Its final real reboot started that
   watcher before interactive login. The installed switcher passed both panels'
   NVAPI away/back checks under the same restricted session-0 bootstrap, one panel at a time with explicit
