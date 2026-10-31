@@ -454,6 +454,52 @@ Invoke-Mutation 'values: outcome 2 re-asks without the map, so an input can be t
 
 # --- the typed fallback --------------------------------------------------------
 
+Invoke-Mutation 'viewport: use scrollback height instead of visible height' `
+    'lib\menu.ps1' 'viewport.tests.ps1' `
+    '$height = [Console]::WindowHeight' '$height = [Console]::BufferHeight'
+Invoke-Mutation 'viewport: paint the entire list instead of its window' `
+    'lib\menu.ps1' 'viewport.tests.ps1' `
+    'for ($i = $start; $i -le $end; $i++) { $lines += $Entries[$i].Lines }' `
+    'for ($i = 0; $i -lt $Entries.Count; $i++) { $lines += $Entries[$i].Lines }'
+Invoke-Mutation 'viewport: forget wrapped physical entry height' `
+    'lib\menu.ps1' 'viewport.tests.ps1' `
+    '$heights = @($Entries | ForEach-Object { Get-MenuRows -Lines $_.Lines -Columns $Geometry.Columns })' `
+    '$heights = @($Entries | ForEach-Object { 1 })'
+Invoke-Mutation 'viewport: hide the visible entry range' `
+    'lib\menu.ps1' 'viewport.tests.ps1' `
+    'if ($overflow) { $lines += ''  Entries {0}-{1} of {2}'' -f ($start+1),($end+1),$Entries.Count }' ''
+Invoke-Mutation 'viewport: page by one row instead of the body height' `
+    'lib\menu.ps1' 'viewport.tests.ps1' `
+    'if ($distance -ge $Body) { break }' 'if ($distance -ge 1) { break }'
+Invoke-Mutation 'viewport: Home chooses the last selectable entry' `
+    'lib\menu.ps1' 'viewport.tests.ps1' `
+    "'Home'      { `$at = 0 }" "'Home'      { `$at = `$sel.Count - 1 }"
+Invoke-Mutation 'viewport: disabled entries become selectable' `
+    'lib\menu.ps1' 'viewport.tests.ps1' `
+    'if ($Items[$i] -and -not ($Disabled -contains $i)) { $sel += $i }' `
+    'if ($Items[$i]) { $sel += $i }'
+Invoke-Mutation 'viewport: height-only resizing is ignored' `
+    'lib\menu.ps1' 'viewport.tests.ps1' `
+    '$Previous.Height -ne $Geometry.Height' '$false'
+Invoke-Mutation 'viewport: resize appends instead of clearing the owned frame' `
+    'lib\menu.ps1' 'viewport.tests.ps1' `
+    'Reset-MenuViewport -State $State -Geometry $Geometry' '$State.Rows = 0'
+Invoke-Mutation 'viewport: numbered fallback loses the current highlight' `
+    'lib\menu.ps1' 'viewport.tests.ps1' `
+    '$Default = $sel[$at]' ''
+Invoke-Mutation 'viewport: numbered fallback loses current checks' `
+    'lib\menu.ps1' 'viewport.tests.ps1' `
+    '$pre = @()' '$state = @($state | ForEach-Object { $false }); $pre = @()'
+Invoke-Mutation 'viewport: trust underestimated native Unicode widths' `
+    'lib\menu.ps1' 'viewport.tests.ps1' `
+    '[Math]::Max($bound, $Host.UI.RawUI.LengthInBufferCells($Text))' '$Host.UI.RawUI.LengthInBufferCells($Text)'
+Invoke-Mutation 'viewport: oversized entries are allowed into the frame' `
+    'lib\menu.ps1' 'viewport.tests.ps1' `
+    '@($heights | Where-Object { $_ -gt $body }).Count' '$false'
+Invoke-Mutation 'viewport: controls get no reserved height' `
+    'lib\menu.ps1' 'viewport.tests.ps1' `
+    '$Geometry.Height - 1 - (Get-MenuRows -Lines $Controls -Columns $Geometry.Columns)' '$Geometry.Height - 1'
+
 Invoke-Mutation 'menus: q is dead on the top menu in the typed fallback' `
     'lib\menu.ps1' 'menus.tests.ps1' `
     '            if ($EscapeTo -ge 0 -and $pick -eq ''q'' -and $sel -contains $EscapeTo) {

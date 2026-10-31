@@ -41,11 +41,11 @@ and the command checklist in `windows/RELEASE-CHECKS.md`.
 - [x] Shared contracts: revision 15 settles horizontal menu overflow and labels
   `status` as the current saved configuration. Both platforms implement it;
   empty saved triggers also retain the restart reminder on Windows.
-- [ ] Windows: implement revision 16's terminal-height viewport in both common
-  menu primitives. macOS implements scrolling, page/end navigation, resize
-  reflow and numbered fallback with state preserved. Prefer synthetic lists
-  and native console fixtures; this menu change needs no monitor switching,
-  reboot, profile changes or repeat of installed boot validation.
+- [x] Revision 16: both platforms implement terminal-height viewports in their
+  common menu primitives, including wrapped details, page/end navigation,
+  resize reflow and numbered fallback with state preserved. Windows has 27
+  automated native console cases and relevant mutation coverage. No monitor
+  switching, reboot, profile changes or repeat boot validation was needed.
 - [x] Documentation: copyable installation and usage examples, explicit
   prerequisites, bounded compatibility claims, accurate file references and
   privacy guidance for diagnostic output. Shared and both platforms' docs are

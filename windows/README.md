@@ -209,6 +209,12 @@ save. Nothing is written until Save. The contract is
 [`../specs/configure.md`](../specs/configure.md); what is specific to this
 platform:
 
+- Long lists scroll inside the visible console window, with an entry-range
+  indicator. Up/down wraps; Home/End selects the first/last available row;
+  Page Up/Down moves by the available height, including wrapped details.
+  Done participates in multi-select navigation. Resizing retains the highlight
+  and checks. If an entry and its controls cannot fit, numbered input preserves
+  the current choices and Escape behavior; complete text remains in scrollback.
 - Standard DDC/CI is the default for every panel. The LG dialect is offered for
   LG panels, and only values from [`../displays.toml`](../displays.toml) or
   values you type are ever sent on it.

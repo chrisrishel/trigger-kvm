@@ -1936,6 +1936,54 @@ were not counted as product evidence; the complete native run above passed.
 
 ## Windows follow-up review
 
+**2026-10-31 -- revision-16 menu viewport, Windows PowerShell 5.1.22621.7649.**
+At `8564b05`, a bounded hidden native console with 30 synthetic entries and a
+12-row, 80-column window reproduced the Windows defect before production edits:
+the single-choice menu scrolled its first highlight away, leaving rows 21-29
+and the hint visible. Its native regression failed at the visible-highlight
+assertion. The existing menu assertions were retained.
+
+Both common primitives now use one physical-row viewport, reserving controls,
+wrapped help/validation text, an overflow range and a cursor row. Explicit
+folding also handles a buffer wider than the visible window. A resized frame
+is erased through bounded buffer rectangles, without rewinding the old height
+through a smaller window. Selection/check state survives scrolling, reflow and
+numbered fallback; no identifiers are shortened. Done belongs to navigation,
+and separators/disabled entries keep their original positions.
+
+Native measurement found that RawUI `LengthInBufferCells` returned 1 for a CJK
+character while `Write-Host` advanced the cursor by 2. RawUI buffer reads also
+returned that glyph twice as `Complete` cells, rather than a leading/trailing
+pair. Latin-1 accented text advanced one cell; a supplementary character and
+a combining sequence each advanced two. The renderer bounds code units beyond
+Latin-1 conservatively and explicitly folds before painting. An indivisible
+text element exceeding the safe width uses the complete numbered transcript.
+The Unicode regression checks exact text passed to the real host, a visible
+terminal token and actual frame/highlight bounds; it does not interpret those
+duplicated RawUI cells as lost/duplicated source characters.
+
+`powershell.exe -NoProfile -ExecutionPolicy Bypass -File
+windows/tests/run.ps1 viewport` passed 27 cases in actual hidden console
+windows. Scripted `ConsoleKey` values drive the unchanged input boundary;
+buffer cells, cursor positions, window/buffer dimensions and resize operations
+are native. Coverage includes 12x80, 10x55, 16x80, 8x80, 6x24 and 14x80 windows,
+a 120-column buffer behind an 80-column window, wrapped details/help/Done,
+disabled/separator rows, page distances/end clamping, arrow wrap, empty-Done
+refusal, resized fallback and Escape/selection preservation. These are automated
+console fixtures, not manual keypress or physical-monitor observations.
+
+Using the same native host, `windows/tests/mutate.ps1 viewport` caught all 14
+new mutations; the refined current-highlight mutation was also rerun separately
+and failed specifically after moving the selection. Filters `menus` and
+`redraw` caught all 3 and 2 existing mutations. The full suite before advancing
+`SPEC-REVISION` passed every file except the expected revision-15/16 ledger
+failure. No live installation, account, watcher, reboot or monitor setting was
+changed; previous installed/hardware evidence remains tied to its candidates.
+After advancing Windows `SPEC-REVISION` to 16, the complete native command
+`powershell.exe -NoProfile -ExecutionPolicy Bypass -File windows/tests/run.ps1`
+passed all 23 files without skips, including parsing/conventions, conformance
+and the native viewport cases. Product version remains 0.2.0.
+
 **2026-10-31 -- Windows follow-up review at `f4bacab`, from macOS.** Source,
 regressions and the recorded native evidence address all three findings in the
 preceding handoff: pre-restriction PowerShell module loading, the native UAC
@@ -1946,8 +1994,8 @@ reports all 22 files and 20 relevant mutations passing on native PowerShell
 5.1, bounded S4U bootstrap control/success/failure checks and the supported live
 upgrade to `6f65aff`. Those native actions were not repeated on this Mac.
 No additional blocker was found within that follow-up's scope. Windows menu
-height support remains outstanding; privacy and coordinated release checks
-remain separate gates.
+height support was outstanding at that review and is addressed by the native
+evidence above; privacy and coordinated release checks remain separate gates.
 
 ## Release validation and privacy
 

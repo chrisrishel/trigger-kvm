@@ -51,9 +51,10 @@ unchanged switcher/config source. Driver-update/port-move checks keep their
 TODO triggers; never test S3 standby.
 
 Publication remains blocked by the owner's 2026-10-30 privacy-review decision.
-Product version remains 0.2.0, specification revision 15; 0.3.0 is the next
-coordinated release target. Do not tag, publish or change visibility as part
-of this validation.
+Product version remains 0.2.0; 0.3.0 is the next coordinated release target.
+Windows source implements specification revision 16; the installed `6f65aff`
+records revision 15. Do not tag, publish or change visibility as part of this
+validation.
 
 The 2026-10-31 review findings are resolved in Windows code/tests/docs. Native
 5.1 adversarial reproduction, all 22 suite files, 20 mutations and the actual
@@ -72,19 +73,12 @@ Privacy remains a separate task. The owner's policy is to retain public
 authorship/name and GitHub handle while removing private email addresses,
 device identifiers and personal machine/profile details from everything
 published. This work authorizes neither history/author-metadata changes nor
-publication, tags or visibility changes. Product/spec versions remain 0.2.0/15.
+publication, tags or visibility changes. Product version remains 0.2.0.
 
-## Keep long menu selections inside the visible console window
-
-Kind:     defect report
-Spec:     specs/configure.md 3.1.1; run the revision checker for the current contract
-Why:      at f4bacab, both primitives in lib/menu.ps1 draw the entire list without a visible-height budget; long device lists can scroll the highlighted row out of view
-Owed:     investigate both primitives on Windows and implement the shared viewport contract; test long single/multi-select lists, wrapped details, resize, disabled/separator rows, Done and fallback state with synthetic console fixtures
-Verified: 2026-10-31, source inspection on macOS only for Windows; the equivalent macOS defect was reproduced with 30 synthetic entries in a 12-row PTY. No Windows console behavior was exercised here
-
-Favor automated native console tests. Request manual interaction only for a
-specific behavior the fixtures cannot establish; no monitor writes, reboot,
-new profiles or repeat boot-token/installed workflow matrix is needed for a
-menu-only change. The three previous Windows findings were re-reviewed at
-`f4bacab`; hosted CI passed, and the recorded native/bootstrap evidence covers
-their fixes. The separate privacy and coordinated-release gates remain open.
+Revision 16's menu-height defect was reproduced in a native 12-row console
+before implementation. Both primitives now share the viewport renderer; 27
+automated native console cases and 19 relevant mutations cover scrolling,
+wrapping, resize, navigation, Done, disabled/separator rows and fallback state.
+See the dated evidence in `../docs/measurements.md`. This menu-only work does
+not repeat hardware, reboot, profile or installed boot validation. The separate
+privacy and coordinated-release gates remain open.

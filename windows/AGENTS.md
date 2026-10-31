@@ -120,13 +120,13 @@ down, never fall back.
 
 ## PowerShell hazards
 
-**`[Console]::CursorLeft` CLAMPS at `BufferWidth - 1`.** An exactly-full line
-reads the same as one a column short. `Write-MenuFrame` erases with RawUI BEFORE
-writing, including folded rows, the last column and leftover rows after shrinking.
-`Get-MenuWidth` caps the wrapping target at
-110, never the text. **Do not infer wrapping from `[Console]::Write`**: it differs
-from `Write-Host`. `tests/native-publication.tests.ps1` measures the real host's
-cursor and buffer in hidden consoles at widths 24, 60, 80 and 120.
+**`[Console]::CursorLeft` clamps; RawUI can undercount CJK cell widths.**
+`Write-MenuFrame` clears folded/leftover rows and the last column BEFORE writing.
+`Get-MenuViewport` budgets visible window height, including controls and cursor;
+`Get-MenuCells` bounds widths before explicit folding. Never truncate identifiers.
+`Get-MenuWidth` caps only the wrapping target at 110. Native console fixtures in
+`native-publication.tests.ps1` and `viewport.tests.ps1` pin these rules; dated
+evidence is in `../docs/measurements.md`.
 
 **A SIMPLE PowerShell function SWALLOWS an undeclared named argument into `$args`
 without a word**; a `[CmdletBinding()]` function throws. So a caller left on an

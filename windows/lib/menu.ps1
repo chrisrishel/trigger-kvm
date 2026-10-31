@@ -104,6 +104,162 @@ function Get-MenuWidth {
     return $w
 }
 
+# Visible dimensions, not scrollback buffer height. Query at every redraw and
+# again after a key: a resize while ReadKey waits must precede key handling.
+function Get-MenuGeometry {
+    $width = Get-MenuWidth
+    $columns = $width
+    $height = 25
+    $buffer = $columns
+    $native = $false
+    try {
+        if ([Console]::WindowWidth -gt 0 -and [Console]::WindowHeight -gt 0) {
+            $columns = [Console]::WindowWidth
+            $height = [Console]::WindowHeight
+            $buffer = [Console]::BufferWidth
+            $native = $true
+        }
+    } catch { }
+    return [pscustomobject]@{ Width=$width; Columns=$columns; Height=$height; Buffer=$buffer; Native=$native }
+}
+
+function Get-MenuCells {
+    param([string]$Text)
+    # PowerShell 5.1 can report one cell for a CJK character that conhost draws
+    # in two. Bound code units beyond Latin-1 conservatively, then explicitly fold
+    # before painting. Each emitted physical line fits even on those hosts.
+    $bound = 0
+    foreach ($character in $Text.ToCharArray()) { $bound += $(if ([int]$character -gt 255) { 2 } else { 1 }) }
+    try { return [Math]::Max($bound, $Host.UI.RawUI.LengthInBufferCells($Text)) } catch { return $bound }
+}
+
+# Explicit physical folds also cover a console whose buffer is wider than its
+# window. Text elements stay intact, including surrogate pairs/combining marks.
+function Split-MenuLine {
+    param([string]$Text, [int]$Columns)
+    foreach ($part in ($Text -split "`r?`n")) {
+        if ((Get-MenuCells $part) -le $Columns) { $part; continue }
+        $elements = [Globalization.StringInfo]::GetTextElementEnumerator($part)
+        $line = ''; $cells = 0
+        while ($elements.MoveNext()) {
+            $element = $elements.GetTextElement()
+            $size = Get-MenuCells $element
+            if ($line -and $cells + $size -gt $Columns) { $line; $line = ''; $cells = 0 }
+            $line += $element
+            $cells += $size
+        }
+        if ($line) { $line }
+    }
+}
+
+function Get-MenuRows {
+    param([string[]]$Lines, [int]$Columns)
+    $count = 0
+    foreach ($line in $Lines) { $count += @(Split-MenuLine -Text $line -Columns $Columns).Count }
+    return $count
+}
+
+# Entries retain their original positions, including disabled rows/separators.
+# Only complete entries fit in the body. Controls and a cursor row are reserved
+# before selecting the window; any oversized entry uses the numbered transcript.
+function Get-MenuViewport {
+    param([object[]]$Entries, [string[]]$Controls, [int]$Selected, [int]$First, $Geometry)
+    $heights = @($Entries | ForEach-Object { Get-MenuRows -Lines $_.Lines -Columns $Geometry.Columns })
+    $body = $Geometry.Height - 1 - (Get-MenuRows -Lines $Controls -Columns $Geometry.Columns)
+    $overflow = ($heights | Measure-Object -Sum).Sum -gt $body
+    if ($overflow) {
+        $indicator = '  Entries {0}-{0} of {0}' -f $Entries.Count
+        $body -= Get-MenuRows -Lines @($indicator) -Columns $Geometry.Columns
+    }
+    $view = [pscustomobject]@{ Fits=$false; Lines=@(); Heights=$heights; Body=$body; First=0; Last=($Entries.Count-1) }
+    if ($Geometry.Columns -lt 2 -or $body -lt 1 -or @($heights | Where-Object { $_ -gt $body }).Count) { return $view }
+    # A single text element cannot be split without corrupting its characters.
+    # If even that element exceeds the safe width, keep it in the transcript.
+    foreach ($line in (@($Entries | ForEach-Object { $_.Lines }) + @($Controls))) {
+        foreach ($part in @(Split-MenuLine -Text $line -Columns $Geometry.Columns)) {
+            if ((Get-MenuCells $part) -gt $Geometry.Columns) { return $view }
+        }
+    }
+    $start = 0; $end = $Entries.Count - 1
+    if ($overflow) {
+        $start = [Math]::Max(0, [Math]::Min($First, $Selected))
+        $used = 0
+        for ($i = $start; $i -le $Selected; $i++) { $used += $heights[$i] }
+        while ($used -gt $body) { $used -= $heights[$start]; $start++ }
+        $end = $Selected
+        while ($end + 1 -lt $Entries.Count -and $used + $heights[$end+1] -le $body) { $end++; $used += $heights[$end] }
+        if ($end -eq $Entries.Count - 1) {
+            while ($start -gt 0 -and $used + $heights[$start-1] -le $body) { $start--; $used += $heights[$start] }
+        }
+    }
+    $lines = @()
+    for ($i = $start; $i -le $end; $i++) { $lines += $Entries[$i].Lines }
+    if ($overflow) { $lines += '  Entries {0}-{1} of {2}' -f ($start+1),($end+1),$Entries.Count }
+    $view.Fits = $true
+    $view.Lines = @($lines) + @($Controls)
+    $view.First = $start; $view.Last = $end
+    return $view
+}
+
+function Test-MenuResize {
+    param($Previous, $Geometry)
+    return ($null -eq $Previous -or $Previous.Columns -ne $Geometry.Columns -or
+        $Previous.Height -ne $Geometry.Height -or $Previous.Buffer -ne $Geometry.Buffer)
+}
+
+# Erase the owned frame directly rather than rewinding an old height through a
+# smaller window. Buffer cells do not scroll; the next frame starts in view.
+function Reset-MenuViewport {
+    param($State, $Geometry)
+    if ($State.Rows -le 0) { return }
+    try {
+        $oldRows = Get-MenuRows -Lines $State.Lines -Columns $Geometry.Buffer
+        $top = [Math]::Max(0, [Math]::Min($State.Top, [Console]::CursorTop - $oldRows))
+        $bottom = [Math]::Min([Console]::BufferHeight-1, [Math]::Max($State.Top+$State.Rows-1, [Console]::CursorTop))
+        $rect = New-Object Management.Automation.Host.Rectangle 0,$top,([Console]::BufferWidth-1),$bottom
+        $cell = New-Object Management.Automation.Host.BufferCell (' ', $Host.UI.RawUI.ForegroundColor,
+            $Host.UI.RawUI.BackgroundColor, [Management.Automation.Host.BufferCellType]::Complete)
+        $Host.UI.RawUI.SetBufferContents($rect, $cell)
+        [Console]::SetCursorPosition(0, [Math]::Max($top, [Console]::WindowTop))
+    } catch { }
+    $State.Rows = 0
+}
+
+function Write-MenuViewport {
+    param($View, $Geometry, $State)
+    if (Test-MenuResize -Previous $State.Geometry -Geometry $Geometry) { Reset-MenuViewport -State $State -Geometry $Geometry }
+    $lines = @($View.Lines)
+    if ($Geometry.Native) {
+        $lines = @(foreach ($line in $lines) { Split-MenuLine -Text $line -Columns $Geometry.Columns })
+        try { [Console]::SetWindowPosition(0, [Console]::WindowTop) } catch { }
+    }
+    $State.Rows = Write-MenuFrame -Lines $lines -Width $Geometry.Width -Previous $State.Rows
+    $State.Lines = $lines
+    $State.Geometry = $Geometry
+    try {
+        $State.Top = [Math]::Max(0, [Console]::CursorTop - $State.Rows)
+        if ($State.Top -lt [Console]::WindowTop -or [Console]::CursorTop -ge [Console]::WindowTop + $Geometry.Height) {
+            [Console]::SetWindowPosition(0, [Math]::Min($State.Top, [Console]::BufferHeight - $Geometry.Height))
+        }
+    } catch { }
+}
+
+# Page distance is physical rows, including intervening unselectable entries.
+# Unlike arrows it clamps at the ends. Return an index into the selectable list.
+function Get-MenuPage {
+    param([int[]]$Selectable, [int]$At, [int[]]$Heights, [int]$Body, [int]$Direction)
+    $start = $Selectable[$At]
+    $target = $start; $distance = 0
+    for ($i = $start + $Direction; $i -ge 0 -and $i -lt $Heights.Count; $i += $Direction) {
+        $distance += $Heights[$(if ($Direction -gt 0) { $i-1 } else { $i })]
+        if ($Selectable -contains $i) {
+            $target = $i
+            if ($distance -ge $Body) { break }
+        }
+    }
+    return [array]::IndexOf($Selectable, $target)
+}
+
 # Repaint a block in place, returning THE NUMBER OF LINES ACTUALLY DRAWN, which
 # the next call passes back as -Previous. Counting what was drawn rather than
 # inferring it from the inputs is the whole contract: an inferred height is one
@@ -262,7 +418,55 @@ function Select-One {
                             -ItemWidth $ITEMW -Width $Width)
     }
 
-    if (-not (Test-CanReadKeys)) {
+    if (Test-CanReadKeys) {
+        $at = [Math]::Max(0, $sel.IndexOf($Default))
+        $first = 0; $key = $null
+        $frame = [pscustomobject]@{ Rows=0; Top=0; Lines=@(); Geometry=$null }
+        $controls = $(if ($Help) { @('') + @($Help -split "`r?`n") } else { @() }) + @('',
+            $(if ($Escapable) { '  up/down move   enter choose   esc back' } else { '  up/down move   enter choose' }),
+            '  home/end first/last   pgup/pgdn page')
+        while ($true) {
+            $geometry = Get-MenuGeometry
+            $entries = @(for ($i = 0; $i -lt $Items.Count; $i++) {
+                $row = if (-not $Items[$i]) { @('') } else {
+                    @(Build-Row -Index $i -Width $geometry.Width -Marker $(
+                        if ($Disabled -contains $i) { ' --' } elseif ($i -eq $sel[$at]) { '  >' } else { '   ' }))
+                }
+                [pscustomobject]@{ Lines=@($row) }
+            })
+            $view = Get-MenuViewport -Entries $entries -Controls $controls -Selected $sel[$at] -First $first -Geometry $geometry
+            if (-not $view.Fits) {
+                Reset-MenuViewport -State $frame -Geometry $geometry
+                Write-Host '  The console is too small for an entry and its controls; using numbered input.'
+                $Default = $sel[$at]
+                break
+            }
+            $first = $view.First
+            if ($null -eq $key -or (Test-MenuResize -Previous $frame.Geometry -Geometry $geometry)) {
+                Write-MenuViewport -View $view -Geometry $geometry -State $frame
+            }
+            if ($null -eq $key) { $key = Read-MenuKey; continue }
+            switch ($key) {
+                'UpArrow'   { $at = ($at - 1 + $sel.Count) % $sel.Count }
+                'DownArrow' { $at = ($at + 1) % $sel.Count }
+                'Home'      { $at = 0 }
+                'End'       { $at = $sel.Count - 1 }
+                'PageUp'    { $at = Get-MenuPage -Selectable $sel -At $at -Heights $view.Heights -Body $view.Body -Direction -1 }
+                'PageDown'  { $at = Get-MenuPage -Selectable $sel -At $at -Heights $view.Heights -Body $view.Body -Direction 1 }
+                'Enter'     { Write-Host ''; return $sel[$at] }
+                'Escape'    {
+                    if ($Escapable) { Write-Host ''; return -1 }
+                    $to = $sel.IndexOf($EscapeTo)
+                    if ($to -ge 0) { $at = $to }
+                }
+            }
+            $key = $null
+        }
+    }
+
+    # The same fallback serves redirected input and an oversized viewport.
+    # Default is the current highlight, not the menu's original starting row.
+    & {
         for ($i = 0; $i -lt $Items.Count; $i++) {
             if (-not $Items[$i]) { Write-Host ''; continue }
             if ($Disabled -contains $i) {
@@ -295,64 +499,93 @@ function Select-One {
         }
     }
 
-    $width    = Get-MenuWidth
-    $helpBody = if ($Help) { @('') + @($Help -split "`r?`n") } else { @() }
-    # The cursor moves over SELECTABLE rows, not drawn ones, so a separator can
-    # never be landed on and a multi-line row is one stop.
-    $at    = [Math]::Max(0, $sel.IndexOf($Default))
-    $drawn = 0
-
-    while ($true) {
-        $lines = @()
-        for ($i = 0; $i -lt $Items.Count; $i++) {
-            if (-not $Items[$i]) { $lines += ''; continue }
-            if ($Disabled -contains $i) { $lines += Build-Row -Index $i -Width $width -Marker '  -'; continue }
-            $lines += Build-Row -Index $i -Width $width -Marker $(if ($i -eq $sel[$at]) { '  >' } else { '   ' })
-        }
-        $lines += $helpBody
-        $lines += ''
-        $lines += $(if ($Escapable) { '  up/down move   enter choose   esc back' }
-                    else            { '  up/down move   enter choose' })
-        $drawn = Write-MenuFrame -Lines $lines -Width $width -Previous $drawn
-
-        switch (Read-MenuKey) {
-            'UpArrow'   { $at = ($at - 1 + $sel.Count) % $sel.Count }
-            'DownArrow' { $at = ($at + 1) % $sel.Count }
-            'Enter'     { Write-Host ''; return $sel[$at] }
-            'Escape'    {
-                if ($Escapable) { Write-Host ''; return -1 }
-                $to = $sel.IndexOf($EscapeTo)
-                if ($to -ge 0) { $at = $to }
-            }
-        }
-    }
 }
 
 # Several choices. Enter toggles the highlighted row and the last row is the way
 # out, so "how do I finish?" is answered by the list rather than by a hint line
 # nobody reads (specs/configure.md 3.4). Space toggles too.
 function Select-Many {
-    param([string[]]$Items, [string[]]$Detail, [int[]]$Checked = @(), [string]$Help,
+    param([string[]]$Items, [string[]]$Detail = @(), [int[]]$Checked = @(), [string]$Help,
           [string]$DoneLabel = 'Done',
+          [int[]]$Disabled = @(),
           # Esc returns $null -- distinct from any list of indices, and from the
           # empty list this refuses to return.
           [switch]$Escapable)
 
     $state = @($Items | ForEach-Object { $false })
-    foreach ($i in $Checked) { if ($i -ge 0 -and $i -lt $state.Count) { $state[$i] = $true } }
+    foreach ($i in $Checked) { if ($i -ge 0 -and $i -lt $state.Count -and $Items[$i]) { $state[$i] = $true } }
 
     # 3.1's layout applies here too, and this is the menu where it matters most:
     # device names arrive from the system rather than being chosen, so a
     # concatenated row overflows, wraps, and the wrapped tail is not cleared.
     $ITEMW = Get-ItemWidth -Items $Items
 
-    if (-not (Test-CanReadKeys)) {
+    $done = $Items.Count
+    $sel = @(for ($i = 0; $i -lt $done; $i++) { if ($Items[$i] -and $Disabled -notcontains $i) { $i } }) + @($done)
+    if (Test-CanReadKeys) {
+        $at = 0; $first = 0; $key = $null; $note = ''
+        $frame = [pscustomobject]@{ Rows=0; Top=0; Lines=@(); Geometry=$null }
+        $helpBody = if ($Help) { @('') + @($Help -split "`r?`n") } else { @() }
+        while ($true) {
+            $geometry = Get-MenuGeometry
+            $cursor = $sel[$at]
+            $entries = @(for ($i = 0; $i -lt $done; $i++) {
+                $row = if (-not $Items[$i]) { @('') } else {
+                    $marker = '{0} {1}' -f $(if ($Disabled -contains $i) { ' --' } elseif ($cursor -eq $i) { '  >' } else { '   ' }),
+                        $(if ($state[$i]) { '[x]' } else { '[ ]' })
+                    $detailText = if ($i -lt $Detail.Count) { $Detail[$i] } else { '' }
+                    @(Get-MenuRow -Item $Items[$i] -Detail $detailText -Marker $marker -ItemWidth $ITEMW -Width $geometry.Width)
+                }
+                [pscustomobject]@{ Lines=@($row) }
+            })
+            $n = @($state | Where-Object { $_ }).Count
+            $entries += [pscustomobject]@{ Lines=(@('') + @(Get-MenuRow -Item $DoneLabel -Marker ('{0}    ' -f $(if ($cursor -eq $done) { '  >' } else { '   ' })) `
+                -Detail $(if ($n -gt 0) { "$n selected" } else { 'nothing selected' }) -ItemWidth $ITEMW -Width $geometry.Width)) }
+            $controls = @($helpBody) + @('',
+                $(if ($Escapable) { '  up/down move   enter toggles the highlighted row   esc back' } else { '  up/down move   enter toggles the highlighted row' }),
+                '  home/end first/last   pgup/pgdn page', $note)
+            $view = Get-MenuViewport -Entries $entries -Controls $controls -Selected $cursor -First $first -Geometry $geometry
+            if (-not $view.Fits) {
+                Reset-MenuViewport -State $frame -Geometry $geometry
+                Write-Host '  The console is too small for an entry and its controls; using numbered input.'
+                break
+            }
+            $first = $view.First
+            if ($null -eq $key -or (Test-MenuResize -Previous $frame.Geometry -Geometry $geometry)) {
+                Write-MenuViewport -View $view -Geometry $geometry -State $frame
+            }
+            if ($null -eq $key) { $key = Read-MenuKey; continue }
+            $note = ''
+            if ($key -eq 'Escape' -and $Escapable) { Write-Host ''; return $null }
+            switch ($key) {
+                'UpArrow'   { $at = ($at - 1 + $sel.Count) % $sel.Count }
+                'DownArrow' { $at = ($at + 1) % $sel.Count }
+                'Home'      { $at = 0 }
+                'End'       { $at = $sel.Count - 1 }
+                'PageUp'    { $at = Get-MenuPage -Selectable $sel -At $at -Heights $view.Heights -Body $view.Body -Direction -1 }
+                'PageDown'  { $at = Get-MenuPage -Selectable $sel -At $at -Heights $view.Heights -Body $view.Body -Direction 1 }
+                'Spacebar'  { if ($cursor -ne $done) { $state[$cursor] = -not $state[$cursor] } }
+                'Enter'     {
+                    if ($cursor -ne $done) { $state[$cursor] = -not $state[$cursor]; break }
+                    $out = @(for ($i = 0; $i -lt $state.Count; $i++) { if ($state[$i]) { $i } })
+                    if ($out.Count -gt 0) { Write-Host ''; return $out }
+                    $note = '  Nothing is checked -- move to a row and press enter to check it.'
+                }
+            }
+            $key = $null
+        }
+    }
+
+    & {
         for ($i = 0; $i -lt $Items.Count; $i++) {
+            if (-not $Items[$i]) { Write-Host ''; continue }
             $mark  = if ($state[$i]) { '*' } else { ' ' }
             $first = $true
-            foreach ($l in (Get-MenuRow -Item $Items[$i] -Detail $Detail[$i] -Marker '   [x]' `
+            $detailText = if ($i -lt $Detail.Count) { $Detail[$i] } else { '' }
+            foreach ($l in (Get-MenuRow -Item $Items[$i] -Detail $detailText -Marker '   [x]' `
                                         -ItemWidth $ITEMW -Width 100)) {
-                if ($first) { Write-Host ('  {0}{1,2}) {2}' -f $mark, ($i + 1), $l.Substring(7)) }
+                if ($first -and $Disabled -contains $i) { Write-Host ('   -- {0}' -f $l.Substring(7)) }
+                elseif ($first) { Write-Host ('  {0}{1,2}) {2}' -f $mark, ($i + 1), $l.Substring(7)) }
                 else        { Write-Host ('       {0}' -f $l.Substring(7)) }
                 $first = $false
             }
@@ -363,10 +596,11 @@ function Select-Many {
         while ($true) {
             $pick = Read-Default '  Numbers, comma-separated' ($pre -join ',')
             if ($Escapable -and $pick -eq 'q') { return $null }
-            $out = @()
+            # Checked disabled rows are read-only state, not selectable inputs.
+            $out = @($Disabled | Where-Object { $_ -ge 0 -and $_ -lt $state.Count -and $state[$_] })
             foreach ($n in ($pick -split ',')) {
                 $n = $n.Trim()
-                if ($n -match '^[0-9]+$' -and [int]$n -ge 1 -and [int]$n -le $Items.Count) { $out += ([int]$n - 1) }
+                if ($n -match '^[0-9]+$' -and $sel -contains ([int]$n - 1) -and [int]$n -le $Items.Count -and $out -notcontains ([int]$n - 1)) { $out += ([int]$n - 1) }
             }
             if ($out.Count -gt 0) { return $out }
             Write-Host $(if ($Escapable) { '  Pick at least one, or q to go back.' }
@@ -374,53 +608,6 @@ function Select-Many {
         }
     }
 
-    $width    = Get-MenuWidth
-    $helpBody = if ($Help) { @('') + @($Help -split "`r?`n") } else { @() }
-    $done     = $Items.Count          # the index of the Done row
-    $cursor   = 0
-    $note     = ''
-    $drawn    = 0
-
-    while ($true) {
-        $lines = @()
-        for ($i = 0; $i -lt $Items.Count; $i++) {
-            $marker = '{0} {1}' -f $(if ($i -eq $cursor) { '  >' } else { '   ' }),
-                                   $(if ($state[$i]) { '[x]' } else { '[ ]' })
-            $lines += Get-MenuRow -Item $Items[$i] -Detail $Detail[$i] -Marker $marker `
-                                  -ItemWidth $ITEMW -Width $width
-        }
-        # A plain row aligned with the item text, its live count in the detail
-        # column where every other menu puts a value. A marker as wide as
-        # "  > [x]" and no wider, so Done lines up with the items rather than
-        # with the checkboxes.
-        $n = @($state | Where-Object { $_ }).Count
-        $lines += ''
-        $lines += Get-MenuRow -Item $DoneLabel -Marker ('{0}    ' -f $(if ($cursor -eq $done) { '  >' } else { '   ' })) `
-                              -Detail $(if ($n -gt 0) { "$n selected" } else { 'nothing selected' }) `
-                              -ItemWidth $ITEMW -Width $width
-        $lines += $helpBody
-        $lines += ''
-        $lines += $(if ($Escapable) { '  up/down move   enter toggles the highlighted row   esc back' }
-                    else            { '  up/down move   enter toggles the highlighted row' })
-        $lines += $note
-        $drawn = Write-MenuFrame -Lines $lines -Width $width -Previous $drawn
-
-        $key  = Read-MenuKey
-        $note = ''
-        if ($key -eq 'Escape' -and $Escapable) { Write-Host ''; return $null }
-        switch ($key) {
-            'UpArrow'   { $cursor = ($cursor - 1 + $done + 1) % ($done + 1) }
-            'DownArrow' { $cursor = ($cursor + 1) % ($done + 1) }
-            'Spacebar'  { if ($cursor -ne $done) { $state[$cursor] = -not $state[$cursor] } }
-            'Enter'     {
-                if ($cursor -ne $done) { $state[$cursor] = -not $state[$cursor]; break }
-                $out = @()
-                for ($i = 0; $i -lt $state.Count; $i++) { if ($state[$i]) { $out += $i } }
-                if ($out.Count -gt 0) { Write-Host ''; return $out }
-                $note = '  Nothing is checked -- move to a row and press enter to check it.'
-            }
-        }
-    }
 }
 
 # --- names --------------------------------------------------------------------

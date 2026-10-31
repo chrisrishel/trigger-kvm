@@ -80,11 +80,13 @@ Every platform is the same two roles: a **detector** ("do I own the peripherals
 now?") and a **switcher** ("make the monitors show me"). They are separate
 processes so the switcher stays usable by hand and testable in isolation.
 
-On macOS, both menu primitives in `lib/menu.sh` use one viewport renderer. It
-lays out physical rows, reserves controls and moves the visible window around
-the selected entry. Selection and checkbox state belong to the menu, so
-scrolling, resizing and the numbered fallback preserve them. The shared
-contract is `specs/configure.md` 3.1.1; Windows implementation is pending.
+Both platforms' common menu primitives use a shared viewport renderer within
+their menu library (`lib/menu.sh` / `lib/menu.ps1`). It lays out physical rows,
+reserves controls and moves the visible window around the selected entry.
+Selection and checkbox state belong to the menu, so scrolling, resizing and
+the numbered fallback preserve them. Windows explicitly folds physical lines
+and clears the owned buffer region on resize, without rewinding an old frame
+through a smaller window. The contract is `specs/configure.md` 3.1.1.
 
 **The detector is one process with N event sources.** Today: USB device
 presence and Bluetooth connection. Its contract is `specs/detector.md`. Not one

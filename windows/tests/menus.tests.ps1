@@ -8,6 +8,8 @@ $ErrorActionPreference = 'Stop'
 
 Import-Subject -Script 'lib\menu.ps1' -Functions @(
     'Read-Default','Read-YesNo','Get-MenuWidth','Write-MenuFrame','Clear-ToLineEnd',
+    'Get-MenuGeometry','Get-MenuCells','Split-MenuLine','Get-MenuRows','Get-MenuViewport',
+    'Test-MenuResize','Reset-MenuViewport','Write-MenuViewport','Get-MenuPage',
     'Split-Detail','Get-ItemWidth','Get-MenuRow',
     'Select-One','Select-Many','Join-Names')
 

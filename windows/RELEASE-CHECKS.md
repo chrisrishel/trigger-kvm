@@ -37,6 +37,18 @@ controlled policy fixtures cover permitted, denied and unavailable settings.
 
 ## Candidate status
 
+Windows source now implements specification revision 16 in both common menu
+primitives. Native hidden-console fixtures cover 27 synthetic cases, including
+small visible windows, physical folds/Unicode, a wider scrollback buffer,
+resize, page/end navigation, disabled/separator rows, Done and numbered
+fallback retaining current choices. All 14 viewport, 3 existing menu and 2
+existing folded/tail-redraw mutations were caught. This changes only menu
+interaction: the installed `6f65aff` below remains unchanged at revision 15,
+and its boot/profile/physical evidence is reused for unchanged behavior.
+The final native Windows PowerShell 5.1 suite passed all 23 files without skips,
+including parsing/conventions and revision-16 conformance. Product version
+remains 0.2.0; privacy and coordinated publication gates remain open.
+
 The 2026-10-31 review follow-up, implementation candidate **`7e65036`**, confirms
 pre-restriction module loading under native PowerShell 5.1 and moves compilation
 to task registration. The protected task embeds the assembly and performs only in-memory Framework operations
