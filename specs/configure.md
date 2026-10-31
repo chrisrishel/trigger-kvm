@@ -51,8 +51,8 @@ Item on the left, its value on the right.
 
 - The item column is **28 wide**, or the longest item + 1, capped at **44**.
 - **Wrapping, never truncation.** A long detail wraps at the `", "` between
-  items onto continuation lines aligned under the column. An unbreakable single
-  item overruns rather than being cut.
+  items onto continuation lines aligned under the column. An unbreakable item
+  may continue across physical terminal rows; no characters are discarded.
 - **Target one column less than the terminal width when wrapping details.**
   An unbreakable item or a row wider than a narrow terminal may fold naturally;
   preserve its full text. Redraw must account for the physical rows occupied,
@@ -62,6 +62,32 @@ Item on the left, its value on the right.
 - **One punctuation rule down the value column**: `", "` separates items, `": "`
   separates a label from its value, `"/"` joins things sharing one label. The
   wrapper breaks at `", "`.
+
+### 3.1.1 Viewport
+
+Both interactive menu types fit inside the visible terminal height, reserving
+space for their help, key hints, validation message and the cursor below the
+frame. Count the physical rows occupied by wrapping, not just list entries.
+Long lists use a moving window: the highlighted entry, including its detail,
+is always completely visible. An overflow indicator identifies the visible
+entry range and total, so entries above and below are discoverable.
+
+Up/down moves selection and scrolls as needed, retaining the existing wrap at
+the ends. Home/End selects the first/last selectable entry. Page Up/Down moves
+approximately one available body height, accounting for wrapped entries and
+skipping separators and disabled entries; it stops at the ends. In multi-select,
+Done participates in navigation. Scrolling never changes checked state.
+Offscreen entries are not filtered out: disabled entries remain in their
+original positions and are shown when their part of the list is visible.
+
+Re-query terminal dimensions on each redraw, including the first interaction
+after a resize. Reflow and clamp the window without changing the selection or
+checked state. All displayed text remains accessible; viewport clipping must
+not replace identifiers with ellipses. If an entry and the controls cannot fit,
+explain the size limit and use the numbered fallback for that menu, preserving
+current selections and Escape behavior. The ordinary fallback transcript can
+be inspected with terminal scrollback. Do not attempt an oversized cursor-up
+redraw or require the user to navigate an invisible highlight.
 
 ### 3.2 Rows
 
@@ -77,6 +103,8 @@ Item on the left, its value on the right.
 | key | does |
 |---|---|
 | up / down | move over selectable rows only |
+| home / end | first / last selectable row |
+| page up / page down | approximately one visible page, stopping at the ends |
 | enter | what the highlighted row says |
 | space | in a multi-select, toggles |
 | esc | back, and change nothing |

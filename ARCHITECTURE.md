@@ -80,6 +80,12 @@ Every platform is the same two roles: a **detector** ("do I own the peripherals
 now?") and a **switcher** ("make the monitors show me"). They are separate
 processes so the switcher stays usable by hand and testable in isolation.
 
+On macOS, both menu primitives in `lib/menu.sh` use one viewport renderer. It
+lays out physical rows, reserves controls and moves the visible window around
+the selected entry. Selection and checkbox state belong to the menu, so
+scrolling, resizing and the numbered fallback preserve them. The shared
+contract is `specs/configure.md` 3.1.1; Windows implementation is pending.
+
 **The detector is one process with N event sources.** Today: USB device
 presence and Bluetooth connection. Its contract is `specs/detector.md`. Not one
 process per source: the debounce is in-memory, so two watchers would each hold

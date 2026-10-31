@@ -1907,6 +1907,48 @@ inputs were changed. This is installed/native OS evidence, not a new physical
 switching or pre-login reboot observation. Private backups and receipts remain
 outside tracked files.
 
+## Menu viewport
+
+**2026-10-31 -- terminal height, synthetic lists, macOS.** The installed menu
+library matched the source at `cfc84ed`. With 30 synthetic entries in a 12-row,
+80-column PTY, single-choice and multi-select drew 32 and 34 rows respectively.
+The first selected row was outside the visible viewport, although scripted
+navigation still returned index 0. Both primitives repainted the full list;
+terminal height did not constrain their frames.
+
+The revision-16 implementation uses the same viewport for both primitives.
+Repeating that bounded PTY reproduction returned index 0 in each, kept the
+initial highlight visible in the screen model and issued only 11-row cursor-up
+redraws. New regressions failed against the original renderer before the fix.
+Fixtures cover wrapped details and Unicode, disabled/separator rows, Done,
+page/end navigation, resize and numbered fallback retaining choices. Native
+PTY tests also exercise the actual escape sequences and a 12-by-80 window
+resized to 9-by-55. This evidence concerns synthetic terminal interaction;
+no monitor, installed watcher or owner configuration was changed.
+
+`cd macos && make test` passed all 14 files and shellcheck with native PTY/
+process access, without skips. `bash tests/mutate.sh lib/menu.sh` caught all 18
+existing menu mutations; after correcting two new mutation expressions,
+`bash tests/mutate.sh viewport` caught all six viewport mutations against a
+passing baseline. A completion guard in the new regression file also rejects
+an early zero-status Bash exit before all cases run. Sandboxed PTY/lock failures
+were not counted as product evidence; the complete native run above passed.
+
+## Windows follow-up review
+
+**2026-10-31 -- Windows follow-up review at `f4bacab`, from macOS.** Source,
+regressions and the recorded native evidence address all three findings in the
+preceding handoff: pre-restriction PowerShell module loading, the native UAC
+eligibility assertion and the stale boot-validation documentation. Hosted run
+`41192088119` passed: macOS 13 files, Windows 21 files with the native resolve
+file and two driver cases explicitly skipped. The Windows record separately
+reports all 22 files and 20 relevant mutations passing on native PowerShell
+5.1, bounded S4U bootstrap control/success/failure checks and the supported live
+upgrade to `6f65aff`. Those native actions were not repeated on this Mac.
+No additional blocker was found within that follow-up's scope. Windows menu
+height support remains outstanding; privacy and coordinated release checks
+remain separate gates.
+
 ## Release validation and privacy
 
 **2026-10-30 -- privacy audit at `2835cb0`, while the repository remains

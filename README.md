@@ -104,6 +104,11 @@ each test keeps one here so you can read the question. With one monitor, the
 walkthrough warns you before switching it and explains how to restore its input
 manually. The full contract is [`specs/configure.md`](specs/configure.md).
 
+On macOS, long menus scroll with the highlight. Home/End jumps to the first/last
+entry; Page Up/Down moves by a visible page. A small window uses numbered input
+when it cannot fit an entry and its controls. Windows viewport support is pending
+specification revision 16.
+
 | | macOS | Windows |
 |---|---|---|
 | Config | `~/Library/Application Support/trigger-kvm/config` | `%LOCALAPPDATA%\trigger-kvm\config` |

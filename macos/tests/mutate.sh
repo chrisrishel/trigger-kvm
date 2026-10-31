@@ -457,10 +457,25 @@ mutate 'esc: the top menu ACTIVATES the way out instead of moving to it' lib/men
 
 # --- redraw: the reported 80-column corruption -------------------------------
 
-mutate 'redraw: select_many concatenates its detail instead of wrapping' lib/menu.sh keys.tests.sh \
-  's@      _buf="$_buf$(menu_build_row "$_i" "$_m" "$_width" "$_itemw" -1 "$_b")@      _buf="$_buf$(printf "%s %s %s  %s" "$_m" "$_b" "${MENU_ITEMS[$_i]}" "${MENU_DETAIL[$_i]}")@'
+mutate 'redraw: select_many concatenates its detail instead of wrapping' lib/menu.sh menu.tests.sh \
+  's@_row=$(menu_build_row "$_i" "$_m" "$_width" "$_itemw" -1 "$_b")@_row=$(printf "%s %s %s  %s" "$_m" "$_b" "${MENU_ITEMS[$_i]}" "${MENU_DETAIL[$_i]}")@'
 mutate 'redraw: the frame pads to width instead of erasing the line' lib/menu.sh keys.tests.sh \
   "s@    printf '%s.033\[K.n' \"\$_l\" >&2@    printf '%-*s\\n' \"\$_width\" \"\$_l\" >\&2@"
+
+# --- viewport: long lists, small windows and resizing ------------------------
+
+mutate 'viewport: a long list ignores the terminal height' lib/menu.sh viewport.tests.sh \
+  's%_budget=$(( MENU_VIEW_HEIGHT - 2 - ${#MENU_WRAPPED\[@\]} ))%_budget=1000%'
+mutate 'viewport: scrolling does not follow the selected row' lib/menu.sh viewport.tests.sh \
+  's@MENU_VIEW_TOP=$(( MENU_ROW_END\[_selected\] - _budget ))@MENU_VIEW_TOP=0@'
+mutate 'viewport: page down moves only one physical row' lib/menu.sh viewport.tests.sh \
+  's@MENU_PAGE_ROWS=$_budget@MENU_PAGE_ROWS=1@'
+mutate 'viewport: redraw ignores a resized terminal' lib/menu.sh viewport.tests.sh \
+  's@MENU_VIEW_HEIGHT=$(menu_term_height)@MENU_VIEW_HEIGHT=24@'
+mutate 'viewport: numbered fallback discards the checked state' lib/menu.sh viewport.tests.sh \
+  's@    select_many_typed "$_help" "$_escapable"@    _state[0]=0; _state[1]=1; select_many_typed "$_help" "$_escapable"@'
+mutate 'viewport: the page-down escape sequence is decoded as an arrow' lib/menu.sh keys.tests.sh \
+  "s@'\[6~')     printf 'PageDown@'[6~')     printf 'Down@"
 
 # --- revision 4: the boot tier ----------------------------------------------
 

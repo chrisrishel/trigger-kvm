@@ -95,6 +95,13 @@ only on Save. The contract is
 [`../specs/configure.md`](../specs/configure.md); what is specific to this
 platform:
 
+- All menus scroll to keep the highlighted entry and its details visible.
+  Home/End selects the first/last entry (including Done); Page Up/Down moves
+  by a visible page. A range indicator shows where you are in a long list.
+  Resizing reflows the menu on the next keypress without losing checked devices.
+  If an entry and the controls cannot fit, the menu explains and uses numbered
+  input. Current choices remain the default; `q` goes back where Escape is
+  available. Use terminal scrollback to read the numbered list.
 - Standard DDC/CI is the default for every panel. The LG dialect is offered for
   LG panels, and only values from [`../displays.toml`](../displays.toml) or
   values you type are ever sent on it.

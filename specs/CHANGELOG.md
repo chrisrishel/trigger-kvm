@@ -14,6 +14,22 @@ rest.
 
 ---
 
+## Revision 16 -- 2026-10-31
+
+**Every interactive menu keeps its selection inside the terminal viewport.**
+
+Sections: [`configure.md`](configure.md) 3.1, 3.1.1, 3.3. No new normative
+strings; existing Enter, Space, Escape and typed-input semantics are retained.
+
+**Act on (both platforms):** bound menu frames by visible terminal height,
+account for wrapped physical rows and controls, scroll with selection and show
+the visible range. Add Home/End and Page Up/Down navigation. Re-query dimensions
+on redraw and preserve selection/checks after resizing. When an entry plus
+controls cannot fit, explain and use the numbered fallback with state intact.
+Apply this to both common menu primitives, including Done, separators and
+disabled rows; preserve complete text across physical line wrapping. Test long
+lists in small viewports, wrapped entries, resizing, navigation and fallback.
+
 ## Revision 15 -- 2026-10-29
 
 **Status resolves the saved configuration, and menu overflow preserves text.**

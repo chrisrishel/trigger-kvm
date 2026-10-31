@@ -54,11 +54,13 @@ chmod +x "$FAKE_DIR/many-demo.sh"
 
 # Run a script on a pty, type the given bytes at it, return everything it wrote.
 cat >"$FAKE_DIR/ptydrive.py" <<'EOS'
-import os, pty, sys, time, select, signal
+import os, pty, sys, time, select, signal, fcntl, termios, struct
 script, keys = sys.argv[1], sys.argv[2]
 pid, fd = pty.fork()
 if pid == 0:
     os.environ["COLUMNS"] = "100"
+    if "TK_TEST_ROWS" in os.environ:
+        fcntl.ioctl(0, termios.TIOCSWINSZ, struct.pack("HHHH", int(os.environ["TK_TEST_ROWS"]), 80, 0, 0))
     # run.sh starts each test file as a background job of a non-interactive
     # shell, which leaves SIGINT ignored -- and an ignored-at-entry signal stays
     # ignored through exec and cannot be trapped by a script. The Ctrl-C case
@@ -72,7 +74,13 @@ out = b""
 # continuation byte glued to it.
 time.sleep(0.4)
 for k in keys.split(","):
+    if k == "RESIZE":
+        fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 9, 55, 0, 0))
+        k = "DOWN"
     b = {"UP": b"\x1b[A", "DOWN": b"\x1b[B", "ENTER": b"\r",
+         "HOME": b"\x1b[H", "END": b"\x1b[F", "PGUP": b"\x1b[5~", "PGDN": b"\x1b[6~",
+         "HOME1": b"\x1b[1~", "END4": b"\x1b[4~", "HOME7": b"\x1b[7~", "END8": b"\x1b[8~",
+         "HOMEO": b"\x1bOH", "ENDO": b"\x1bOF",
          "ESC": b"\x1b", "SPACE": b" ", "Q": b"q", "INT": b"\x03"}[k]
     os.write(fd, b)
     time.sleep(0.25)
@@ -128,6 +136,45 @@ assert_match "$out" 'PICK=1' "$out"
 it 'the up-arrow escape sequence moves the other way, and wraps'
 out=$(pty_run "$FAKE_DIR/menu-demo.sh" UP,ENTER)
 assert_match "$out" 'PICK=2' "$out"
+
+it 'Home and End decode the common terminal sequences'
+for pair in HOME:END HOME1:END4 HOME7:END8 HOMEO:ENDO; do
+  out=$(pty_run "$FAKE_DIR/menu-demo.sh" "${pair#*:},ENTER")
+  assert_match "$out" 'PICK=2' "$out"
+  out=$(pty_run "$FAKE_DIR/menu-demo.sh" "DOWN,${pair%:*},ENTER")
+  assert_match "$out" 'PICK=0' "$out"
+done
+
+it 'page keys stop at the ends on a real terminal'
+out=$(pty_run "$FAKE_DIR/menu-demo.sh" PGDN,ENTER)
+assert_match "$out" 'PICK=2' "$out"
+out=$(pty_run "$FAKE_DIR/menu-demo.sh" END,PGUP,ENTER)
+assert_match "$out" 'PICK=0' "$out"
+
+it 'a small real terminal keeps both long menus reachable after resize'
+cat >"$FAKE_DIR/viewport-demo.sh" <<EOS
+#!/bin/bash
+set -euo pipefail
+. "$MAC_DIR/lib/common.sh"
+. "$MAC_DIR/lib/menu.sh"
+menu_reset
+for i in \$(seq 1 30); do menu_add "Fixture \$i" ''; done
+if [ "\${TK_MANY:-}" = 1 ]; then
+  select_many --escapable
+  printf 'PICKED=%s ESC=%s\n' "\$MENU_PICKED" "\$MENU_ESCAPED"
+else
+  select_one --escapable
+  printf 'PICK=%s\n' "\$MENU_PICK"
+fi
+EOS
+out=$(TK_TEST_ROWS=12 pty_run "$FAKE_DIR/viewport-demo.sh" END,HOME,RESIZE,ENTER)
+assert_match "$out" 'PICK=1' "$out"
+assert_match "$out" 'of 30'
+assert_no_match "$out" 'numbered input' 'the ordinary list fits the resized viewport'
+assert_equal '' "$(printf '%s' "$out" | python3 -c 'import re,sys; print("oversized" if any(int(n)>11 for n in re.findall(r"\x1b\[(\d+)A",sys.stdin.read())) else "")')"
+out=$(TK_TEST_ROWS=12 TK_MANY=1 pty_run "$FAKE_DIR/viewport-demo.sh" SPACE,END,HOME,RESIZE,SPACE,END,ENTER)
+assert_match "$out" 'PICKED=0 1 ESC=0' "$out"
+assert_no_match "$out" 'numbered input'
 
 it 'two downs move two rows'
 out=$(pty_run "$FAKE_DIR/menu-demo.sh" DOWN,DOWN,ENTER)
@@ -202,6 +249,7 @@ it 'and wraps the detail rather than truncating it'
 assert_match "$out" 'AirPods Pro'
 assert_match "$out" 'not connected)'
 assert_no_match "$out" '...'
+assert_match "$out" '[ ] bt:0011223344ff      BT' 'the item column survives wrapping'
 
 it 'select_one keeps every line inside the width too'
 cat >"$FAKE_DIR/wide-one.sh" <<EOS

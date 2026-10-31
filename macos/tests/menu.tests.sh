@@ -217,11 +217,20 @@ cont=$(printf '%s\n' "$MENU_TEXT" | sed -n "$(( first + 1 ))p")
 lead=$(printf '%s' "$cont" | sed 's/[^ ].*//' | wc -c | tr -d ' ')
 assert_true "$([ "$lead" -gt 20 ] && echo 0 || echo 1)" "continuation indented, got $lead"
 
-it 'lets an unbreakable single item overrun rather than cutting it'
+it 'multi-select aligns wrapped details under its value column too'
+menu_reset; menu_add 'Triggers' "$LONG"
+COLUMNS=80 keys 'End Enter' select_many --checked 0
+first=$(printf '%s\n' "$MENU_TEXT" | grep -n 'Triggers' | head -1 | cut -d: -f1)
+cont=$(printf '%s\n' "$MENU_TEXT" | sed -n "$(( first + 1 ))p")
+lead=$(printf '%s' "$cont" | sed 's/[^ ].*//' | wc -c | tr -d ' ')
+assert_true "$([ "$lead" -gt 20 ] && echo 0 || echo 1)" "continuation indented, got $lead"
+
+it 'continues an unbreakable identifier across rows without losing characters'
 huge='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
 menu_reset; menu_add 'One' "$huge"
 COLUMNS=60 keys 'Enter' select_one --default 0
-assert_match "$MENU_TEXT" "$huge" 'an unbreakable item must survive whole'
+unfolded=$(printf '%s\n' "$MENU_TEXT" | sed $'s/\033\\[[0-9;]*[A-Za-z]//g' | tr -d '\n')
+assert_match "$unfolded" "$huge" 'every character survives physical wrapping'
 
 it 'clears folded tails and dropped rows when a frame shrinks'
 MENU_DRAWN=0

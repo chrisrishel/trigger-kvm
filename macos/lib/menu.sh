@@ -53,15 +53,25 @@ menu_width() {
 # The width the terminal folds a line at; menu_frame counts rows against it.
 menu_term_width() {
   local _w
-  _w=${COLUMNS:-0}
+  _w=$({ stty size </dev/tty; } 2>/dev/null | awk '{print $2}')
+  [ "${_w:-0}" -gt 0 ] 2>/dev/null || _w=${COLUMNS:-0}
   [ "$_w" -gt 0 ] 2>/dev/null || _w=$(tput cols 2>/dev/null || echo 100)
-  [ "$_w" -lt 20 ] && _w=20
+  [ "$_w" -gt 0 ] 2>/dev/null || _w=100
   printf '%s\n' "$_w"
+}
+
+menu_term_height() {
+  local _h
+  _h=$({ stty size </dev/tty; } 2>/dev/null | awk '{print $1}')
+  [ "${_h:-0}" -gt 0 ] 2>/dev/null || _h=${LINES:-0}
+  [ "$_h" -gt 0 ] 2>/dev/null || _h=$(tput lines 2>/dev/null || echo 24)
+  [ "$_h" -gt 0 ] 2>/dev/null || _h=24
+  printf '%s\n' "$_h"
 }
 
 # A row's detail wrapped to the width left for it, broken at the ", " between
 # items. Nothing is ever truncated: the review screen exists to confirm what is
-# about to be written. An unbreakable item overruns rather than being cut.
+# about to be written. The viewport also wraps unbreakable items physically.
 menu_split_detail() {
   awk -v w="$2" '
     {
@@ -159,6 +169,133 @@ EOF
   MENU_DRAWN=$_n
 }
 
+# Both menus share one viewport (specs/configure.md 3.1.1). Layout records
+# physical lines and each entry's extent; selection and check state stay with
+# the callers. A byte budget conservatively fits wide Unicode characters too,
+# while UTF-8 slicing keeps characters intact. Leave the last column unused to
+# avoid the terminal's delayed-wrap state, and one row for the cursor.
+menu_byte_length() { local LC_ALL=C; MENU_BYTES=${#1}; }
+
+menu_wrap() {
+  local _text _limit _line _chunk LC_ALL=en_US.UTF-8
+  _text=$1 _limit=$2
+  MENU_WRAPPED=()
+  while IFS= read -r _line; do
+    _line=${_line//$'\t'/        }
+    menu_byte_length "$_line"
+    while [ "$MENU_BYTES" -gt "$_limit" ]; do
+      _chunk=${_line:0:$_limit}
+      menu_byte_length "$_chunk"
+      while [ "$MENU_BYTES" -gt "$_limit" ]; do
+        _chunk=${_chunk%?}
+        menu_byte_length "$_chunk"
+      done
+      MENU_WRAPPED+=("$_chunk")
+      _line=${_line:${#_chunk}}
+      menu_byte_length "$_line"
+    done
+    MENU_WRAPPED+=("$_line")
+  done <<< "$_text"
+}
+
+menu_view_begin() {
+  MENU_VIEW_COLS=$(menu_term_width)
+  MENU_VIEW_HEIGHT=$(menu_term_height)
+  MENU_VIEW_LINES=(); MENU_ROW_START=(); MENU_ROW_END=()
+  MENU_VIEW_ORDINAL=(); MENU_VIEW_TOTAL=0
+}
+
+menu_view_add() {
+  local _row _line _ordinal
+  _row=$2
+  # Narrow terminals use the typed path before any character slicing.
+  [ "$MENU_VIEW_COLS" -ge 20 ] || return 0
+  menu_wrap "$1" "$(( MENU_VIEW_COLS - 1 ))"
+  MENU_ROW_START[_row]=${#MENU_VIEW_LINES[@]}
+  _ordinal=0
+  if [ "$3" = 1 ]; then
+    MENU_VIEW_TOTAL=$(( MENU_VIEW_TOTAL + 1 )); _ordinal=$MENU_VIEW_TOTAL
+  fi
+  for _line in "${MENU_WRAPPED[@]}"; do
+    MENU_VIEW_LINES+=("$_line"); MENU_VIEW_ORDINAL+=("$_ordinal")
+  done
+  MENU_ROW_END[_row]=${#MENU_VIEW_LINES[@]}
+}
+
+menu_view_frame() {
+  local _selected _footer _budget _total _overflow _i _buf _first _last _hint
+  _selected=$1 _footer=$2
+  [ "$MENU_VIEW_COLS" -ge 20 ] || return 2
+  menu_wrap "$_footer" "$(( MENU_VIEW_COLS - 1 ))"
+  _budget=$(( MENU_VIEW_HEIGHT - 1 - ${#MENU_WRAPPED[@]} ))
+  _total=${#MENU_VIEW_LINES[@]}; _overflow=0
+  if [ "$_total" -gt "$_budget" ]; then
+    _overflow=1
+    _hint='  home/end first/last   pgup/pgdn page'
+    menu_wrap "$_footer
+$_hint" "$(( MENU_VIEW_COLS - 1 ))"
+    _budget=$(( MENU_VIEW_HEIGHT - 2 - ${#MENU_WRAPPED[@]} ))
+  fi
+  [ "$_budget" -ge 1 ] || return 2
+  _i=0
+  while [ "$_i" -lt "${#MENU_ROW_START[@]}" ]; do
+    [ "$(( MENU_ROW_END[_i] - MENU_ROW_START[_i] ))" -le "$_budget" ] || return 2
+    _i=$(( _i + 1 ))
+  done
+  MENU_PAGE_ROWS=$_budget
+  [ "$MENU_VIEW_TOP" -le "$(( _total - _budget ))" ] || MENU_VIEW_TOP=$(( _total - _budget ))
+  [ "$MENU_VIEW_TOP" -ge 0 ] || MENU_VIEW_TOP=0
+  [ "${MENU_ROW_START[$_selected]}" -ge "$MENU_VIEW_TOP" ] || MENU_VIEW_TOP=${MENU_ROW_START[$_selected]}
+  if [ "${MENU_ROW_END[$_selected]}" -gt "$(( MENU_VIEW_TOP + _budget ))" ]; then
+    MENU_VIEW_TOP=$(( MENU_ROW_END[_selected] - _budget ))
+  fi
+  _buf='' _first=0 _last=0 _i=$MENU_VIEW_TOP
+  while [ "$_i" -lt "$_total" ] && [ "$_i" -lt "$(( MENU_VIEW_TOP + _budget ))" ]; do
+    _buf="$_buf${MENU_VIEW_LINES[$_i]}
+"
+    if [ "${MENU_VIEW_ORDINAL[$_i]}" -gt 0 ]; then
+      [ "$_first" -gt 0 ] || _first=${MENU_VIEW_ORDINAL[$_i]}
+      _last=${MENU_VIEW_ORDINAL[$_i]}
+    fi
+    _i=$(( _i + 1 ))
+  done
+  if [ "$_overflow" = 1 ]; then
+    _hint="  $_first-$_last of $MENU_VIEW_TOTAL"
+    menu_byte_length "$_hint"
+    [ "$MENU_BYTES" -lt "$MENU_VIEW_COLS" ] || return 2
+    _buf="$_buf$_hint
+"
+  fi
+  for _hint in "${MENU_WRAPPED[@]}"; do _buf="$_buf$_hint
+"; done
+  # A resize can leave the previous frame taller than the new viewport.
+  [ "$MENU_DRAWN" -lt "$MENU_VIEW_HEIGHT" ] || MENU_DRAWN=$(( MENU_VIEW_HEIGHT - 1 ))
+  menu_frame "${_buf%$'\n'}" "$(( MENU_VIEW_COLS - 1 ))"
+}
+
+# Return a selectable-position index, a page of physical rows away. Unlike
+# arrows, pages stop at the ends. The passed list omits disabled/separator rows.
+menu_page() {
+  local _at _direction _choices _target _next
+  _at=$1 _direction=$2; shift 2; _choices=("$@")
+  _target=$(( MENU_ROW_START[${_choices[$_at]}] + _direction * MENU_PAGE_ROWS ))
+  MENU_PAGE_PICK=$_at
+  while :; do
+    _next=$(( MENU_PAGE_PICK + _direction ))
+    [ "$_next" -ge 0 ] && [ "$_next" -lt "${#_choices[@]}" ] || break
+    MENU_PAGE_PICK=$_next
+    if [ "$_direction" -gt 0 ]; then
+      [ "${MENU_ROW_START[${_choices[$_next]}]}" -lt "$_target" ] || break
+    else
+      [ "${MENU_ROW_START[${_choices[$_next]}]}" -gt "$_target" ] || break
+    fi
+  done
+}
+
+menu_view_fallback() {
+  printf '\n  This window cannot fit the menu and its controls; using numbered input.\n' >&2
+}
+
 # --- input -------------------------------------------------------------------
 
 # Can the host read individual keys? A function so the suite can force the
@@ -196,6 +333,10 @@ menu_read_key() {
     case $_rest in
       '[A'|'OA') printf 'Up\n' ;;
       '[B'|'OB') printf 'Down\n' ;;
+      '[H'|'OH'|'[1~'|'[7~') printf 'Home\n' ;;
+      '[F'|'OF'|'[4~'|'[8~') printf 'End\n' ;;
+      '[5~')     printf 'PageUp\n' ;;
+      '[6~')     printf 'PageDown\n' ;;
       '')        printf 'Escape\n' ;;
       *)         printf 'Other\n' ;;
     esac
@@ -286,7 +427,7 @@ select_many() { menu_tty_guard select_many_body "$@"; }
 
 select_one_body() {
   local _default _current _help _escapable _escapeto _sel _i _ok _s _itemw _at
-  local _n _width _buf _j
+  local _n _width _buf _j _row _marker
   _default=0 _current=-1 _help='' _escapable=0 _escapeto=-1
   while [ $# -gt 0 ]; do
     case $1 in
@@ -327,27 +468,24 @@ select_one_body() {
   _n=0
   for _s in "${_sel[@]}"; do [ "$_s" = "$_default" ] && _at=$_n; _n=$(( _n + 1 )); done
 
-  _width=$(menu_width)
-  MENU_DRAWN=0
+  MENU_DRAWN=0 MENU_VIEW_TOP=0
   while :; do
-    _buf=""
+    menu_view_begin
+    _width=$(menu_width)
     _i=0
     while [ "$_i" -lt "${#MENU_ITEMS[@]}" ]; do
       if [ -z "${MENU_ITEMS[$_i]}" ]; then
-        _buf="$_buf
-"
-      elif menu_is_disabled "$_i"; then
-        _buf="$_buf$(menu_build_row "$_i" '  -' "$_width" "$_itemw" "$_current")
-"
-      elif [ "$_i" = "${_sel[$_at]}" ]; then
-        _buf="$_buf$(menu_build_row "$_i" '  >' "$_width" "$_itemw" "$_current")
-"
+        menu_view_add '' "$_i" 0
       else
-        _buf="$_buf$(menu_build_row "$_i" '   ' "$_width" "$_itemw" "$_current")
-"
+        if menu_is_disabled "$_i"; then _marker='  -'
+        elif [ "$_i" = "${_sel[$_at]}" ]; then _marker='  >'
+        else _marker='   '; fi
+        _row=$(menu_build_row "$_i" "$_marker" "$_width" "$_itemw" "$_current")
+        menu_view_add "$_row" "$_i" 1
       fi
       _i=$(( _i + 1 ))
     done
+    _buf=''
     [ -n "$_help" ] && _buf="$_buf
 $_help
 "
@@ -358,11 +496,19 @@ $_help
       _buf="$_buf
   up/down move   enter choose"
     fi
-    menu_frame "$_buf" "$_width"
+    if ! menu_view_frame "${_sel[$_at]}" "$_buf"; then
+      menu_view_fallback
+      select_one_typed "${_sel[$_at]}" "$_current" "$_help" "$_escapable" "$_itemw" "$_escapeto"
+      return 0
+    fi
 
     case $(menu_read_key) in
       Up)     _at=$(( (_at - 1 + ${#_sel[@]}) % ${#_sel[@]} )) ;;
       Down)   _at=$(( (_at + 1) % ${#_sel[@]} )) ;;
+      Home)   _at=0 ;;
+      End)    _at=$(( ${#_sel[@]} - 1 )) ;;
+      PageUp) menu_page "$_at" -1 "${_sel[@]}"; _at=$MENU_PAGE_PICK ;;
+      PageDown) menu_page "$_at" 1 "${_sel[@]}"; _at=$MENU_PAGE_PICK ;;
       Enter)  printf '\n' >&2; MENU_PICK=${_sel[$_at]}; return 0 ;;
       Escape)
         if [ "$_escapable" = "1" ]; then printf '\n' >&2; MENU_PICK=-1; return 0; fi
@@ -434,7 +580,7 @@ select_one_typed() {
 # MENU_ESCAPED=1 for esc.
 select_many_body() {
   local _checked _help _escapable _donelabel _state _i _c _done _cursor _note _itemw
-  local _width _buf _m _b _n _s _count _key _out
+  local _width _buf _m _b _n _s _count _key _out _choices _row _at
   _checked='' _help='' _escapable=0 _donelabel='Done'
   while [ $# -gt 0 ]; do
     case $1 in
@@ -451,7 +597,8 @@ select_many_body() {
   _i=0
   while [ "$_i" -lt "${#MENU_ITEMS[@]}" ]; do _state+=(0); _i=$(( _i + 1 )); done
   for _c in $_checked; do
-    if [ "$_c" -ge 0 ] 2>/dev/null && [ "$_c" -lt "${#_state[@]}" ]; then _state[_c]=1; fi
+    if [ "$_c" -ge 0 ] 2>/dev/null && [ "$_c" -lt "${#_state[@]}" ] &&
+       [ -n "${MENU_ITEMS[$_c]}" ] && ! menu_is_disabled "$_c"; then _state[_c]=1; fi
   done
 
   if ! menu_can_read_keys; then
@@ -460,21 +607,34 @@ select_many_body() {
   fi
 
   _done=${#MENU_ITEMS[@]}
-  _cursor=0
+  _at=0
   _note=''
-  _width=$(menu_width)
   _itemw=$(menu_itemw)
-  MENU_DRAWN=0
+  MENU_DRAWN=0 MENU_VIEW_TOP=0
+  _choices=()
+  _i=0
+  while [ "$_i" -lt "$_done" ]; do
+    if [ -n "${MENU_ITEMS[$_i]}" ] && ! menu_is_disabled "$_i"; then _choices+=("$_i"); fi
+    _i=$(( _i + 1 ))
+  done
+  _choices+=("$_done")
 
   while :; do
-    _buf=""
+    _cursor=${_choices[$_at]}
+    menu_view_begin
+    _width=$(menu_width)
     _i=0
     while [ "$_i" -lt "${#MENU_ITEMS[@]}" ]; do
       if [ "$_i" = "$_cursor" ]; then _m='  >'; else _m='   '; fi
       if [ "${_state[$_i]}" = "1" ]; then _b='[x]'; else _b='[ ]'; fi
       # The same builder select_one uses, so the detail wraps at ", ".
-      _buf="$_buf$(menu_build_row "$_i" "$_m" "$_width" "$_itemw" -1 "$_b")
-"
+      if [ -z "${MENU_ITEMS[$_i]}" ]; then
+        menu_view_add '' "$_i" 0
+      else
+        menu_is_disabled "$_i" && _m='  -'
+        _row=$(menu_build_row "$_i" "$_m" "$_width" "$_itemw" -1 "$_b")
+        menu_view_add "$_row" "$_i" 1
+      fi
       _i=$(( _i + 1 ))
     done
 
@@ -484,9 +644,10 @@ select_many_body() {
     for _s in ${_state[@]+"${_state[@]}"}; do [ "$_s" = "1" ] && _n=$(( _n + 1 )); done
     if [ "$_cursor" = "$_done" ]; then _m='  >'; else _m='   '; fi
     if [ "$_n" -gt 0 ]; then _count="$_n selected"; else _count='nothing selected'; fi
-    _buf="$_buf
-$(printf '%s     %-*s %s' "$_m" "$_itemw" "$_donelabel" "$_count")
-"
+    _row=$(printf '%s     %-*s %s' "$_m" "$_itemw" "$_donelabel" "$_count")
+    menu_view_add "
+$_row" "$_done" 1
+    _buf=''
     [ -n "$_help" ] && _buf="$_buf
 $_help
 "
@@ -499,14 +660,22 @@ $_help
     fi
     [ -n "$_note" ] && _buf="$_buf
 $_note"
-    menu_frame "$_buf" "$_width"
+    if ! menu_view_frame "$_cursor" "$_buf"; then
+      menu_view_fallback
+      select_many_typed "$_help" "$_escapable"
+      return 0
+    fi
 
     _key=$(menu_read_key)
     _note=''
     case $_key in
       Escape) if [ "$_escapable" = "1" ]; then printf '\n' >&2; MENU_PICKED=''; MENU_ESCAPED=1; return 0; fi ;;
-      Up)     _cursor=$(( (_cursor - 1 + _done + 1) % (_done + 1) )) ;;
-      Down)   _cursor=$(( (_cursor + 1) % (_done + 1) )) ;;
+      Up)     _at=$(( (_at - 1 + ${#_choices[@]}) % ${#_choices[@]} )) ;;
+      Down)   _at=$(( (_at + 1) % ${#_choices[@]} )) ;;
+      Home)   _at=0 ;;
+      End)    _at=$(( ${#_choices[@]} - 1 )) ;;
+      PageUp) menu_page "$_at" -1 "${_choices[@]}"; _at=$MENU_PAGE_PICK ;;
+      PageDown) menu_page "$_at" 1 "${_choices[@]}"; _at=$MENU_PAGE_PICK ;;
       Space)  if [ "$_cursor" != "$_done" ]; then
                 if [ "${_state[$_cursor]}" = "1" ]; then _state[_cursor]=0; else _state[_cursor]=1; fi
               fi ;;
@@ -540,7 +709,12 @@ select_many_typed() {
   _i=0
   while [ "$_i" -lt "${#MENU_ITEMS[@]}" ]; do
     if [ "${_state[$_i]}" = "1" ]; then _mark='*'; else _mark=' '; fi
-    printf '  %s%3d) %s  %s\n' "$_mark" "$(( _i + 1 ))" "${MENU_ITEMS[$_i]}" "${MENU_DETAIL[$_i]}" >&2
+    if [ -z "${MENU_ITEMS[$_i]}" ]; then printf '\n' >&2
+    elif menu_is_disabled "$_i"; then
+      printf '    -- %s  %s\n' "${MENU_ITEMS[$_i]}" "${MENU_DETAIL[$_i]}" >&2
+    else
+      printf '  %s%3d) %s  %s\n' "$_mark" "$(( _i + 1 ))" "${MENU_ITEMS[$_i]}" "${MENU_DETAIL[$_i]}" >&2
+    fi
     _i=$(( _i + 1 ))
   done
   [ -n "$_help" ] && { printf '\n' >&2; printf '%s\n' "$_help" >&2; }
@@ -566,7 +740,10 @@ select_many_typed() {
       case $_n in
         ''|*[!0-9]*) continue ;;
       esac
-      if [ "$_n" -ge 1 ] && [ "$_n" -le "${#MENU_ITEMS[@]}" ]; then _out="$_out $(( _n - 1 ))"; fi
+      if [ "$_n" -ge 1 ] && [ "$_n" -le "${#MENU_ITEMS[@]}" ] &&
+         [ -n "${MENU_ITEMS[$(( _n - 1 ))]}" ] && ! menu_is_disabled "$(( _n - 1 ))"; then
+        _out="$_out $(( _n - 1 ))"
+      fi
       IFS=,
     done
     IFS=$_old
