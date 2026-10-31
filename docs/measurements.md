@@ -1261,9 +1261,21 @@ account right or monitor was changed by this test.
 The correction landed as `6a5afcf`. Its clean checkout passed all 21 native test
 files without skips. CI `41154488503` passed macOS 13 files and Windows 20 files;
 the NVIDIA resolution file and two driver cases were explicitly skipped on
-the hosted Windows runner. Full logs were inspected. The prepared, bounded
-session-0 bootstrap check still awaits coordination; this is not an installed
-or physical-switching result.
+the hosted Windows runner. Full logs were inspected.
+
+**2026-10-30, Windows -- shipped bootstrap in session 0.** After the owner's
+UAC approval, two uniquely named S4U/Limited fixture tasks exercised the exact
+bootstrap from clean `6a5afcf`. Each was limited to 30 seconds and launched only
+an identity-reporting child. The normal case preserved the intended owner and
+session 0, ran at medium integrity (8192), had neither administrator nor
+power-user membership, retained only `SeChangeNotifyPrivilege`, and forwarded
+the child's expected exit 7. A source mutation omitting the integrity-setting
+call failed with exit 1 before producing a child receipt or user log. Both
+tasks were removed; independent enumeration confirmed zero remaining fixture
+tasks. Original owner config/PATH were unchanged and the product task remained
+absent for the profile matrix. Receipts completed at 2026-10-31 01:34 UTC.
+This is native session-0 token/launch evidence, not an installed watcher,
+startup-after-reboot, device-access or physical-switching result.
 
 CI at `4c0f13b` passed both platforms on the second attempt. The first Windows
 attempt failed before the unchanged native-cleanup fixture's child produced a

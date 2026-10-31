@@ -92,6 +92,10 @@ and the command checklist in `windows/RELEASE-CHECKS.md`.
   now implements that registration and an embedded token-restricting bootstrap;
   the actual installed token, cleanup and restricted device access still need
   validation. Diagnostic cleanup restored rights and removed all fixture tasks.
+  Clean `6a5afcf` passed the native session-0 bootstrap check with the expected
+  ordinary rights; the missing-integrity mutation was caught before launch.
+  Both bounded fixture tasks were removed. This does not establish installed
+  watcher behavior, startup after reboot or physical switching.
   Nonterminating task errors also exposed false success output, now covered
   by regression/mutation tests. Full native validation passed; its installed
   repeat remains with the standard-user registration gate.

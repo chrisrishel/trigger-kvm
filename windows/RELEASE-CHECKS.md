@@ -91,13 +91,17 @@ close those installation gates.
 Candidate `473274d` and its clean checkout passed all 21 native test files
 without skips; all 53 publication mutations were caught. CI `41153314261`
 passed both platforms. Hosted Windows passed 20 files, with one NVIDIA-dependent
-file and two driver cases skipped; macOS passed 13. The bounded session-0
-bootstrap check and installed repeat must be recorded separately.
+file and two driver cases skipped; macOS passed 13.
 The prepared installation candidate is now `6a5afcf`, which removes privileged
 error-log writes from the bootstrap. Its clean native suite again passed all
 21 files without skips, all 12 affected boot mutations were caught, and CI
 `41154488503` passed both platforms with the same hosted hardware skips.
 No installed copy has been upgraded to this candidate yet.
+The coordinated session-0 bootstrap check passed on 2026-10-30: clean
+`6a5afcf` retained the owner/session, medium integrity and ordinary rights;
+omitting the integrity restriction failed before the child or a log write.
+Both bounded fixture tasks were removed. The installed watcher, reboot and
+restricted device-access checks remain open; no physical switching occurred.
 The probe's initial decline and later approval are not installation-fallback
 results: neither run installed the product or registered a task.
 The current source corrects this by elevating only old-task removal and

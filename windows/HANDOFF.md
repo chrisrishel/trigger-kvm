@@ -113,3 +113,10 @@ Spec:     configure.md section 8; root AGENTS.md, host-owned startup tier
 Why:      S4U / RunLevel Limited did not produce an unelevated administrator process in the native control
 Owed:     validate the new protected bootstrap with the installed watcher in session 0, ownership, cleanup/single-instance behavior and required device access before restoring the boot installation
 Verified: 2026-10-30 bounded identity-only task, same principal/settings construction as the installer, registered S4U/Limited, correct owner, session 0, TokenElevation 1, TokenElevationType 1, Administrator membership enabled; zero fixture tasks left; no installed watcher or physical switching tested by this diagnostic
+
+The protected bootstrap from clean `6a5afcf` passed a coordinated native
+session-0 fixture on 2026-10-30: correct owner/session, medium integrity, no
+administrator/power-user membership and only change-notify privilege. Removing
+the integrity-setting call was caught before child launch or a log write.
+Cleanup independently verified zero fixture tasks. The installed watcher,
+reboot and required device access remain unverified on this execution path.
