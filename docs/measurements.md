@@ -1340,6 +1340,80 @@ their stated candidate scope. CI `41157257426` at `d4152aa` passed both platform
 macOS 13 files plus shellcheck; hosted Windows 20 files, with its NVIDIA
 resolution file and two driver cases explicitly skipped.
 
+**2026-10-30, Windows -- restored owner's final reboot.** Installed `6a5afcf`
+retained its exact source identity, config bytes and owner PATH. The boot at
+2026-10-31 03:30:04.5 UTC produced one intended session-0 watcher at
+03:30:43.767 UTC, about 39 seconds after boot and 22 seconds before the first
+interactive logon at 03:31:06.066 UTC. Actual process-token inspection confirmed
+medium integrity, no administrator/power-user membership and only
+`SeChangeNotifyPrivilege`. The enabled S4U task, boot trigger and held watcher
+lock were verified. A separate read-only NVAPI enumeration on driver 616.64
+matched the earlier display/output identity fields and local EDID product keys
+for both panels. Neither the reboot evidence nor enumeration sent display
+writes or established physical switching.
+
+**2026-10-30, Windows -- restricted session-0 NVAPI switching on `6a5afcf`.**
+After the restored owner's reboot and local sign-in, bounded 30-second native
+tasks used the exact installed `Get-BootTaskArguments` bootstrap and installed
+switcher. An identity-checking wrapper verified the intended owner, session 0,
+medium integrity, no administrator/power-user membership and only change-notify
+privilege before invoking the switcher. Four one-panel `-WhatIf` cases passed;
+the four actual commands (`to mac` and `pull` for each panel) also returned 0.
+The saved map and source hashes were checked before invocation. Only saved,
+allowlisted input values were used, through the shipping transport's EDID gate;
+there was no service-channel probing or VCP readback.
+
+The owner explicitly confirmed ASUS to Mac and back while LG stayed on Windows,
+then moved the console/chat to ASUS and confirmed LG to Mac and back while ASUS
+stayed on Windows. Both displays ended on Windows. These are physical
+observations under the restricted session-0 token after local sign-in, not a
+detector-triggered or pre-login physical-write test. Earlier ASUS dxva2 and
+local-console NVAPI observations remain separate; `trigger-kvm.ps1` and
+`config.ps1` are byte-identical between `2835cb0` and `6a5afcf`.
+
+The private console restored the watcher and removed its tasks, then failed
+while serializing `List[object]` with an array subexpression under PowerShell
+5.1. All eight individual command/token receipts survived. The owner supplied
+a separate explicit chat confirmation of the four visual transitions and
+working-display sequence; original per-prompt timestamps and the host-task
+exit-code summary were not retained. The collector failure was reproduced
+without hardware, fixed with `ToArray()` and immediate confirmation persistence,
+and the original conversion mutation was caught. No display write was repeated
+to recover the record. Independent checks verified zero fixture tasks and the
+original owner's single restricted watcher, enabled/running boot task and
+unchanged config/PATH/source identity.
+
+**Administrator PATH comparison, 2026-10-30.** Windows' application/live-hive
+load APIs rejected private copies of the unloaded disposable administrator's
+profile hive; no temporary registry mounts remained and the original hive was
+not changed. The final read used the existing System32 `offreg.dll`, with only
+[`OROpenHive`](https://learn.microsoft.com/en-us/windows/win32/devnotes/oropenhive),
+`ORGetValue` and `ORCloseHive` imported. A clean, checksum-valid committed copy
+was read in memory; its file hash remained unchanged. Its PATH exactly matched
+the administrator's post-uninstall baseline from before the standard-user
+elevation session. The intended standard-user install did not change the
+administrator's PATH. No account switch or further elevation was needed for
+this final comparison; no third-party reader or product dependency was added.
+
+**2026-10-30, Windows -- approved disposable-profile cleanup.** Both recorded
+account SIDs and exact profile paths matched the creation/baseline records;
+the profiles were unloaded and no tasks referenced them. Both profiles were
+backed up privately before either was deleted. SHA-256 comparisons verified
+9,390 administrator-profile files and 9,833 standard-profile files. Each
+profile's 70 links were preserved as raw reparse metadata without traversing
+their targets. The first ordinary-copy attempt refused app-execution aliases
+and stopped before deletion; the corrected backup helper passed a native
+fixture proving file preservation and no junction traversal. No backup failure
+was ignored.
+
+The standard account's added batch-logon grant was restored to its recorded
+baseline before native profile/account deletion. Independent checks confirmed
+both accounts, profile registrations and profile directories absent; both
+verified backups retained; no related fixture tasks; and the original owner's
+single restricted watcher, enabled boot task, exact installed `6a5afcf` source,
+config/PATH and original Switch user policy intact. Private backups and raw
+validation receipts remain available. No original-owner files were removed.
+
 CI at `4c0f13b` passed both platforms on the second attempt. The first Windows
 attempt failed before the unchanged native-cleanup fixture's child produced a
 report; the cause was not established. All 13 native invocation forms and the
@@ -1780,3 +1854,10 @@ private inventory found no new current/history/remote identifying values or
 authorship records. The repository remained private with one branch and one
 tag; other remote surface counts were unchanged. Secret scanning remained
 unavailable. The owner's separate privacy-review block remains in force.
+
+The 2026-10-30 refresh through `1f00e7e` covered 242 commits / 1,298 text blobs,
+with no binary blobs, and all 30 accessible Actions runs' logs. Earlier reports
+were retained privately. Comparison found no new current/history/message
+finding pairs, authorship records or remote category/value pairs. Remote surface
+counts and the secret-scanning limitation were unchanged. This is an audit
+delta, not approval to publish the historical identifiers or author metadata.

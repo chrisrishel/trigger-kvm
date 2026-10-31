@@ -195,7 +195,10 @@ Both platforms' contract requires **elevation once, to register, and nothing
 elevated on the switch path.** Windows boot uses SAFER normal-user restriction
 plus explicit medium integrity; the host verifies rights, owner and session
 before starting the detector. S4U / Limited alone does not restrict the token
-(`docs/measurements.md`). Installed device-access validation remains open.
+(`docs/measurements.md`). The installed watcher token and pre-login startup,
+and the installed switcher under the same restricted session-0 bootstrap, have
+native evidence. Physical writes were visually confirmed after local sign-in;
+the dated measurements distinguish that from detector-triggered switching.
 
 | | boot | login |
 |---|---|---|

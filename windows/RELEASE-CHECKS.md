@@ -26,7 +26,7 @@ self-test checks that publication boundary.
 Transport tests enumerate real displays and use `-WhatIf`; none prove that a
 physical panel changed input.
 
-## Candidate status and next coordinated session
+## Candidate status
 
 The original owner's installed candidate is now **`6a5afcf`**, product 0.2.0 /
 specification 15. The supported installer restored its intended boot/enabled/
@@ -35,6 +35,10 @@ configuration bytes and owner PATH are unchanged, and exactly one intended
 watcher holds its lock. Its actual session-0 token has medium integrity, no
 administrator/power-user membership and only change-notify privilege. The
 temporary Switch user policy is restored to its original value.
+The restored owner's final real reboot also passed: one restricted watcher
+started about 39 seconds after boot and 22 seconds before the first interactive
+login, with source identity/config/PATH unchanged. The read-only post-reboot
+NVAPI identity comparison matched the baseline on driver 616.64.
 
 Completed installation evidence on Windows 11 build 22631 / PowerShell 5.1:
 
@@ -70,28 +74,46 @@ Completed installation evidence on Windows 11 build 22631 / PowerShell 5.1:
 The full native PowerShell 5.1 suite passed all 21 files without skips again
 after this session. The clean `6a5afcf` suite also passed 21; all 12 affected
 boot mutations were caught after the prior full 53-mutation publication run.
-CI `41157257426` at documentation commit `d4152aa` passed macOS 13 files and
+CI `41163702720` at documentation commit `1f00e7e` passed macOS 13 files and
 Windows 20, with the NVIDIA resolution file and two driver cases explicitly
 skipped. The coordinated session-0 bootstrap fixture and its missing-integrity
 mutation passed; both bounded tasks were removed. These are separate from
 installed-product and physical observations.
 
-Still required:
+Final restricted-session checks also passed on 2026-10-30. Bounded native tasks
+used the installed `6a5afcf` bootstrap and switcher; all four `-WhatIf` cases and
+four one-panel writes returned success with the intended ordinary session-0
+token. The owner explicitly confirmed ASUS away/back with LG kept on Windows,
+then LG away/back after moving the terminal to ASUS, with ASUS kept on Windows.
+Both panels returned to Windows. No fixture tasks remain; the original watcher,
+config/PATH and intended enabled/running state were independently verified.
+The private console's final serializer failed after restoration; its individual
+command/token receipts survived, and the owner supplied a separate explicit
+chat confirmation. The collector was reproduced/fixed under native 5.1 and its
+original conversion mutation caught, without repeating the writes.
 
-1. Repeat the restored original-owner startup check after a real reboot.
-2. Observe NVAPI writes through the restricted session-0 path, one panel at a
-   time with visual confirmation. ASUS dxva2 away/back was confirmed on
-   2026-10-29; both panels' local-console NVAPI away/back on installed `2835cb0`
-   were confirmed on 2026-10-30. No physical writes occurred in the standard
-   profile session. Those observations do not prove the new execution path.
-3. Finish the separate administrator-PATH comparison: its unloaded profile's
-   copied-hive read failed, so no pass is recorded. Read-only account-right
-   comparison confirmed only the standard user's expected batch-logon grant;
-   successful installation deliberately retains it after uninstall. Coordinate
-   final account/profile cleanup separately.
-4. Complete both native suites at the coordinated release commit and the
-   separate privacy review. The owner explicitly kept publication blocked on
-   2026-10-30. Deferred driver/port checks keep their documented triggers.
+These physical writes ran after local sign-in in session 0. They establish the
+restricted transport path, not a detector-triggered or pre-login physical write.
+Earlier ASUS dxva2 (2026-10-29) and local-console NVAPI (2026-10-30) observations
+remain separate evidence; switcher/config source is identical to that candidate.
+No S3 standby test was performed.
+
+The administrator-PATH comparison passed using Windows' read-only offline
+registry API on a clean private hive copy, whose hash remained unchanged.
+Earlier live-load attempts of copies failed; none changed the original hive
+or left temporary registry mounts. Read-only account-right comparison confirmed
+only the standard user's expected added batch-logon grant; successful product
+installation retains it after uninstall by design. With the owner's explicit
+approval, cleanup restored that grant to baseline and removed both disposable
+accounts/profiles after privately backing up both. All 19,223 regular files
+matched their backup hashes; 140 links were preserved as reparse metadata
+without following their targets. Independent checks confirmed both profiles
+and accounts absent, the original installation/state intact and the temporary
+Switch user policy restored. Private backups and validation evidence are retained.
+
+Still required: both native suites at the coordinated release commit and the
+separate privacy review. The owner explicitly kept publication blocked on
+2026-10-30. Deferred driver/port checks keep their documented triggers.
 
 See `../docs/measurements.md` for dated receipts, candidate history and limits.
 Never test S3 standby.
@@ -161,15 +183,13 @@ path, since an account's display name alone does not prove a Unicode path.
   removal, config/log retention, and no unrelated script or user's process
   stopped. Restore the source location afterwards.
 
-Batch the remaining standard-profile work into one coordinated session: upgrade
-the failed partial installation, inspect ownership/PATH/build/token, run installed
-Save/Cancel, exercise the user tiers and their required sign-ins, then uninstall
-with source unavailable. Retain already-passed administrator-profile evidence;
-repeat only boot checks affected by the token bootstrap. Restore the original
-owner on the final candidate, verify one ordinary-rights watcher in session 0,
-then coordinate the final reboot and one-panel-at-a-time NVAPI checks. Restore
-the temporary Switch user policy afterward; remove disposable profiles only
-after the owner approves that destructive cleanup.
+For future candidates, repeat the checks affected by the changes and retain
+the dated evidence for unchanged code. Batch profile work into a coordinated
+session, then restore the owner's configuration, tier, enabled/running state
+and any temporary user-switching policy. Verify one ordinary-rights watcher
+in session 0. Coordinate reboot and physical checks separately. Back up and
+remove disposable profiles only after the owner approves that destructive
+cleanup; stop if a profile is loaded, referenced by a task or not fully backed up.
 
 ## Physical switching (one monitor at a time)
 

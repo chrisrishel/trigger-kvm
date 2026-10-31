@@ -23,7 +23,8 @@ and the command checklist in `windows/RELEASE-CHECKS.md`.
   Verified with `make test` (13 files plus shellcheck) and
   `bash tests/mutate.sh publication` (11 mutations caught).
 - [x] Windows: publication-review defects resolved with native PowerShell 5.1
-  regressions, 21 passing test files and 53 caught publication mutations.
+  regressions and 21 passing test files. A full 53-mutation publication run
+  passed; all 12 affected boot mutations were caught after the final code fix.
   Includes incomplete-check gating, exact-path/owner cleanup with conservative
   execution-boundary recognition, prior watcher state, apostrophes/Unicode,
   fractional settle, restricted DLL loading,
@@ -46,17 +47,25 @@ and the command checklist in `windows/RELEASE-CHECKS.md`.
   preservation and fresh-product login fallback on 2026-10-30. Its restricted
   session-0 watcher started before the first login after reboot. Earlier
   administrator-profile and real Ctrl+C results remain in the measurements.
-  The separate administrator-PATH comparison below remains unverified.
-- [ ] Windows final release validation: the original owner is restored to clean
-  `6a5afcf` with its config/PATH unchanged and one enabled/running restricted
-  boot watcher. Repeat its real reboot check and validate required device access
-  and physical switching through the restricted session-0 path. Earlier ASUS
-  dxva2 and both-panel local-console NVAPI visual confirmations are separate
-  evidence. Complete the administrator-PATH comparison: the unloaded profile's
-  copied-hive read failed. The standard account's only added right was the
+  The separate administrator PATH was also unchanged, verified from a clean
+  private hive copy using Windows' read-only offline registry API.
+- [x] Windows installed-candidate and hardware validation: the original owner
+  is restored to clean `6a5afcf` with its config/PATH unchanged and one
+  enabled/running restricted boot watcher. Its final real reboot started that
+  watcher before interactive login. The installed switcher passed both panels'
+  NVAPI away/back checks under the same restricted session-0 bootstrap, one panel at a time with explicit
+  visual confirmation. These physical writes ran after local sign-in; they
+  do not establish a detector-triggered or pre-login physical switch. Earlier
+  ASUS dxva2 and local-console NVAPI confirmations remain separate evidence;
+  switcher/config code is unchanged from that tested candidate.
+  The standard account's only added right was the
   expected batch-logon grant, retained after successful uninstall by design.
-  Temporary Switch user policy is restored; coordinate account/profile cleanup
-  separately. See `windows/RELEASE-CHECKS.md` for the remaining steps and limits.
+  Temporary Switch user policy is restored. Both disposable profiles were
+  privately backed up and removed with approval; the standard account's
+  test-added batch-logon right was restored first. See `windows/RELEASE-CHECKS.md`
+  for the evidence and remaining
+  coordinated release/privacy gates. This does not mark the repository ready
+  for publication.
 - [ ] Privacy: shared measurement notes now use consistent labels for device
   identifiers; unnecessary current Windows device examples are synthetic.
   The 2026-10-30 audit at `2835cb0` covered 112 tracked files, 226 commits/1,192
@@ -66,6 +75,8 @@ and the command checklist in `windows/RELEASE-CHECKS.md`.
   author email remain, including that email in Actions metadata. See the
   location/category inventory and limits in `docs/measurements.md`, "Release
   validation and privacy". GitHub secret scanning was disabled/unavailable.
+  The refresh through `1f00e7e` covered 242 commits / 1,298 text blobs and all
+  30 Actions runs' logs, with no new findings or authorship records.
   On 2026-10-30 the owner chose to keep publication blocked for a separate
   privacy review; retaining that historical content/metadata for publication
   is not approved. Before any
