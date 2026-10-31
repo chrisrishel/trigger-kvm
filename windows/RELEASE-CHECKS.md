@@ -93,6 +93,11 @@ without skips; all 53 publication mutations were caught. CI `41153314261`
 passed both platforms. Hosted Windows passed 20 files, with one NVIDIA-dependent
 file and two driver cases skipped; macOS passed 13. The bounded session-0
 bootstrap check and installed repeat must be recorded separately.
+The prepared installation candidate is now `6a5afcf`, which removes privileged
+error-log writes from the bootstrap. Its clean native suite again passed all
+21 files without skips, all 12 affected boot mutations were caught, and CI
+`41154488503` passed both platforms with the same hosted hardware skips.
+No installed copy has been upgraded to this candidate yet.
 The probe's initial decline and later approval are not installation-fallback
 results: neither run installed the product or registered a task.
 The current source corrects this by elevating only old-task removal and

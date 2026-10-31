@@ -1258,6 +1258,12 @@ caught, including reintroducing this write. The full native PowerShell 5.1 suite
 passed all 21 files without skips again; the preceding full publication run
 caught all 53 mutations before the new case was added. No installed task,
 account right or monitor was changed by this test.
+The correction landed as `6a5afcf`. Its clean checkout passed all 21 native test
+files without skips. CI `41154488503` passed macOS 13 files and Windows 20 files;
+the NVIDIA resolution file and two driver cases were explicitly skipped on
+the hosted Windows runner. Full logs were inspected. The prepared, bounded
+session-0 bootstrap check still awaits coordination; this is not an installed
+or physical-switching result.
 
 CI at `4c0f13b` passed both platforms on the second attempt. The first Windows
 attempt failed before the unchanged native-cleanup fixture's child produced a
