@@ -37,6 +37,13 @@ controlled policy fixtures cover permitted, denied and unavailable settings.
 
 ## Candidate status
 
+The sanitized Windows checkout at `2551331` passed all 23 native PowerShell 5.1
+test files without skips on 2026-10-31. It is the active top-level workspace;
+the old checkout and local/private work are archived separately. Git integrity,
+clean status and repository-local noreply identity were verified. The installed
+copy retains its original stamp, with config/PATH and enabled/running boot state
+unchanged. This migration adds no physical-switching or reboot observation.
+
 Windows source now implements specification revision 16 in both common menu
 primitives. Native hidden-console fixtures cover 30 synthetic cases, including
 small visible windows, physical folds/Unicode, a wider scrollback buffer,

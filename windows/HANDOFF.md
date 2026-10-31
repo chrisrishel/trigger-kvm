@@ -30,7 +30,7 @@ Resolve it with native evidence; remove it in the commit that lands the fix.
 Kind:     defect report
 Spec:     CONTRIBUTING.md, Versioning and releases; TODO.md, Publication readiness
 Why:      validated Windows behavior does not approve publication of historical identifiers or complete coordinated release preparation
-Owed:     complete the separately requested privacy review and run both native platforms' suites at the final coordinated release commit
+Owed:     complete final sanitized remote-surface/linked-Projects review and release approval, and run both native platforms' suites at the final coordinated release commit
 Verified: 2026-10-30, Windows PowerShell 5.1 suite: 21 files without skips; installed 6a5afcf standard-user workflow, owner restoration/reboot and actual ordinary session-0 watcher tokens; both panels' NVAPI away/back through the installed restricted session-0 path, explicitly confirmed by the owner; administrator PATH unchanged
 
 Completed installed/hardware evidence is retained; the changed bootstrap's
@@ -50,7 +50,7 @@ physical write. Earlier ASUS dxva2 and local-console NVAPI confirmations cover
 unchanged switcher/config source. Driver-update/port-move checks keep their
 TODO triggers; never test S3 standby.
 
-Publication remains blocked by the owner's 2026-10-30 privacy-review decision.
+Publication remains blocked by the final review and approval gates in TODO.md.
 Product version remains 0.2.0; 0.3.0 is the next coordinated release target.
 Windows source and the installed `ab82fce` implement specification revision 16.
 Do not tag, publish or change visibility as part of this validation.
@@ -68,7 +68,7 @@ passed verification. Private backups are retained. No repeat of the complete
 manual matrix is required for unchanged detector, switcher or token-restriction
 code; no reboot or physical write was performed during this upgrade.
 
-Privacy remains a separate task. The owner's policy is to retain public
+The owner's privacy policy is to retain public
 authorship/name and GitHub handle while removing private email addresses,
 device identifiers and personal machine/profile details from everything
 published. This work authorizes neither history/author-metadata changes nor
@@ -82,19 +82,12 @@ See the dated evidence in `../docs/measurements.md`. This menu-only work does
 not repeat hardware, reboot, profile or installed boot validation. The separate
 privacy and coordinated-release gates remain open.
 
-## Refresh the checkout after the authorized privacy rewrite
-
-Kind:     defect report
-Spec:     ../docs/privacy.md; CONTRIBUTING.md, Versioning and releases
-Why:      the old checkout carries identifiers and email metadata that must not be merged or pushed back into the sanitized history
-Owed:     archive the old checkout privately, clone main anew, set the repository-local GitHub noreply email, open the new checkout in development tools, and run the native Windows PowerShell 5.1 suite
-Verified: the owner authorized the cross-platform privacy substitutions, historical commit/message/metadata rewrite, replacement of main and v0.2.0, and removal of affected Actions records on 2026-10-31; this supersedes earlier statements withholding history-cleanup approval, but does not authorize publication
-
-Follow the exact migration instructions in `../docs/privacy.md`. Preserve and
-review any uncommitted file edits before copying them into the new clone; do
-not import old branches, tags or Git metadata. The display-row fixture uses a
-synthetic serial with every existing assertion retained. Historical commit
-references now identify the sanitized source; installed copies retain their
-original stamps. Privacy-only edits do not require a reinstall, new profiles,
-reboot or physical monitor testing. Record the native suite outcome and skips;
-product version remains 0.2.0 and the next coordinated release is 0.3.0.
+The Windows checkout migration completed on 2026-10-31. A clean sanitized clone
+at `2551331` is now the active top-level workspace, with repository-local
+noreply email and no imported old objects/refs. The old checkout, local edits,
+private backups and linked worktrees are preserved in a separate private archive.
+All 23 native PowerShell 5.1 test files passed without skips. Installed stamp,
+config bytes, PATH and the enabled/running boot task are unchanged. Installed
+stamps retain their original IDs; historical source references use sanitized
+IDs (`../docs/privacy.md`). No reinstall, profile, reboot or physical test was
+needed. See `../docs/measurements.md` for the migration evidence.

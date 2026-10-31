@@ -89,10 +89,12 @@ and the command checklist in `windows/RELEASE-CHECKS.md`.
   names and dates, and replaces the remaining real Windows fixture serial without
   changing assertions. Private recovery and Actions evidence are retained.
   See `docs/privacy.md` for scope, residual risk and checkout migration.
-- [ ] Windows checkout migration: replace the old checkout with a fresh clone,
-  set the repository-local noreply email and run the native suite. Do not pull,
-  merge or push the old history. No repeated hardware/profile/reboot matrix is
-  required for privacy-only edits.
+- [x] Windows checkout migration: the fresh sanitized clone at `2551331` is
+  the active workspace, with repository-local noreply email. The old checkout,
+  local edits and private backups are archived separately; no old Git objects
+  or refs were imported. Native Windows PowerShell 5.1 passed all 23 test files
+  without skips on 2026-10-31. Installation/configuration/PATH and the running
+  boot task are unchanged; no hardware/profile/reboot matrix was repeated.
 - [ ] Publication: verify the final sanitized remote refs and Actions metadata,
   review any linked Projects not accessible to the audit, and obtain explicit
   approval for the coordinated release and repository visibility change.

@@ -2029,6 +2029,29 @@ evidence above; privacy and coordinated release checks remain separate gates.
 
 ## Release validation and privacy
 
+**2026-10-31 -- native Windows checkout migration at `2551331`.** The fresh
+sanitized clone was promoted to the top-level development workspace; the old
+checkout, its local edit, private validation/installation backups, linked
+worktrees and duplicate clone were archived outside it. Windows refused some
+Git directory renames, so metadata files were moved with hash verification;
+the resulting object database matches the fresh clone, with no extra Git files,
+object alternates or imported old refs. The old head is absent, `git fsck --full
+--no-reflogs` passes, and the clean branch matches `origin/main`. Archive
+worktree pointers were repaired without importing them into the active clone.
+Repository-local email uses the maintainer's GitHub noreply identity.
+
+On Windows 11 build 22631, Windows PowerShell 5.1.22621.7649 ran
+`powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\windows\tests\run.ps1`:
+all 23 test files passed without skips, including the synthetic display-row
+fixture, native process/console cases, parsing/conventions and specification
+conformance. Existing assertions were unchanged. Saved configuration bytes,
+installed version-stamp bytes, user PATH and exported task definition matched
+the private pre-migration snapshot; the boot task remained enabled/running.
+The local edit was preserved byte-for-byte in the archive. No installer,
+monitor write, account change or reboot was performed. This verifies the
+sanitized checkout and unchanged installed state, not a new physical switch
+or final coordinated release. Raw receipts remain private.
+
 **2026-10-31 -- owner-authorized, history-preserving privacy cleanup.** The
 pre-rewrite audit covered 121 current files, 251 commits, 1,363 text blobs,
 the annotated tag, and 39 Actions runs with 40 available log attempts. A direct
