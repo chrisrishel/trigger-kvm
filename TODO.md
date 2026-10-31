@@ -29,12 +29,14 @@ and the command checklist in `windows/RELEASE-CHECKS.md`.
   execution-boundary recognition, prior watcher state, apostrophes/Unicode,
   fractional settle, restricted DLL loading,
   Escape rollback, recursive conformance coverage and isolated test paths.
-- [ ] Windows follow-up review at `7a2a9a4`: resolve the boot bootstrap's
-  pre-restriction module-loading concern, the native UAC-eligibility assertion
-  and stale boot-validation wording. `windows/HANDOFF.md` contains the evidence
-  and acceptance criteria. Prefer focused automated/native fixtures and reuse
-  completed installed/hardware evidence where behavior is unchanged; coordinate
-  only the smallest necessary additional manual checks.
+- [x] Windows follow-up review at `7a2a9a4`: resolve the boot bootstrap's
+  native-confirmed pre-restriction module-loading defect. Task registration now
+  embeds a compiled assembly; native adversarial success/error checks and
+  mutations cover dependency loading. The UAC assertion and stale README are
+  corrected. Native suite: 22 files; relevant mutations: 20 caught. Bounded
+  session-0 control/success/failure checks passed on 2026-10-31; reuse completed
+  installed/reboot/physical evidence for unchanged behavior.
+  The live installation remains `6a5afcf` until a coordinated upgrade.
 - [x] Shared contracts: revision 15 settles menu overflow and labels `status`
   as the current saved configuration. Both platforms implement revision 15;
   empty saved triggers also retain the restart reminder on Windows.

@@ -108,14 +108,15 @@ values quoted (`Format-ChildArguments`). And its only voice is the transcript
 the terminating error and flattens the exit code (measured), so the catch goes
 INSIDE the redirection.
 
-**Tiers**: boot's protected task embeds `lib/user-launch.ps1`'s token restriction;
-Limited alone does not restrict S4U (2026-10-30). `lib/boot-registration.ps1`'s
-native block prompts for credentials and sets only the batch-logon right.
-Neither binding accesses displays. `event-watch.ps1` takes a `Global\` mutex so
-exclusion covers the computer rather than one session, and falls back to
-`Local\` ONLY where the account may not create a global name. A watcher finding
-the global name held by ANOTHER ACCOUNT stands down instead of falling back --
-that is exactly the two-tiers-two-watchers case the global name prevents.
+**Tiers**: `lib/user-launch.ps1` embeds a compiled assembly in the protected
+task. Before restriction, allow no PowerShell command/module resolution,
+compiler or user-writable code; failure writes only stderr. Keep Framework
+compiler/temp protections at registration (`docs/measurements.md`, 2026-10-31).
+Limited alone does not restrict S4U. `lib/boot-registration.ps1` prompts for
+credentials and sets only the batch-logon right; neither binding accesses
+displays. The watcher uses a `Global\` mutex, with `Local\` fallback only if
+global creation is denied. A global lock owned by another account means stand
+down, never fall back.
 
 ## PowerShell hazards
 

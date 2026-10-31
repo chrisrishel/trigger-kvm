@@ -26,7 +26,44 @@ self-test checks that publication boundary.
 Transport tests enumerate real displays and use `-WhatIf`; none prove that a
 physical panel changed input.
 
+The native bootstrap-dependency fixture starts fresh PowerShell 5.1 children
+with an isolated hostile Utility module, DLL/compiler bait and process-only
+environment changes. Its control proves both substitute commands can resolve;
+the protected bootstrap rejects that path on success, restriction failure and
+malformed payload/assembly failures. Existing tests verify actual child token
+rights, owner/session, quoted paths and exit codes. UAC eligibility keeps the
+independent `whoami` membership check and adds an independent policy read;
+controlled policy fixtures cover permitted, denied and unavailable settings.
+
 ## Candidate status
+
+The 2026-10-31 review follow-up confirms pre-restriction module loading under
+native PowerShell 5.1 and moves compilation to task registration. The protected
+task embeds the assembly and performs only in-memory Framework operations
+before restricting the token; failure reports directly to stderr. Normal and
+error-path adversarial mutations are caught. The stale installation-guide
+claim is corrected, and existing installed/reboot/physical evidence below is
+retained for unchanged behavior.
+
+Native Windows PowerShell 5.1: all 22 test files passed without skips, including
+parsing/conventions; all 14 boot, 3 standard-user and 3 elevation mutations were
+caught. Run commands and evidence limits are in `../docs/measurements.md`.
+
+On 2026-10-31, four bounded S4U/Limited session-0 tasks passed: the original
+bootstrap executed the hostile-module control with enabled administrator
+membership; the secured bootstrap launched an identity-only child with the
+intended owner/session, medium integrity, no administrator/power-user membership
+and only change-notify privilege. It returned the child's exit code 7.
+Restriction and assembly failures returned 1 without a child, substitute module
+or privileged user-log write. All four tasks were removed. Current config,
+installed stamp, task XML/enabled/running state, watcher lock and PATH matched
+before/after snapshots. No account rights, installation, reboot or monitors
+were changed. This closes the affected-context validation gap.
+
+The live `6a5afcf` installation has not been changed by this follow-up. Applying
+the fix there requires a supported installer upgrade to regenerate the
+protected task, coordinated separately. Existing manual evidence is reused
+where behavior is unchanged.
 
 The original owner's installed candidate is now **`6a5afcf`**, product 0.2.0 /
 specification 15. The supported installer restored its intended boot/enabled/

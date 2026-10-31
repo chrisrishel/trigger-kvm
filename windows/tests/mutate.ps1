@@ -1124,13 +1124,29 @@ Invoke-Mutation 'identity: status offers configure as the fix it does not have' 
 # =============================================================================
 
 # Publication regressions: each suite is required green before these run.
+Invoke-Mutation 'publication: boot startup resolves an untrusted compiler module' `
+    'lib\user-launch.ps1' 'bootstrap-dependencies.tests.ps1' `
+    @'
+'try { $gzip.CopyTo($assembly); [void][Reflection.Assembly]::Load($assembly.ToArray()) }'
+'@ `
+    @'
+'try { $PSModuleAutoLoadingPreference = ''All''; Add-Type -TypeDefinition ''public class FixtureBeforeRestriction {}'' }'
+'@
+Invoke-Mutation 'publication: boot failure resolves an untrusted error module' `
+    'lib\user-launch.ps1' 'bootstrap-dependencies.tests.ps1' `
+    @'
+'[Console]::Error.WriteLine($_.Exception.Message)'
+'@ `
+    @'
+'$PSModuleAutoLoadingPreference = ''All''; Write-Error $_ -ErrorAction Continue'
+'@
 Invoke-Mutation 'publication: privileged boot failure writes a user-controlled log' `
     'lib\user-launch.ps1' 'boot-launch.tests.ps1' `
     @'
-'Write-Error $_ -ErrorAction Continue'
+'[Console]::Error.WriteLine($_.Exception.Message)'
 '@ `
     @'
-('Add-Content -LiteralPath ''{0}'' -Value ''fixture'' ' -f $LogFile.Replace("'", "''"))
+('[IO.File]::AppendAllText(''{0}'', ''fixture'')' -f $LogFile.Replace("'", "''"))
 '@
 Invoke-Mutation 'publication: boot action bypasses the protected token bootstrap' `
     'lib\host.ps1' 'privilege.tests.ps1' `
@@ -1169,6 +1185,9 @@ Invoke-Mutation 'publication: cross-user boot definition drops self-heal' `
 Invoke-Mutation 'publication: elevation ignores deny-only administrator claims' `
     'lib\host.ps1' 'elevation.tests.ps1' `
     '[Security.Claims.ClaimTypes]::DenyOnlySid' '[Security.Claims.ClaimTypes]::PrimarySid'
+Invoke-Mutation 'publication: unavailable elevation queries hide the credential prompt' `
+    'lib\host.ps1' 'elevation.tests.ps1' `
+    '} catch { return $true }' '} catch { return $false }'
 Invoke-Mutation 'publication: skipped transport check grants a pass' `
     'lib\checks.ps1' 'publication.tests.ps1' `
     'if ($null -eq $outcome) { return $null }' 'if ($null -eq $outcome) { return $true }'

@@ -7,8 +7,8 @@ Import-Subject 'lib\host.ps1' -Functions @('Write-WatcherLauncher','Get-WatcherC
     'Request-Elevation','Get-ChildArguments','Format-ChildArguments','Stop-Watchers','Get-ShimLines',
     'Test-CanElevate','Get-CurrentTokenClaims')
 
-# whoami reports deny-only groups that WindowsIdentity.Groups omits. Compare
-# the actual eligibility function with the independent native token view.
+# whoami reports deny-only groups that WindowsIdentity.Groups omits. Membership
+# and permission to request a separate administrator credential are distinct.
 $nativeGroups = @(& whoami.exe /groups /fo csv /nh |
     ConvertFrom-Csv -Header 'Group','Kind','Sid','Attributes')
 Assert-Equal 0 $LASTEXITCODE 'native token groups can be read'
@@ -22,12 +22,30 @@ $claimedAdmin = @($tokenClaims | Where-Object {
 Assert-Equal $nativeAdmin $claimedAdmin 'claims preserve native administrator membership after the identity is disposed'
 $global:IsElevated = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
     [Security.Principal.WindowsBuiltInRole]::Administrator)
-Assert-Equal $nativeAdmin (Test-CanElevate) `
-    'boot eligibility includes the native deny-only administrator membership'
+$nativeEligibility = $global:IsElevated -or $nativeAdmin
+if (-not $nativeEligibility) {
+    # Read policy independently of the subject's Get-ItemProperty call. Missing
+    # or unreadable settings leave eligibility uncertain, so the prompt stays.
+    $policyKey = $null
+    $nativeEligibility = $true
+    try {
+        $policyKey = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System')
+        if ($policyKey) {
+            $nativeLUA = $policyKey.GetValue('EnableLUA', $null)
+            $nativePrompt = $policyKey.GetValue('ConsentPromptBehaviorUser', $null)
+            if ($null -ne $nativeLUA -and $null -ne $nativePrompt) {
+                $nativeEligibility = ($nativeLUA -ne 0 -and $nativePrompt -ne 0)
+            }
+        }
+    } catch { $nativeEligibility = $true }
+    finally { if ($policyKey) { $policyKey.Dispose() } }
+}
+Assert-Equal $nativeEligibility (Test-CanElevate) `
+    'native eligibility follows membership and standard-user credential policy independently'
 $root = Join-Path $env:TEMP ("tk-native-$PID-O'Brien-" + [char]0x00E9 + [char]0x6771)
 New-Item -ItemType Directory -Path $root -Force | Out-Null
-# TEMP may contain a DOS 8.3 alias. GetTempFileName and enumeration return long
-# paths; compare the same path representation without dropping Unicode checks.
+# Use the actual directory name for the Unicode case. GetTempPath may preserve
+# or expand an 8.3 alias, so its separate case checks directory identity too.
 $root = (Get-Item -LiteralPath $root).FullName
 $global:FORUSER = [Security.Principal.WindowsIdentity]::GetCurrent().Name
 $global:APPDATA = $root
@@ -46,24 +64,30 @@ try {
     $global:TK_SELF = $child
     $oldTemp = $env:TEMP
     $oldTmp = $env:TMP
-    try {
-        $shortRoot = (New-Object -ComObject Scripting.FileSystemObject).GetFolder($root).ShortPath
-        $env:TEMP = $shortRoot
-        $env:TMP = $shortRoot
-        Request-Elevation install | Out-Null
-    } finally { $env:TEMP = $oldTemp; $env:TMP = $oldTmp }
-    $inner = $script:commands[-1]
-    $parseErrors = $null
-    $ast = [Management.Automation.Language.Parser]::ParseInput($inner,[ref]$null,[ref]$parseErrors)
-    Assert-Equal 0 @($parseErrors).Count 'installer AND transcript paths parse'
-    $redirect = $ast.Find({param($a) $a -is [Management.Automation.Language.FileRedirectionAst]},$true)
-    $transcript = $redirect.Location.SafeGetValue()
-    Assert-True ($transcript.StartsWith($root, [StringComparison]::OrdinalIgnoreCase)) 'the transcript exercises apostrophes and Unicode too'
-    $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($inner))
-    $p = Start-Process powershell.exe -WindowStyle Hidden -Wait -PassThru -ArgumentList @(
-        '-NoProfile','-ExecutionPolicy','Bypass','-EncodedCommand',$encoded)
-    Assert-Equal 7 $p.ExitCode 'native child exit code survives the wrapper'
-    Assert-Match (Get-Content -Raw -LiteralPath $transcript) 'native child reached'
+    $fileSystem = New-Object -ComObject Scripting.FileSystemObject
+    $shortRoot = $fileSystem.GetFolder($root).ShortPath
+    foreach ($tempCase in @('unicode','short-alias')) {
+        try {
+            $env:TEMP = if ($tempCase -eq 'unicode') {$root} else {$shortRoot}
+            $env:TMP = $env:TEMP
+            Request-Elevation install | Out-Null
+        } finally { $env:TEMP = $oldTemp; $env:TMP = $oldTmp }
+        $inner = $script:commands[-1]
+        $parseErrors = $null
+        $ast = [Management.Automation.Language.Parser]::ParseInput($inner,[ref]$null,[ref]$parseErrors)
+        Assert-Equal 0 @($parseErrors).Count 'installer AND transcript paths parse'
+        $redirect = $ast.Find({param($a) $a -is [Management.Automation.Language.FileRedirectionAst]},$true)
+        $transcript = $redirect.Location.SafeGetValue()
+        if ($tempCase -eq 'unicode') {
+            Assert-True ($transcript.StartsWith($root, [StringComparison]::OrdinalIgnoreCase)) 'the transcript exercises apostrophes and Unicode too'
+        }
+        Assert-Equal $shortRoot $fileSystem.GetFolder((Split-Path -Parent $transcript)).ShortPath 'both temporary path spellings stay in the isolated fixture directory'
+        $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($inner))
+        $p = Start-Process powershell.exe -WindowStyle Hidden -Wait -PassThru -ArgumentList @(
+            '-NoProfile','-ExecutionPolicy','Bypass','-EncodedCommand',$encoded)
+        Assert-Equal 7 $p.ExitCode 'native child exit code survives the wrapper'
+        Assert-Match (Get-Content -Raw -LiteralPath $transcript) 'native child reached'
+    }
 
     # The real WSH reader executes the generated UTF-16 launcher from a Unicode
     # path. Its child only writes its received paths to JSON, then exits.

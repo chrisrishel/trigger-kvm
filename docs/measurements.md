@@ -1782,6 +1782,99 @@ elevated child's command line through `Format-ChildArguments` rather than a join
 and why the suite round-trips it through a real script instead of asserting on
 the text alone.
 
+**2026-10-31, Windows -- boot dependency-loading review of `cfc84ed`.** Fresh
+Windows PowerShell 5.1.22621.7649 children executed the actual generated
+bootstrap, with no trusted Utility module preloaded. Normal startup reached a
+bounded harmless child and returned its exit code 7. With only the fixture
+process's module path changed to put an isolated substitute
+`Microsoft.PowerShell.Utility` first, its `Add-Type` and catch-path `Write-Error`
+both wrote markers before restriction; the child did not start and the process
+exited 1. The test host supplied process-only execution-policy Bypass. No real
+profile module, persistent environment or policy was changed. The normal
+search order included current-user, shared and system locations; the explicit
+hostile path preceded them. This confirms native command resolution under
+those conditions; this initial unelevated reproduction alone does not prove
+privilege escalation in S4U.
+
+The bootstrap now embeds a compiled assembly in the administrator-protected
+task. Registration uses the direct Framework C# provider, absolute runtime
+references to `mscorlib.dll` and `System.dll`, `/noconfig /nostdlib+`, and default
+`TempFileCollection` protection/cleanup. Boot disables module autoload and uses
+in-memory Framework operations through token restriction; failure writes to
+`Console.Error`, without command lookup or a user log. No compiler, output DLL
+or installed-code read is required by that startup script. The native token
+restriction C# source is unchanged.
+
+The dependency review covered the compiler, assembly and compression path.
+The compiled assembly references only the two strong-named Framework
+assemblies. Microsoft's [Framework temporary-file implementation](https://github.com/microsoft/referencesource/blob/main/System/compmod/system/codedom/compiler/TempFiles.cs)
+creates protected high-integrity scratch space when elevated; specifying a
+custom temp directory would bypass that default. The Framework's
+[compression loader](https://github.com/microsoft/referencesource/blob/main/System/InternalApis/NDP_FX/inc/ZLibNative.cs)
+selects `clrcompression.dll` by its absolute runtime-directory path. Native
+fixtures also supply invalid DLL/compiler bait in the working directory/PATH
+and an isolated TEMP/TMP. PowerShell itself creates an empty missing TEMP even
+for `exit 0`; that host behavior is separate from compiler activity.
+
+`bootstrap-dependencies.tests.ps1` failed against the unchanged production
+code at the substitute-module assertion. Its fresh-process adversary control,
+success path and restriction/assembly/decompression failures now pass. Both
+mutations restoring untrusted compiler/error command resolution are caught by
+actual fixture markers, alongside the 12 existing affected boot mutations.
+The privileged-user-log mutation still fails its original assertion, using a
+direct Framework append to exercise that defect with module autoload disabled.
+
+The approved native UAC assertion correction was also reproduced under an
+actual standard account: native membership was false while credential-prompt
+eligibility was true. The independent `whoami`/claims assertion is retained;
+eligibility now has an independent registry-policy expectation. That focused
+native standard-account check passes. Existing native policy fixtures cover
+enabled/deny-only administrator membership and permitted, denied, missing or
+unreadable standard-user policy. Three standard-user and three elevation
+mutations were caught. The full publication file's sandbox-standard run then
+encountered unavailable CIM access; it is not recorded as a full-file pass in
+that context. The owner-context native publication file passed.
+
+Native comparison also showed `GetTempPath` preserving an 8.3 alias in the
+standard context while expanding it in the owner context. The Unicode
+transcript assertion is retained with an explicitly Unicode TEMP path; a
+separate alias case verifies the same isolated directory and child exit code.
+No product assertion was relaxed. Existing profile, reboot and physical
+observations remain tied to their candidates and unchanged behavior. No new
+physical write or installation is established by these fixtures.
+
+From the repository root, native `powershell.exe -NoProfile -ExecutionPolicy
+Bypass -File windows/tests/run.ps1` passed all 22 files without skips, including
+parsing/conventions and transport enumeration/WhatIf. The same host with
+`-File windows/tests/mutate.ps1 boot`, `standard-user` and `elevation` caught
+14, 3 and 3 mutations respectively. These are fixture/native OS results, not
+new observations of physical switching.
+
+**Bounded S4U check, 2026-10-31 09:47 UTC.** With one coordinated UAC approval,
+four uniquely named S4U/Limited tasks, each capped at 30 seconds, exercised the
+actual privileged session-0 context. The saved original bootstrap, with only
+fixture paths substituted, resolved both hostile Utility functions and exited
+1 without a child; its recorded parent had enabled administrator membership,
+the intended owner and session 0. The secured bootstrap ignored those modules
+and DLL/compiler bait, launched the identity-only child and returned its exit
+code 7. That child's actual token retained the intended owner/session, medium
+integrity, no enabled administrator/power-user membership and only
+`SeChangeNotifyPrivilege`. Forced restriction and assembly failures exited 1
+without a child, module marker or privileged user-log write. This supplies the
+affected S4U-context evidence absent from the initial reproduction.
+
+All four tasks were removed. Before/after hashes and state checks matched for
+the current saved configuration, installed stamp, task XML/enabled/running
+state, watcher lock and user PATH. The owner confirmed a configuration edit
+during this investigation; those current bytes were preserved, not replaced
+by an older backup. The source snapshot tested in session 0 matched
+`windows/lib/user-launch.ps1` SHA-256
+`4EDD6073A6766B17AAB9331669F866C9C16DCCDA1E1E527288AF7F2AF43221FB`.
+Private task/token receipts are retained outside tracked files. No account
+rights, live installation, reboot or monitor inputs were changed. The installed
+`6a5afcf` task therefore still needs a coordinated supported-installer upgrade
+to receive this bootstrap; a watcher restart alone does not regenerate it.
+
 ## Release validation and privacy
 
 **2026-10-30 -- privacy audit at `2835cb0`, while the repository remains

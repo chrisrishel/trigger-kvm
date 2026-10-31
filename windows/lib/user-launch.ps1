@@ -181,25 +181,68 @@ function Initialize-UserLaunch {
     }
 }
 
-# Embed the bootstrap in the administrator-protected task definition. Never
-# dot-source installed scripts while still holding the S4U token.
+# Compile during registration, not in the recurring S4U process. The direct
+# Framework provider uses the runtime compiler; explicit runtime references and
+# /noconfig avoid ambient compiler configuration. Default TempFileCollection
+# retains Framework's protected high-integrity scratch directory when elevated.
+function Get-BootAssemblyPayload {
+    $provider = [Microsoft.CSharp.CSharpCodeProvider]::new()
+    $temporary = [CodeDom.Compiler.TempFileCollection]::new()
+    $output = $null
+    try {
+        $options = [CodeDom.Compiler.CompilerParameters]::new()
+        $options.TempFiles = $temporary
+        $output = $temporary.AddExtension('dll', $true)
+        $options.OutputAssembly = $output
+        $options.GenerateInMemory = $false
+        $options.GenerateExecutable = $false
+        $options.IncludeDebugInformation = $false
+        $options.CompilerOptions = '/optimize+ /noconfig /nostdlib+'
+        $runtime = [Runtime.InteropServices.RuntimeEnvironment]::GetRuntimeDirectory()
+        [void]$options.ReferencedAssemblies.Add([IO.Path]::Combine($runtime, 'mscorlib.dll'))
+        [void]$options.ReferencedAssemblies.Add([IO.Path]::Combine($runtime, 'System.dll'))
+        $result = $provider.CompileAssemblyFromSource($options, $UserLaunchSource)
+        if ($result.Errors.HasErrors) { throw ('Cannot build the boot launcher: ' + $result.Errors[0].ErrorText) }
+        $bytes = [IO.File]::ReadAllBytes($output)
+        $buffer = [IO.MemoryStream]::new()
+        try {
+            $gzip = [IO.Compression.GZipStream]::new($buffer, [IO.Compression.CompressionMode]::Compress, $true)
+            try { $gzip.Write($bytes, 0, $bytes.Length) }
+            finally { $gzip.Dispose() }
+            return [Convert]::ToBase64String($buffer.ToArray())
+        } finally { $buffer.Dispose() }
+    } finally {
+        # Only the exact output registered with this collection; its remaining
+        # scratch files and protected directory are disposed by the Framework.
+        try { if ($output) { [IO.File]::Delete($output) } }
+        finally {
+            try { $temporary.Dispose() }
+            finally { $provider.Dispose() }
+        }
+    }
+}
+
+# Embed the assembly in the administrator-protected task definition. Boot uses
+# only in-memory Framework operations until restriction: no command/module
+# resolution, compiler, temporary assembly or installed-code read, even on error.
 function Get-BootTaskArguments {
     param([string]$Watcher, [string]$Switcher, [string]$LogFile, [string]$ConfigFile)
     $arguments = '-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "{0}" -Exec "{1}" -Arg pull -LogFile "{2}" -Config "{3}"' -f `
         $Watcher, $Switcher, $LogFile, $ConfigFile
-    $native = ($UserLaunchSource -split "`r?`n" | ForEach-Object { $_.Trim() }) -join "`n"
-    # A literal native block and escaped path literals: neither is interpolated
-    # by the privileged child, and it reads no installed code before restricting.
+    $payload = Get-BootAssemblyPayload
     $bootstrap = @(
+        '$PSModuleAutoLoadingPreference = ''None'''
         '$ErrorActionPreference = ''Stop'''
         'try {'
-        "Add-Type -TypeDefinition @'"
-        $native
-        "'@"
+        ('$data = [IO.MemoryStream]::new([Convert]::FromBase64String(''{0}''))' -f $payload)
+        '$gzip = [IO.Compression.GZipStream]::new($data, [IO.Compression.CompressionMode]::Decompress)'
+        '$assembly = [IO.MemoryStream]::new()'
+        'try { $gzip.CopyTo($assembly); [void][Reflection.Assembly]::Load($assembly.ToArray()) }'
+        'finally { $assembly.Dispose(); $gzip.Dispose(); $data.Dispose() }'
         ('exit ([TkUserLaunch]::Run(''{0}'', ''{1}'', ''{2}''))' -f `
             (Join-Path $PSHOME 'powershell.exe').Replace("'", "''"), $arguments.Replace("'", "''"), (Split-Path -Parent $Watcher).Replace("'", "''"))
         '} catch {'
-        'Write-Error $_ -ErrorAction Continue'
+        '[Console]::Error.WriteLine($_.Exception.Message)'
         'exit 1'
         '}'
     ) -join "`n"

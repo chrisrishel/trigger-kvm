@@ -97,7 +97,11 @@ takes a name at all; `pull` looks up `computer.this`.
 
 On Windows a host waiter starts the one detector: login/manual use a generated
 WSH shim to avoid flashing a console; boot embeds a token-restricting bootstrap
-in the protected task definition, before loading user-writable scripts.
+in the protected task definition, before loading user-writable scripts. The
+installer compiles its assembly during registration and embeds compressed bytes
+in that task. Boot loads those bytes in memory using Framework APIs, with module
+autoload disabled and no PowerShell command resolution on success or failure.
+There is no compiler or temporary assembly on the recurring boot path.
 Stopping the task does not stop the watcher, so
 `event-watch.ps1` enforces single-instance itself with a named mutex.
 

@@ -79,12 +79,16 @@ registration removes only a grant added by that attempt. After successful
 registration, the right is retained through uninstall: another task may rely
 on it. No deny policy or other account right is changed. S4U cannot access
 network resources or EFS-encrypted files; use a local, unencrypted install.
-**The corrected boot paths still require installed validation** in
-[`RELEASE-CHECKS.md`](RELEASE-CHECKS.md), including restricted session-0 device access.
+Installed boot, reboot and restricted session-0 checks are recorded in
+[`RELEASE-CHECKS.md`](RELEASE-CHECKS.md), with candidate identities, physical
+observation limits and the current follow-up requirements.
 
 The install is self-contained: the installer copies itself next to the program,
 so uninstalling works after the source tree is gone. To upgrade or repair, run
 it again. Only `bin\`, which holds a single `trigger-kvm.cmd`, goes on PATH.
+For a boot installation, rerunning the supported installer also rebuilds the
+bootstrap embedded in its protected task. Copying scripts or running `restart`
+does not update that embedded code.
 
 | | |
 |---|---|
