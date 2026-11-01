@@ -1,11 +1,16 @@
 # trigger-kvm
 
-**Flip a USB switch and your monitors follow.**
+**Connect your devices. Your monitors follow.**
 
-Share a keyboard, mouse and monitors between computers without routing video
-through a KVM. Each computer connects directly to each monitor. When your USB
-switch moves the peripherals, trigger-kvm tells the monitors to show the
-computer that received them.
+trigger-kvm switches your monitors to a computer when a USB or Bluetooth device
+you choose connects to it. Each computer connects directly to the monitors, so
+video doesn't need to pass through a KVM.
+
+You can plug in a USB device, connect a hub or dock carrying a selected USB
+peripheral, or use a Bluetooth device that reconnects when you change computers.
+A USB switch is one convenient way to move several peripherals together.
+
+Example setup with a USB switch:
 
 ```text
               ┌───────────┐
@@ -21,10 +26,10 @@ Computer B ═╝
 
 ## Will it work with my setup?
 
-You need a USB switch that connects your peripherals to **one computer at a
-time**, a separate video cable from each computer to each monitor, and monitors
-that accept input changes over **DDC/CI** (monitor control over the video cable).
-Bluetooth devices that reconnect when switching can also act as triggers.
+You need a supported USB or Bluetooth device to act as a trigger, a separate
+video cable from each computer to each monitor, and monitors that accept input
+changes over **DDC/CI** (monitor control over the video cable). Setup lists the
+devices trigger-kvm can watch.
 
 | Platform | Requirements |
 |---|---|
@@ -103,10 +108,11 @@ organization policies and permissions, see the [Windows guide](windows/README.md
 ### Set it up
 
 On first installation, the walkthrough asks you to name your computers, map
-each monitor's inputs to those names, and select the devices that move with
-the USB switch. A USB webcam is a useful trigger; a device permanently wired
-to one computer is not. Use the offered checks to confirm the input mapping
-by looking at the screens, then **Save**.
+each monitor's inputs to those names, and choose the devices whose connection
+should bring the monitors to this computer. Select devices that connect when
+you want to use that computer; a device that stays connected won't signal a
+change. Use the offered checks to confirm the input mapping by looking at the
+screens, then **Save**.
 
 Choose **From boot** to cover the login screen where supported, **From login**
 to start when you sign in, or **No** to run only for this session. On a Mac
@@ -119,8 +125,13 @@ with large lists. Run `trigger-kvm configure` whenever your setup changes.
 
 ## Everyday use
 
-Normally, just press your USB switch. The computer receiving the devices
-selects its own monitor inputs automatically.
+Connect or reconnect a selected device to the computer you want to use. That
+computer selects its own monitor inputs automatically. With a USB switch,
+pressing its button moves the devices and triggers the change.
+
+Triggers respond to new connections. A device already connected when the
+watcher starts doesn't trigger a switch. Neither does activity on a device
+that stays connected, Bluetooth pairing alone, or waking the computer.
 
 | Command | Use it to… |
 |---|---|
@@ -160,7 +171,7 @@ This software writes to your monitors' control channels. Use it at your own risk
 
 | Problem | What to check |
 |---|---|
-| Pressing the USB switch does nothing | Run `status` and `logs`, then use the checks in `configure` to review your trigger and input map. |
+| Connecting a selected device doesn't switch the monitors | Run `status` and `logs`, then use the checks in `configure` to review your trigger and input map. |
 | A monitor switches by itself when a computer sleeps | Turn off the monitor's automatic input selection. Waking a computer is not a trigger. |
 | A monitor shows no signal after power-on | Select the active input with the monitor's controls; automatic input selection is disabled. |
 | A monitor briefly blanks or flickers when switching | The video link may reconnect during an input change. This is expected on the reference LG. |

@@ -1,8 +1,9 @@
 # trigger-kvm on Windows
 
-Make your monitors follow the keyboard and mouse when you move them to this
-PC with a USB switch. Setup lets you choose the devices to watch and the input
-each computer uses on each monitor. You can also switch inputs manually.
+Make your monitors follow the USB or Bluetooth devices you choose. When one
+connects to this PC, the monitors switch to its inputs. Setup lets you choose
+the devices to watch and the input each computer uses on each monitor. You can
+also switch inputs manually.
 
 Start with the [shared setup guide](../README.md). This page covers Windows
 installation, permissions and transport limits. See the
@@ -226,10 +227,10 @@ minute".
 
 ## The walkthrough and the checks
 
-`trigger-kvm configure` is one menu: name the computers, say which computer is
-on which input of each monitor, tick the devices that travel with the switch,
-choose when it starts, test the inputs and the trigger while you watch, then
-save. Nothing is written until Save. The contract is
+`trigger-kvm configure` lets you name your computers, map each monitor's inputs
+and choose which device connections bring the monitors to this PC. Choose
+when it starts, test the inputs and trigger while you watch, then Save.
+Nothing is written until Save. The contract is
 [`../specs/configure.md`](../specs/configure.md); what is specific to this
 platform:
 

@@ -1,7 +1,8 @@
 # trigger-kvm on macOS
 
 Install trigger-kvm on an Apple Silicon Mac to make your monitors follow the
-devices on your USB switch. Start with the [setup overview](../README.md) for
+USB or Bluetooth devices you choose. When one connects to this Mac, the monitors
+switch to its inputs. Start with the [setup overview](../README.md) for
 cabling, monitor settings and safety. This guide covers macOS installation,
 commands and troubleshooting; implementation details follow below.
 
@@ -94,10 +95,10 @@ tier fails with an explanation; rerun `configure` to finish the change.
 
 ## The walkthrough and the checks
 
-`trigger-kvm configure` is one menu: name the computers, say which computer is
-on which input of each monitor, tick the devices that travel with the switch,
-choose when it starts, test the inputs and the trigger while you watch, then
-save. Escape discards changes in the submenu you leave. Configuration is written
+`trigger-kvm configure` lets you name your computers, map each monitor's inputs
+and choose which device connections bring the monitors to this Mac. Choose
+when it starts, test the inputs and trigger while you watch, then Save.
+Escape discards changes in the submenu you leave. Configuration is written
 only on Save. The contract is
 [`../specs/configure.md`](../specs/configure.md); what is specific to this
 platform:
