@@ -2029,6 +2029,24 @@ evidence above; privacy and coordinated release checks remain separate gates.
 
 ## Release validation and privacy
 
+**2026-10-31 -- 0.3.0 release and public distribution.** The owner explicitly
+approved the annotated tag, prepared GitHub release and public repository
+visibility. Tag `v0.3.0` (`e1d21cf4e342be18cb29e4cabc16dae94906d56f`) points to
+`0d5401d35cba77b151ce3a9b6c05b759c08a43bf`, with both product versions at
+0.3.0 and both specification revisions at 16. The release notes match the
+reviewed body. GitHub's generated ZIP and tar archives each contain exactly
+the 123 tracked files from that commit, byte for byte; private audit material
+is excluded and the tar archive preserves the macOS installer's executable bit.
+
+[Tag CI](https://github.com/chrisrishel/trigger-kvm/actions/runs/41258556358)
+passed on both platforms, with the same declared NVIDIA-dependent skips as
+candidate CI. Before visibility changed, the new tag metadata, release body
+and all six retained Actions runs/logs passed the known-identifier and secret
+checks. Anonymous access to the repository and release was verified after
+publication. This did not reinstall either platform, alter configuration or
+move a monitor. The release tag remains fixed; this later documentation
+receipt records completion. Raw receipts remain private.
+
 **2026-10-31 -- coordinated 0.3.0 validation and final publication review.**
 At `153812a9500a7518fc9147bdfd49737e6e6b29d1`, the native macOS suite
 (`make -C macos test`, macOS 26.6.2 arm64, Bash 3.2.57) passed all 14 files

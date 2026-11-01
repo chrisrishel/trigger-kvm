@@ -7,6 +7,8 @@ contracts in [`specs/`](specs/README.md).
 
 ## Built
 
+- **Public release 0.3.0**, published on 2026-10-31 with both platforms at
+  specification revision 16 ([release notes](docs/releases/0.3.0.md)).
 - **Pull-to-self on both platforms**, USB and Bluetooth triggers, the walkthrough
   with visual checks, one config format, one verb surface.
 - **A boot tier that runs unelevated** on both platforms: Windows S4U task in
@@ -29,8 +31,6 @@ contracts in [`specs/`](specs/README.md).
 
 ## Next
 
-- **Release 0.3.0 and public distribution**, after the final coordinated
-  validation and approval gates in [`TODO.md`](TODO.md).
 - **A tiebreak for two identical monitors**, designed and unbuilt
   ([`ideas/telling-two-identical-monitors-apart.md`](ideas/telling-two-identical-monitors-apart.md)).
   The measurement it waited on (NVAPI ids survive reboots and a driver update)

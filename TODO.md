@@ -6,68 +6,20 @@ Milestones are `ROADMAP.md`; what each platform owes the other is its
 
 ## Publication readiness
 
-Keep the repository private until the gates below are complete. The next
-coordinated release is **0.3.0**. Product versions, evidence and approval follow
-[the release policy](CONTRIBUTING.md#preparing-and-publishing-a-release);
-[release notes](docs/releases/0.3.0.md) describe the user-facing changes.
+[Release 0.3.0](https://github.com/chrisrishel/trigger-kvm/releases/tag/v0.3.0)
+was published on 2026-10-31, and the repository is public. The annotated tag
+points to `0d5401d35cba77b151ce3a9b6c05b759c08a43bf`; both platforms implement
+specification revision 16. The coordinated validation, privacy review and
+explicit release/visibility approval gates are complete. Dated evidence is in
+[`docs/measurements.md`](docs/measurements.md); changes, upgrade instructions
+and compatibility limits are in the [release notes](docs/releases/0.3.0.md).
 
-### Complete
-
-- [x] Both platforms implement specification revision **16**, including menu
-  viewports, saved-configuration status, ambiguity refusals and the reviewed
-  installer/trigger-check fixes. Native suites and relevant mutation coverage
-  are recorded in `docs/measurements.md`.
-- [x] Windows boot security, administrator/standard-account workflows,
-  installation/upgrade, autostart and restricted session-0 physical switching
-  have dated evidence. Retain its stated limits: the final restricted physical
-  writes ran after local sign-in, and did not prove a detector-triggered or
-  pre-login physical write. Detailed coverage is in `windows/RELEASE-CHECKS.md`.
-- [x] Privacy cleanup preserved the 251 original commits while replacing private
-  identifiers and email metadata. Sanitized main/tag were verified remotely;
-  all 39 old Actions runs were privately archived and removed. Mac and Windows
-  checkouts use the sanitized history and repository-local noreply identity.
-  Native Windows migration validation passed all 23 files without skips.
-- [x] The owner confirmed on 2026-10-31 that there are no linked GitHub Projects.
-  The accepted limits of the history cleanup are in `docs/privacy.md`.
-- [x] The shared README separates setup and everyday use from implementation
-  details. Release notes cover changes since `v0.2.0`, upgrades and limitations;
-  the roadmap reflects the completed dxva2 observation.
-- [x] macOS release preparation: installer regressions, all 14 native test files
-  and ShellCheck passed without skips; all 11 publication mutations were caught
-  and restored. The only runtime edit is the product version constant.
-- [x] Coordinated source versions are **0.3.0** and both specification revisions
-  stay at 16. The Windows guide distinguishes released sources from development
-  main; isolated installer/status fixtures verify version stamping and retention.
-- [x] Windows release preparation at clean `e2636e0`: all 23 native PowerShell
-  5.1 test files passed without skips; all three installed-version mutations
-  were caught and restored. Existing installation/state and dated hardware,
-  profile and reboot evidence are preserved (`docs/measurements.md`).
-- [x] Coordinated native validation at `153812a`: macOS passed all 14 test
-  files and ShellCheck without skips; the owner confirmed the final Windows
-  PowerShell 5.1 run passed all 23 files without skips on this same commit.
-  CI passed on both platforms, with the Windows runner's NVIDIA-dependent
-  file and two driver cases explicitly skipped. Relevant mutation evidence
-  above remains valid for unchanged code.
-- [x] Final documentation review removed temporary preparation notices and
-  checked 64 local links across the user guides, release notes and supporting
-  documentation. Release notes are ready for publication.
-- [x] The final privacy review at `153812a` covered 256 reachable commits,
-  `v0.2.0`, all 123 tracked files, GitHub metadata and all four retained Actions
-  runs and their logs. No known private identifiers or new secrets were found;
-  the secret scanner's filename-list false positives were reviewed. Private
-  backups and raw receipts remain ignored. The only following edits are
-  documentation; validate and scan their final commit before release.
-
-### Remaining
-
-- [ ] Obtain explicit approval for the tested candidate, annotated `v0.3.0`
-  tag, release publication and public repository visibility. Do not interpret
-  ordinary commit/push authorization as release or visibility approval.
-  At release time, confirm the approved commit is unchanged, its CI passed
-  and final refs, Actions metadata/logs and any new GitHub surfaces or assets
-  remain within the privacy review. Export only tracked files for distribution,
-  never a workspace ZIP. Revalidate any candidate change in proportion to its
-  effect, as required by the release policy.
+For subsequent releases, follow [the release policy](CONTRIBUTING.md#preparing-and-publishing-a-release):
+validate the candidate in proportion to its changes, repeat the privacy review
+for new history and GitHub surfaces, and obtain explicit release approval.
+Keep released tags immutable and export only tracked files for distribution.
+The accepted limits of the history cleanup remain in
+[Publication privacy](docs/privacy.md#audit-limits).
 
 ## Deferred work
 
