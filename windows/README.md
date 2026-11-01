@@ -44,7 +44,6 @@ Choose your source **before installing**. Cloning selects development `main`.
 For a released build, choose a [published tag](https://github.com/chrisrishel/trigger-kvm/tags)
 and run `git checkout vX.Y.Z`, replacing `vX.Y.Z` with that tag. Alternatively,
 extract that tag's source ZIP. To use the development build, stay on `main`.
-Version 0.3.0 is in preparation; its tag is not yet published.
 
 Open **Windows PowerShell as your normal user**, without "Run as administrator."
 From the chosen source directory:

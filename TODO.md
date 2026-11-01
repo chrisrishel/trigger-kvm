@@ -42,21 +42,32 @@ coordinated release is **0.3.0**. Product versions, evidence and approval follow
   5.1 test files passed without skips; all three installed-version mutations
   were caught and restored. Existing installation/state and dated hardware,
   profile and reboot evidence are preserved (`docs/measurements.md`).
+- [x] Coordinated native validation at `153812a`: macOS passed all 14 test
+  files and ShellCheck without skips; the owner confirmed the final Windows
+  PowerShell 5.1 run passed all 23 files without skips on this same commit.
+  CI passed on both platforms, with the Windows runner's NVIDIA-dependent
+  file and two driver cases explicitly skipped. Relevant mutation evidence
+  above remains valid for unchanged code.
+- [x] Final documentation review removed temporary preparation notices and
+  checked 64 local links across the user guides, release notes and supporting
+  documentation. Release notes are ready for publication.
+- [x] The final privacy review at `153812a` covered 256 reachable commits,
+  `v0.2.0`, all 123 tracked files, GitHub metadata and all four retained Actions
+  runs and their logs. No known private identifiers or new secrets were found;
+  the secret scanner's filename-list false positives were reviewed. Private
+  backups and raw receipts remain ignored. The only following edits are
+  documentation; validate and scan their final commit before release.
 
 ### Remaining
 
-- [ ] Validate clean checkouts of the same final candidate on native macOS and
-  Windows PowerShell 5.1, with relevant mutations and passing CI. Record exact
-  commands, commit, results and skips. Reuse dated installed/profile/reboot/
-  physical evidence where the relevant code is unchanged; repeat affected
-  checks only. Do not turn a skipped hardware test into a compatibility claim.
-- [ ] Review the final documentation and remove the release notes' preparation
-  notice when the candidate is ready for approval. Recheck final refs, new
-  commits, Actions metadata/logs and any new GitHub surfaces or assets for
-  privacy. Export only tracked files for distribution, never a workspace ZIP.
 - [ ] Obtain explicit approval for the tested candidate, annotated `v0.3.0`
   tag, release publication and public repository visibility. Do not interpret
   ordinary commit/push authorization as release or visibility approval.
+  At release time, confirm the approved commit is unchanged, its CI passed
+  and final refs, Actions metadata/logs and any new GitHub surfaces or assets
+  remain within the privacy review. Export only tracked files for distribution,
+  never a workspace ZIP. Revalidate any candidate change in proportion to its
+  effect, as required by the release policy.
 
 ## Deferred work
 

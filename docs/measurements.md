@@ -2029,6 +2029,48 @@ evidence above; privacy and coordinated release checks remain separate gates.
 
 ## Release validation and privacy
 
+**2026-10-31 -- coordinated 0.3.0 validation and final publication review.**
+At `153812a9500a7518fc9147bdfd49737e6e6b29d1`, the native macOS suite
+(`make -C macos test`, macOS 26.6.2 arm64, Bash 3.2.57) passed all 14 files
+and ShellCheck without skips. The owner confirmed that the final Windows
+PowerShell 5.1 run also passed all 23 files without skips on
+this commit; the preceding `e2636e0` receipt and its three caught/restored
+installed-version mutations remain the detailed Windows preparation record.
+All 11 macOS publication mutations were already caught and restored during
+preparation; no runtime or test changes follow these validations.
+
+[CI for the coordinated candidate](https://github.com/chrisrishel/trigger-kvm/actions/runs/41254835088)
+passed: macOS 14 files plus ShellCheck, Windows 22 files. The hosted Windows
+runner explicitly skipped `resolve.tests.ps1` and the NvDdc/NvProbe real-driver
+cases because it has no NVIDIA driver/display. Those skips do not expand the
+physical compatibility evidence. No new installation, profile, reboot or
+monitor-switching checks were needed for the version-and-documentation changes;
+the dated evidence and limitations above remain applicable.
+
+The publication review checked all 123 tracked files, 256 reachable commits,
+the annotated `v0.2.0` tag and 513 author/committer/tagger email records. All
+email records use the approved noreply identity, and none of the 22 known
+private-identifier patterns matched. Secret scanning found only the previously
+reviewed filename-list assignment in the conventions tests, appearing once in
+the current tree and in two historical diffs. The new commit range was clean.
+
+Remote review covered the two advertised refs, accessible repository surfaces,
+metadata and logs for all four retained Actions runs. No known private
+identifiers or secret-pattern findings were present in that remote evidence.
+The repository was private; it had no releases, issues, pull requests,
+comments, artifacts, caches, deployments, environments or forks. Wiki, Pages
+and Discussions were disabled; the owner's confirmation of no linked Projects
+still applies. The residual-object and secret-scanning limits in
+`docs/privacy.md` remain unchanged.
+
+The final documentation pass checked 64 local links across the user guides,
+release notes and supporting docs, removed temporary preparation notices,
+and prepared a release body with tag-based GitHub links. The owner explicitly
+authorized the one-line Windows README correction from macOS. Only documentation
+changes follow the coordinated native candidate; their CI and final privacy
+receipts are retained privately before requesting release approval. No tag,
+release or visibility change is authorized by these checks.
+
 **2026-10-31 -- Windows 0.3.0 preparation at clean candidate
 `e2636e099827f903ee9bf62c1ab1c0855d9e7916`.** Windows 11 Education build 22631,
 Windows PowerShell 5.1.22621.7649, an administrator-capable account without
